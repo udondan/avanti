@@ -115,7 +115,7 @@ files:
       exec: echo hello
 `);
     expect(() => loadConfig(f)).toThrow(
-      '"target" is required for exec sources',
+      '"target" is required for exec/raw sources',
     );
   });
 

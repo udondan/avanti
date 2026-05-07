@@ -21,6 +21,10 @@ async function fetchOneSrc(src: FileSrc): Promise<string> {
     return values.join('\n');
   }
 
+  if ('raw' in src) {
+    return src.raw;
+  }
+
   if ('exec' in src) {
     return fetchExec(src.exec);
   }
@@ -82,6 +86,11 @@ export async function fetchSource(entry: FileEntry): Promise<FetchResult> {
   }
 
   // Map sources
+  if ('raw' in src) {
+    const filename = path.basename(entry.target!);
+    return { files: new Map([[filename, src.raw]]) };
+  }
+
   if ('exec' in src) {
     const content = fetchExec(src.exec);
     const filename = path.basename(entry.target!); // target required, validated in config

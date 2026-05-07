@@ -4,7 +4,7 @@ Assemble local files from any source via a declarative YAML spec.
 
 ## Features
 
-- Fetch files from **HTTP/HTTPS**, **local paths**, **GitLab** (via `glab`), **GitHub** (via `gh`), or **shell commands**
+- Fetch files from **HTTP/HTTPS**, **local paths**, **GitLab** (via `glab`), **GitHub** (via `gh`), **shell commands**, or **inline raw content**
 - **Multi-source entries** — combine multiple sources into a single file by providing `src` as a list
 - **Atomic writes** — all files are staged to a temp dir first; targets are only written if everything succeeds
 - **Diff preview** — see exactly what will change before applying
@@ -97,14 +97,14 @@ files:
 
 ### File Entry Fields
 
-| Field     | Required    | Description                                                                                                               |
-| --------- | ----------- | ------------------------------------------------------------------------------------------------------------------------- |
-| `src`     | Yes         | Source (see below). May be a single source or a **list** of sources to concatenate.                                       |
-| `target`  | Conditional | Local path to write to. Required for `exec:` sources and when `src` is a list. May be omitted when filename is inferable. |
-| `ref`     | No          | Branch, tag, or `$latest` (resolves to latest tag). GitLab/GitHub only.                                                   |
-| `mode`    | No          | File permission mode, e.g. `"0755"`                                                                                       |
-| `replace` | No          | List of `{from, to}` replacement rules. `from` may be a plain string or `/pattern/flags` regex.                           |
-| `post`    | No          | Shell script. Content is piped via stdin; stdout is used as the result. Runs after `replace`.                             |
+| Field     | Required    | Description                                                                                                                          |
+| --------- | ----------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `src`     | Yes         | Source (see below). May be a single source or a **list** of sources to concatenate.                                                  |
+| `target`  | Conditional | Local path to write to. Required for `exec:` and `raw:` sources and when `src` is a list. May be omitted when filename is inferable. |
+| `ref`     | No          | Branch, tag, or `$latest` (resolves to latest tag). GitLab/GitHub only.                                                              |
+| `mode`    | No          | File permission mode, e.g. `"0755"`                                                                                                  |
+| `replace` | No          | List of `{from, to}` replacement rules. `from` may be a plain string or `/pattern/flags` regex.                                      |
+| `post`    | No          | Shell script. Content is piped via stdin; stdout is used as the result. Runs after `replace`.                                        |
 
 ### Source Types
 
@@ -116,11 +116,15 @@ src: ~/templates/file.txt
 src: /absolute/path/file.txt
 ```
 
-**Map** — for exec, gitlab, github:
+**Map** — for exec, gitlab, github, raw:
 
 ```yaml
 src:
   exec: <shell command>          # stdout becomes file content; target required
+
+src:
+  raw: |                         # inline content; target required
+    your content here
 
 src:
   gitlab:
