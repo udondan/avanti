@@ -86,8 +86,13 @@ export function resolveTargetPath(
   return resolved;
 }
 
-function assertWithinWorkingDir(resolvedPath: string, workingDir: string): void {
-  const prefix = workingDir.endsWith(path.sep) ? workingDir : workingDir + path.sep;
+function assertWithinWorkingDir(
+  resolvedPath: string,
+  workingDir: string,
+): void {
+  const prefix = workingDir.endsWith(path.sep)
+    ? workingDir
+    : workingDir + path.sep;
   if (resolvedPath !== workingDir && !resolvedPath.startsWith(prefix)) {
     throw new Error(
       `Target path "${resolvedPath}" escapes working directory "${workingDir}".`,

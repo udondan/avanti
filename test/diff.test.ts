@@ -41,8 +41,8 @@ describe('resolveTargetPath', () => {
   });
 
   it('allows absolute directory target when workingDir is /', () => {
-    expect(
-      resolveTargetPath({ target: '/etc/conf/' }, 'my.conf', '/'),
-    ).toBe('/etc/conf/my.conf');
+    expect(resolveTargetPath({ target: '/etc/conf/' }, 'my.conf', '/')).toBe(
+      '/etc/conf/my.conf',
+    );
   });
 });

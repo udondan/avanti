@@ -50,7 +50,7 @@ export function pullCommand(): Command {
       const writeTargets: WriteTarget[] = [];
       let hasError = false;
 
-      for (const entry of config!.files) {
+      for (const entry of config.files) {
         try {
           const result = await fetchSource(entry, workingDir);
           for (const [relPath, rawContent] of result.files) {

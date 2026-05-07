@@ -5,7 +5,6 @@ export interface LocalResult {
   files: Map<string, string>;
 }
 
-
 export function fetchLocal(src: string, workingDir: string): LocalResult {
   let resolved: string;
   if (src.startsWith('~/')) {
