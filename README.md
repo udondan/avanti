@@ -35,11 +35,12 @@ npx @udondan/avanti --help
 avanti [options] [command]
 
 Options:
-  -c, --config <path>   path to config file (default: auto-detected)
+  -c, --config <path>         path to config file (default: auto-detected)
+  -w, --working-dir <path>    working directory for resolving paths (default: current directory)
 
 Commands:
-  diff                  Show diff between remote sources and local files
-  pull [--yes]          Pull remote sources and write to local files
+  diff                        Show diff between remote sources and local files
+  pull [--yes]                Pull remote sources and write to local files
 ```
 
 ### `avanti diff`
@@ -49,6 +50,28 @@ Shows a colored git-diff-like output of what would change. Exits `0` if no chang
 ### `avanti pull`
 
 Fetches all sources, shows the diff, and prompts for confirmation before writing. Use `--yes` to skip the prompt.
+
+## Working Directory
+
+All relative `src` and `target` paths are resolved relative to the **working directory** — the directory where you invoke `avanti`, or the path given with `-C`.
+
+This is independent of where the config file lives. A config loaded from another directory with `-c /shared/avanti.yml` still resolves all paths from your working directory (or the one you specify with `-C`).
+
+Use `-C` to deploy the same config to multiple locations without `cd`-ing there first:
+
+```sh
+avanti -c /shared/avanti.yml -C /project-a pull
+avanti -c /shared/avanti.yml -C /project-b pull
+```
+
+### Path Constraints
+
+Avanti enforces that target paths cannot escape the working directory:
+
+- **Relative targets** are resolved under the working directory. A path like `../../etc/passwd` is rejected.
+- **Absolute targets** (e.g. `/etc/hosts`) are only permitted when the working directory is `/`. If your working directory is any other path, absolute targets are an error.
+
+These rules apply to `target` values in your config. Source (`src`) paths are reads-only and are not restricted.
 
 ## Configuration
 

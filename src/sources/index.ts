@@ -10,12 +10,12 @@ export interface FetchResult {
   files: Map<string, string>;
 }
 
-async function fetchOneSrc(src: FileSrc): Promise<string> {
+async function fetchOneSrc(src: FileSrc, workingDir: string): Promise<string> {
   if (typeof src === 'string') {
     if (src.startsWith('http://') || src.startsWith('https://')) {
       return fetchHttp(src);
     }
-    const result = fetchLocal(src);
+    const result = fetchLocal(src, workingDir);
     // For a single-file local result, return the first (and only) value
     const values = Array.from(result.files.values());
     return values.join('\n');
@@ -52,7 +52,10 @@ async function fetchOneSrc(src: FileSrc): Promise<string> {
   throw new Error(`Unknown source type: ${JSON.stringify(src)}`);
 }
 
-export async function fetchSource(entry: FileEntry): Promise<FetchResult> {
+export async function fetchSource(
+  entry: FileEntry,
+  workingDir: string,
+): Promise<FetchResult> {
   const { src } = entry;
 
   // List src → fetch each, concatenate with newline
@@ -60,7 +63,7 @@ export async function fetchSource(entry: FileEntry): Promise<FetchResult> {
     const parts: string[] = [];
     for (let i = 0; i < src.length; i++) {
       try {
-        parts.push(await fetchOneSrc(src[i]));
+        parts.push(await fetchOneSrc(src[i], workingDir));
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
         throw new Error(`[source ${i}] ${msg}`, { cause: err });
@@ -81,7 +84,7 @@ export async function fetchSource(entry: FileEntry): Promise<FetchResult> {
     }
 
     // Local path (absolute, ~/, or relative)
-    const result = fetchLocal(src);
+    const result = fetchLocal(src, workingDir);
     return { files: result.files };
   }
 

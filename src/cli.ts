@@ -11,7 +11,11 @@ program
     'Assemble local files from any source via a declarative YAML spec',
   )
   .version('0.1.0')
-  .option('-c, --config <path>', 'path to config file');
+  .option('-c, --config <path>', 'path to config file')
+  .option(
+    '-w, --working-dir <path>',
+    'working directory for resolving relative paths (default: current directory)',
+  );
 
 program.addCommand(diffCommand());
 program.addCommand(pullCommand());
