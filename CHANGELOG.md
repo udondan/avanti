@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.1](https://github.com/udondan/avanti/compare/v0.3.0...v0.3.1) (2026-05-07)
+
+
+### Bug Fixes
+
+* read CLI version dynamically from package.json ([#14](https://github.com/udondan/avanti/issues/14)) ([8ccbb80](https://github.com/udondan/avanti/commit/8ccbb80aeea645a50439ddc41693fd20931ad860))
+
 ## [0.3.0](https://github.com/udondan/avanti/compare/v0.2.1...v0.3.0) (2026-05-07)
 
 
