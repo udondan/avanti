@@ -10,6 +10,7 @@ Assemble local files from any source via a declarative YAML spec.
 - **Diff preview** — see exactly what will change before applying
 - **Post-processing** — apply text replacements (string or regex) and/or pipe content through a shell script
 - **Directory sync** — recursively sync directories from GitLab/GitHub/local sources
+- **Variables** — define reusable values in a `variables:` block and reference them anywhere with `$name`; use `$env:NAME` for environment variables
 
 ## Requirements
 
@@ -85,12 +86,15 @@ Create one of the following files in your project root (searched in this order, 
 Example:
 
 ```yaml
+variables:
+  email: you@example.com
+
 files:
   - src: http://www.example.com/example.yml
     target: my-example.yml
     replace:
       - from: '{EMAIL}'
-        to: you@example.com
+        to: $email
       - from: /\d+/
         to: number
 
@@ -176,6 +180,44 @@ target: combined.txt
 ```
 
 Sources are fetched in order and joined with a newline. Post-processing (`replace`, `post`) is applied to the combined result. If any source fails, the entire entry is aborted.
+
+### Variables
+
+Define reusable values at the top level under `variables:`:
+
+```yaml
+variables:
+  email: you@example.com
+  version: '1.2.3'
+```
+
+Reference them anywhere in the config with `$name`:
+
+```yaml
+files:
+  - src:
+      gitlab:
+        project: group/project
+        file: renovate.json
+        ref: $version # resolved to "1.2.3"
+    replace:
+      - from: '{EMAIL}'
+        to: $email # resolved to "you@example.com"
+```
+
+Variables are resolved in every string field: `ref`, `exec` commands, HTTP URLs, local paths, `raw` content, `replace` rules (`from` and `to`), and `post` scripts.
+
+**Environment variables** use the `$env:NAME` form:
+
+```yaml
+replace:
+  - from: /secret-token/
+    to: $env:MY_SECRET # reads process.env.MY_SECRET at runtime
+```
+
+Referencing an undefined variable or a missing environment variable is an error.
+
+`$latest` is reserved for GitLab's "latest tag" resolution and cannot be used as a variable name.
 
 ## Exit Codes
 
