@@ -14,6 +14,11 @@ export function diffCommand(): Command {
       const configPath = resolveConfigPath(
         cmd.parent?.opts().config as string | undefined,
       );
+      const rawWorkingDir = cmd.parent?.opts().workingDir as string | undefined;
+      const workingDir = rawWorkingDir
+        ? path.resolve(rawWorkingDir)
+        : process.cwd();
+
       let config;
       try {
         config = loadConfig(configPath);
@@ -21,20 +26,18 @@ export function diffCommand(): Command {
         console.error((err as Error).message);
         process.exit(2);
       }
-
-      const baseDir = path.dirname(configPath);
       const allDiffs: FileDiff[] = [];
       let hasError = false;
 
       for (const entry of config.files) {
         try {
-          const result = await fetchSource(entry);
+          const result = await fetchSource(entry, workingDir);
           for (const [relPath, rawContent] of result.files) {
             let content = rawContent;
             if (entry.replace?.length)
               content = applyReplace(content, entry.replace);
             if (entry.post) content = applyPost(content, entry.post);
-            const targetPath = resolveTargetPath(entry, relPath, baseDir);
+            const targetPath = resolveTargetPath(entry, relPath, workingDir);
             allDiffs.push(computeDiff(targetPath, content));
           }
         } catch (err: unknown) {

@@ -5,15 +5,15 @@ export interface LocalResult {
   files: Map<string, string>;
 }
 
-function expandHome(p: string): string {
-  if (p.startsWith('~/')) {
-    return path.join(process.env['HOME'] ?? '~', p.slice(2));
+export function fetchLocal(src: string, workingDir: string): LocalResult {
+  let resolved: string;
+  if (src.startsWith('~/')) {
+    resolved = path.join(process.env['HOME'] ?? '~', src.slice(2));
+  } else if (path.isAbsolute(src)) {
+    resolved = src;
+  } else {
+    resolved = path.resolve(workingDir, src);
   }
-  return p;
-}
-
-export function fetchLocal(src: string): LocalResult {
-  const resolved = expandHome(src);
   if (!fs.existsSync(resolved)) {
     throw new Error(`Local source not found: ${resolved}`);
   }
