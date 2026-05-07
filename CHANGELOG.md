@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.5.0](https://github.com/udondan/avanti/compare/v0.4.0...v0.5.0) (2026-05-07)
+
+
+### Features
+
+* **fetch:** add exponential backoff retry for all HTTP requests ([#27](https://github.com/udondan/avanti/issues/27)) ([2caf0f3](https://github.com/udondan/avanti/commit/2caf0f3dc368fd6a7cead8a2946dc4504693d6f1))
+* **sources:** replace mandatory CLI tools with native HTTP for GitHub and GitLab ([#21](https://github.com/udondan/avanti/issues/21)) ([990b8ee](https://github.com/udondan/avanti/commit/990b8eedc60047d9743eb69358d0967852c8d9a2))
+
+
+### Performance Improvements
+
+* parallelize directory file fetches for GitHub and GitLab ([#26](https://github.com/udondan/avanti/issues/26)) ([c11d2e2](https://github.com/udondan/avanti/commit/c11d2e25871eccf75398cf11eb6b315db7c7a16b))
+
 ## [0.4.0](https://github.com/udondan/avanti/compare/v0.3.2...v0.4.0) (2026-05-07)
 
 
