@@ -57,15 +57,40 @@ export function printDiffs(diffs: FileDiff[]): void {
 export function resolveTargetPath(
   entry: { target?: string },
   relPath: string,
-  baseDir: string,
+  workingDir: string,
 ): string {
+  let resolved: string;
+
   if (entry.target) {
-    // If target looks like a directory (ends with /) or the relPath has subdirs, join them
-    if (entry.target.endsWith('/') || entry.target.endsWith(path.sep)) {
-      return path.resolve(baseDir, entry.target, relPath);
+    if (path.isAbsolute(entry.target)) {
+      if (workingDir !== '/') {
+        throw new Error(
+          `Absolute target path "${entry.target}" is not allowed when working directory is not "/". Use a relative path or run with -C /.`,
+        );
+      }
+      if (entry.target.endsWith('/') || entry.target.endsWith(path.sep)) {
+        return path.resolve(entry.target, relPath);
+      }
+      return entry.target;
     }
-    // Single file: use target directly
-    return path.resolve(baseDir, entry.target);
+    if (entry.target.endsWith('/') || entry.target.endsWith(path.sep)) {
+      resolved = path.resolve(workingDir, entry.target, relPath);
+    } else {
+      resolved = path.resolve(workingDir, entry.target);
+    }
+  } else {
+    resolved = path.resolve(workingDir, relPath);
   }
-  return path.resolve(baseDir, relPath);
+
+  assertWithinWorkingDir(resolved, workingDir);
+  return resolved;
+}
+
+function assertWithinWorkingDir(resolvedPath: string, workingDir: string): void {
+  const prefix = workingDir.endsWith(path.sep) ? workingDir : workingDir + path.sep;
+  if (resolvedPath !== workingDir && !resolvedPath.startsWith(prefix)) {
+    throw new Error(
+      `Target path "${resolvedPath}" escapes working directory "${workingDir}".`,
+    );
+  }
 }

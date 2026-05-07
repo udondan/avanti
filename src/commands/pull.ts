@@ -33,6 +33,11 @@ export function pullCommand(): Command {
       const configPath = resolveConfigPath(
         cmd.parent?.opts().config as string | undefined,
       );
+      const rawWorkingDir = cmd.parent?.opts().workingDir as string | undefined;
+      const workingDir = rawWorkingDir
+        ? path.resolve(rawWorkingDir)
+        : process.cwd();
+
       let config;
       try {
         config = loadConfig(configPath);
@@ -41,20 +46,19 @@ export function pullCommand(): Command {
         process.exit(2);
       }
 
-      const baseDir = path.dirname(configPath);
       const allDiffs: FileDiff[] = [];
       const writeTargets: WriteTarget[] = [];
       let hasError = false;
 
-      for (const entry of config.files) {
+      for (const entry of config!.files) {
         try {
-          const result = await fetchSource(entry);
+          const result = await fetchSource(entry, workingDir);
           for (const [relPath, rawContent] of result.files) {
             let content = rawContent;
             if (entry.replace?.length)
               content = applyReplace(content, entry.replace);
             if (entry.post) content = applyPost(content, entry.post);
-            const targetPath = resolveTargetPath(entry, relPath, baseDir);
+            const targetPath = resolveTargetPath(entry, relPath, workingDir);
             allDiffs.push(computeDiff(targetPath, content));
             writeTargets.push({ targetPath, content, mode: entry.mode });
           }
