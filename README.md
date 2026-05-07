@@ -124,13 +124,13 @@ files:
 
 ### File Entry Fields
 
-| Field     | Required    | Description                                                                                                                          |
-| --------- | ----------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| `src`     | Yes         | Source (see below). May be a single source or a **list** of sources to concatenate.                                                  |
-| `target`  | Conditional | Local path to write to. Required for `exec:` and `raw:` sources and when `src` is a list. May be omitted when filename is inferable. |
-| `mode`    | No          | File permission mode, e.g. `"0755"`                                                                                                  |
-| `replace` | No          | List of `{from, to}` replacement rules. `from` may be a plain string or `/pattern/flags` regex.                                      |
-| `post`    | No          | Shell script. Content is piped via stdin; stdout is used as the result. Runs after `replace`.                                        |
+| Field     | Required    | Description                                                                                                                                                                                                                              |
+| --------- | ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src`     | Yes         | Source (see below). May be a single source or a **list** of sources to concatenate.                                                                                                                                                      |
+| `target`  | Conditional | Local path to write to. Required for `exec:` and `raw:` sources and when `src` is a list. May be omitted when filename is inferable. End with `/` when `src` is a directory — files are written inside, preserving their relative paths. |
+| `mode`    | No          | File permission mode, e.g. `"0755"`                                                                                                                                                                                                      |
+| `replace` | No          | List of `{from, to}` replacement rules. `from` may be a plain string or `/pattern/flags` regex.                                                                                                                                          |
+| `post`    | No          | Shell script. Content is piped via stdin; stdout is used as the result. Runs after `replace`.                                                                                                                                            |
 
 ### Source Types
 
@@ -164,6 +164,36 @@ src:
     file: path/to/file.txt       # file or directory in repo
     ref: main                    # branch or tag (optional)
 ```
+
+### Directory Sources
+
+Any source type that references a path (local, GitLab, GitHub) can point to a directory instead of a single file. End the path with `/` to declare it a directory explicitly; without a trailing slash the tool probes the remote to decide.
+
+When `src` is a directory, the matched files are written individually under `target` (which must also end with `/`), preserving the subdirectory structure relative to the source root:
+
+```yaml
+# All files under skills/ in the GitLab repo are written into local skills.new/
+- src:
+    gitlab:
+      project: group/repo
+      file: skills/
+      ref: main
+  target: skills/
+
+# GitHub directory → local directory
+- src:
+    github:
+      repo: org/repo
+      file: .github/workflows/
+      ref: main
+  target: .github/workflows/
+
+# Local directory → local directory
+- src: ~/shared/hooks/
+  target: .githooks/
+```
+
+Directory sources cannot be mixed into a multi-source list (`src` as a list), because the list mode always produces a single file.
 
 **List** — combine multiple sources into one file (all source types supported; `target` required):
 
