@@ -1,3 +1,5 @@
+export type Variables = Record<string, string>;
+
 export interface ReplaceRule {
   from: string;
   to: string;
@@ -39,5 +41,6 @@ export interface FileEntry {
 }
 
 export interface FileFerryConfig {
+  variables?: Variables;
   files: FileEntry[];
 }

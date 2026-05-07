@@ -1,5 +1,6 @@
 import * as path from 'path';
-import { FileEntry, FileSrc } from '../types';
+import { FileEntry, FileSrc, Variables } from '../types';
+import { resolveVars } from '../variables';
 import { fetchHttp, inferFilenameFromUrl } from './http';
 import { fetchLocal } from './local';
 import { fetchExec } from './exec';
@@ -10,30 +11,36 @@ export interface FetchResult {
   files: Map<string, string>;
 }
 
-async function fetchOneSrc(src: FileSrc, workingDir: string): Promise<string> {
+async function fetchOneSrc(
+  src: FileSrc,
+  workingDir: string,
+  vars: Variables,
+): Promise<string> {
   if (typeof src === 'string') {
-    if (src.startsWith('http://') || src.startsWith('https://')) {
-      return fetchHttp(src);
+    const resolved = resolveVars(src, vars);
+    if (resolved.startsWith('http://') || resolved.startsWith('https://')) {
+      return fetchHttp(resolved);
     }
-    const result = fetchLocal(src, workingDir);
-    // For a single-file local result, return the first (and only) value
+    const result = fetchLocal(resolved, workingDir);
     const values = Array.from(result.files.values());
     return values.join('\n');
   }
 
   if ('raw' in src) {
-    return src.raw;
+    return resolveVars(src.raw, vars);
   }
 
   if ('exec' in src) {
-    return fetchExec(src.exec);
+    return fetchExec(resolveVars(src.exec, vars));
   }
 
   if ('gitlab' in src) {
     const result = fetchGitLab(
-      src.gitlab.project,
-      src.gitlab.file,
-      src.gitlab.ref,
+      resolveVars(src.gitlab.project, vars),
+      resolveVars(src.gitlab.file, vars),
+      src.gitlab.ref !== undefined
+        ? resolveVars(src.gitlab.ref, vars)
+        : undefined,
     );
     const values = Array.from(result.files.values());
     return values.join('\n');
@@ -41,9 +48,11 @@ async function fetchOneSrc(src: FileSrc, workingDir: string): Promise<string> {
 
   if ('github' in src) {
     const result = fetchGitHub(
-      src.github.repo,
-      src.github.file,
-      src.github.ref,
+      resolveVars(src.github.repo, vars),
+      resolveVars(src.github.file, vars),
+      src.github.ref !== undefined
+        ? resolveVars(src.github.ref, vars)
+        : undefined,
     );
     const values = Array.from(result.files.values());
     return values.join('\n');
@@ -55,6 +64,7 @@ async function fetchOneSrc(src: FileSrc, workingDir: string): Promise<string> {
 export async function fetchSource(
   entry: FileEntry,
   workingDir: string,
+  vars: Variables = {},
 ): Promise<FetchResult> {
   const { src } = entry;
 
@@ -63,7 +73,7 @@ export async function fetchSource(
     const parts: string[] = [];
     for (let i = 0; i < src.length; i++) {
       try {
-        parts.push(await fetchOneSrc(src[i], workingDir));
+        parts.push(await fetchOneSrc(src[i], workingDir, vars));
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
         throw new Error(`[source ${i}] ${msg}`, { cause: err });
@@ -75,45 +85,50 @@ export async function fetchSource(
 
   // Single src — original behaviour
   if (typeof src === 'string') {
-    if (src.startsWith('http://') || src.startsWith('https://')) {
-      const content = await fetchHttp(src);
+    const resolved = resolveVars(src, vars);
+    if (resolved.startsWith('http://') || resolved.startsWith('https://')) {
+      const content = await fetchHttp(resolved);
       const filename = entry.target
         ? path.basename(entry.target)
-        : (inferFilenameFromUrl(src) ?? 'download');
+        : (inferFilenameFromUrl(resolved) ?? 'download');
       return { files: new Map([[filename, content]]) };
     }
 
     // Local path (absolute, ~/, or relative)
-    const result = fetchLocal(src, workingDir);
+    const result = fetchLocal(resolved, workingDir);
     return { files: result.files };
   }
 
   // Map sources
   if ('raw' in src) {
     const filename = path.basename(entry.target!);
-    return { files: new Map([[filename, src.raw]]) };
+    return { files: new Map([[filename, resolveVars(src.raw, vars)]]) };
   }
 
   if ('exec' in src) {
-    const content = fetchExec(src.exec);
-    const filename = path.basename(entry.target!); // target required, validated in config
+    const content = fetchExec(resolveVars(src.exec, vars));
+    const filename = path.basename(entry.target!);
     return { files: new Map([[filename, content]]) };
   }
 
   if ('gitlab' in src) {
     const result = fetchGitLab(
-      src.gitlab.project,
-      src.gitlab.file,
-      src.gitlab.ref,
+      resolveVars(src.gitlab.project, vars),
+      resolveVars(src.gitlab.file, vars),
+      src.gitlab.ref !== undefined
+        ? resolveVars(src.gitlab.ref, vars)
+        : undefined,
     );
     return { files: result.files };
   }
 
   if ('github' in src) {
     const result = fetchGitHub(
-      src.github.repo,
-      src.github.file,
-      src.github.ref,
+      resolveVars(src.github.repo, vars),
+      resolveVars(src.github.file, vars),
+      src.github.ref !== undefined
+        ? resolveVars(src.github.ref, vars)
+        : undefined,
     );
     return { files: result.files };
   }

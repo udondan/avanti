@@ -50,14 +50,16 @@ export function pullCommand(): Command {
       const writeTargets: WriteTarget[] = [];
       let hasError = false;
 
+      const vars = config.variables ?? {};
+
       for (const entry of config.files) {
         try {
-          const result = await fetchSource(entry, workingDir);
+          const result = await fetchSource(entry, workingDir, vars);
           for (const [relPath, rawContent] of result.files) {
             let content = rawContent;
             if (entry.replace?.length)
-              content = applyReplace(content, entry.replace);
-            if (entry.post) content = applyPost(content, entry.post);
+              content = applyReplace(content, entry.replace, vars);
+            if (entry.post) content = applyPost(content, entry.post, vars);
             const targetPath = resolveTargetPath(entry, relPath, workingDir);
             allDiffs.push(computeDiff(targetPath, content));
             writeTargets.push({ targetPath, content, mode: entry.mode });
