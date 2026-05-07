@@ -1,48 +1,48 @@
-import * as path from "path";
-import { FileEntry, FileSrc } from "../types";
-import { fetchHttp, inferFilenameFromUrl } from "./http";
-import { fetchLocal } from "./local";
-import { fetchExec } from "./exec";
-import { fetchGitLab } from "./gitlab";
-import { fetchGitHub } from "./github";
+import * as path from 'path';
+import { FileEntry, FileSrc } from '../types';
+import { fetchHttp, inferFilenameFromUrl } from './http';
+import { fetchLocal } from './local';
+import { fetchExec } from './exec';
+import { fetchGitLab } from './gitlab';
+import { fetchGitHub } from './github';
 
 export interface FetchResult {
   files: Map<string, string>;
 }
 
 async function fetchOneSrc(src: FileSrc): Promise<string> {
-  if (typeof src === "string") {
-    if (src.startsWith("http://") || src.startsWith("https://")) {
+  if (typeof src === 'string') {
+    if (src.startsWith('http://') || src.startsWith('https://')) {
       return fetchHttp(src);
     }
     const result = fetchLocal(src);
     // For a single-file local result, return the first (and only) value
     const values = Array.from(result.files.values());
-    return values.join("\n");
+    return values.join('\n');
   }
 
-  if ("exec" in src) {
+  if ('exec' in src) {
     return fetchExec(src.exec);
   }
 
-  if ("gitlab" in src) {
+  if ('gitlab' in src) {
     const result = fetchGitLab(
       src.gitlab.project,
       src.gitlab.file,
       src.gitlab.ref,
     );
     const values = Array.from(result.files.values());
-    return values.join("\n");
+    return values.join('\n');
   }
 
-  if ("github" in src) {
+  if ('github' in src) {
     const result = fetchGitHub(
       src.github.repo,
       src.github.file,
       src.github.ref,
     );
     const values = Array.from(result.files.values());
-    return values.join("\n");
+    return values.join('\n');
   }
 
   throw new Error(`Unknown source type: ${JSON.stringify(src)}`);
@@ -63,16 +63,16 @@ export async function fetchSource(entry: FileEntry): Promise<FetchResult> {
       }
     }
     const filename = path.basename(entry.target!);
-    return { files: new Map([[filename, parts.join("\n")]]) };
+    return { files: new Map([[filename, parts.join('\n')]]) };
   }
 
   // Single src — original behaviour
-  if (typeof src === "string") {
-    if (src.startsWith("http://") || src.startsWith("https://")) {
+  if (typeof src === 'string') {
+    if (src.startsWith('http://') || src.startsWith('https://')) {
       const content = await fetchHttp(src);
       const filename = entry.target
         ? path.basename(entry.target)
-        : (inferFilenameFromUrl(src) ?? "download");
+        : (inferFilenameFromUrl(src) ?? 'download');
       return { files: new Map([[filename, content]]) };
     }
 
@@ -82,13 +82,13 @@ export async function fetchSource(entry: FileEntry): Promise<FetchResult> {
   }
 
   // Map sources
-  if ("exec" in src) {
+  if ('exec' in src) {
     const content = fetchExec(src.exec);
     const filename = path.basename(entry.target!); // target required, validated in config
     return { files: new Map([[filename, content]]) };
   }
 
-  if ("gitlab" in src) {
+  if ('gitlab' in src) {
     const result = fetchGitLab(
       src.gitlab.project,
       src.gitlab.file,
@@ -97,7 +97,7 @@ export async function fetchSource(entry: FileEntry): Promise<FetchResult> {
     return { files: result.files };
   }
 
-  if ("github" in src) {
+  if ('github' in src) {
     const result = fetchGitHub(
       src.github.repo,
       src.github.file,

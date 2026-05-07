@@ -1,5 +1,5 @@
-import { spawnSync } from "child_process";
-import * as path from "path";
+import { spawnSync } from 'child_process';
+import * as path from 'path';
 
 export interface GitHubResult {
   files: Map<string, string>;
@@ -10,44 +10,44 @@ function ghRun(args: string[]): {
   stderr: string;
   status: number | null;
 } {
-  const result = spawnSync("gh", args, { encoding: "utf8" });
+  const result = spawnSync('gh', args, { encoding: 'utf8' });
   if (result.error) {
-    const msg = result.error.message ?? "";
-    if (msg.includes("ENOENT")) {
+    const msg = result.error.message ?? '';
+    if (msg.includes('ENOENT')) {
       throw new Error(
-        "gh CLI not found. Install it from https://cli.github.com",
+        'gh CLI not found. Install it from https://cli.github.com',
       );
     }
     throw new Error(`gh error: ${msg}`);
   }
   return {
-    stdout: result.stdout ?? "",
-    stderr: result.stderr ?? "",
+    stdout: result.stdout ?? '',
+    stderr: result.stderr ?? '',
     status: result.status,
   };
 }
 
 function fetchFile(repo: string, filePath: string, ref: string): string {
   const res = ghRun([
-    "api",
+    'api',
     `repos/${repo}/contents/${filePath}?ref=${encodeURIComponent(ref)}`,
-    "--jq",
-    ".content",
+    '--jq',
+    '.content',
   ]);
   if (res.status !== 0) {
     throw new Error(
       `Failed to fetch ${filePath} from ${repo}@${ref}: ${res.stderr}`,
     );
   }
-  const b64 = res.stdout.trim().replace(/\\n/g, "").replace(/\n/g, "");
-  return Buffer.from(b64, "base64").toString("utf8");
+  const b64 = res.stdout.trim().replace(/\\n/g, '').replace(/\n/g, '');
+  return Buffer.from(b64, 'base64').toString('utf8');
 }
 
 function listTree(repo: string, dirPath: string, ref: string): string[] {
   const res = ghRun([
-    "api",
+    'api',
     `repos/${repo}/git/trees/${encodeURIComponent(ref)}?recursive=1`,
-    "--jq",
+    '--jq',
     `.tree[] | select(.type == "blob") | select(.path | startswith("${dirPath}/")) | .path`,
   ]);
   if (res.status !== 0) {
@@ -55,7 +55,7 @@ function listTree(repo: string, dirPath: string, ref: string): string[] {
       `Failed to list tree ${dirPath} in ${repo}@${ref}: ${res.stderr}`,
     );
   }
-  return res.stdout.trim().split("\n").filter(Boolean);
+  return res.stdout.trim().split('\n').filter(Boolean);
 }
 
 export function fetchGitHub(
@@ -63,7 +63,7 @@ export function fetchGitHub(
   file: string,
   ref: string | undefined,
 ): GitHubResult {
-  const resolvedRef = ref ?? "HEAD";
+  const resolvedRef = ref ?? 'HEAD';
   const files = new Map<string, string>();
 
   try {

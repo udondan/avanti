@@ -1,14 +1,14 @@
-import { spawnSync } from "child_process";
+import { spawnSync } from 'child_process';
 
 export function applyPost(content: string, script: string): string {
-  const result = spawnSync("sh", ["-c", script], {
+  const result = spawnSync('sh', ['-c', script], {
     input: content,
-    encoding: "utf8",
+    encoding: 'utf8',
   });
   if (result.status !== null && result.status !== 0) {
-    const stderr = result.stderr?.trim() ?? "";
+    const stderr = result.stderr?.trim() ?? '';
     throw new Error(
-      `post script exited with code ${result.status}${stderr ? ": " + stderr : ""}`,
+      `post script exited with code ${result.status}${stderr ? ': ' + stderr : ''}`,
     );
   }
   if (result.error) {

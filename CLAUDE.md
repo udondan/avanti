@@ -14,6 +14,8 @@ bun run dev          # Run CLI directly via tsx (no build needed)
 bun test             # Run tests once
 bun run test:watch   # Run tests in watch mode
 bun run lint         # Run ESLint
+bun run format       # Format with Prettier
+bun run format:check # Check formatting without writing
 ```
 
 Run a single test file:

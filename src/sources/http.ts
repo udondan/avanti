@@ -1,6 +1,6 @@
-import * as https from "https";
-import * as http from "http";
-import * as path from "path";
+import * as https from 'https';
+import * as http from 'http';
+import * as path from 'path';
 
 export function inferFilenameFromUrl(url: string): string | undefined {
   try {
@@ -14,7 +14,7 @@ export function inferFilenameFromUrl(url: string): string | undefined {
 
 export async function fetchHttp(url: string): Promise<string> {
   return new Promise((resolve, reject) => {
-    const mod = url.startsWith("https") ? https : http;
+    const mod = url.startsWith('https') ? https : http;
     mod
       .get(url, (res) => {
         if (
@@ -31,10 +31,10 @@ export async function fetchHttp(url: string): Promise<string> {
           return;
         }
         const chunks: Buffer[] = [];
-        res.on("data", (chunk: Buffer) => chunks.push(chunk));
-        res.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
-        res.on("error", reject);
+        res.on('data', (chunk: Buffer) => chunks.push(chunk));
+        res.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
+        res.on('error', reject);
       })
-      .on("error", reject);
+      .on('error', reject);
   });
 }

@@ -1,4 +1,4 @@
-import { ReplaceRule } from "../types";
+import { ReplaceRule } from '../types';
 
 function parseFrom(from: string): string | RegExp {
   const match = from.match(/^\/(.+)\/([gimsuy]*)$/);
@@ -12,7 +12,7 @@ export function applyReplace(content: string, rules: ReplaceRule[]): string {
   let result = content;
   for (const rule of rules) {
     const pattern = parseFrom(rule.from);
-    if (typeof pattern === "string") {
+    if (typeof pattern === 'string') {
       result = result.split(pattern).join(rule.to);
     } else {
       result = result.replace(pattern, rule.to);

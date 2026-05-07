@@ -1,5 +1,5 @@
-import { spawnSync } from "child_process";
-import * as path from "path";
+import { spawnSync } from 'child_process';
+import * as path from 'path';
 
 export interface GitLabResult {
   /** Map of relative path → content */
@@ -11,27 +11,27 @@ function glabRun(args: string[]): {
   stderr: string;
   status: number | null;
 } {
-  const result = spawnSync("glab", args, { encoding: "utf8" });
+  const result = spawnSync('glab', args, { encoding: 'utf8' });
   if (result.error) {
-    const msg = result.error.message ?? "";
-    if (msg.includes("ENOENT")) {
+    const msg = result.error.message ?? '';
+    if (msg.includes('ENOENT')) {
       throw new Error(
-        "glab CLI not found. Install it from https://gitlab.com/gitlab-org/cli",
+        'glab CLI not found. Install it from https://gitlab.com/gitlab-org/cli',
       );
     }
     throw new Error(`glab error: ${msg}`);
   }
   return {
-    stdout: result.stdout ?? "",
-    stderr: result.stderr ?? "",
+    stdout: result.stdout ?? '',
+    stderr: result.stderr ?? '',
     status: result.status,
   };
 }
 
 function resolveRef(project: string, ref: string | undefined): string {
-  if (!ref || ref === "$latest") {
+  if (!ref || ref === '$latest') {
     const res = glabRun([
-      "api",
+      'api',
       `projects/${encodeURIComponent(project)}/repository/tags?order_by=version&sort=desc&per_page=1`,
     ]);
     if (res.status !== 0) {
@@ -53,7 +53,7 @@ function resolveRef(project: string, ref: string | undefined): string {
 function fetchFile(project: string, filePath: string, ref: string): string {
   const encodedPath = encodeURIComponent(filePath);
   const res = glabRun([
-    "api",
+    'api',
     `projects/${encodeURIComponent(project)}/repository/files/${encodedPath}/raw?ref=${encodeURIComponent(ref)}`,
   ]);
   if (res.status !== 0) {
@@ -66,7 +66,7 @@ function fetchFile(project: string, filePath: string, ref: string): string {
 
 function listTree(project: string, dirPath: string, ref: string): string[] {
   const res = glabRun([
-    "api",
+    'api',
     `projects/${encodeURIComponent(project)}/repository/tree?path=${encodeURIComponent(dirPath)}&ref=${encodeURIComponent(ref)}&recursive=true&per_page=100`,
   ]);
   if (res.status !== 0) {
@@ -75,7 +75,7 @@ function listTree(project: string, dirPath: string, ref: string): string[] {
     );
   }
   const items = JSON.parse(res.stdout) as Array<{ type: string; path: string }>;
-  return items.filter((i) => i.type === "blob").map((i) => i.path);
+  return items.filter((i) => i.type === 'blob').map((i) => i.path);
 }
 
 export function fetchGitLab(

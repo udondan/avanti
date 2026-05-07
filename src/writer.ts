@@ -1,6 +1,6 @@
-import * as fs from "fs";
-import * as os from "os";
-import * as path from "path";
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 
 export interface WriteTarget {
   targetPath: string;
@@ -9,16 +9,16 @@ export interface WriteTarget {
 }
 
 export function atomicWrite(targets: WriteTarget[]): void {
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "fileferry-"));
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fileferry-'));
   try {
     // Stage all files to temp dir first
     const staged: Array<{ tmp: string; dest: string; mode?: string }> = [];
     for (const t of targets) {
       const tmpFile = path.join(
         tmpDir,
-        path.basename(t.targetPath) + "-" + staged.length,
+        path.basename(t.targetPath) + '-' + staged.length,
       );
-      fs.writeFileSync(tmpFile, t.content, "utf8");
+      fs.writeFileSync(tmpFile, t.content, 'utf8');
       staged.push({ tmp: tmpFile, dest: t.targetPath, mode: t.mode });
     }
 

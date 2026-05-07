@@ -1,13 +1,13 @@
-import * as fs from "fs";
-import * as path from "path";
+import * as fs from 'fs';
+import * as path from 'path';
 
 export interface LocalResult {
   files: Map<string, string>;
 }
 
 function expandHome(p: string): string {
-  if (p.startsWith("~/")) {
-    return path.join(process.env["HOME"] ?? "~", p.slice(2));
+  if (p.startsWith('~/')) {
+    return path.join(process.env['HOME'] ?? '~', p.slice(2));
   }
   return p;
 }
@@ -22,7 +22,7 @@ export function fetchLocal(src: string): LocalResult {
   if (stat.isDirectory()) {
     readDirRecursive(resolved, resolved, files);
   } else {
-    files.set(path.basename(resolved), fs.readFileSync(resolved, "utf8"));
+    files.set(path.basename(resolved), fs.readFileSync(resolved, 'utf8'));
   }
   return { files };
 }
@@ -39,7 +39,7 @@ function readDirRecursive(
     if (stat.isDirectory()) {
       readDirRecursive(base, full, out);
     } else {
-      out.set(rel, fs.readFileSync(full, "utf8"));
+      out.set(rel, fs.readFileSync(full, 'utf8'));
     }
   }
 }
