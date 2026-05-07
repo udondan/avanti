@@ -2,6 +2,7 @@
 import { Command } from 'commander';
 import { diffCommand } from './commands/diff';
 import { pullCommand } from './commands/pull';
+import { version } from '../package.json';
 
 const program = new Command();
 
@@ -10,7 +11,7 @@ program
   .description(
     'Assemble local files from any source via a declarative YAML spec',
   )
-  .version('0.1.0')
+  .version(version)
   .option('-c, --config <path>', 'path to config file')
   .option(
     '-w, --working-dir <path>',
