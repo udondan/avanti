@@ -2,6 +2,7 @@ import { spawnSync } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { fetchWithRetry } from '../fetch';
 
 export interface GitLabResult {
   /** Map of relative path → content */
@@ -47,7 +48,7 @@ async function resolveRef(
 ): Promise<string> {
   if (!ref || ref === '$latest') {
     const host = getHost();
-    const res = await fetch(
+    const res = await fetchWithRetry(
       `https://${host}/api/v4/projects/${encodeURIComponent(project)}/repository/tags?order_by=version&sort=desc&per_page=1`,
       { headers: apiHeaders() },
     );
@@ -92,7 +93,7 @@ async function detectPathType(
 ): Promise<'file' | 'directory'> {
   const host = getHost();
   const encodedPath = encodeURIComponent(filePath);
-  const res = await fetch(
+  const res = await fetchWithRetry(
     `https://${host}/api/v4/projects/${encodeURIComponent(project)}/repository/files/${encodedPath}?ref=${encodeURIComponent(ref)}`,
     { headers: apiHeaders() },
   );
@@ -124,7 +125,7 @@ async function fetchFile(
 ): Promise<string> {
   const host = getHost();
   const encodedPath = encodeURIComponent(filePath);
-  const res = await fetch(
+  const res = await fetchWithRetry(
     `https://${host}/api/v4/projects/${encodeURIComponent(project)}/repository/files/${encodedPath}/raw?ref=${encodeURIComponent(ref)}`,
     { headers: apiHeaders() },
   );
@@ -168,7 +169,7 @@ async function listTree(
   let page = 1;
 
   while (true) {
-    const res = await fetch(
+    const res = await fetchWithRetry(
       `https://${host}/api/v4/projects/${encodeURIComponent(project)}/repository/tree?path=${encodeURIComponent(dirPath)}&ref=${encodeURIComponent(ref)}&recursive=true&per_page=${perPage}&page=${page}`,
       { headers: apiHeaders() },
     );
@@ -276,7 +277,7 @@ async function fetchDirectoryViaArchive(
 ): Promise<Map<string, string> | null> {
   const host = getHost();
   const encodedProject = encodeURIComponent(project);
-  const res = await fetch(
+  const res = await fetchWithRetry(
     `https://${host}/api/v4/projects/${encodedProject}/repository/archive.tar.gz?sha=${encodeURIComponent(ref)}&path=${encodeURIComponent(dirPath)}`,
     { headers: apiHeaders() },
   );
