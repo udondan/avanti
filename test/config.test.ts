@@ -281,4 +281,80 @@ files:
 `);
     expect(() => loadConfig(f)).toThrow('"latest" is reserved');
   });
+
+  // ── json ──────────────────────────────────────────────────────────────────
+
+  it('loads an empty json block', () => {
+    const f = writeTmp(`
+files:
+  - src: https://example.com/foo.json
+    target: foo.json
+    json: {}
+`);
+    const cfg = loadConfig(f);
+    expect(cfg.files[0].json).toEqual({});
+  });
+
+  it('loads json block with all options', () => {
+    const f = writeTmp(`
+files:
+  - src:
+      - https://example.com/a.json
+      - https://example.com/b.json
+    target: merged.json
+    json:
+      conflicts: first_wins
+      arrays: concat
+      objects: replace
+`);
+    const cfg = loadConfig(f);
+    expect(cfg.files[0].json).toEqual({
+      conflicts: 'first_wins',
+      arrays: 'concat',
+      objects: 'replace',
+    });
+  });
+
+  it('throws on invalid conflicts value', () => {
+    const f = writeTmp(`
+files:
+  - src: https://example.com/foo.json
+    target: foo.json
+    json:
+      conflicts: overwrite
+`);
+    expect(() => loadConfig(f)).toThrow('json.conflicts');
+  });
+
+  it('throws on invalid arrays value', () => {
+    const f = writeTmp(`
+files:
+  - src: https://example.com/foo.json
+    target: foo.json
+    json:
+      arrays: append
+`);
+    expect(() => loadConfig(f)).toThrow('json.arrays');
+  });
+
+  it('throws on invalid objects value', () => {
+    const f = writeTmp(`
+files:
+  - src: https://example.com/foo.json
+    target: foo.json
+    json:
+      objects: deep
+`);
+    expect(() => loadConfig(f)).toThrow('json.objects');
+  });
+
+  it('throws when json is not an object', () => {
+    const f = writeTmp(`
+files:
+  - src: https://example.com/foo.json
+    target: foo.json
+    json: true
+`);
+    expect(() => loadConfig(f)).toThrow('"json" must be an object');
+  });
 });
