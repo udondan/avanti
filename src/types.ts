@@ -32,12 +32,23 @@ export interface RawSrc {
 /** src can be a plain string (http/https URL or local path) or a map for gitlab/github/exec/raw */
 export type FileSrc = string | GitLabSrc | GitHubSrc | ExecSrc | RawSrc;
 
+export type JsonConflictStrategy = 'abort' | 'first_wins' | 'last_wins';
+export type JsonArrayStrategy = 'replace' | 'concat';
+export type JsonObjectStrategy = 'replace' | 'merge';
+
+export interface JsonMergeOptions {
+  conflicts?: JsonConflictStrategy;
+  arrays?: JsonArrayStrategy;
+  objects?: JsonObjectStrategy;
+}
+
 export interface FileEntry {
   src: FileSrc | FileSrc[];
   target?: string;
   mode?: string;
   replace?: ReplaceRule[];
   post?: string;
+  json?: JsonMergeOptions;
 }
 
 export interface FileFerryConfig {

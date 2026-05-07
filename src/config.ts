@@ -5,6 +5,10 @@ import {
   FileFerryConfig,
   FileEntry,
   FileSrc,
+  JsonArrayStrategy,
+  JsonConflictStrategy,
+  JsonMergeOptions,
+  JsonObjectStrategy,
   ReplaceRule,
   Variables,
 } from './types';
@@ -99,6 +103,10 @@ export function loadConfig(configPath: string): FileFerryConfig {
       fileEntry.replace = (e['replace'] as unknown[]).map((r, j) =>
         parseReplaceRule(r, i, j),
       );
+    }
+
+    if (e['json'] !== undefined) {
+      fileEntry.json = parseJsonMergeOptions(e['json'], i);
     }
 
     return fileEntry;
@@ -213,6 +221,50 @@ function isExecSrc(src: FileSrc): boolean {
 
 function isRawSrc(src: FileSrc): boolean {
   return typeof src === 'object' && 'raw' in src;
+}
+
+function parseJsonMergeOptions(raw: unknown, i: number): JsonMergeOptions {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new Error(`files[${i}]: "json" must be an object`);
+  }
+  const obj = raw as Record<string, unknown>;
+  const opts: JsonMergeOptions = {};
+
+  const conflictValues: JsonConflictStrategy[] = [
+    'abort',
+    'first_wins',
+    'last_wins',
+  ];
+  if (obj['conflicts'] !== undefined) {
+    if (!conflictValues.includes(obj['conflicts'] as JsonConflictStrategy)) {
+      throw new Error(
+        `files[${i}].json.conflicts: must be one of ${conflictValues.join(', ')}`,
+      );
+    }
+    opts.conflicts = obj['conflicts'] as JsonConflictStrategy;
+  }
+
+  const arrayValues: JsonArrayStrategy[] = ['replace', 'concat'];
+  if (obj['arrays'] !== undefined) {
+    if (!arrayValues.includes(obj['arrays'] as JsonArrayStrategy)) {
+      throw new Error(
+        `files[${i}].json.arrays: must be one of ${arrayValues.join(', ')}`,
+      );
+    }
+    opts.arrays = obj['arrays'] as JsonArrayStrategy;
+  }
+
+  const objectValues: JsonObjectStrategy[] = ['replace', 'merge'];
+  if (obj['objects'] !== undefined) {
+    if (!objectValues.includes(obj['objects'] as JsonObjectStrategy)) {
+      throw new Error(
+        `files[${i}].json.objects: must be one of ${objectValues.join(', ')}`,
+      );
+    }
+    opts.objects = obj['objects'] as JsonObjectStrategy;
+  }
+
+  return opts;
 }
 
 function parseReplaceRule(r: unknown, i: number, j: number): ReplaceRule {
