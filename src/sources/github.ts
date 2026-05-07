@@ -1,5 +1,6 @@
 import { spawnSync } from 'child_process';
 import * as path from 'path';
+import { fetchWithRetry } from '../fetch';
 
 export interface GitHubResult {
   files: Map<string, string>;
@@ -48,7 +49,7 @@ async function detectPathType(
   filePath: string,
   ref: string,
 ): Promise<'file' | 'directory'> {
-  const res = await fetch(
+  const res = await fetchWithRetry(
     `${getApiBase()}/repos/${repo}/contents/${filePath}?ref=${encodeURIComponent(ref)}`,
     { headers: apiHeaders() },
   );
@@ -88,7 +89,7 @@ async function fetchFile(
   filePath: string,
   ref: string,
 ): Promise<string> {
-  const res = await fetch(
+  const res = await fetchWithRetry(
     `${getApiBase()}/repos/${repo}/contents/${filePath}?ref=${encodeURIComponent(ref)}`,
     { headers: apiHeaders() },
   );
@@ -127,7 +128,7 @@ async function listTree(
   dirPath: string,
   ref: string,
 ): Promise<string[]> {
-  const res = await fetch(
+  const res = await fetchWithRetry(
     `${getApiBase()}/repos/${repo}/git/trees/${encodeURIComponent(ref)}?recursive=1`,
     { headers: apiHeaders() },
   );
@@ -170,16 +171,19 @@ async function resolveRef(
   if (ref !== '$latest') return ref ?? 'HEAD';
 
   // Try latest release first
-  const relRes = await fetch(`${getApiBase()}/repos/${repo}/releases/latest`, {
-    headers: apiHeaders(),
-  });
+  const relRes = await fetchWithRetry(
+    `${getApiBase()}/repos/${repo}/releases/latest`,
+    {
+      headers: apiHeaders(),
+    },
+  );
   if (relRes.ok) {
     const rel = (await relRes.json()) as { tag_name: string };
     return rel.tag_name;
   }
   // No releases (404) — fall back to most recent tag
   if (relRes.status === 404) {
-    const tagRes = await fetch(
+    const tagRes = await fetchWithRetry(
       `${getApiBase()}/repos/${repo}/tags?per_page=1`,
       { headers: apiHeaders() },
     );
