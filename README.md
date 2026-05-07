@@ -219,6 +219,177 @@ Referencing an undefined variable or a missing environment variable is an error.
 
 `$latest` is reserved for GitLab's "latest tag" resolution and cannot be used as a variable name.
 
+## Use Cases
+
+### Composable AI Agent Instructions (CLAUDE.md / AGENTS.md)
+
+Assemble agent instruction files from multiple sources: a static header defined inline, team-specific rules from a shared GitLab repo, and company-wide standards from GitHub — all merged into one file. Every developer runs `avanti pull` and stays in sync without copy-paste drift across dozens of repos.
+
+```yaml
+# .avanti.yml
+variables:
+  team: backend
+  jira_project: BE
+  oncall_channel: '#backend-oncall'
+
+files:
+  - src:
+      - raw: |
+          # AI Assistant Guidelines
+          <!-- THIS FILE IS MANAGED — run `avanti pull` to update -->
+      - gitlab:
+          project: platform/ai-standards
+          file: teams/backend-rules.md
+          ref: main
+      - github:
+          repo: org/shared-prompts
+          file: company-standards.md
+          ref: main
+      - raw: |
+          ## Team Context
+          Team: $team
+          Jira project: $jira_project
+          Oncall: $oncall_channel
+    target: CLAUDE.md
+```
+
+### Shared Tooling Config (Renovate, ESLint, Prettier, TSConfig)
+
+A platform team owns canonical configs in a central repo. Projects pull them and stay current. Pin all files to the same version in one place — bump `standards_ref` and `avanti diff` shows every file that will change before you apply it.
+
+```yaml
+variables:
+  standards_ref: v2.4.1
+
+files:
+  - src:
+      github:
+        repo: org/standards
+        file: renovate.json
+        ref: $standards_ref
+
+  - src:
+      github:
+        repo: org/standards
+        file: eslint.config.js
+        ref: $standards_ref
+
+  - src:
+      github:
+        repo: org/standards
+        file: tsconfig.base.json
+        ref: $standards_ref
+```
+
+### CI/CD: Shared Workflow Fragments
+
+Pull reusable CI steps from a central repo into each project. A managed header makes it obvious the file should not be edited by hand.
+
+```yaml
+files:
+  - src:
+      - raw: |
+          # THIS FILE IS MANAGED — run `avanti pull` to update
+      - github:
+          repo: org/ci-templates
+          file: workflows/security-scan.yml
+          ref: main
+    target: .github/workflows/security-scan.yml
+```
+
+Use `avanti diff` in CI to detect drift — if a project's checked-in file no longer matches the source, the pipeline fails.
+
+### Environment-Specific Config from a Single Spec
+
+One config file adapts to any environment via variables and env vars. No duplicate specs, no templating hacks.
+
+```yaml
+variables:
+  region: eu-west-1
+
+files:
+  - src:
+      github:
+        repo: org/infra
+        file: k8s/deployment-template.yaml
+        ref: $env:DEPLOY_VERSION
+    target: k8s/deployment.yaml
+    replace:
+      - from: '{ENV}'
+        to: $env:ENVIRONMENT
+      - from: '{REGION}'
+        to: $region
+```
+
+CI sets `DEPLOY_VERSION` and `ENVIRONMENT`; the config pins every file to exactly the version being deployed.
+
+### Secrets from Vault or AWS SSM
+
+Use `exec:` to pull secrets at runtime and write them to a local file. Config variables handle structure; env vars keep credentials out of git.
+
+```yaml
+variables:
+  org: acme
+  region: us-east-1
+
+files:
+  - src:
+      exec: >
+        aws ssm get-parameter
+        --name /$org/$region/db-config
+        --profile $env:AWS_PROFILE
+        --with-decryption
+        --query Parameter.Value --output text
+    target: config/db.json
+    mode: '0600'
+```
+
+### Multi-Project Deployment
+
+Pair a shared config with `-w` to stamp files across many service directories without duplicating the spec:
+
+```sh
+for dir in services/*/; do
+  avanti -c shared/avanti.yml -w "$dir" pull --yes
+done
+```
+
+### Developer Onboarding Bootstrap
+
+A single `avanti pull` populates a new project with everything it needs: editor config, CI workflows, linting rules, AI instructions — all from blessed central sources, all up to date.
+
+```yaml
+files:
+  - src:
+      github:
+        repo: org/standards
+        file: .editorconfig
+        ref: main
+
+  - src:
+      github:
+        repo: org/standards
+        file: .prettierrc
+        ref: main
+
+  - src:
+      - raw: |
+          # AI Assistant Guidelines
+          <!-- THIS FILE IS MANAGED — run `avanti pull` to update -->
+      - github:
+          repo: org/ai-standards
+          file: CLAUDE.md
+          ref: main
+    target: CLAUDE.md
+
+  - src:
+      github:
+        repo: org/ci-templates
+        file: workflows/
+        ref: main
+    target: .github/workflows/
+```
+
 ## Exit Codes
 
 | Code | Meaning                         |
