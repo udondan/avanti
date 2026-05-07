@@ -246,12 +246,14 @@ export async function fetchGitHub(
       `Failed to fetch ${file} from ${repo}@${resolvedRef} (not a file or empty directory)`,
     );
   }
-  const files = new Map<string, string>();
-  for (const p of paths) {
-    files.set(
-      path.relative(normalizedPath, p),
-      await fetchFile(repo, p, resolvedRef),
-    );
-  }
-  return { files };
+  const entries = await Promise.all(
+    paths.map(
+      async (p) =>
+        [
+          path.relative(normalizedPath, p),
+          await fetchFile(repo, p, resolvedRef),
+        ] as const,
+    ),
+  );
+  return { files: new Map(entries) };
 }

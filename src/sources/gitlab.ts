@@ -341,12 +341,14 @@ export async function fetchGitLab(
       `Failed to fetch ${file} from ${project}@${resolvedRef} (not a file or empty directory)`,
     );
   }
-  const files = new Map<string, string>();
-  for (const p of paths) {
-    files.set(
-      path.relative(normalizedPath, p),
-      await fetchFile(project, p, resolvedRef),
-    );
-  }
-  return { files };
+  const entries = await Promise.all(
+    paths.map(
+      async (p) =>
+        [
+          path.relative(normalizedPath, p),
+          await fetchFile(project, p, resolvedRef),
+        ] as const,
+    ),
+  );
+  return { files: new Map(entries) };
 }
