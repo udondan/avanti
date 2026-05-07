@@ -1,4 +1,5 @@
-import { ReplaceRule } from '../types';
+import { ReplaceRule, Variables } from '../types';
+import { resolveVars } from '../variables';
 
 function parseFrom(from: string): string | RegExp {
   const match = from.match(/^\/(.+)\/([gimsuy]*)$/);
@@ -8,14 +9,20 @@ function parseFrom(from: string): string | RegExp {
   return from;
 }
 
-export function applyReplace(content: string, rules: ReplaceRule[]): string {
+export function applyReplace(
+  content: string,
+  rules: ReplaceRule[],
+  vars: Variables = {},
+): string {
   let result = content;
   for (const rule of rules) {
-    const pattern = parseFrom(rule.from);
+    const from = resolveVars(rule.from, vars);
+    const to = resolveVars(rule.to, vars);
+    const pattern = parseFrom(from);
     if (typeof pattern === 'string') {
-      result = result.split(pattern).join(rule.to);
+      result = result.split(pattern).join(to);
     } else {
-      result = result.replace(pattern, rule.to);
+      result = result.replace(pattern, to);
     }
   }
   return result;

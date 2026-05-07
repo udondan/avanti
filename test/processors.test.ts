@@ -46,4 +46,42 @@ describe('applyPost', () => {
       'post script exited with code 1',
     );
   });
+
+  it('resolves variables in the script', () => {
+    const result = applyPost('hello\n', 'tr $from $to', {
+      from: 'a-z',
+      to: 'A-Z',
+    });
+    expect(result).toBe('HELLO\n');
+  });
+
+  it('throws on undefined variable in script', () => {
+    expect(() => applyPost('x', 'echo $missing', {})).toThrow(
+      'Undefined variable: $missing',
+    );
+  });
+});
+
+describe('applyReplace with variables', () => {
+  it('resolves variable in "to"', () => {
+    expect(
+      applyReplace('hello {NAME}', [{ from: '{NAME}', to: '$name' }], {
+        name: 'world',
+      }),
+    ).toBe('hello world');
+  });
+
+  it('resolves variable in "from"', () => {
+    expect(
+      applyReplace('hello PLACEHOLDER', [{ from: '$ph', to: 'world' }], {
+        ph: 'PLACEHOLDER',
+      }),
+    ).toBe('hello world');
+  });
+
+  it('throws on undefined variable in replace rule', () => {
+    expect(() =>
+      applyReplace('x', [{ from: 'x', to: '$missing' }], {}),
+    ).toThrow('Undefined variable: $missing');
+  });
 });
