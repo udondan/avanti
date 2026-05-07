@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.0](https://github.com/udondan/avanti/compare/v0.3.2...v0.4.0) (2026-05-07)
+
+
+### Features
+
+* **json:** add JSON merge and pretty-print processor ([#19](https://github.com/udondan/avanti/issues/19)) ([6fab171](https://github.com/udondan/avanti/commit/6fab171e1d1b85e86060213f6f0be6b9606ca96f))
+
 ## [0.3.2](https://github.com/udondan/avanti/compare/v0.3.1...v0.3.2) (2026-05-07)
 
 
