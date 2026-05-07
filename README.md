@@ -32,7 +32,7 @@ npx @udondan/avanti --help
 
 ## Usage
 
-```
+```text
 avanti [options] [command]
 
 Options:
@@ -54,15 +54,15 @@ Fetches all sources, shows the diff, and prompts for confirmation before writing
 
 ## Working Directory
 
-All relative `src` and `target` paths are resolved relative to the **working directory** — the directory where you invoke `avanti`, or the path given with `-C`.
+All relative `src` and `target` paths are resolved relative to the **working directory** — the directory where you invoke `avanti`, or the path given with `-w`.
 
-This is independent of where the config file lives. A config loaded from another directory with `-c /shared/avanti.yml` still resolves all paths from your working directory (or the one you specify with `-C`).
+This is independent of where the config file lives. A config loaded from another directory with `-c /shared/avanti.yml` still resolves all paths from your working directory (or the one you specify with `-w`).
 
-Use `-C` to deploy the same config to multiple locations without `cd`-ing there first:
+Use `-w` to deploy the same config to multiple locations without `cd`-ing there first:
 
 ```sh
-avanti -c /shared/avanti.yml -C /project-a pull
-avanti -c /shared/avanti.yml -C /project-b pull
+avanti -c /shared/avanti.yml -w /project-a pull
+avanti -c /shared/avanti.yml -w /project-b pull
 ```
 
 ### Path Constraints
@@ -128,7 +128,6 @@ files:
 | --------- | ----------- | ------------------------------------------------------------------------------------------------------------------------------------ |
 | `src`     | Yes         | Source (see below). May be a single source or a **list** of sources to concatenate.                                                  |
 | `target`  | Conditional | Local path to write to. Required for `exec:` and `raw:` sources and when `src` is a list. May be omitted when filename is inferable. |
-| `ref`     | No          | Branch, tag, or `$latest` (resolves to latest tag). GitLab/GitHub only.                                                              |
 | `mode`    | No          | File permission mode, e.g. `"0755"`                                                                                                  |
 | `replace` | No          | List of `{from, to}` replacement rules. `from` may be a plain string or `/pattern/flags` regex.                                      |
 | `post`    | No          | Shell script. Content is piped via stdin; stdout is used as the result. Runs after `replace`.                                        |
@@ -402,8 +401,8 @@ files:
 
 ```sh
 git clone ...
-npm install
-npm run dev -- --help       # run via tsx
-npm test                    # run tests
-npm run build               # compile to dist/
+bun install
+bun run dev -- --help       # run via tsx
+bun test                    # run tests
+bun run build               # compile to dist/
 ```
