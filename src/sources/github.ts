@@ -27,6 +27,25 @@ function ghRun(args: string[]): {
   };
 }
 
+function detectPathType(
+  repo: string,
+  filePath: string,
+  ref: string,
+): 'file' | 'directory' {
+  const res = ghRun([
+    'api',
+    `repos/${repo}/contents/${filePath}?ref=${encodeURIComponent(ref)}`,
+    '--jq',
+    'if type == "array" then "directory" else "file" end',
+  ]);
+  if (res.status !== 0) {
+    throw new Error(
+      `Failed to stat ${filePath} in ${repo}@${ref}: ${res.stderr}`,
+    );
+  }
+  return res.stdout.trim() as 'file' | 'directory';
+}
+
 function fetchFile(repo: string, filePath: string, ref: string): string {
   const res = ghRun([
     'api',
@@ -64,24 +83,28 @@ export function fetchGitHub(
   ref: string | undefined,
 ): GitHubResult {
   const resolvedRef = ref ?? 'HEAD';
-  const files = new Map<string, string>();
+  const normalizedPath = file.replace(/\/$/, '');
+  const isDirectory =
+    file.endsWith('/') ||
+    detectPathType(repo, normalizedPath, resolvedRef) === 'directory';
 
-  try {
-    const content = fetchFile(repo, file, resolvedRef);
-    files.set(path.basename(file), content);
-  } catch {
-    const paths = listTree(repo, file, resolvedRef);
-    if (!paths.length) {
-      throw new Error(
-        `Failed to fetch ${file} from ${repo}@${resolvedRef} (not a file or empty directory)`,
-      );
-    }
-    for (const p of paths) {
-      const rel = path.relative(file, p);
-      const content = fetchFile(repo, p, resolvedRef);
-      files.set(rel, content);
-    }
+  if (!isDirectory) {
+    const content = fetchFile(repo, normalizedPath, resolvedRef);
+    return { files: new Map([[path.basename(normalizedPath), content]]) };
   }
 
+  const paths = listTree(repo, normalizedPath, resolvedRef);
+  if (!paths.length) {
+    throw new Error(
+      `Failed to fetch ${file} from ${repo}@${resolvedRef} (not a file or empty directory)`,
+    );
+  }
+  const files = new Map<string, string>();
+  for (const p of paths) {
+    files.set(
+      path.relative(normalizedPath, p),
+      fetchFile(repo, p, resolvedRef),
+    );
+  }
   return { files };
 }
