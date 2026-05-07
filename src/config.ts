@@ -69,7 +69,11 @@ export function loadConfig(configPath: string): FileFerryConfig {
     }
 
     // exec/raw sources must have a target
-    if (!Array.isArray(src) && (isExecSrc(src) || isRawSrc(src)) && !e['target']) {
+    if (
+      !Array.isArray(src) &&
+      (isExecSrc(src) || isRawSrc(src)) &&
+      !e['target']
+    ) {
       throw new Error(`files[${i}]: "target" is required for exec/raw sources`);
     }
 
