@@ -35,7 +35,7 @@ npx @udondan/avanti --help
 avanti [options] [command]
 
 Options:
-  -c, --config <path>   path to config file (default: "avanti.yml")
+  -c, --config <path>   path to config file (default: auto-detected)
 
 Commands:
   diff                  Show diff between remote sources and local files
@@ -52,7 +52,14 @@ Fetches all sources, shows the diff, and prompts for confirmation before writing
 
 ## Configuration
 
-Create a `avanti.yml` in your project root:
+Create one of the following files in your project root (searched in this order, case-insensitive):
+
+- `.avanti.yml`
+- `.avanti.yaml`
+- `avanti.yml`
+- `avanti.yaml`
+
+Example:
 
 ```yaml
 files:

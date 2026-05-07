@@ -1,6 +1,6 @@
 import { Command } from 'commander';
 import * as path from 'path';
-import { loadConfig } from '../config';
+import { loadConfig, resolveConfigPath } from '../config';
 import { fetchSource } from '../sources';
 import { applyReplace } from '../processors/replace';
 import { applyPost } from '../processors/post';
@@ -11,9 +11,7 @@ export function diffCommand(): Command {
   return new Command('diff')
     .description('Show diff between remote sources and local files')
     .action(async (_options, cmd) => {
-      const configPath = path.resolve(
-        cmd.parent?.opts().config ?? 'avanti.yml',
-      );
+      const configPath = resolveConfigPath(cmd.parent?.opts().config);
       let config;
       try {
         config = loadConfig(configPath);

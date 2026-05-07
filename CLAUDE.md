@@ -24,7 +24,7 @@ npx vitest run test/config.test.ts
 ### Data flow
 
 1. `cli.ts` — Commander.js entry point, routes to commands
-2. `config.ts` — Parses and validates `avanti.yml` into typed config
+2. `config.ts` — Resolves and parses the config file; auto-detects `.avanti.yml`, `.avanti.yaml`, `avanti.yml`, `avanti.yaml` (case-insensitive) when no explicit `--config` path is given
 3. `sources/index.ts` — Orchestrates fetching across all source types
 4. `processors/` — Transforms fetched content (replacements, shell pipes)
 5. `diff.ts` — Computes and renders git-diff-style output

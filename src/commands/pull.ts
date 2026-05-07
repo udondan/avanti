@@ -1,7 +1,7 @@
 import { Command } from 'commander';
 import * as path from 'path';
 import * as readline from 'readline';
-import { loadConfig } from '../config';
+import { loadConfig, resolveConfigPath } from '../config';
 import { fetchSource } from '../sources';
 import { applyReplace } from '../processors/replace';
 import { applyPost } from '../processors/post';
@@ -30,9 +30,7 @@ export function pullCommand(): Command {
     .description('Pull remote sources and write to local files')
     .option('-y, --yes', 'skip confirmation prompt')
     .action(async (options, cmd) => {
-      const configPath = path.resolve(
-        cmd.parent?.opts().config ?? 'avanti.yml',
-      );
+      const configPath = resolveConfigPath(cmd.parent?.opts().config);
       let config;
       try {
         config = loadConfig(configPath);

@@ -1,6 +1,29 @@
 import * as fs from "fs";
+import * as path from "path";
 import * as yaml from "js-yaml";
 import { FileFerryConfig, FileEntry, FileSrc, ReplaceRule } from "./types";
+
+const CONFIG_CANDIDATES = [
+  ".avanti.yml",
+  ".avanti.yaml",
+  "avanti.yml",
+  "avanti.yaml",
+];
+
+export function resolveConfigPath(explicit?: string): string {
+  if (explicit) return path.resolve(explicit);
+
+  const cwd = process.cwd();
+  const entries = fs.readdirSync(cwd);
+  const lowerEntries = entries.map((e) => e.toLowerCase());
+
+  for (const candidate of CONFIG_CANDIDATES) {
+    const idx = lowerEntries.indexOf(candidate);
+    if (idx !== -1) return path.resolve(cwd, entries[idx]);
+  }
+
+  return path.resolve(cwd, CONFIG_CANDIDATES[0]);
+}
 
 export function loadConfig(configPath: string): FileFerryConfig {
   if (!fs.existsSync(configPath)) {
