@@ -2,6 +2,8 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { createTwoFilesPatch } from 'diff';
 import chalk from 'chalk';
+import { Variables } from './types';
+import { resolveVars } from './variables';
 
 export interface FileDiff {
   targetPath: string;
@@ -58,25 +60,27 @@ export function resolveTargetPath(
   entry: { target?: string },
   relPath: string,
   workingDir: string,
+  vars: Variables = {},
 ): string {
   let resolved: string;
+  const target = entry.target ? resolveVars(entry.target, vars) : undefined;
 
-  if (entry.target) {
-    if (path.isAbsolute(entry.target)) {
+  if (target) {
+    if (path.isAbsolute(target)) {
       if (workingDir !== '/') {
         throw new Error(
-          `Absolute target path "${entry.target}" is not allowed when working directory is not "/". Use a relative path or run with -C /.`,
+          `Absolute target path "${target}" is not allowed when working directory is not "/". Use a relative path or run with -C /.`,
         );
       }
-      if (entry.target.endsWith('/') || entry.target.endsWith(path.sep)) {
-        return path.resolve(entry.target, relPath);
+      if (target.endsWith('/') || target.endsWith(path.sep)) {
+        return path.resolve(target, relPath);
       }
-      return entry.target;
+      return target;
     }
-    if (entry.target.endsWith('/') || entry.target.endsWith(path.sep)) {
-      resolved = path.resolve(workingDir, entry.target, relPath);
+    if (target.endsWith('/') || target.endsWith(path.sep)) {
+      resolved = path.resolve(workingDir, target, relPath);
     } else {
-      resolved = path.resolve(workingDir, entry.target);
+      resolved = path.resolve(workingDir, target);
     }
   } else {
     resolved = path.resolve(workingDir, relPath);

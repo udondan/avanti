@@ -45,4 +45,26 @@ describe('resolveTargetPath', () => {
       '/etc/conf/my.conf',
     );
   });
+
+  it('resolves variables in target', () => {
+    expect(
+      resolveTargetPath({ target: 'dir/$team/file.json' }, '', wdir, {
+        team: 'backend',
+      }),
+    ).toBe('/project/dir/backend/file.json');
+  });
+
+  it('resolves env vars in target', () => {
+    process.env['TEST_TEAM'] = 'frontend';
+    expect(
+      resolveTargetPath({ target: 'dir/$env:TEST_TEAM/file.json' }, '', wdir),
+    ).toBe('/project/dir/frontend/file.json');
+    delete process.env['TEST_TEAM'];
+  });
+
+  it('throws on undefined variable in target', () => {
+    expect(() =>
+      resolveTargetPath({ target: 'dir/$missing/file.json' }, '', wdir),
+    ).toThrow('Undefined variable: $missing');
+  });
 });
