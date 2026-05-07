@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.2](https://github.com/udondan/avanti/compare/v0.3.1...v0.3.2) (2026-05-07)
+
+
+### Bug Fixes
+
+* **sources:** fix GitLab pagination, add archive fast path, and explicit directory detection ([#17](https://github.com/udondan/avanti/issues/17)) ([5b348ef](https://github.com/udondan/avanti/commit/5b348ef68b0ba9caebebd5ec6668fd9b07d4eafe))
+
 ## [0.3.1](https://github.com/udondan/avanti/compare/v0.3.0...v0.3.1) (2026-05-07)
 
 
