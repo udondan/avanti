@@ -21,3 +21,15 @@ run = "bun run test"
 [tasks."test:watch"]
 description = "Run tests in watch mode"
 run = "bun run test:watch"
+
+[tasks.lint]
+description = "Run ESLint"
+run = "bun run lint"
+
+[tasks.format]
+description = "Format all files with Prettier"
+run = "bun run format"
+
+[tasks."format:check"]
+description = "Check formatting without writing"
+run = "bun run format:check"
