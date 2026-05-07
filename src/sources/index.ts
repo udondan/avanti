@@ -36,7 +36,7 @@ async function fetchOneSrc(
   }
 
   if ('gitlab' in src) {
-    const result = fetchGitLab(
+    const result = await fetchGitLab(
       resolveVars(src.gitlab.project, vars),
       resolveVars(src.gitlab.file, vars),
       src.gitlab.ref !== undefined
@@ -48,7 +48,7 @@ async function fetchOneSrc(
   }
 
   if ('github' in src) {
-    const result = fetchGitHub(
+    const result = await fetchGitHub(
       resolveVars(src.github.repo, vars),
       resolveVars(src.github.file, vars),
       src.github.ref !== undefined
@@ -113,7 +113,7 @@ export async function fetchSource(
     const filename = path.basename(entry.target!);
     singleResult = { files: new Map([[filename, content]]) };
   } else if ('gitlab' in src) {
-    const result = fetchGitLab(
+    const result = await fetchGitLab(
       resolveVars(src.gitlab.project, vars),
       resolveVars(src.gitlab.file, vars),
       src.gitlab.ref !== undefined
@@ -122,7 +122,7 @@ export async function fetchSource(
     );
     singleResult = { files: result.files };
   } else if ('github' in src) {
-    const result = fetchGitHub(
+    const result = await fetchGitHub(
       resolveVars(src.github.repo, vars),
       resolveVars(src.github.file, vars),
       src.github.ref !== undefined

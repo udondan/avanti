@@ -15,8 +15,8 @@ Assemble local files from any source via a declarative YAML spec.
 ## Requirements
 
 - Node.js 18+
-- `glab` CLI (for GitLab sources) — [install](https://gitlab.com/gitlab-org/cli)
-- `gh` CLI (for GitHub sources) — [install](https://cli.github.com)
+
+The `glab` and `gh` CLIs are **optional**. Public repositories are accessed directly over HTTPS without any tools installed. The CLIs are only used as a fallback for private repositories or private instances when no token is configured.
 
 ## Install
 
@@ -163,7 +163,7 @@ src:
   github:
     repo: owner/repo             # GitHub owner/repo
     file: path/to/file.txt       # file or directory in repo
-    ref: main                    # branch or tag (optional)
+    ref: main                    # branch, tag, or $latest (optional)
 ```
 
 ### Directory Sources
@@ -289,7 +289,32 @@ replace:
 
 Referencing an undefined variable or a missing environment variable is an error.
 
-`$latest` is reserved for GitLab's "latest tag" resolution and cannot be used as a variable name.
+`$latest` is a reserved keyword that resolves to the latest published version and cannot be used as a variable name. For GitLab it resolves to the latest tag sorted by semantic version. For GitHub it resolves to the tag of the latest release; if the repository has no releases, it falls back to the most recently created tag.
+
+### Authentication
+
+Public repositories on github.com and gitlab.com work without any configuration. For private repositories or private instances, supply a token via environment variable:
+
+| Platform | Environment variable                     | Header sent                     |
+| -------- | ---------------------------------------- | ------------------------------- |
+| GitHub   | `GITHUB_TOKEN`                           | `Authorization: Bearer <token>` |
+| GitLab   | `GITLAB_TOKEN` or `GITLAB_PRIVATE_TOKEN` | `PRIVATE-TOKEN: <token>`        |
+
+If a request fails with a 401, 403, or 404 response and `gh` / `glab` is installed and authenticated, the tool falls back to the CLI automatically. This means existing CLI setups continue to work for private repos without any extra configuration.
+
+### Private Instances
+
+**GitLab** — set `GITLAB_HOST` to override the default `gitlab.com`:
+
+```bash
+GITLAB_HOST=gitlab.mycompany.com avanti pull
+```
+
+**GitHub Enterprise Server** — set `GITHUB_HOST` to override the default `github.com` (API requests go to `https://{GITHUB_HOST}/api/v3`):
+
+```bash
+GITHUB_HOST=github.mycompany.com avanti pull
+```
 
 ## Use Cases
 
