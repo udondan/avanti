@@ -10,6 +10,8 @@ on:
       - package.json
       - bun.lock
       - tsconfig*.json
+      - eslint.config.mjs
+      - prettier.config.mjs
       - .github/workflows/test.yml
 
 jobs:
@@ -31,6 +33,12 @@ jobs:
 
       - name: Build
         run: bun run build
+
+      - name: Lint
+        run: bun run lint
+
+      - name: Format check
+        run: bun run format:check
 
       - name: Test
         run: bun run test
