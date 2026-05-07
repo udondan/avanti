@@ -205,7 +205,7 @@ files:
         to: $email # resolved to "you@example.com"
 ```
 
-Variables are resolved in every string field: `ref`, `exec` commands, HTTP URLs, local paths, `raw` content, `replace` rules (`from` and `to`), and `post` scripts.
+Variables are resolved in every string field: `target`, `ref`, `exec` commands, HTTP URLs, local paths, `raw` content, `replace` rules (`from` and `to`), and `post` scripts.
 
 **Environment variables** use the `$env:NAME` form:
 
