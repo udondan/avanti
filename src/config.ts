@@ -1,7 +1,14 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as yaml from 'js-yaml';
-import { FileFerryConfig, FileEntry, FileSrc, ReplaceRule } from './types';
+import {
+  FileFerryConfig,
+  FileEntry,
+  FileSrc,
+  ReplaceRule,
+  Variables,
+} from './types';
+import { validateVariables } from './variables';
 
 const CONFIG_CANDIDATES = [
   '.avanti.yml',
@@ -49,6 +56,8 @@ export function loadConfig(configPath: string): FileFerryConfig {
     throw new Error('Config must have a "files" array');
   }
 
+  const variables = parseVariables(obj['variables']);
+
   const files: FileEntry[] = (obj['files'] as unknown[]).map((entry, i) => {
     if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
       throw new Error(`files[${i}]: must be an object`);
@@ -95,7 +104,26 @@ export function loadConfig(configPath: string): FileFerryConfig {
     return fileEntry;
   });
 
-  return { files };
+  return { variables, files };
+}
+
+function parseVariables(raw: unknown): Variables {
+  if (raw === undefined || raw === null) return {};
+  if (typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new Error(
+      '"variables" must be a map of string keys to string values',
+    );
+  }
+  const obj = raw as Record<string, unknown>;
+  const vars: Variables = {};
+  for (const [key, val] of Object.entries(obj)) {
+    if (typeof val !== 'string') {
+      throw new Error(`variables.${key}: value must be a string`);
+    }
+    vars[key] = val;
+  }
+  validateVariables(vars);
+  return vars;
 }
 
 function parseSingleSrc(

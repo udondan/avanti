@@ -218,4 +218,67 @@ files:
 `);
     expect(() => loadConfig(f)).toThrow(/files\[0\]\.src\[1\]/);
   });
+
+  // ── variables ─────────────────────────────────────────────────────────────
+
+  it('loads a variables block', () => {
+    const f = writeTmp(`
+variables:
+  email: you@example.com
+  version: "1.2.3"
+files:
+  - src: https://example.com/foo.txt
+    target: foo.txt
+`);
+    const cfg = loadConfig(f);
+    expect(cfg.variables).toEqual({
+      email: 'you@example.com',
+      version: '1.2.3',
+    });
+  });
+
+  it('returns empty variables when block is absent', () => {
+    const f = writeTmp(`
+files:
+  - src: https://example.com/foo.txt
+    target: foo.txt
+`);
+    const cfg = loadConfig(f);
+    expect(cfg.variables).toEqual({});
+  });
+
+  it('throws when variables block is not a map', () => {
+    const f = writeTmp(`
+variables:
+  - email
+files:
+  - src: https://example.com/foo.txt
+    target: foo.txt
+`);
+    expect(() => loadConfig(f)).toThrow('"variables" must be a map');
+  });
+
+  it('throws when a variable value is not a string', () => {
+    const f = writeTmp(`
+variables:
+  count: 42
+files:
+  - src: https://example.com/foo.txt
+    target: foo.txt
+`);
+    expect(() => loadConfig(f)).toThrow(
+      'variables.count: value must be a string',
+    );
+  });
+
+  it('throws when a reserved variable name is used', () => {
+    const f = writeTmp(`
+variables:
+  latest: "1.0.0"
+files:
+  - src: https://example.com/foo.txt
+    target: foo.txt
+`);
+    expect(() => loadConfig(f)).toThrow('"latest" is reserved');
+  });
 });
