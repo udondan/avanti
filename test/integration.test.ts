@@ -229,15 +229,15 @@ describe('Integration', () => {
   - src:
       gitlab:
         project: gitlab-org/cli
-        file: docs
+        file: internal/config
         ref: main
-    target: ./docs/
+    target: ./config/
 `,
         );
 
         const { exitCode } = runAvanti(config, tmpDir);
         expect(exitCode).toBe(0);
-        const outputDir = join(tmpDir, 'docs');
+        const outputDir = join(tmpDir, 'config');
         expect(existsSync(outputDir)).toBe(true);
         const entries = require('fs').readdirSync(outputDir, {
           recursive: true,
