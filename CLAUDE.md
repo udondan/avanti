@@ -2,19 +2,24 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Package manager
+
+This project uses **Bun**. Always use `bun` / `bunx` — never `npm` or `npx`.
+
 ## Commands
 
 ```bash
-npm run build        # Compile TypeScript → dist/
-npm run dev          # Run CLI directly via tsx (no build needed)
-npm test             # Run tests once
-npm run test:watch   # Run tests in watch mode
+bun run build        # Compile TypeScript → dist/
+bun run dev          # Run CLI directly via tsx (no build needed)
+bun test             # Run tests once
+bun run test:watch   # Run tests in watch mode
+bun run lint         # Run ESLint
 ```
 
 Run a single test file:
 
 ```bash
-npx vitest run test/config.test.ts
+bunx vitest run test/config.test.ts
 ```
 
 ## Architecture

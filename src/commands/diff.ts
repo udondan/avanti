@@ -10,8 +10,10 @@ import { FileDiff } from '../diff';
 export function diffCommand(): Command {
   return new Command('diff')
     .description('Show diff between remote sources and local files')
-    .action(async (_options, cmd) => {
-      const configPath = resolveConfigPath(cmd.parent?.opts().config);
+    .action(async (_options: unknown, cmd: Command) => {
+      const configPath = resolveConfigPath(
+        cmd.parent?.opts().config as string | undefined,
+      );
       let config;
       try {
         config = loadConfig(configPath);
@@ -37,7 +39,7 @@ export function diffCommand(): Command {
           }
         } catch (err: unknown) {
           console.error(
-            `Error processing ${entry.src}: ${(err as Error).message}`,
+            `Error processing ${JSON.stringify(entry.src)}: ${(err as Error).message}`,
           );
           hasError = true;
         }

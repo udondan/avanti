@@ -10,7 +10,7 @@ export interface FetchResult {
   files: Map<string, string>;
 }
 
-async function fetchOneSrc(src: FileSrc, entry: FileEntry): Promise<string> {
+async function fetchOneSrc(src: FileSrc): Promise<string> {
   if (typeof src === "string") {
     if (src.startsWith("http://") || src.startsWith("https://")) {
       return fetchHttp(src);
@@ -56,10 +56,10 @@ export async function fetchSource(entry: FileEntry): Promise<FetchResult> {
     const parts: string[] = [];
     for (let i = 0; i < src.length; i++) {
       try {
-        parts.push(await fetchOneSrc(src[i], entry));
+        parts.push(await fetchOneSrc(src[i]));
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
-        throw new Error(`[source ${i}] ${msg}`);
+        throw new Error(`[source ${i}] ${msg}`, { cause: err });
       }
     }
     const filename = path.basename(entry.target!);

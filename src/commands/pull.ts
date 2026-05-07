@@ -29,8 +29,10 @@ export function pullCommand(): Command {
   return new Command('pull')
     .description('Pull remote sources and write to local files')
     .option('-y, --yes', 'skip confirmation prompt')
-    .action(async (options, cmd) => {
-      const configPath = resolveConfigPath(cmd.parent?.opts().config);
+    .action(async (options: unknown, cmd: Command) => {
+      const configPath = resolveConfigPath(
+        cmd.parent?.opts().config as string | undefined,
+      );
       let config;
       try {
         config = loadConfig(configPath);
@@ -58,7 +60,7 @@ export function pullCommand(): Command {
           }
         } catch (err: unknown) {
           console.error(
-            `Error processing ${entry.src}: ${(err as Error).message}`,
+            `Error processing ${JSON.stringify(entry.src)}: ${(err as Error).message}`,
           );
           hasError = true;
         }
@@ -77,7 +79,7 @@ export function pullCommand(): Command {
         process.exit(0);
       }
 
-      const yes: boolean = options.yes ?? false;
+      const yes: boolean = (options as { yes?: boolean }).yes ?? false;
       if (!yes) {
         const ok = await confirm('Apply changes? [y/N] ');
         if (!ok) {
