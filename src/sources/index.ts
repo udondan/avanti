@@ -6,6 +6,7 @@ import { fetchLocal } from './local';
 import { fetchExec } from './exec';
 import { fetchGitLab } from './gitlab';
 import { fetchGitHub } from './github';
+import { mergeJson, formatJson } from '../processors/json';
 
 export interface FetchResult {
   files: Map<string, string>;
@@ -68,7 +69,7 @@ export async function fetchSource(
 ): Promise<FetchResult> {
   const { src } = entry;
 
-  // List src → fetch each, concatenate with newline
+  // List src → fetch each, then merge as JSON or concatenate with newline
   if (Array.isArray(src)) {
     const parts: string[] = [];
     for (let i = 0; i < src.length; i++) {
@@ -80,10 +81,15 @@ export async function fetchSource(
       }
     }
     const filename = path.basename(entry.target!);
-    return { files: new Map([[filename, parts.join('\n')]]) };
+    const content = entry.json
+      ? mergeJson(parts, entry.json)
+      : parts.join('\n');
+    return { files: new Map([[filename, content]]) };
   }
 
-  // Single src — original behaviour
+  // Single src — fetch then optionally format as JSON
+  let singleResult: FetchResult;
+
   if (typeof src === 'string') {
     const resolved = resolveVars(src, vars);
     if (resolved.startsWith('http://') || resolved.startsWith('https://')) {
@@ -91,27 +97,22 @@ export async function fetchSource(
       const filename = entry.target
         ? path.basename(entry.target)
         : (inferFilenameFromUrl(resolved) ?? 'download');
-      return { files: new Map([[filename, content]]) };
+      singleResult = { files: new Map([[filename, content]]) };
+    } else {
+      // Local path (absolute, ~/, or relative)
+      const result = fetchLocal(resolved, workingDir);
+      singleResult = { files: result.files };
     }
-
-    // Local path (absolute, ~/, or relative)
-    const result = fetchLocal(resolved, workingDir);
-    return { files: result.files };
-  }
-
-  // Map sources
-  if ('raw' in src) {
+  } else if ('raw' in src) {
     const filename = path.basename(entry.target!);
-    return { files: new Map([[filename, resolveVars(src.raw, vars)]]) };
-  }
-
-  if ('exec' in src) {
+    singleResult = {
+      files: new Map([[filename, resolveVars(src.raw, vars)]]),
+    };
+  } else if ('exec' in src) {
     const content = fetchExec(resolveVars(src.exec, vars));
     const filename = path.basename(entry.target!);
-    return { files: new Map([[filename, content]]) };
-  }
-
-  if ('gitlab' in src) {
+    singleResult = { files: new Map([[filename, content]]) };
+  } else if ('gitlab' in src) {
     const result = fetchGitLab(
       resolveVars(src.gitlab.project, vars),
       resolveVars(src.gitlab.file, vars),
@@ -119,10 +120,8 @@ export async function fetchSource(
         ? resolveVars(src.gitlab.ref, vars)
         : undefined,
     );
-    return { files: result.files };
-  }
-
-  if ('github' in src) {
+    singleResult = { files: result.files };
+  } else if ('github' in src) {
     const result = fetchGitHub(
       resolveVars(src.github.repo, vars),
       resolveVars(src.github.file, vars),
@@ -130,8 +129,16 @@ export async function fetchSource(
         ? resolveVars(src.github.ref, vars)
         : undefined,
     );
-    return { files: result.files };
+    singleResult = { files: result.files };
+  } else {
+    throw new Error(`Unknown source type: ${JSON.stringify(src)}`);
   }
 
-  throw new Error(`Unknown source type: ${JSON.stringify(src)}`);
+  if (!entry.json) return singleResult;
+
+  const formatted = new Map<string, string>();
+  for (const [k, v] of singleResult.files) {
+    formatted.set(k, formatJson(v));
+  }
+  return { files: formatted };
 }

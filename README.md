@@ -131,6 +131,7 @@ files:
 | `mode`    | No          | File permission mode, e.g. `"0755"`                                                                                                                                                                                                      |
 | `replace` | No          | List of `{from, to}` replacement rules. `from` may be a plain string or `/pattern/flags` regex.                                                                                                                                          |
 | `post`    | No          | Shell script. Content is piped via stdin; stdout is used as the result. Runs after `replace`.                                                                                                                                            |
+| `json`    | No          | JSON merge/format options (see below). When set, sources are parsed as JSON and the result is pretty-printed with 2-space indent.                                                                                                        |
 
 ### Source Types
 
@@ -209,6 +210,48 @@ target: combined.txt
 ```
 
 Sources are fetched in order and joined with a newline. Post-processing (`replace`, `post`) is applied to the combined result. If any source fails, the entire entry is aborted.
+
+### JSON Merging
+
+Add a `json` block to merge multiple JSON sources into a single valid JSON file, or to pretty-print a single JSON source with 2-space indentation.
+
+```yaml
+files:
+  - src:
+      - ./defaults.json
+      - type: github
+        repo: org/configs
+        file: overrides.json
+    target: merged.json
+    json:
+      conflicts: last_wins # abort | first_wins | last_wins (default)
+      arrays: replace # replace (default) | concat
+      objects: merge # merge (default) | replace
+```
+
+**Options:**
+
+- `conflicts` — what to do when the same key holds a scalar (or an array/object when their strategy is `replace`):
+  - `last_wins` _(default)_ — the last source's value wins
+  - `first_wins` — the first source's value is kept
+  - `abort` — throw an error (identical values are not considered a conflict)
+- `arrays` — how to combine arrays at the same key:
+  - `replace` _(default)_ — the later source's array replaces the earlier one
+  - `concat` — arrays are concatenated (no deduplication)
+- `objects` — how to combine objects (maps) at the same key:
+  - `merge` _(default)_ — deep merge, applying the same rules recursively to nested keys
+  - `replace` — the later source's object replaces the earlier one entirely
+
+All options are optional. `json: {}` is valid and just pretty-prints the source.
+
+**Pretty-printing a single file** — `json` works on single-source entries too:
+
+```yaml
+files:
+  - src: ./minified.json
+    target: pretty.json
+    json: {}
+```
 
 ### Variables
 
