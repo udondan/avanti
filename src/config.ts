@@ -68,9 +68,9 @@ export function loadConfig(configPath: string): FileFerryConfig {
       throw new Error(`files[${i}]: "target" is required when "src" is a list`);
     }
 
-    // exec sources must have a target
-    if (!Array.isArray(src) && isExecSrc(src) && !e['target']) {
-      throw new Error(`files[${i}]: "target" is required for exec sources`);
+    // exec/raw sources must have a target
+    if (!Array.isArray(src) && (isExecSrc(src) || isRawSrc(src)) && !e['target']) {
+      throw new Error(`files[${i}]: "target" is required for exec/raw sources`);
     }
 
     const fileEntry: FileEntry = { src };
@@ -142,6 +142,13 @@ function parseSingleSrc(
     };
   }
 
+  if ('raw' in obj) {
+    if (typeof obj['raw'] !== 'string') {
+      throw new Error(`${loc}.raw: must be a string`);
+    }
+    return { raw: obj['raw'] };
+  }
+
   if ('github' in obj) {
     const gh = obj['github'];
     if (!gh || typeof gh !== 'object' || Array.isArray(gh)) {
@@ -164,12 +171,16 @@ function parseSingleSrc(
   }
 
   throw new Error(
-    `${loc}: unknown source type. Must be a string or map with exec/gitlab/github`,
+    `${loc}: unknown source type. Must be a string or map with exec/gitlab/github/raw`,
   );
 }
 
 function isExecSrc(src: FileSrc): boolean {
   return typeof src === 'object' && 'exec' in src;
+}
+
+function isRawSrc(src: FileSrc): boolean {
+  return typeof src === 'object' && 'raw' in src;
 }
 
 function parseReplaceRule(r: unknown, i: number, j: number): ReplaceRule {
