@@ -60,7 +60,12 @@ export function pullCommand(): Command {
             if (entry.replace?.length)
               content = applyReplace(content, entry.replace, vars);
             if (entry.post) content = applyPost(content, entry.post, vars);
-            const targetPath = resolveTargetPath(entry, relPath, workingDir);
+            const targetPath = resolveTargetPath(
+              entry,
+              relPath,
+              workingDir,
+              vars,
+            );
             allDiffs.push(computeDiff(targetPath, content));
             writeTargets.push({ targetPath, content, mode: entry.mode });
           }
