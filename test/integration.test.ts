@@ -1124,6 +1124,82 @@ files:
     });
   });
 
+  describe('self-config re-evaluation', () => {
+    it('re-evaluates with the new config when the config file updates itself', () => {
+      // v2 config: pulls file-b.txt instead of file-a.txt
+      const fileBSource = join(tmpDir, 'file-b-source.txt');
+      writeFileSync(fileBSource, 'content of file b');
+
+      const configV2Path = join(tmpDir, 'config-v2.yml');
+      writeFileSync(
+        configV2Path,
+        `files:
+  - src: ${fileBSource}
+    target: ./file-b.txt
+`,
+      );
+
+      const fileASource = join(tmpDir, 'file-a-source.txt');
+      writeFileSync(fileASource, 'content of file a');
+
+      // v1 config: pulls file-a.txt and also updates the config file itself to v2
+      const config = writeConfig(
+        tmpDir,
+        `files:
+  - src: ${fileASource}
+    target: ./file-a.txt
+  - src: ${configV2Path}
+    target: ./avanti.yml
+`,
+      );
+
+      const { exitCode, stdout } = runAvanti(config, tmpDir);
+      expect(exitCode).toBe(0);
+      expect(stdout).toContain('re-evaluating with new config');
+
+      // The config was updated to v2
+      const writtenConfig = readFileSync(join(tmpDir, 'avanti.yml'), 'utf8');
+      expect(writtenConfig).toContain('file-b.txt');
+
+      // file-b.txt must exist (from v2 config)
+      expect(existsSync(join(tmpDir, 'file-b.txt'))).toBe(true);
+      expect(readFileSync(join(tmpDir, 'file-b.txt'), 'utf8')).toBe(
+        'content of file b',
+      );
+
+      // file-a.txt must NOT exist (v2 config doesn't include it, and it
+      // was never on disk before, so it should not have been created)
+      expect(existsSync(join(tmpDir, 'file-a.txt'))).toBe(false);
+    });
+
+    it('falls back to first-pass results when the updated config is invalid', () => {
+      // Valid YAML but not a valid avanti config (missing "files" key).
+      // Using a .yml source triggers auto-YAML-format, so the content must
+      // be parseable YAML; the failure must come from parseConfigContent.
+      const invalidConfigPath = join(tmpDir, 'invalid-config.yml');
+      writeFileSync(invalidConfigPath, 'not_an_avanti_config: true\n');
+
+      const fileASource = join(tmpDir, 'file-a-source.txt');
+      writeFileSync(fileASource, 'content of file a');
+
+      const config = writeConfig(
+        tmpDir,
+        `files:
+  - src: ${fileASource}
+    target: ./file-a.txt
+  - src: ${invalidConfigPath}
+    target: ./avanti.yml
+`,
+      );
+
+      const { exitCode } = runAvanti(config, tmpDir);
+      expect(exitCode).toBe(0);
+
+      // file-a.txt is still written (first-pass results used despite bad config)
+      expect(existsSync(join(tmpDir, 'file-a.txt'))).toBe(true);
+    });
+  });
+
   describe('multi-source concatenation', () => {
     it('concatenates multiple text sources with newlines', () => {
       const aFile = join(tmpDir, 'a.txt');

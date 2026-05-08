@@ -12,7 +12,7 @@ export function atomicWrite(
   targets: WriteTarget[],
   deletions: string[] = [],
 ): void {
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fileferry-'));
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'avanti-'));
   try {
     // Stage all files to temp dir first
     const staged: Array<{ tmp: string; dest: string; mode?: string }> = [];

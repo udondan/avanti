@@ -872,7 +872,9 @@ files:
 
 ### Self-managing Config
 
-avanti can sync any file — including its own config. Put the canonical config in a central repo and add a self-update entry. Every `avanti pull` refreshes the config alongside all other managed files; the updated config takes effect on the next run.
+avanti can sync any file — including its own config. Put the canonical config in a central repo and add a self-update entry. Every `avanti pull` refreshes the config alongside all other managed files.
+
+When avanti detects that a pull would update the local config file, it automatically re-evaluates the new config in memory and applies all the files it describes — in the same run, with a single confirmation prompt and a single atomic write. You don't need to run `avanti pull` twice to get the new config's files.
 
 ```yaml
 # ~/.avanti.yml
