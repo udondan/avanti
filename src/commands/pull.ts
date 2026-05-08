@@ -30,7 +30,7 @@ export function pullCommand(): Command {
 
       let config;
       try {
-        config = loadConfig(configPath);
+        config = await loadConfig(configPath);
       } catch (err: unknown) {
         console.error((err as Error).message);
         process.exit(2);
