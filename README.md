@@ -34,6 +34,7 @@ Assemble local files from any source via a declarative YAML spec.
   - [Environment-Specific Config from a Single Spec](#environment-specific-config-from-a-single-spec)
   - [Secrets from Vault or S3](#secrets-from-vault-or-s3)
   - [Multi-Project Deployment](#multi-project-deployment)
+  - [Docker Compose Layering](#docker-compose-layering)
   - [Developer Onboarding Bootstrap](#developer-onboarding-bootstrap)
   - [Self-managing Config](#self-managing-config)
   - [Avanti as a Package Manager](#avanti-as-a-package-manager)
@@ -812,6 +813,26 @@ for dir in services/*/; do
   avanti -c shared/avanti.yml -w "$dir" pull --yes
 done
 ```
+
+### Docker Compose Layering
+
+Maintain a shared `docker-compose.yml` in a central repo and let each project layer its own overrides on top. A `avanti pull` merges them into a single ready-to-run file — no manual copy-paste, no diverging base definitions.
+
+```yaml
+files:
+  - src:
+      - github:
+          repo: org/platform
+          file: docker/compose-base.yml # shared service definitions and networks
+          ref: main
+      - ./docker-compose.override.yml # project-specific ports, volumes, env vars
+    target: ./docker-compose.yml
+    yaml:
+      conflicts: last_wins # local overrides win
+      arrays: concat # environment and volumes lists are appended, not replaced
+```
+
+The base file defines the canonical service images, healthchecks, and network topology. Each project's override only declares what differs — a different port, an extra volume mount, a local build context. Comments from both files survive in the merged output, so the generated `docker-compose.yml` stays readable and self-documenting.
 
 ### Developer Onboarding Bootstrap
 
