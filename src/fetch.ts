@@ -2,9 +2,11 @@ const MAX_RETRIES = 5;
 const BASE_DELAY_MS = 1_000;
 const MAX_DELAY_MS = 60_000;
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
+// Object wrapper so tests can spy on sleep without fake timers
+export const _testable = {
+  sleep: (ms: number): Promise<void> =>
+    new Promise((resolve) => setTimeout(resolve, ms)),
+};
 
 function retryDelayMs(attempt: number, headers: Headers): number {
   // Retry-After: seconds to wait (GitHub secondary rate limit, GitLab)
@@ -33,6 +35,6 @@ export async function fetchWithRetry(
     const shouldRetry =
       res.status === 429 || (res.status >= 500 && res.status <= 599);
     if (!shouldRetry || attempt >= MAX_RETRIES) return res;
-    await sleep(retryDelayMs(attempt, res.headers));
+    await _testable.sleep(retryDelayMs(attempt, res.headers));
   }
 }
