@@ -6,7 +6,7 @@ import {
   YamlMergeOptions,
   Variables,
 } from '../types';
-import { resolveVars } from '../variables';
+import { resolveVars, resolveVarsShellSafe } from '../variables';
 import { fetchHttp, inferFilenameFromUrl } from './http';
 import { fetchLocal } from './local';
 import { fetchExec } from './exec';
@@ -95,7 +95,9 @@ async function fetchOneSrc(
 
   if ('exec' in src) {
     return {
-      files: new Map([['output', fetchExec(resolveVars(src.exec, vars))]]),
+      files: new Map([
+        ['output', fetchExec(resolveVarsShellSafe(src.exec, vars))],
+      ]),
     };
   }
 

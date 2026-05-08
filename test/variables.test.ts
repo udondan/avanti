@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { resolveVars, validateVariables } from '../src/variables';
+import {
+  resolveVars,
+  resolveVarsShellSafe,
+  validateVariables,
+} from '../src/variables';
 
 describe('resolveVars', () => {
   it('resolves a named variable', () => {
@@ -51,6 +55,45 @@ describe('resolveVars', () => {
     expect(resolveVars('no variables here', { x: 'y' })).toBe(
       'no variables here',
     );
+  });
+});
+
+describe('resolveVarsShellSafe', () => {
+  it('wraps a plain value in single quotes', () => {
+    expect(resolveVarsShellSafe('echo $name', { name: 'world' })).toBe(
+      "echo 'world'",
+    );
+  });
+
+  it('escapes single quotes in value', () => {
+    expect(resolveVarsShellSafe('echo $msg', { msg: "it's fine" })).toBe(
+      "echo 'it'\\''s fine'",
+    );
+  });
+
+  it('shell-quotes env var values', () => {
+    process.env['SAFE_TEST_VAR'] = 'hello; rm -rf /';
+    expect(resolveVarsShellSafe('echo $env:SAFE_TEST_VAR', {})).toBe(
+      "echo 'hello; rm -rf /'",
+    );
+    delete process.env['SAFE_TEST_VAR'];
+  });
+
+  it('passes $latest through unquoted', () => {
+    expect(resolveVarsShellSafe('ref: $latest', {})).toBe('ref: $latest');
+  });
+
+  it('throws on undefined variable', () => {
+    expect(() => resolveVarsShellSafe('$missing', {})).toThrow(
+      'Undefined variable: $missing',
+    );
+  });
+
+  it('throws on undefined env var', () => {
+    delete process.env['DEFINITELY_NOT_SET_XYZ'];
+    expect(() =>
+      resolveVarsShellSafe('$env:DEFINITELY_NOT_SET_XYZ', {}),
+    ).toThrow('Undefined environment variable: $env:DEFINITELY_NOT_SET_XYZ');
   });
 });
 
