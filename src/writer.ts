@@ -8,7 +8,10 @@ export interface WriteTarget {
   mode?: string;
 }
 
-export function atomicWrite(targets: WriteTarget[]): void {
+export function atomicWrite(
+  targets: WriteTarget[],
+  deletions: string[] = [],
+): void {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fileferry-'));
   try {
     // Stage all files to temp dir first
@@ -35,5 +38,14 @@ export function atomicWrite(targets: WriteTarget[]): void {
     }
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+
+  // Deletions happen after writes succeed; each failure is non-fatal
+  for (const p of deletions) {
+    try {
+      fs.rmSync(p, { force: true });
+    } catch (err) {
+      console.warn(`Warning: could not delete ${p}: ${(err as Error).message}`);
+    }
   }
 }

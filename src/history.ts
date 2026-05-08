@@ -1,0 +1,373 @@
+import * as crypto from 'crypto';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
+
+export interface FileHistoryMeta {
+  absolutePath: string;
+  slug: string;
+  firstSeenAt: string;
+  existedBeforeAvanti: boolean;
+  currentVersion: number;
+}
+
+export interface PullLogEntry {
+  pullId: string;
+  timestamp: string;
+  configFile: string;
+  files: PullLogFileRef[];
+}
+
+export interface PullLogFileRef {
+  absolutePath: string;
+  slug: string;
+  version: number;
+  wasNew: boolean;
+}
+
+export interface FileVersionInfo {
+  version: number;
+  isOriginal: boolean;
+  pulledAt: string | null;
+  pullId: string | null;
+}
+
+export interface FileHistory {
+  absolutePath: string;
+  existedBeforeAvanti: boolean;
+  currentVersion: number;
+  versions: FileVersionInfo[];
+}
+
+function defaultBaseDir(): string {
+  return (
+    process.env.AVANTI_HISTORY_DIR ??
+    path.join(os.homedir(), '.config', 'avanti')
+  );
+}
+
+function sha256(input: string): string {
+  return crypto.createHash('sha256').update(input).digest('hex');
+}
+
+function uuid(): string {
+  return crypto.randomUUID();
+}
+
+export class HistoryManager {
+  private readonly baseDir: string;
+  private readonly projectSlug: string;
+  private readonly projectDir: string;
+  private readonly filesDir: string;
+  private readonly indexPath: string;
+  private readonly pullsLogPath: string;
+  private readonly configFile: string;
+  private readonly workingDir: string;
+
+  constructor(configFile: string, workingDir: string) {
+    this.configFile = configFile;
+    this.workingDir = workingDir;
+    this.baseDir = defaultBaseDir();
+    this.projectSlug = sha256(`${configFile}|${workingDir}`);
+    this.projectDir = path.join(this.baseDir, 'projects', this.projectSlug);
+    this.filesDir = path.join(this.projectDir, 'files');
+    this.indexPath = path.join(this.filesDir, 'index.json');
+    this.pullsLogPath = path.join(this.projectDir, 'pulls.jsonl');
+  }
+
+  ensureStorageDir(): boolean {
+    try {
+      fs.mkdirSync(this.filesDir, { recursive: true });
+      const metaPath = path.join(this.projectDir, 'meta.json');
+      if (!fs.existsSync(metaPath)) {
+        fs.writeFileSync(
+          metaPath,
+          JSON.stringify(
+            { configFile: this.configFile, workingDir: this.workingDir },
+            null,
+            2,
+          ),
+          'utf8',
+        );
+      }
+      return true;
+    } catch (err) {
+      console.warn(
+        `Warning: could not initialise history storage at ${this.baseDir}: ${(err as Error).message}`,
+      );
+      return false;
+    }
+  }
+
+  openPullSession(): string {
+    return uuid();
+  }
+
+  stageFileVersion(
+    pullId: string,
+    targetPath: string,
+    newContent: string,
+    isNew: boolean,
+  ): { version: number; fileRef: PullLogFileRef } {
+    const slug = sha256(targetPath);
+    const fileDir = path.join(this.filesDir, slug);
+    fs.mkdirSync(fileDir, { recursive: true });
+
+    const metaPath = path.join(fileDir, 'meta.json');
+    let meta: FileHistoryMeta;
+
+    if (fs.existsSync(metaPath)) {
+      meta = JSON.parse(fs.readFileSync(metaPath, 'utf8')) as FileHistoryMeta;
+    } else {
+      const existedBeforeAvanti = !isNew && fs.existsSync(targetPath);
+      if (existedBeforeAvanti) {
+        const originalContent = fs.readFileSync(targetPath, 'utf8');
+        fs.writeFileSync(path.join(fileDir, 'v0'), originalContent, 'utf8');
+      }
+      meta = {
+        absolutePath: targetPath,
+        slug,
+        firstSeenAt: new Date().toISOString(),
+        existedBeforeAvanti,
+        currentVersion: 0,
+      };
+      fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2), 'utf8');
+
+      const index = this.readIndex();
+      index[targetPath] = slug;
+      this.writeIndex(index);
+    }
+
+    const nextVersion = meta.currentVersion + 1;
+    fs.writeFileSync(path.join(fileDir, `v${nextVersion}`), newContent, 'utf8');
+
+    const fileRef: PullLogFileRef = {
+      absolutePath: targetPath,
+      slug,
+      version: nextVersion,
+      wasNew: isNew,
+    };
+
+    return { version: nextVersion, fileRef };
+  }
+
+  closePullSession(
+    pullId: string,
+    configFile: string,
+    fileRefs: PullLogFileRef[],
+  ): void {
+    for (const ref of fileRefs) {
+      const metaPath = path.join(this.filesDir, ref.slug, 'meta.json');
+      if (fs.existsSync(metaPath)) {
+        const meta = JSON.parse(
+          fs.readFileSync(metaPath, 'utf8'),
+        ) as FileHistoryMeta;
+        meta.currentVersion = ref.version;
+        fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2), 'utf8');
+      }
+    }
+
+    const entry: PullLogEntry = {
+      pullId,
+      timestamp: new Date().toISOString(),
+      configFile,
+      files: fileRefs,
+    };
+    fs.appendFileSync(this.pullsLogPath, JSON.stringify(entry) + '\n', 'utf8');
+  }
+
+  listPulls(): PullLogEntry[] {
+    try {
+      if (!fs.existsSync(this.pullsLogPath)) return [];
+      const lines = fs
+        .readFileSync(this.pullsLogPath, 'utf8')
+        .split('\n')
+        .filter(Boolean);
+      const entries: PullLogEntry[] = [];
+      for (const line of lines) {
+        try {
+          entries.push(JSON.parse(line) as PullLogEntry);
+        } catch {
+          // skip corrupt lines
+        }
+      }
+      return entries.reverse();
+    } catch {
+      return [];
+    }
+  }
+
+  getFileHistory(absolutePath: string): FileHistory | null {
+    try {
+      const index = this.readIndex();
+      const slug = index[absolutePath];
+      if (!slug) return null;
+
+      const meta = this.readMeta(slug);
+      if (!meta) return null;
+
+      const pulls = this.listPulls().slice().reverse(); // chronological order for version lookup
+      const versionMap = new Map<
+        number,
+        { pulledAt: string; pullId: string }
+      >();
+      for (const pull of pulls) {
+        for (const ref of pull.files) {
+          if (ref.absolutePath === absolutePath) {
+            versionMap.set(ref.version, {
+              pulledAt: pull.timestamp,
+              pullId: pull.pullId,
+            });
+          }
+        }
+      }
+
+      const versions: FileVersionInfo[] = [];
+      if (meta.existedBeforeAvanti) {
+        versions.push({
+          version: 0,
+          isOriginal: true,
+          pulledAt: null,
+          pullId: null,
+        });
+      }
+      for (let v = 1; v <= meta.currentVersion; v++) {
+        const info = versionMap.get(v);
+        versions.push({
+          version: v,
+          isOriginal: false,
+          pulledAt: info?.pulledAt ?? null,
+          pullId: info?.pullId ?? null,
+        });
+      }
+
+      return {
+        absolutePath,
+        existedBeforeAvanti: meta.existedBeforeAvanti,
+        currentVersion: meta.currentVersion,
+        versions,
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  readVersion(absolutePath: string, version: number): string | null {
+    try {
+      const index = this.readIndex();
+      const slug = index[absolutePath];
+      if (!slug) return null;
+      const versionPath = path.join(this.filesDir, slug, `v${version}`);
+      if (!fs.existsSync(versionPath)) return null;
+      return fs.readFileSync(versionPath, 'utf8');
+    } catch {
+      return null;
+    }
+  }
+
+  getFileMeta(absolutePath: string): FileHistoryMeta | null {
+    try {
+      const index = this.readIndex();
+      const slug = index[absolutePath];
+      if (!slug) return null;
+      return this.readMeta(slug);
+    } catch {
+      return null;
+    }
+  }
+
+  getFilesAtPull(
+    pullId: string,
+  ): Map<string, { version: number; existedBeforeAvanti: boolean }> {
+    const result = new Map<
+      string,
+      { version: number; existedBeforeAvanti: boolean }
+    >();
+    const pulls = this.listPulls().slice().reverse(); // chronological
+
+    // Build state snapshot: for each file, find highest version at or before the target pull
+    let found = false;
+    const snapshot = new Map<string, number>(); // absolutePath → version at target pull
+
+    for (const pull of pulls) {
+      for (const ref of pull.files) {
+        if (!snapshot.has(ref.absolutePath)) {
+          // Only record if we haven't passed the target pull yet or are at it
+          if (!found) {
+            snapshot.set(ref.absolutePath, ref.version);
+          }
+        }
+      }
+      if (pull.pullId === pullId) {
+        // Record files written IN this pull (overwrite any tentative earlier values)
+        for (const ref of pull.files) {
+          snapshot.set(ref.absolutePath, ref.version);
+        }
+        found = true;
+        break;
+      }
+    }
+
+    if (!found) return result;
+
+    for (const [absolutePath, version] of snapshot) {
+      const meta = this.getFileMeta(absolutePath);
+      result.set(absolutePath, {
+        version,
+        existedBeforeAvanti: meta?.existedBeforeAvanti ?? false,
+      });
+    }
+
+    return result;
+  }
+
+  listTrackedFiles(): FileHistoryMeta[] {
+    try {
+      const index = this.readIndex();
+      const metas: FileHistoryMeta[] = [];
+      for (const slug of Object.values(index)) {
+        const meta = this.readMeta(slug);
+        if (meta) metas.push(meta);
+      }
+      return metas;
+    } catch {
+      return [];
+    }
+  }
+
+  getLastPullFiles(): PullLogFileRef[] {
+    const pulls = this.listPulls();
+    if (pulls.length === 0) return [];
+    return pulls[0].files; // listPulls returns newest first
+  }
+
+  hasHistory(): boolean {
+    return fs.existsSync(this.pullsLogPath);
+  }
+
+  private readIndex(): Record<string, string> {
+    try {
+      if (!fs.existsSync(this.indexPath)) return {};
+      return JSON.parse(fs.readFileSync(this.indexPath, 'utf8')) as Record<
+        string,
+        string
+      >;
+    } catch {
+      return {};
+    }
+  }
+
+  private writeIndex(index: Record<string, string>): void {
+    fs.writeFileSync(this.indexPath, JSON.stringify(index, null, 2), 'utf8');
+  }
+
+  private readMeta(slug: string): FileHistoryMeta | null {
+    try {
+      const metaPath = path.join(this.filesDir, slug, 'meta.json');
+      if (!fs.existsSync(metaPath)) return null;
+      return JSON.parse(fs.readFileSync(metaPath, 'utf8')) as FileHistoryMeta;
+    } catch {
+      return null;
+    }
+  }
+}

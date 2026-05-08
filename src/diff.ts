@@ -12,6 +12,22 @@ export interface FileDiff {
   patch: string;
 }
 
+export function computeDeleteDiff(targetPath: string): FileDiff {
+  if (!fs.existsSync(targetPath)) {
+    return { targetPath, isNew: false, hasChanges: false, patch: '' };
+  }
+  const oldContent = fs.readFileSync(targetPath, 'utf8');
+  const patch = createTwoFilesPatch(
+    targetPath,
+    '/dev/null',
+    oldContent,
+    '',
+    undefined,
+    'deleted',
+  );
+  return { targetPath, isNew: false, hasChanges: true, patch };
+}
+
 export function computeDiff(targetPath: string, newContent: string): FileDiff {
   const isNew = !fs.existsSync(targetPath);
   const oldContent = isNew ? '' : fs.readFileSync(targetPath, 'utf8');
