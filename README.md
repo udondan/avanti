@@ -591,7 +591,9 @@ replace:
 
 Referencing an undefined variable or a missing environment variable is an error.
 
-`$latest` is a reserved keyword that resolves to the latest published version and cannot be used as a variable name. For GitLab it resolves to the latest tag sorted by semantic version. For GitHub it resolves to the tag of the latest release; if the repository has no releases, it falls back to the most recently created tag.
+`$latest` is a reserved keyword that resolves to the latest published version and cannot be used as a variable name. For GitLab it resolves to the latest tag sorted by semantic version. For GitHub it resolves to the tag of the latest release; if the repository has no releases, it falls back to the most recently created tag. For Bitbucket it resolves to the latest tag sorted by name; if no tags exist, it falls back to the repository's default branch.
+
+When `ref` is omitted, all source types (GitHub, GitLab, Bitbucket, git) resolve to the repository's default branch.
 
 ### Authentication
 
