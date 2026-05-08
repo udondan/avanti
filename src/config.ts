@@ -425,92 +425,82 @@ function isRawSrc(src: FileSrc): boolean {
   return typeof src === 'object' && 'raw' in src;
 }
 
-function parseJsonMergeOptions(raw: unknown, i: number): JsonMergeOptions {
+function parseMergeOptions<
+  C extends string,
+  A extends string,
+  O extends string,
+>(
+  raw: unknown,
+  i: number,
+  kind: string,
+  conflictValues: C[],
+  arrayValues: A[],
+  objectValues: O[],
+): { conflicts?: C; arrays?: A; objects?: O } {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
-    throw new Error(`files[${i}]: "json" must be an object`);
+    throw new Error(`files[${i}]: "${kind}" must be an object`);
   }
   const obj = raw as Record<string, unknown>;
-  const opts: JsonMergeOptions = {};
+  const opts: { conflicts?: C; arrays?: A; objects?: O } = {};
 
-  const conflictValues: JsonConflictStrategy[] = [
-    'abort',
-    'first_wins',
-    'last_wins',
-  ];
   if (obj['conflicts'] !== undefined) {
-    if (!conflictValues.includes(obj['conflicts'] as JsonConflictStrategy)) {
+    if (!conflictValues.includes(obj['conflicts'] as C)) {
       throw new Error(
-        `files[${i}].json.conflicts: must be one of ${conflictValues.join(', ')}`,
+        `files[${i}].${kind}.conflicts: must be one of ${conflictValues.join(', ')}`,
       );
     }
-    opts.conflicts = obj['conflicts'] as JsonConflictStrategy;
+    opts.conflicts = obj['conflicts'] as C;
   }
 
-  const arrayValues: JsonArrayStrategy[] = ['replace', 'concat'];
   if (obj['arrays'] !== undefined) {
-    if (!arrayValues.includes(obj['arrays'] as JsonArrayStrategy)) {
+    if (!arrayValues.includes(obj['arrays'] as A)) {
       throw new Error(
-        `files[${i}].json.arrays: must be one of ${arrayValues.join(', ')}`,
+        `files[${i}].${kind}.arrays: must be one of ${arrayValues.join(', ')}`,
       );
     }
-    opts.arrays = obj['arrays'] as JsonArrayStrategy;
+    opts.arrays = obj['arrays'] as A;
   }
 
-  const objectValues: JsonObjectStrategy[] = ['replace', 'merge'];
   if (obj['objects'] !== undefined) {
-    if (!objectValues.includes(obj['objects'] as JsonObjectStrategy)) {
+    if (!objectValues.includes(obj['objects'] as O)) {
       throw new Error(
-        `files[${i}].json.objects: must be one of ${objectValues.join(', ')}`,
+        `files[${i}].${kind}.objects: must be one of ${objectValues.join(', ')}`,
       );
     }
-    opts.objects = obj['objects'] as JsonObjectStrategy;
+    opts.objects = obj['objects'] as O;
   }
 
   return opts;
 }
 
+function parseJsonMergeOptions(raw: unknown, i: number): JsonMergeOptions {
+  return parseMergeOptions<
+    JsonConflictStrategy,
+    JsonArrayStrategy,
+    JsonObjectStrategy
+  >(
+    raw,
+    i,
+    'json',
+    ['abort', 'first_wins', 'last_wins'],
+    ['replace', 'concat'],
+    ['replace', 'merge'],
+  );
+}
+
 function parseYamlMergeOptions(raw: unknown, i: number): YamlMergeOptions {
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
-    throw new Error(`files[${i}]: "yaml" must be an object`);
-  }
-  const obj = raw as Record<string, unknown>;
-  const opts: YamlMergeOptions = {};
-
-  const conflictValues: YamlConflictStrategy[] = [
-    'abort',
-    'first_wins',
-    'last_wins',
-  ];
-  if (obj['conflicts'] !== undefined) {
-    if (!conflictValues.includes(obj['conflicts'] as YamlConflictStrategy)) {
-      throw new Error(
-        `files[${i}].yaml.conflicts: must be one of ${conflictValues.join(', ')}`,
-      );
-    }
-    opts.conflicts = obj['conflicts'] as YamlConflictStrategy;
-  }
-
-  const arrayValues: YamlArrayStrategy[] = ['replace', 'concat'];
-  if (obj['arrays'] !== undefined) {
-    if (!arrayValues.includes(obj['arrays'] as YamlArrayStrategy)) {
-      throw new Error(
-        `files[${i}].yaml.arrays: must be one of ${arrayValues.join(', ')}`,
-      );
-    }
-    opts.arrays = obj['arrays'] as YamlArrayStrategy;
-  }
-
-  const objectValues: YamlObjectStrategy[] = ['replace', 'merge'];
-  if (obj['objects'] !== undefined) {
-    if (!objectValues.includes(obj['objects'] as YamlObjectStrategy)) {
-      throw new Error(
-        `files[${i}].yaml.objects: must be one of ${objectValues.join(', ')}`,
-      );
-    }
-    opts.objects = obj['objects'] as YamlObjectStrategy;
-  }
-
-  return opts;
+  return parseMergeOptions<
+    YamlConflictStrategy,
+    YamlArrayStrategy,
+    YamlObjectStrategy
+  >(
+    raw,
+    i,
+    'yaml',
+    ['abort', 'first_wins', 'last_wins'],
+    ['replace', 'concat'],
+    ['replace', 'merge'],
+  );
 }
 
 function parseReplaceRule(r: unknown, i: number, j: number): ReplaceRule {
