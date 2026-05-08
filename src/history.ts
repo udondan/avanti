@@ -294,21 +294,16 @@ export class HistoryManager {
     const snapshot = new Map<string, number>(); // absolutePath → version at target pull
 
     for (const pull of pulls) {
-      for (const ref of pull.files) {
-        if (!snapshot.has(ref.absolutePath)) {
-          // Only record if we haven't passed the target pull yet or are at it
-          if (!found) {
-            snapshot.set(ref.absolutePath, ref.version);
-          }
-        }
-      }
       if (pull.pullId === pullId) {
-        // Record files written IN this pull (overwrite any tentative earlier values)
         for (const ref of pull.files) {
           snapshot.set(ref.absolutePath, ref.version);
         }
         found = true;
         break;
+      }
+      // Always overwrite so we capture the most recent version before the target pull
+      for (const ref of pull.files) {
+        snapshot.set(ref.absolutePath, ref.version);
       }
     }
 
