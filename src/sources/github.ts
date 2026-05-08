@@ -153,8 +153,11 @@ function listTreeViaCli(repo: string, dirPath: string, ref: string): string[] {
   const res = ghRun([
     'api',
     `repos/${repo}/git/trees/${encodeURIComponent(ref)}?recursive=1`,
+    '--arg',
+    'dirPath',
+    dirPath,
     '--jq',
-    `.tree[] | select(.type == "blob") | select(.path | startswith("${dirPath}/")) | .path`,
+    '.tree[] | select(.type == "blob") | select(.path | startswith($dirPath + "/")) | .path',
   ]);
   if (res.status !== 0) {
     throw new Error(
