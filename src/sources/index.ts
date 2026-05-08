@@ -1,5 +1,5 @@
 import * as path from 'path';
-import { FileEntry, FileSrc, Variables } from '../types';
+import { FileEntry, FileSrc, JsonMergeOptions, Variables } from '../types';
 import { resolveVars } from '../variables';
 import { fetchHttp, inferFilenameFromUrl } from './http';
 import { fetchLocal } from './local';
@@ -7,6 +7,34 @@ import { fetchExec } from './exec';
 import { fetchGitLab } from './gitlab';
 import { fetchGitHub } from './github';
 import { mergeJson, formatJson } from '../processors/json';
+
+const JSON_EXTENSIONS = new Set(['.json', '.jsonc']);
+
+function srcFilename(src: FileSrc): string | null {
+  if (typeof src === 'string') return src;
+  if ('gitlab' in src) return src.gitlab.file;
+  if ('github' in src) return src.github.file;
+  return null;
+}
+
+function hasJsonExtension(src: FileSrc): boolean {
+  const name = srcFilename(src);
+  if (!name) return false;
+  return JSON_EXTENSIONS.has(path.extname(name).toLowerCase());
+}
+
+function resolveJsonOptions(
+  entry: FileEntry,
+  srcs: FileSrc[],
+): JsonMergeOptions | null {
+  const { json } = entry;
+  if (json === false) return null;
+  if (json === true) return {};
+  if (json !== undefined && typeof json === 'object') return json;
+  // Auto-detect: all sources have a JSON/JSONC file extension
+  if (srcs.length > 0 && srcs.every(hasJsonExtension)) return {};
+  return null;
+}
 
 export interface FetchResult {
   files: Map<string, string>;
@@ -81,9 +109,9 @@ export async function fetchSource(
       }
     }
     const filename = path.basename(entry.target!);
-    const content = entry.json
-      ? mergeJson(parts, entry.json)
-      : parts.join('\n');
+    const jsonOpts = resolveJsonOptions(entry, src);
+    const content =
+      jsonOpts !== null ? mergeJson(parts, jsonOpts) : parts.join('\n');
     return { files: new Map([[filename, content]]) };
   }
 
@@ -134,7 +162,8 @@ export async function fetchSource(
     throw new Error(`Unknown source type: ${JSON.stringify(src)}`);
   }
 
-  if (!entry.json) return singleResult;
+  const singleJsonOpts = resolveJsonOptions(entry, [src]);
+  if (singleJsonOpts === null) return singleResult;
 
   const formatted = new Map<string, string>();
   for (const [k, v] of singleResult.files) {

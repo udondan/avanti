@@ -623,6 +623,129 @@ files:
     });
   });
 
+  describe('JSON merge — auto-detection and json: true/false', () => {
+    it('auto-merges when all sources are .json files (no json: key needed)', () => {
+      const aFile = join(tmpDir, 'a.json');
+      const bFile = join(tmpDir, 'b.json');
+      writeFileSync(aFile, JSON.stringify({ from: 'a' }));
+      writeFileSync(bFile, JSON.stringify({ from: 'b', extra: 1 }));
+
+      const config = writeConfig(
+        tmpDir,
+        `files:
+  - src:
+      - ${aFile}
+      - ${bFile}
+    target: ./merged.json
+`,
+      );
+
+      const { exitCode } = runAvanti(config, tmpDir);
+      expect(exitCode).toBe(0);
+      const merged = JSON.parse(
+        readFileSync(join(tmpDir, 'merged.json'), 'utf8'),
+      );
+      expect(merged).toMatchObject({ from: 'b', extra: 1 });
+    });
+
+    it('auto-merges when all sources are .jsonc files', () => {
+      const aFile = join(tmpDir, 'a.jsonc');
+      const bFile = join(tmpDir, 'b.jsonc');
+      writeFileSync(aFile, '{ "x": 1 }');
+      writeFileSync(bFile, '{ "y": 2 }');
+
+      const config = writeConfig(
+        tmpDir,
+        `files:
+  - src:
+      - ${aFile}
+      - ${bFile}
+    target: ./merged.jsonc
+`,
+      );
+
+      const { exitCode } = runAvanti(config, tmpDir);
+      expect(exitCode).toBe(0);
+      const merged = JSON.parse(
+        readFileSync(join(tmpDir, 'merged.jsonc'), 'utf8'),
+      );
+      expect(merged).toEqual({ x: 1, y: 2 });
+    });
+
+    it('does NOT auto-merge when sources have mixed extensions', () => {
+      const aFile = join(tmpDir, 'a.json');
+      const bFile = join(tmpDir, 'b.txt');
+      writeFileSync(aFile, '{"a":1}');
+      writeFileSync(bFile, '{"b":2}');
+
+      const config = writeConfig(
+        tmpDir,
+        `files:
+  - src:
+      - ${aFile}
+      - ${bFile}
+    target: ./output.txt
+`,
+      );
+
+      const { exitCode } = runAvanti(config, tmpDir);
+      expect(exitCode).toBe(0);
+      const content = readFileSync(join(tmpDir, 'output.txt'), 'utf8');
+      // Plain concatenation — not valid JSON as a whole
+      expect(content).toContain('{"a":1}');
+      expect(content).toContain('{"b":2}');
+    });
+
+    it('json: true enables merge with defaults for .json sources', () => {
+      const aFile = join(tmpDir, 'a.json');
+      const bFile = join(tmpDir, 'b.json');
+      writeFileSync(aFile, JSON.stringify({ key: 'first', a: 1 }));
+      writeFileSync(bFile, JSON.stringify({ key: 'second', b: 2 }));
+
+      const config = writeConfig(
+        tmpDir,
+        `files:
+  - src:
+      - ${aFile}
+      - ${bFile}
+    target: ./merged.json
+    json: true
+`,
+      );
+
+      const { exitCode } = runAvanti(config, tmpDir);
+      expect(exitCode).toBe(0);
+      const merged = JSON.parse(
+        readFileSync(join(tmpDir, 'merged.json'), 'utf8'),
+      );
+      expect(merged).toMatchObject({ key: 'second', a: 1, b: 2 });
+    });
+
+    it('json: false disables auto-merge even for .json sources', () => {
+      const aFile = join(tmpDir, 'a.json');
+      const bFile = join(tmpDir, 'b.json');
+      writeFileSync(aFile, '{"a":1}');
+      writeFileSync(bFile, '{"b":2}');
+
+      const config = writeConfig(
+        tmpDir,
+        `files:
+  - src:
+      - ${aFile}
+      - ${bFile}
+    target: ./output.json
+    json: false
+`,
+      );
+
+      const { exitCode } = runAvanti(config, tmpDir);
+      expect(exitCode).toBe(0);
+      const content = readFileSync(join(tmpDir, 'output.json'), 'utf8');
+      expect(content).toContain('{"a":1}');
+      expect(content).toContain('{"b":2}');
+    });
+  });
+
   describe('multi-source concatenation', () => {
     it('concatenates multiple text sources with newlines', () => {
       const aFile = join(tmpDir, 'a.txt');
