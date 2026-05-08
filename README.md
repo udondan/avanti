@@ -1,6 +1,6 @@
 # avanti
 
-Assemble local files from any source via a declarative YAML spec.
+A stateful package manager for arbitrary text files. Declare what you need and where to get it; avanti fetches, diffs, and writes with full version history, atomic rollbacks, and diff-before-apply safety.
 
 ## Table of Contents
 
@@ -27,6 +27,7 @@ Assemble local files from any source via a declarative YAML spec.
   - [Authentication](#authentication)
   - [Private Instances](#private-instances)
 - [Use Cases](#use-cases)
+  - [Avanti as a Package Manager](#avanti-as-a-package-manager)
   - [Composable AI Agent Instructions (CLAUDE.md / AGENTS.md)](#composable-ai-agent-instructions-claudemd--agentsmd)
   - [Shared Tooling Config (Renovate, ESLint, Prettier, TSConfig)](#shared-tooling-config-renovate-eslint-prettier-tsconfig)
   - [CI/CD: Shared Workflow Fragments](#cicd-shared-workflow-fragments)
@@ -37,7 +38,6 @@ Assemble local files from any source via a declarative YAML spec.
   - [Docker Compose from Upstream Sources](#docker-compose-from-upstream-sources)
   - [Developer Onboarding Bootstrap](#developer-onboarding-bootstrap)
   - [Self-managing Config](#self-managing-config)
-  - [Avanti as a Package Manager](#avanti-as-a-package-manager)
 - [Exit Codes](#exit-codes)
 - [Development](#development)
 
@@ -615,6 +615,95 @@ GITHUB_HOST=github.mycompany.com avanti pull
 
 ## Use Cases
 
+### Avanti as a Package Manager
+
+avanti is a package manager for arbitrary text files. Your `.avanti.yml` is the manifest — it declares what you consume, where to fetch it, and which version to pin, the same role as `package.json` or `Cargo.toml`. Source repositories are the packages. `avanti pull` is the install command.
+
+What makes it stateful: every successful pull is recorded in a local history store. You can diff any two states, revert the whole project to a prior pull, or fully undo all avanti changes — the same guarantees as a lockfile, extended to any text file from any source.
+
+**Declare dependencies** — pin versions with a variable and bump in one place to upgrade everything at once:
+
+```yaml
+variables:
+  frontend_standards: myorg/frontend-standards
+  platform: myorg/platform-templates
+  standards_ref: v2.4.1 # pinned — bump here to upgrade
+
+files:
+  - src:
+      github:
+        repo: $frontend_standards
+        file: eslint.config.js
+        ref: $standards_ref
+
+  - src:
+      github:
+        repo: $frontend_standards
+        file: .prettierrc
+        ref: $standards_ref
+
+  - src:
+      github:
+        repo: $platform
+        file: workflows/test.yml
+        ref: $standards_ref
+    target: .github/workflows/test.yml
+
+  - src:
+      github:
+        repo: $platform
+        file: workflows/deploy.yml
+        ref: $standards_ref
+    target: .github/workflows/deploy.yml
+```
+
+**Review and apply upgrades** — the same workflow as reading a lockfile diff before committing:
+
+```sh
+# Bump standards_ref: v2.4.1 → v2.5.0, then:
+avanti diff    # see every file that would change
+avanti pull    # apply after review
+avanti revert  # roll back instantly if something breaks
+```
+
+**Publish your own packages** — any repo can ship an `avanti-snippet.yml` alongside its files. Consumers YAML-merge those snippets into their own config. The snippet is a valid avanti config fragment with its own `files:` list:
+
+```yaml
+# myorg/frontend-standards:avanti-snippet.yml — published alongside eslint.config.js, .prettierrc, etc.
+files:
+  - src:
+      github:
+        repo: myorg/frontend-standards
+        file: eslint.config.js
+        ref: $latest
+
+  - src:
+      github:
+        repo: myorg/frontend-standards
+        file: .prettierrc
+        ref: $latest
+```
+
+```yaml
+# .avanti.yml — assembled from team snippets via YAML merge
+files:
+  - src:
+      - github:
+          repo: myorg/frontend-standards
+          file: avanti-snippet.yml
+          ref: $latest
+      - github:
+          repo: myorg/platform-templates
+          file: avanti-snippet.yml
+          ref: $latest
+    target: .avanti.yml
+    yaml:
+      arrays: concat # file lists from all snippets are concatenated
+      conflicts: last_wins
+```
+
+Each team controls what they publish and when they cut a release. The YAML-merged config self-updates on every pull — add a snippet source to opt into a new package, remove it to opt out. `avanti diff` shows exactly what would change before you apply any update.
+
 ### Composable AI Agent Instructions (CLAUDE.md / AGENTS.md)
 
 Assemble agent instruction files from multiple sources: a static header defined inline, team-specific rules from a shared GitLab repo, and company-wide standards from GitHub — all merged into one file. Every developer runs `avanti pull` and stays in sync without copy-paste drift across dozens of repos.
@@ -986,81 +1075,6 @@ avanti pull -c https://configs.example.com/bootstrap.yml
 The config format is `github:owner/repo:path/to/file.yml[@ref]` and `gitlab:group/project:path/to/file.yml[@ref]`. The same token auth and `gh`/`glab` CLI fallback that applies to sources also applies here, so private repos work without any extra setup.
 
 This scales to any number of machines or containers. Update the central repo once; every client picks up the change on its next pull. No config drift, no manual distribution.
-
-### Avanti as a Package Manager
-
-Think of avanti like `package.json` — your config declares what you consume and where, and each source repo is a "package" that owns its files. Adding a dependency means adding entries; updating means running `avanti pull`. Teams publish their own snippets; projects compose from them.
-
-```yaml
-# .avanti.yml — pulling from multiple upstream "packages"
-variables:
-  frontend_standards: myorg/frontend-standards
-  platform: myorg/platform-templates
-  standards_ref: $latest
-
-files:
-  # "package": frontend team standards
-  - src:
-      github:
-        repo: $frontend_standards
-        file: eslint.config.js
-        ref: $standards_ref
-    target: eslint.config.js
-
-  - src:
-      github:
-        repo: $frontend_standards
-        file: .prettierrc
-        ref: $standards_ref
-    target: .prettierrc
-
-  # "package": platform team CI templates
-  - src:
-      github:
-        repo: $platform
-        file: workflows/test.yml
-        ref: $standards_ref
-    target: .github/workflows/test.yml
-
-  - src:
-      github:
-        repo: $platform
-        file: workflows/deploy.yml
-        ref: $standards_ref
-    target: .github/workflows/deploy.yml
-```
-
-The two patterns compose naturally. Each team publishes its own avanti snippet alongside the files it owns. A central config pulls in those snippets and merges them into the canonical config that all clients self-manage:
-
-```yaml
-# myorg/devtools — avanti.yml assembled from team snippets
-files:
-  # Self-update
-  - src:
-      github:
-        repo: myorg/devtools
-        file: avanti.yml
-        ref: $latest
-    target: ~/.avanti.yml
-
-  # Snippet contributed by the frontend team
-  - src:
-      github:
-        repo: myorg/frontend-standards
-        file: avanti-snippet.yml # their entries live here
-        ref: $latest
-    target: /tmp/avanti-snippets/frontend.yml
-
-  # Snippet contributed by the platform team
-  - src:
-      github:
-        repo: myorg/platform-templates
-        file: avanti-snippet.yml
-        ref: $latest
-    target: /tmp/avanti-snippets/platform.yml
-```
-
-Each team controls what they publish and when they cut a new release. Projects opt in by referencing the snippet. `avanti diff` shows exactly what would change before you apply any update — the same safety you get with a lockfile review in npm or Cargo.
 
 ## Exit Codes
 
