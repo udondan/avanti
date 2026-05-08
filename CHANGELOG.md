@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.0](https://github.com/udondan/avanti/compare/v0.9.0...v0.10.0) (2026-05-08)
+
+
+### Features
+
+* add YAML merge with comment preservation ([#44](https://github.com/udondan/avanti/issues/44)) ([e6b9650](https://github.com/udondan/avanti/commit/e6b96504c7a78bd4952ad6f491fb39de7bdf7cc1))
+
 ## [0.9.0](https://github.com/udondan/avanti/compare/v0.8.1...v0.9.0) (2026-05-08)
 
 
