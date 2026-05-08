@@ -568,6 +568,19 @@ Variables are resolved in every string field: `target`, `ref`, `exec` commands, 
 
 For `raw:` sources, variables are resolved in the content itself. For all other source types (`http`, `local`, `github`, `gitlab`, `exec`), variables are only resolved in the fields that locate the source (URL, path, command) — not in the fetched content. Use a `replace:` rule if you need to substitute values in fetched content.
 
+**Shell safety in `exec:` and `post:`** — when a variable is substituted into an `exec:` command or a `post:` script, its value is automatically wrapped in POSIX single quotes. This means shell metacharacters (`;`, `&&`, `$(...)`, etc.) in the value are treated as literal data and are never executed. The surrounding command template itself is not quoted, so the static shell syntax you write is executed as usual.
+
+```yaml
+variables:
+  version: '1.0'
+
+files:
+  - src:
+      exec: curl https://example.com/api/$version/data # expands to: curl …/'1.0'/data
+    target: data.json
+    post: sed 's/$version/replaced/g' # expands to: sed 's/'\''1.0'\''/replaced/g'
+```
+
 **Environment variables** use the `$env:NAME` form:
 
 ```yaml

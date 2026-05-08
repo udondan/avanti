@@ -1,13 +1,13 @@
 import { spawnSync } from 'child_process';
 import { Variables } from '../types';
-import { resolveVars } from '../variables';
+import { resolveVarsShellSafe } from '../variables';
 
 export function applyPost(
   content: string,
   script: string,
   vars: Variables = {},
 ): string {
-  const resolvedScript = resolveVars(script, vars);
+  const resolvedScript = resolveVarsShellSafe(script, vars);
   const result = spawnSync('sh', ['-c', resolvedScript], {
     input: content,
     encoding: 'utf8',
