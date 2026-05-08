@@ -231,7 +231,7 @@ files:
 | `mode`    | No          | File permission mode, e.g. `"0755"`                                                                                                                                                                                                      |
 | `replace` | No          | List of `{from, to}` replacement rules. `from` may be a plain string or `/pattern/flags` regex.                                                                                                                                          |
 | `post`    | No          | Shell script. Content is piped via stdin; stdout is used as the result. Runs after `replace`.                                                                                                                                            |
-| `json`    | No          | JSON merge/format options (see below). When set, sources are parsed as JSON and the result is pretty-printed with 2-space indent.                                                                                                        |
+| `json`    | No          | JSON merge/format options (see below). When omitted, merging is auto-enabled if all sources have a `.json` or `.jsonc` extension. Use `true`/`false` to force on or off regardless of extension.                                         |
 
 ### Source Types
 
@@ -313,7 +313,30 @@ Sources are fetched in order and joined with a newline. Post-processing (`replac
 
 ### JSON Merging
 
-Add a `json` block to merge multiple JSON sources into a single valid JSON file, or to pretty-print a single JSON source with 2-space indentation.
+When all sources in a list have a `.json` or `.jsonc` extension, JSON merging is enabled automatically — no extra config needed:
+
+```yaml
+files:
+  - src:
+      - ./team.jsonc
+      - ./my.jsonc
+    target: merged.jsonc
+```
+
+To merge sources that don't have a JSON extension (e.g. `exec:`, `raw:`, or a URL without `.json`), set `json: true`:
+
+```yaml
+files:
+  - src:
+      - exec: cat defaults.json
+      - ./overrides.json
+    target: merged.json
+    json: true
+```
+
+To opt out of auto-detection and force plain concatenation, set `json: false`.
+
+**Fine-grained options** — pass an object to control merge behavior:
 
 ```yaml
 files:
@@ -329,8 +352,6 @@ files:
       objects: merge # merge (default) | replace
 ```
 
-**Options:**
-
 - `conflicts` — what to do when the same key holds a scalar (or an array/object when their strategy is `replace`):
   - `last_wins` _(default)_ — the last source's value wins
   - `first_wins` — the first source's value is kept
@@ -342,15 +363,12 @@ files:
   - `merge` _(default)_ — deep merge, applying the same rules recursively to nested keys
   - `replace` — the later source's object replaces the earlier one entirely
 
-All options are optional. `json: {}` is valid and just pretty-prints the source.
-
-**Pretty-printing a single file** — `json` works on single-source entries too:
+**Pretty-printing a single file** — `json` works on single-source entries too. Auto-detection applies here as well, so a single `.json` source is pretty-printed automatically:
 
 ```yaml
 files:
   - src: ./minified.json
     target: pretty.json
-    json: {}
 ```
 
 ### Variables

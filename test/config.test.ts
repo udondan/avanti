@@ -348,12 +348,34 @@ files:
     expect(() => loadConfig(f)).toThrow('json.objects');
   });
 
-  it('throws when json is not an object', () => {
+  it('accepts json: true', () => {
     const f = writeTmp(`
 files:
   - src: https://example.com/foo.json
     target: foo.json
     json: true
+`);
+    const config = loadConfig(f);
+    expect(config.files[0].json).toBe(true);
+  });
+
+  it('accepts json: false', () => {
+    const f = writeTmp(`
+files:
+  - src: https://example.com/foo.json
+    target: foo.json
+    json: false
+`);
+    const config = loadConfig(f);
+    expect(config.files[0].json).toBe(false);
+  });
+
+  it('throws when json is not an object, boolean, or null', () => {
+    const f = writeTmp(`
+files:
+  - src: https://example.com/foo.json
+    target: foo.json
+    json: "invalid"
 `);
     expect(() => loadConfig(f)).toThrow('"json" must be an object');
   });

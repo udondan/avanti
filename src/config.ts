@@ -106,7 +106,12 @@ export function loadConfig(configPath: string): FileFerryConfig {
     }
 
     if (e['json'] !== undefined) {
-      fileEntry.json = parseJsonMergeOptions(e['json'], i);
+      const rawJson = e['json'];
+      if (rawJson === true || rawJson === false) {
+        fileEntry.json = rawJson;
+      } else {
+        fileEntry.json = parseJsonMergeOptions(rawJson, i);
+      }
     }
 
     return fileEntry;

@@ -48,7 +48,7 @@ export interface FileEntry {
   mode?: string;
   replace?: ReplaceRule[];
   post?: string;
-  json?: JsonMergeOptions;
+  json?: JsonMergeOptions | boolean;
 }
 
 export interface FileFerryConfig {
