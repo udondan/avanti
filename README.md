@@ -34,7 +34,7 @@ Assemble local files from any source via a declarative YAML spec.
   - [Environment-Specific Config from a Single Spec](#environment-specific-config-from-a-single-spec)
   - [Secrets from Vault or S3](#secrets-from-vault-or-s3)
   - [Multi-Project Deployment](#multi-project-deployment)
-  - [Docker Compose Layering](#docker-compose-layering)
+  - [Docker Compose from Upstream Sources](#docker-compose-from-upstream-sources)
   - [Developer Onboarding Bootstrap](#developer-onboarding-bootstrap)
   - [Self-managing Config](#self-managing-config)
   - [Avanti as a Package Manager](#avanti-as-a-package-manager)
@@ -814,25 +814,44 @@ for dir in services/*/; do
 done
 ```
 
-### Docker Compose Layering
+### Docker Compose from Upstream Sources
 
-Maintain a shared `docker-compose.yml` in a central repo and let each project layer its own overrides on top. A `avanti pull` merges them into a single ready-to-run file — no manual copy-paste, no diverging base definitions.
+Many open source projects ship example `docker-compose.yml` files. Pull them directly from their repos, merge them into a single file, and use `replace` rules to substitute placeholder values — no forking, no copy-paste, no drift.
+
+This example assembles a self-hosted [n8n](https://github.com/n8n-io/n8n-hosting/blob/main/docker-caddy/docker-compose.yml) workflow automation stack: n8n and Caddy as the reverse proxy, backed by [Postgres](https://github.com/docker-library/docs/blob/master/postgres/compose.yaml).
 
 ```yaml
+variables:
+  n8n_version: 1.94.1
+  domain: n8n.example.com
+  db_password: changeme
+
 files:
   - src:
       - github:
-          repo: org/platform
-          file: docker/compose-base.yml # shared service definitions and networks
+          repo: n8n-io/n8n-hosting
+          file: docker-caddy/docker-compose.yml
           ref: main
-      - ./docker-compose.override.yml # project-specific ports, volumes, env vars
-    target: ./docker-compose.yml
+      - github:
+          repo: docker-library/docs
+          file: postgres/compose.yaml
+          ref: master
+    target: docker-compose.yml
+    replace:
+      - from: '${N8N_VERSION}'
+        to: $n8n_version # pin version at pull time
+      - from: '${SUBDOMAIN}.${DOMAIN_NAME}'
+        to: $domain # flatten two-part domain into one value
+      - from: 'POSTGRES_PASSWORD: example'
+        to: 'POSTGRES_PASSWORD: $db_password'
     yaml:
-      conflicts: last_wins # local overrides win
-      arrays: concat # environment and volumes lists are appended, not replaced
+      conflicts: last_wins
+      arrays: concat # environment lists are appended, not replaced
 ```
 
-The base file defines the canonical service images, healthchecks, and network topology. Each project's override only declares what differs — a different port, an extra volume mount, a local build context. Comments from both files survive in the merged output, so the generated `docker-compose.yml` stays readable and self-documenting.
+YAML merge combines both files' `services` blocks into a single `docker-compose.yml`. The `replace` rules fix the postgres placeholder password and bake in your domain and version before the file is written. The remaining `${...}` placeholders in the n8n compose (`DATA_FOLDER`, `GENERIC_TIMEZONE`, `RUNNERS_AUTH_TOKEN`) are resolved by Docker Compose itself at runtime from a `.env` file, so they pass through unchanged.
+
+Run `avanti pull` whenever either upstream file updates — your customizations stay in the config, not in a fork.
 
 ### Developer Onboarding Bootstrap
 
