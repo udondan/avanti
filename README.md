@@ -2,15 +2,55 @@
 
 Assemble local files from any source via a declarative YAML spec.
 
+## Table of Contents
+
+- [Features](#features)
+- [Requirements](#requirements)
+- [Install](#install)
+- [Usage](#usage)
+  - [`avanti diff`](#avanti-diff)
+  - [`avanti pull`](#avanti-pull)
+- [History](#history)
+  - [`avanti log`](#avanti-log)
+  - [`avanti diff <pullId>`](#avanti-diff-pullid)
+  - [`avanti revert [pullId]`](#avanti-revert-pullid)
+  - [`avanti reset`](#avanti-reset)
+- [Working Directory](#working-directory)
+  - [Path Constraints](#path-constraints)
+- [Configuration](#configuration)
+  - [File Entry Fields](#file-entry-fields)
+  - [Source Types](#source-types)
+  - [Directory Sources](#directory-sources)
+  - [JSON Merging](#json-merging)
+  - [Variables](#variables)
+  - [Authentication](#authentication)
+  - [Private Instances](#private-instances)
+- [Use Cases](#use-cases)
+  - [Composable AI Agent Instructions (CLAUDE.md / AGENTS.md)](#composable-ai-agent-instructions-claudemd--agentsmd)
+  - [Shared Tooling Config (Renovate, ESLint, Prettier, TSConfig)](#shared-tooling-config-renovate-eslint-prettier-tsconfig)
+  - [CI/CD: Shared Workflow Fragments](#cicd-shared-workflow-fragments)
+  - [CI/CD: Scheduled Sync PR](#cicd-scheduled-sync-pr)
+  - [Environment-Specific Config from a Single Spec](#environment-specific-config-from-a-single-spec)
+  - [Secrets from Vault or AWS SSM](#secrets-from-vault-or-aws-ssm)
+  - [Multi-Project Deployment](#multi-project-deployment)
+  - [Developer Onboarding Bootstrap](#developer-onboarding-bootstrap)
+  - [Self-managing Config](#self-managing-config)
+  - [Avanti as a Package Manager](#avanti-as-a-package-manager)
+- [Exit Codes](#exit-codes)
+- [Development](#development)
+
 ## Features
 
 - Fetch files from **HTTP/HTTPS**, **local paths**, **GitLab** (via `glab`), **GitHub** (via `gh`), **shell commands**, or **inline raw content**
 - **Multi-source entries** — combine multiple sources into a single file by providing `src` as a list
 - **Atomic writes** — all files are staged to a temp dir first; targets are only written if everything succeeds
-- **Diff preview** — see exactly what will change before applying
+- **Diff preview** — see exactly what will change before applying, or compare against any past pull
 - **Post-processing** — apply text replacements (string or regex) and/or pipe content through a shell script
 - **Directory sync** — recursively sync directories from GitLab/GitHub/local sources
+- **JSON merging** — deep-merge multiple JSON/JSONC sources with configurable conflict, array, and object strategies
 - **Variables** — define reusable values in a `variables:` block and reference them anywhere with `$name`; use `$env:NAME` for environment variables
+- **History** — every pull is recorded; inspect what changed, revert the whole project to a past state, or fully undo all avanti changes
+- **Stale file cleanup** — files dropped from a directory source are automatically deleted or restored to their pre-avanti content
 
 ## Requirements
 
