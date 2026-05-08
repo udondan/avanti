@@ -58,7 +58,7 @@ async function fetchVaultViaApi(
 ): Promise<VaultResult> {
   const headers: Record<string, string> = {
     'X-Vault-Token': token,
-    'User-Agent': 'scync',
+    'User-Agent': 'avanti',
   };
   const namespace = process.env.VAULT_NAMESPACE;
   if (namespace) headers['X-Vault-Namespace'] = namespace;

@@ -14,7 +14,7 @@ function getHost(): string {
 }
 
 function apiHeaders(): Record<string, string> {
-  const headers: Record<string, string> = { 'User-Agent': 'scync' };
+  const headers: Record<string, string> = { 'User-Agent': 'avanti' };
   const token = process.env.GITLAB_TOKEN ?? process.env.GITLAB_PRIVATE_TOKEN;
   if (token) headers['PRIVATE-TOKEN'] = token;
   return headers;
@@ -240,7 +240,7 @@ function extractArchive(
   buf: Buffer,
   dirPath: string,
 ): Map<string, string> | null {
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'scync-gl-'));
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'avanti-gl-'));
   try {
     const archivePath = path.join(tmpDir, 'archive.tar.gz');
     const extractDir = path.join(tmpDir, 'extracted');
