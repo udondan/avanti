@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach, beforeEach } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -6,6 +6,7 @@ import {
   loadConfig,
   isRemoteConfigSpec,
   normalizeConfigKey,
+  resolveConfigPath,
 } from '../src/config';
 
 function writeTmp(content: string): string {
@@ -686,5 +687,80 @@ files:
     json: "invalid"
 `);
     await expect(loadConfig(f)).rejects.toThrow('"json" must be an object');
+  });
+});
+
+describe('resolveConfigPath', () => {
+  let tmpDir: string;
+  let originalCwd: string;
+
+  beforeEach(() => {
+    originalCwd = process.cwd();
+    tmpDir = fs.realpathSync(
+      fs.mkdtempSync(path.join(os.tmpdir(), 'avanti-config-test-')),
+    );
+  });
+
+  afterEach(() => {
+    process.chdir(originalCwd);
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('returns the explicit path resolved to absolute for a local path', () => {
+    const result = resolveConfigPath('/absolute/path/config.yml');
+    expect(result).toBe('/absolute/path/config.yml');
+  });
+
+  it('resolves a relative explicit path to an absolute path', () => {
+    const result = resolveConfigPath('relative/config.yml');
+    expect(path.isAbsolute(result)).toBe(true);
+    expect(result).toMatch(/relative\/config\.yml$/);
+  });
+
+  it('returns a github: spec unchanged', () => {
+    const spec = 'github:owner/repo:config.yml@main';
+    expect(resolveConfigPath(spec)).toBe(spec);
+  });
+
+  it('returns a gitlab: spec unchanged', () => {
+    const spec = 'gitlab:group/project:config.yml@v1';
+    expect(resolveConfigPath(spec)).toBe(spec);
+  });
+
+  it('returns an http:// URL unchanged', () => {
+    const spec = 'http://example.com/config.yml';
+    expect(resolveConfigPath(spec)).toBe(spec);
+  });
+
+  it('returns an https:// URL unchanged', () => {
+    const spec = 'https://example.com/config.yml';
+    expect(resolveConfigPath(spec)).toBe(spec);
+  });
+
+  it('auto-detects .avanti.yml in cwd when present', () => {
+    fs.writeFileSync(path.join(tmpDir, '.avanti.yml'), 'files: []', 'utf8');
+    process.chdir(tmpDir);
+    const result = resolveConfigPath();
+    expect(result).toBe(path.join(tmpDir, '.avanti.yml'));
+  });
+
+  it('auto-detects config file case-insensitively (.AVANTI.YML)', () => {
+    fs.writeFileSync(path.join(tmpDir, '.AVANTI.YML'), 'files: []', 'utf8');
+    process.chdir(tmpDir);
+    const result = resolveConfigPath();
+    expect(result).toBe(path.join(tmpDir, '.AVANTI.YML'));
+  });
+
+  it('auto-detects avanti.yaml when .avanti.yml is absent', () => {
+    fs.writeFileSync(path.join(tmpDir, 'avanti.yaml'), 'files: []', 'utf8');
+    process.chdir(tmpDir);
+    const result = resolveConfigPath();
+    expect(result).toBe(path.join(tmpDir, 'avanti.yaml'));
+  });
+
+  it('returns fallback .avanti.yml path when no config file found', () => {
+    process.chdir(tmpDir);
+    const result = resolveConfigPath();
+    expect(result).toBe(path.join(tmpDir, '.avanti.yml'));
   });
 });
