@@ -60,6 +60,15 @@ describe('applyPost', () => {
       'Undefined variable: $missing',
     );
   });
+
+  it('shell-quotes variable values to prevent metachar injection', () => {
+    // Without quoting, "hello; echo injected" would run two commands.
+    // With quoting it is treated as a literal argument.
+    const result = applyPost('', "printf '%s' $val", {
+      val: 'hello; echo injected',
+    });
+    expect(result).toBe('hello; echo injected');
+  });
 });
 
 describe('applyReplace with variables', () => {
