@@ -1,3 +1,4 @@
+import { parse, stringify, assign } from 'comment-json';
 import { JsonMergeOptions } from '../types';
 
 type JsonValue =
@@ -49,13 +50,15 @@ function deepMerge(
   opts: ResolvedOptions,
   basePath: string,
 ): Record<string, JsonValue> {
-  const result: Record<string, JsonValue> = { ...a };
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const result = assign({} as any, a) as Record<string, JsonValue>;
   for (const [key, bVal] of Object.entries(b)) {
     const childPath = basePath ? `${basePath}.${key}` : key;
     if (key in result) {
       result[key] = mergeValues(childPath, result[key], bVal, opts);
     } else {
-      result[key] = bVal;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      assign(result as any, b as any, [key]);
     }
   }
   return result;
@@ -75,7 +78,7 @@ export function mergeJson(
 
   const parsed = parts.map((p, i) => {
     try {
-      return JSON.parse(p) as JsonValue;
+      return parse(p);
     } catch (e) {
       throw new Error(
         `[source ${i}]: invalid JSON: ${(e as SyntaxError).message}`,
@@ -84,17 +87,17 @@ export function mergeJson(
     }
   });
 
-  let result = parsed[0];
+  let result: JsonValue = parsed[0];
   for (let i = 1; i < parsed.length; i++) {
     result = mergeValues('', result, parsed[i], resolved);
   }
 
-  return JSON.stringify(result, null, 2);
+  return stringify(result, null, 2);
 }
 
 export function formatJson(content: string): string {
   try {
-    return JSON.stringify(JSON.parse(content) as JsonValue, null, 2);
+    return stringify(parse(content), null, 2);
   } catch (e) {
     throw new Error(`invalid JSON: ${(e as SyntaxError).message}`, {
       cause: e,

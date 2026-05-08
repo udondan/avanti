@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { parse } from 'comment-json';
 import { mergeJson, formatJson } from '../src/processors/json';
 
 describe('formatJson', () => {
@@ -114,6 +115,40 @@ describe('mergeJson — arrays', () => {
         arrays: 'replace',
       }),
     ).not.toThrow();
+  });
+});
+
+describe('formatJson — JSONC', () => {
+  it('preserves line comments', () => {
+    const input = '{\n  // server host\n  "host": "localhost"\n}';
+    expect(formatJson(input)).toBe(input);
+  });
+
+  it('preserves block comments', () => {
+    const input = '{\n  /* db config */\n  "port": 5432\n}';
+    expect(formatJson(input)).toBe(input);
+  });
+
+  it('preserves inline trailing comments', () => {
+    const input = '{\n  "debug": true // enable debug\n}';
+    expect(formatJson(input)).toBe(input);
+  });
+});
+
+describe('mergeJson — JSONC', () => {
+  it('handles sources with line comments', () => {
+    const a = '{\n  // server\n  "host": "a"\n}';
+    const b = '{"port": 8080}';
+    const result = mergeJson([a, b]);
+    expect(parse(result)).toEqual({ host: 'a', port: 8080 });
+    expect(result).toContain('// server');
+  });
+
+  it('preserves comments from both sources in correct order', () => {
+    const a = '{\n  // from a\n  "a": 1\n}';
+    const b = '{\n  // from b\n  "b": 2\n}';
+    const result = mergeJson([a, b]);
+    expect(result).toBe('{\n  // from a\n  "a": 1,\n  // from b\n  "b": 2\n}');
   });
 });
 
