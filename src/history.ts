@@ -63,6 +63,7 @@ export class HistoryManager {
   private readonly pullsLogPath: string;
   private readonly configFile: string;
   private readonly workingDir: string;
+  private pullsCache: PullLogEntry[] | null = null;
 
   constructor(configFile: string, workingDir: string) {
     this.configFile = configFile;
@@ -174,9 +175,11 @@ export class HistoryManager {
       files: fileRefs,
     };
     fs.appendFileSync(this.pullsLogPath, JSON.stringify(entry) + '\n', 'utf8');
+    this.pullsCache = null;
   }
 
   listPulls(): PullLogEntry[] {
+    if (this.pullsCache !== null) return this.pullsCache;
     try {
       if (!fs.existsSync(this.pullsLogPath)) return [];
       const lines = fs
@@ -191,7 +194,8 @@ export class HistoryManager {
           // skip corrupt lines
         }
       }
-      return entries.reverse();
+      this.pullsCache = entries.reverse();
+      return this.pullsCache;
     } catch {
       return [];
     }
