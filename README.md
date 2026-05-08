@@ -267,15 +267,15 @@ files:
 
 ### File Entry Fields
 
-| Field     | Required    | Description                                                                                                                                                                                                                              |
-| --------- | ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `src`     | Yes         | Source (see below). May be a single source or a **list** of sources to concatenate.                                                                                                                                                      |
-| `target`  | Conditional | Local path to write to. Required for `exec:` and `raw:` sources and when `src` is a list. May be omitted when filename is inferable. End with `/` when `src` is a directory — files are written inside, preserving their relative paths. |
-| `mode`    | No          | File permission mode, e.g. `"0755"`                                                                                                                                                                                                      |
-| `replace` | No          | List of `{from, to}` replacement rules. `from` may be a plain string or `/pattern/flags` regex.                                                                                                                                          |
-| `post`    | No          | Shell script. Content is piped via stdin; stdout is used as the result. Runs after `replace`.                                                                                                                                            |
-| `json`    | No          | JSON merge/format options (see below). When omitted, merging is auto-enabled if all sources have a `.json` or `.jsonc` extension. Use `true`/`false` to force on or off regardless of extension.                                         |
-| `yaml`    | No          | YAML merge/format options (see below). When omitted, merging is auto-enabled if all sources have a `.yaml` or `.yml` extension. Use `true`/`false` to force on or off regardless of extension. Comments are preserved in merged output.  |
+| Field     | Required    | Description                                                                                                                                                                                                                                                                                                                                                                                                 |
+| --------- | ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src`     | Yes         | Source (see below). May be a single source or a **list** of sources to concatenate.                                                                                                                                                                                                                                                                                                                         |
+| `target`  | Conditional | Local path to write to. Required for `exec:` and `raw:` sources and when `src` is a list. May be omitted when filename is inferable. End with `/` when `src` is a directory and you want the files written individually (directory mirror). Omit the trailing slash to merge all files from the directory into a single output file (YAML/JSON auto-detected by extension, or forced with `yaml:`/`json:`). |
+| `mode`    | No          | File permission mode, e.g. `"0755"`                                                                                                                                                                                                                                                                                                                                                                         |
+| `replace` | No          | List of `{from, to}` replacement rules. `from` may be a plain string or `/pattern/flags` regex.                                                                                                                                                                                                                                                                                                             |
+| `post`    | No          | Shell script. Content is piped via stdin; stdout is used as the result. Runs after `replace`.                                                                                                                                                                                                                                                                                                               |
+| `json`    | No          | JSON merge/format options (see below). When omitted, merging is auto-enabled if all sources have a `.json` or `.jsonc` extension. Use `true`/`false` to force on or off regardless of extension.                                                                                                                                                                                                            |
+| `yaml`    | No          | YAML merge/format options (see below). When omitted, merging is auto-enabled if all sources have a `.yaml` or `.yml` extension. Use `true`/`false` to force on or off regardless of extension. Comments are preserved in merged output.                                                                                                                                                                     |
 
 ### Source Types
 
@@ -335,7 +335,7 @@ src:
 
 Any source type that references a path (local, GitLab, GitHub, Bitbucket, git, S3) can point to a directory instead of a single file. End the path with `/` to declare it a directory explicitly; without a trailing slash the tool probes the remote to decide.
 
-When `src` is a directory, the matched files are written individually under `target` (which must also end with `/`), preserving the subdirectory structure relative to the source root:
+**Directory → directory (mirror):** end `target` with `/` and each file is written individually, preserving subdirectory structure relative to the source root:
 
 ```yaml
 # All files under skills/ in the GitLab repo are written into local skills.new/
@@ -379,6 +379,24 @@ When `src` is a directory, the matched files are written individually under `tar
 # Local directory → local directory
 - src: ~/shared/hooks/
   target: .githooks/
+```
+
+**Directory → single file (merge):** omit the trailing `/` from `target` and all files in the directory are merged into one. Files are sorted alphabetically — later names win on key conflicts. YAML/JSON merge is auto-detected from the contained file extensions, or forced with `yaml:`/`json:`:
+
+```yaml
+# One folder per service, each a separate .yml file → single docker-compose.yml
+- src: ./services/
+  target: docker-compose.yml
+
+# Same with explicit yaml merge options (e.g. to concat arrays)
+- src: ./services/
+  target: docker-compose.yml
+  yaml:
+    arrays: concat
+
+# JSON: one file per environment → merged config
+- src: ./config/
+  target: config.json
 ```
 
 Directory sources cannot be mixed into a multi-source list (`src` as a list), because the list mode always produces a single file.

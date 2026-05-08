@@ -102,6 +102,90 @@ describe('Integration', () => {
         'file b',
       );
     });
+
+    it('auto-merges YAML files from a directory into a single target', () => {
+      const sourceDir = join(tmpDir, 'services');
+      mkdirSync(sourceDir);
+      writeFileSync(
+        join(sourceDir, 'db.yml'),
+        'services:\n  db:\n    image: postgres\n',
+      );
+      writeFileSync(
+        join(sourceDir, 'app.yml'),
+        'services:\n  app:\n    image: nginx\n',
+      );
+
+      const config = writeConfig(
+        tmpDir,
+        `files:
+  - src: ${sourceDir}
+    target: ./docker-compose.yml
+`,
+      );
+
+      const { exitCode } = runAvanti(config, tmpDir);
+      expect(exitCode).toBe(0);
+      const content = readFileSync(join(tmpDir, 'docker-compose.yml'), 'utf8');
+      const { parseDocument } = require('yaml');
+      const parsed = parseDocument(content).toJSON();
+      expect(parsed.services).toHaveProperty('db');
+      expect(parsed.services).toHaveProperty('app');
+      expect(parsed.services.db.image).toBe('postgres');
+      expect(parsed.services.app.image).toBe('nginx');
+    });
+
+    it('merges files alphabetically so later names win on conflict', () => {
+      const sourceDir = join(tmpDir, 'layers');
+      mkdirSync(sourceDir);
+      writeFileSync(join(sourceDir, 'a-base.yml'), 'env: dev\nversion: 1\n');
+      writeFileSync(join(sourceDir, 'z-override.yml'), 'env: prod\n');
+
+      const config = writeConfig(
+        tmpDir,
+        `files:
+  - src: ${sourceDir}
+    target: ./config.yml
+`,
+      );
+
+      const { exitCode } = runAvanti(config, tmpDir);
+      expect(exitCode).toBe(0);
+      const content = readFileSync(join(tmpDir, 'config.yml'), 'utf8');
+      const { parseDocument } = require('yaml');
+      const parsed = parseDocument(content).toJSON();
+      expect(parsed.env).toBe('prod');
+      expect(parsed.version).toBe(1);
+    });
+
+    it('auto-merges JSON files from a directory into a single target', () => {
+      const sourceDir = join(tmpDir, 'configs');
+      mkdirSync(sourceDir);
+      writeFileSync(
+        join(sourceDir, 'base.json'),
+        JSON.stringify({ a: 1, b: 'original' }),
+      );
+      writeFileSync(
+        join(sourceDir, 'overrides.json'),
+        JSON.stringify({ b: 'overridden', c: 3 }),
+      );
+
+      const config = writeConfig(
+        tmpDir,
+        `files:
+  - src: ${sourceDir}
+    target: ./merged.json
+`,
+      );
+
+      const { exitCode } = runAvanti(config, tmpDir);
+      expect(exitCode).toBe(0);
+      const merged = JSON.parse(
+        readFileSync(join(tmpDir, 'merged.json'), 'utf8'),
+      );
+      expect(merged.a).toBe(1);
+      expect(merged.b).toBe('overridden');
+      expect(merged.c).toBe(3);
+    });
   });
 
   describe('HTTP source', () => {
