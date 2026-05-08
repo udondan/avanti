@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.1](https://github.com/udondan/avanti/compare/v0.8.0...v0.8.1) (2026-05-08)
+
+
+### Bug Fixes
+
+* strip [@ref](https://github.com/ref) from remote config spec used as history key ([#40](https://github.com/udondan/avanti/issues/40)) ([412dffb](https://github.com/udondan/avanti/commit/412dffb099171013532c80613b47bd76d820cf78))
+
 ## [0.8.0](https://github.com/udondan/avanti/compare/v0.7.0...v0.8.0) (2026-05-08)
 
 
