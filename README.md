@@ -31,7 +31,7 @@ Assemble local files from any source via a declarative YAML spec.
   - [CI/CD: Shared Workflow Fragments](#cicd-shared-workflow-fragments)
   - [CI/CD: Scheduled Sync PR](#cicd-scheduled-sync-pr)
   - [Environment-Specific Config from a Single Spec](#environment-specific-config-from-a-single-spec)
-  - [Secrets from Vault or AWS SSM](#secrets-from-vault-or-aws-ssm)
+  - [Secrets from Vault or S3](#secrets-from-vault-or-s3)
   - [Multi-Project Deployment](#multi-project-deployment)
   - [Developer Onboarding Bootstrap](#developer-onboarding-bootstrap)
   - [Self-managing Config](#self-managing-config)
@@ -350,6 +350,28 @@ When `src` is a directory, the matched files are written individually under `tar
       ref: main
   target: .github/workflows/
 
+# Bitbucket directory → local directory
+- src:
+    bitbucket:
+      workspace: my-workspace
+      repo: shared-configs
+      file: eslint/
+      ref: main
+  target: eslint/
+
+# git remote directory → local directory (any host)
+- src:
+    git:
+      repo: https://github.com/org/repo.git
+      file: .github/workflows/
+      ref: main
+  target: .github/workflows/
+
+# S3 prefix → local directory (trailing / triggers sync)
+- src:
+    s3: s3://my-bucket/configs/
+  target: configs/
+
 # Local directory → local directory
 - src: ~/shared/hooks/
   target: .githooks/
@@ -656,21 +678,42 @@ files:
 
 CI sets `DEPLOY_VERSION` and `ENVIRONMENT`; the config pins every file to exactly the version being deployed.
 
-### Secrets from Vault or AWS SSM
+### Secrets from Vault or S3
 
-Use `exec:` to pull secrets at runtime and write them to a local file. Config variables handle structure; env vars keep credentials out of git.
+Pull secrets at runtime and write them to local files with tight permissions. The native `vault:` and `s3:` sources handle auth automatically via the CLI or env vars — no shell scripting needed.
 
 ```yaml
-variables:
-  org: acme
-  region: us-east-1
+files:
+  # Single field from a Vault KV secret
+  - src:
+      vault:
+        path: secret/myapp/db
+        field: password
+    target: config/db_password.txt
+    mode: '0600'
 
+  # Full Vault secret as JSON
+  - src:
+      vault:
+        path: secret/myapp/config
+    target: config/secrets.json
+    mode: '0600'
+
+  # Config file stored in S3
+  - src:
+      s3: s3://my-bucket/configs/app.json
+    target: config/app.json
+    mode: '0600'
+```
+
+For AWS SSM or other secret stores without a dedicated source type, `exec:` still works:
+
+```yaml
 files:
   - src:
       exec: >
         aws ssm get-parameter
-        --name /$org/$region/db-config
-        --profile $env:AWS_PROFILE
+        --name /myapp/db-config
         --with-decryption
         --query Parameter.Value --output text
     target: config/db.json
