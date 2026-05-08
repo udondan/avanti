@@ -8,7 +8,7 @@ export interface BitbucketResult {
 const API_BASE = 'https://api.bitbucket.org/2.0';
 
 function apiHeaders(): Record<string, string> {
-  const headers: Record<string, string> = { 'User-Agent': 'scync' };
+  const headers: Record<string, string> = { 'User-Agent': 'avanti' };
   const token = process.env.BITBUCKET_TOKEN;
   if (token) {
     headers.Authorization = `Bearer ${token}`;

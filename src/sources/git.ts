@@ -41,7 +41,7 @@ function collectFiles(
 }
 
 export function fetchGit(repo: string, file: string, ref?: string): GitResult {
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'scync-git-'));
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'avanti-git-'));
   try {
     const repoDir = path.join(tmpDir, 'repo');
 
