@@ -26,33 +26,67 @@ bunx vitest run test/config.test.ts
 
 ## Architecture
 
-**avanti** is a CLI tool that syncs local files from declarative YAML specs. Two commands: `diff` (preview changes) and `pull` (apply with confirmation prompt).
+**avanti** is a CLI tool that assembles local files from declarative YAML specs.
+
+### CLI commands (`src/commands/`)
+
+| Command  | Description                                                         |
+| -------- | ------------------------------------------------------------------- |
+| `diff`   | Show diff between remote sources and local files (exit 1 = changes) |
+| `pull`   | Fetch sources, show diff, prompt to apply; `-y` skips prompt        |
+| `log`    | Show pull history; `log <file>` shows version history for one file  |
+| `revert` | Restore files to a past pull state; no arg = undo last pull         |
+| `reset`  | Restore all tracked files to their pre-avanti state                 |
 
 ### Data flow
 
-1. `cli.ts` — Commander.js entry point, routes to commands
+1. `cli.ts` — Commander.js entry point; global flags: `--config`, `--working-dir`
 2. `config.ts` — Resolves and parses the config file; auto-detects `.avanti.yml`, `.avanti.yaml`, `avanti.yml`, `avanti.yaml` (case-insensitive) when no explicit `--config` path is given
-3. `sources/index.ts` — Orchestrates fetching across all source types
-4. `processors/` — Transforms fetched content (replacements, shell pipes)
-5. `diff.ts` — Computes and renders git-diff-style output
-6. `writer.ts` — Stages writes to a temp dir, then atomically commits
+3. `variables.ts` — Validates and resolves `$varname` (config variables) and `$env:NAME` (env vars) in strings; `$latest` is a reserved sentinel for newest tag
+4. `sources/index.ts` — Orchestrates fetching across all source types
+5. `processors/` — Transforms fetched content (replacements, shell pipes, JSON/YAML merge)
+6. `diff.ts` — Computes and renders git-diff-style output
+7. `writer.ts` — Stages writes to a temp dir, then atomically commits
+8. `history.ts` — Persists versioned file snapshots at `~/.config/avanti/` (overridable via `$AVANTI_HISTORY_DIR`)
 
 ### Source types (`src/sources/`)
 
-| File        | Source type                 | Mechanism                                     |
-| ----------- | --------------------------- | --------------------------------------------- |
-| `http.ts`   | HTTP/HTTPS URLs             | Node.js `https` module with redirect handling |
-| `local.ts`  | Local paths (supports `~/`) | `fs` with recursive directory traversal       |
-| `exec.ts`   | Shell commands              | `child_process.execSync`                      |
-| `gitlab.ts` | GitLab files/dirs           | Shells out to `glab` CLI                      |
-| `github.ts` | GitHub files/dirs           | Shells out to `gh` CLI                        |
+- **`http.ts`** (plain URL) — `fetch` with retry/rate-limit backoff
+- **`local.ts`** (plain path) — `fs` with recursive directory traversal; `~/` supported
+- **`exec.ts`** (`exec:`) — `child_process.execSync`
+- **`gitlab.ts`** (`gitlab:`) — shells out to `glab` CLI
+- **`github.ts`** (`github:`) — shells out to `gh` CLI
+- **`bitbucket.ts`** (`bitbucket:`) — Bitbucket REST API; auth via `BITBUCKET_TOKEN` or `BITBUCKET_USERNAME`+`BITBUCKET_APP_PASSWORD`
+- **`git.ts`** (`git:`) — `git clone --depth 1` into a temp dir
+- **`s3.ts`** (`s3:`) — `aws s3 cp` / `aws s3 sync` CLI
+- **`vault.ts`** (`vault:`) — `vault` CLI or `VAULT_ADDR`+`VAULT_TOKEN` HTTP API
 
-A `src` value can be a string (auto-detected as HTTP or local path) or an object with a `type` field (`exec`, `gitlab`, `github`). Multi-source entries use a list of `src` values whose outputs are concatenated.
+A `src` value is a plain string (auto-detected as HTTP or local path) or an object with a source-type key. Multi-source entries use a list of `src` values whose outputs are concatenated.
+
+`fetch.ts` provides `fetchWithRetry` used by HTTP-based sources: retries on 429/5xx, honours `Retry-After` and `X-RateLimit-Reset` headers.
 
 ### Processors (`src/processors/`)
 
-- `replace.ts` — String or regex substitutions on fetched content
+- `replace.ts` — String or regex substitutions; variables resolved in `from`/`to`
 - `post.ts` — Pipes content through a shell script via stdin/stdout
+- `json.ts` — Merges multiple JSON sources; configurable conflict/array/object strategies
+- `yaml.ts` — Merges multiple YAML sources with comment preservation
+
+### Self-config re-evaluation
+
+When `pull` detects that the config file itself is one of the write targets and its content changed, it re-runs the entire fetch loop with the new config before writing anything. This ensures the final state reflects what the updated config declares.
+
+### History storage layout
+
+```text
+~/.config/avanti/projects/<sha256(configFile|workingDir)>/
+  meta.json          # configFile + workingDir paths
+  pulls.jsonl        # one JSON line per pull session
+  files/<sha256(absolutePath)>/
+    meta.json        # firstSeenAt, existedBeforeAvanti, currentVersion
+    v0               # original content (if file existed before avanti)
+    v1, v2, ...      # successive pulled versions
+```
 
 ### Exit codes
 
