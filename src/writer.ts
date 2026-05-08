@@ -1,5 +1,4 @@
 import * as fs from 'fs';
-import * as os from 'os';
 import * as path from 'path';
 
 export interface WriteTarget {
@@ -12,32 +11,38 @@ export function atomicWrite(
   targets: WriteTarget[],
   deletions: string[] = [],
 ): void {
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'avanti-'));
+  // Stage each file as a sibling temp file on the same filesystem as the
+  // destination so that renameSync (rename(2)) is atomic on POSIX.
+  const staged: Array<{ tmp: string; dest: string; mode?: string }> = [];
   try {
-    // Stage all files to temp dir first
-    const staged: Array<{ tmp: string; dest: string; mode?: string }> = [];
     for (const t of targets) {
+      const dir = path.dirname(t.targetPath);
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
       const tmpFile = path.join(
-        tmpDir,
-        path.basename(t.targetPath) + '-' + staged.length,
+        dir,
+        '.' + path.basename(t.targetPath) + '.avanti-tmp',
       );
       fs.writeFileSync(tmpFile, t.content, 'utf8');
       staged.push({ tmp: tmpFile, dest: t.targetPath, mode: t.mode });
     }
 
-    // All staging succeeded — now write to real targets
+    // All staging succeeded — atomically rename each temp file into place
     for (const s of staged) {
-      const dir = path.dirname(s.dest);
-      if (!fs.existsSync(dir)) {
-        fs.mkdirSync(dir, { recursive: true });
-      }
-      fs.copyFileSync(s.tmp, s.dest);
+      fs.renameSync(s.tmp, s.dest);
       if (s.mode) {
         fs.chmodSync(s.dest, parseInt(s.mode, 8));
       }
     }
   } finally {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    for (const s of staged) {
+      try {
+        fs.rmSync(s.tmp, { force: true });
+      } catch {
+        // already renamed into place or never created
+      }
+    }
   }
 
   // Deletions happen after writes succeed; each failure is non-fatal
