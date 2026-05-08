@@ -99,7 +99,7 @@ export interface FileEntry {
   yaml?: YamlMergeOptions | boolean;
 }
 
-export interface FileFerryConfig {
+export interface AvantiConfig {
   variables?: Variables;
   files: FileEntry[];
 }

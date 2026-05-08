@@ -9,7 +9,7 @@ import {
 } from '../src/config';
 
 function writeTmp(content: string): string {
-  const f = path.join(os.tmpdir(), `fileferry-test-${Date.now()}.yml`);
+  const f = path.join(os.tmpdir(), `avanti-test-${Date.now()}.yml`);
   fs.writeFileSync(f, content, 'utf8');
   return f;
 }

@@ -1,6 +1,12 @@
 import { Command } from 'commander';
 import * as path from 'path';
-import { loadConfig, normalizeConfigKey, resolveConfigPath } from '../config';
+import {
+  isRemoteConfigSpec,
+  loadConfig,
+  normalizeConfigKey,
+  parseConfigContent,
+  resolveConfigPath,
+} from '../config';
 import { fetchSource } from '../sources';
 import { applyReplace } from '../processors/replace';
 import { applyPost } from '../processors/post';
@@ -12,8 +18,47 @@ import {
 } from '../diff';
 import { atomicWrite, WriteTarget } from '../writer';
 import { FileDiff } from '../diff';
+import { AvantiConfig } from '../types';
 import { HistoryManager, PullLogFileRef } from '../history';
 import { confirm } from '../prompt';
+
+interface FetchLoopResult {
+  writeTargets: WriteTarget[];
+  allDiffs: FileDiff[];
+  hasError: boolean;
+}
+
+async function runFetchLoop(
+  config: AvantiConfig,
+  workingDir: string,
+): Promise<FetchLoopResult> {
+  const vars = config.variables ?? {};
+  const writeTargets: WriteTarget[] = [];
+  const allDiffs: FileDiff[] = [];
+  let hasError = false;
+
+  for (const entry of config.files) {
+    try {
+      const result = await fetchSource(entry, workingDir, vars);
+      for (const [relPath, rawContent] of result.files) {
+        let content = rawContent;
+        if (entry.replace?.length)
+          content = applyReplace(content, entry.replace, vars);
+        if (entry.post) content = applyPost(content, entry.post, vars);
+        const targetPath = resolveTargetPath(entry, relPath, workingDir, vars);
+        allDiffs.push(computeDiff(targetPath, content));
+        writeTargets.push({ targetPath, content, mode: entry.mode });
+      }
+    } catch (err: unknown) {
+      console.error(
+        `Error processing ${JSON.stringify(entry.src)}: ${(err as Error).message}`,
+      );
+      hasError = true;
+    }
+  }
+
+  return { writeTargets, allDiffs, hasError };
+}
 
 export function pullCommand(): Command {
   return new Command('pull')
@@ -43,40 +88,47 @@ export function pullCommand(): Command {
       const historyAvailable = history.ensureStorageDir();
       const pullId = historyAvailable ? history.openPullSession() : null;
 
-      const allDiffs: FileDiff[] = [];
-      const writeTargets: WriteTarget[] = [];
-      let hasError = false;
+      const firstPass = await runFetchLoop(config, workingDir);
+      let { writeTargets, allDiffs } = firstPass;
 
-      const vars = config.variables ?? {};
-
-      for (const entry of config.files) {
-        try {
-          const result = await fetchSource(entry, workingDir, vars);
-          for (const [relPath, rawContent] of result.files) {
-            let content = rawContent;
-            if (entry.replace?.length)
-              content = applyReplace(content, entry.replace, vars);
-            if (entry.post) content = applyPost(content, entry.post, vars);
-            const targetPath = resolveTargetPath(
-              entry,
-              relPath,
-              workingDir,
-              vars,
-            );
-            allDiffs.push(computeDiff(targetPath, content));
-            writeTargets.push({ targetPath, content, mode: entry.mode });
-          }
-        } catch (err: unknown) {
-          console.error(
-            `Error processing ${JSON.stringify(entry.src)}: ${(err as Error).message}`,
-          );
-          hasError = true;
-        }
-      }
-
-      if (hasError) {
+      if (firstPass.hasError) {
         console.error('Aborting due to errors.');
         process.exit(2);
+      }
+
+      // Detect self-config update: only applies to local config files
+      if (!isRemoteConfigSpec(configPath)) {
+        const configIdx = writeTargets.findIndex(
+          (t) => t.targetPath === configPath,
+        );
+        if (configIdx !== -1 && allDiffs[configIdx].hasChanges) {
+          const newConfigContent = writeTargets[configIdx].content;
+          try {
+            const newConfig = parseConfigContent(newConfigContent);
+            console.log('Config updated; re-evaluating with new config...');
+            const second = await runFetchLoop(newConfig, workingDir);
+            if (second.hasError) {
+              console.error('Aborting due to errors in re-evaluated config.');
+              process.exit(2);
+            }
+            // Ensure the config file write is present in the final targets.
+            // The new config may or may not reference itself; either way we
+            // must write the updated config that was fetched in the first pass.
+            const configInSecond = second.writeTargets.findIndex(
+              (t) => t.targetPath === configPath,
+            );
+            if (configInSecond === -1) {
+              second.writeTargets.push(writeTargets[configIdx]);
+              second.allDiffs.push(allDiffs[configIdx]);
+            }
+            writeTargets = second.writeTargets;
+            allDiffs = second.allDiffs;
+          } catch (err: unknown) {
+            console.warn(
+              `Warning: updated config is invalid, skipping re-evaluation: ${(err as Error).message}`,
+            );
+          }
+        }
       }
 
       // Detect stale files: present in last pull but no longer in current source fetch

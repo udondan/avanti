@@ -2,7 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as yaml from 'js-yaml';
 import {
-  FileFerryConfig,
+  AvantiConfig,
   FileEntry,
   FileSrc,
   JsonArrayStrategy,
@@ -149,10 +149,9 @@ async function fetchConfigContent(spec: string): Promise<string> {
   return fs.readFileSync(spec, 'utf8');
 }
 
-export async function loadConfig(configPath: string): Promise<FileFerryConfig> {
+export function parseConfigContent(content: string): AvantiConfig {
   let raw: unknown;
   try {
-    const content = await fetchConfigContent(configPath);
     raw = yaml.load(content);
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -236,6 +235,16 @@ export async function loadConfig(configPath: string): Promise<FileFerryConfig> {
   });
 
   return { variables, files };
+}
+
+export async function loadConfig(configPath: string): Promise<AvantiConfig> {
+  try {
+    const content = await fetchConfigContent(configPath);
+    return parseConfigContent(content);
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    throw new Error(`Failed to parse config file: ${msg}`, { cause: err });
+  }
 }
 
 function parseVariables(raw: unknown): Variables {
