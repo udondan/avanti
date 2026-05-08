@@ -2,7 +2,22 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { fetchLocal } from '../src/sources/local';
 import { fetchSource } from '../src/sources';
+
+describe('fetchLocal — ~/  expansion', () => {
+  it('throws when HOME is unset and src starts with ~/', () => {
+    const orig = process.env['HOME'];
+    delete process.env['HOME'];
+    try {
+      expect(() => fetchLocal('~/foo/bar', '/tmp')).toThrow(
+        /HOME environment variable is not set/,
+      );
+    } finally {
+      if (orig !== undefined) process.env['HOME'] = orig;
+    }
+  });
+});
 
 describe('fetchSource — local directory → single file target', () => {
   let tmpDir: string;
