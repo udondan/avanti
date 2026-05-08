@@ -44,44 +44,59 @@ function ghRun(args: string[]): {
   };
 }
 
-async function detectPathType(
+type PathInfo = { kind: 'file'; content: string } | { kind: 'directory' };
+
+function decodeBase64Content(b64: string): string {
+  return Buffer.from(b64.replace(/\n/g, ''), 'base64').toString('utf8');
+}
+
+async function fetchPathInfo(
   repo: string,
   filePath: string,
   ref: string,
-): Promise<'file' | 'directory'> {
+): Promise<PathInfo> {
   const res = await fetchWithRetry(
     `${getApiBase()}/repos/${repo}/contents/${filePath}?ref=${encodeURIComponent(ref)}`,
     { headers: apiHeaders() },
   );
   if (res.ok) {
     const data = await res.json();
-    return Array.isArray(data) ? 'directory' : 'file';
+    if (Array.isArray(data)) return { kind: 'directory' };
+    return {
+      kind: 'file',
+      content: decodeBase64Content((data as { content: string }).content),
+    };
   }
   if (shouldFallback(res.status) && isGhAvailable()) {
-    return detectPathTypeViaCli(repo, filePath, ref);
+    return fetchPathInfoViaCli(repo, filePath, ref);
   }
   throw new Error(
-    `Failed to stat ${filePath} in ${repo}@${ref}: HTTP ${res.status}`,
+    `Failed to fetch ${filePath} from ${repo}@${ref}: HTTP ${res.status}`,
   );
 }
 
-function detectPathTypeViaCli(
+function fetchPathInfoViaCli(
   repo: string,
   filePath: string,
   ref: string,
-): 'file' | 'directory' {
+): PathInfo {
   const res = ghRun([
     'api',
     `repos/${repo}/contents/${filePath}?ref=${encodeURIComponent(ref)}`,
     '--jq',
-    'if type == "array" then "directory" else "file" end',
+    'if type == "array" then "directory" else .content end',
   ]);
   if (res.status !== 0) {
     throw new Error(
-      `Failed to stat ${filePath} in ${repo}@${ref}: ${res.stderr}`,
+      `Failed to fetch ${filePath} from ${repo}@${ref}: ${res.stderr}`,
     );
   }
-  return res.stdout.trim() as 'file' | 'directory';
+  const output = res.stdout.trim();
+  if (output === 'directory') return { kind: 'directory' };
+  return {
+    kind: 'file',
+    content: decodeBase64Content(output.replace(/\\n/g, '')),
+  };
 }
 
 async function fetchFile(
@@ -89,38 +104,11 @@ async function fetchFile(
   filePath: string,
   ref: string,
 ): Promise<string> {
-  const res = await fetchWithRetry(
-    `${getApiBase()}/repos/${repo}/contents/${filePath}?ref=${encodeURIComponent(ref)}`,
-    { headers: apiHeaders() },
-  );
-  if (!res.ok) {
-    if (shouldFallback(res.status) && isGhAvailable()) {
-      return fetchFileViaCli(repo, filePath, ref);
-    }
-    throw new Error(
-      `Failed to fetch ${filePath} from ${repo}@${ref}: HTTP ${res.status}`,
-    );
+  const info = await fetchPathInfo(repo, filePath, ref);
+  if (info.kind !== 'file') {
+    throw new Error(`Expected a file but got a directory: ${filePath}`);
   }
-  const data = (await res.json()) as { content: string };
-  return Buffer.from(data.content.replace(/\n/g, ''), 'base64').toString(
-    'utf8',
-  );
-}
-
-function fetchFileViaCli(repo: string, filePath: string, ref: string): string {
-  const res = ghRun([
-    'api',
-    `repos/${repo}/contents/${filePath}?ref=${encodeURIComponent(ref)}`,
-    '--jq',
-    '.content',
-  ]);
-  if (res.status !== 0) {
-    throw new Error(
-      `Failed to fetch ${filePath} from ${repo}@${ref}: ${res.stderr}`,
-    );
-  }
-  const b64 = res.stdout.trim().replace(/\\n/g, '').replace(/\n/g, '');
-  return Buffer.from(b64, 'base64').toString('utf8');
+  return info.content;
 }
 
 async function listTree(
@@ -238,13 +226,14 @@ export async function fetchGitHub(
 ): Promise<GitHubResult> {
   const resolvedRef = await resolveRef(repo, ref);
   const normalizedPath = file.replace(/\/$/, '');
-  const isDirectory =
-    file.endsWith('/') ||
-    (await detectPathType(repo, normalizedPath, resolvedRef)) === 'directory';
 
-  if (!isDirectory) {
-    const content = await fetchFile(repo, normalizedPath, resolvedRef);
-    return { files: new Map([[path.basename(normalizedPath), content]]) };
+  if (!file.endsWith('/')) {
+    const info = await fetchPathInfo(repo, normalizedPath, resolvedRef);
+    if (info.kind === 'file') {
+      return {
+        files: new Map([[path.basename(normalizedPath), info.content]]),
+      };
+    }
   }
 
   const paths = await listTree(repo, normalizedPath, resolvedRef);
