@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.12.1](https://github.com/udondan/avanti/compare/v0.12.0...v0.12.1) (2026-05-08)
+
+
+### Bug Fixes
+
+* apply normalizeConfigKey in log, revert, and reset commands ([#76](https://github.com/udondan/avanti/issues/76)) ([c1cf8cf](https://github.com/udondan/avanti/commit/c1cf8cf3944fc817c4a3f7838e2a7d1b461e973f)), closes [#58](https://github.com/udondan/avanti/issues/58)
+* **github:** error on truncated Trees API response ([#78](https://github.com/udondan/avanti/issues/78)) ([05ce50a](https://github.com/udondan/avanti/commit/05ce50abe32f3f9996c3ec674a48ec4f82a7ad41)), closes [#61](https://github.com/udondan/avanti/issues/61)
+* **history:** getFilesAtPull always overwrites with most recent version ([#77](https://github.com/udondan/avanti/issues/77)) ([0c2ff40](https://github.com/udondan/avanti/commit/0c2ff40af9394e8d9192ff8ce301d95ec94a8bf4)), closes [#57](https://github.com/udondan/avanti/issues/57)
+* **history:** write version file before meta.json in stageFileVersion ([#81](https://github.com/udondan/avanti/issues/81)) ([4e5266c](https://github.com/udondan/avanti/commit/4e5266cf50380bc86bf457b4b61f8b9cd98de540)), closes [#63](https://github.com/udondan/avanti/issues/63)
+* **local:** throw on unset HOME instead of silently using relative path ([#83](https://github.com/udondan/avanti/issues/83)) ([ae3b69b](https://github.com/udondan/avanti/commit/ae3b69be7bc28ba0d58b5690cc489a8a26d8e41d)), closes [#69](https://github.com/udondan/avanti/issues/69)
+* **log:** display timestamps in local time with explicit timezone offset ([#84](https://github.com/udondan/avanti/issues/84)) ([c0a7e22](https://github.com/udondan/avanti/commit/c0a7e22ce90621041f2b03108797e27a7d8bfb10))
+* prevent jq filter injection in github source directory listing ([#54](https://github.com/udondan/avanti/issues/54)) ([3e88dab](https://github.com/udondan/avanti/commit/3e88dab228c94679ac0df223cf1154f32ffb225a))
+* replace remaining scync references with avanti ([#56](https://github.com/udondan/avanti/issues/56)) ([7fb6799](https://github.com/udondan/avanti/commit/7fb6799b75e517bb3dc6737285fd2a3101e6807b))
+* **security:** shell-quote variable values in exec/post commands ([#85](https://github.com/udondan/avanti/issues/85)) ([22b8d73](https://github.com/udondan/avanti/commit/22b8d737c2307c435ff35371fd04388456440fe9)), closes [#65](https://github.com/udondan/avanti/issues/65)
+* **sources:** omitting ref now resolves to default branch for GitLab and Bitbucket ([#88](https://github.com/udondan/avanti/issues/88)) ([242338b](https://github.com/udondan/avanti/commit/242338b579c246b48350a61eaa75aca4719e0090)), closes [#64](https://github.com/udondan/avanti/issues/64)
+* **test:** resolve Bun/Vitest API gaps in fetch and vault tests ([#87](https://github.com/udondan/avanti/issues/87)) ([dc0bcf7](https://github.com/udondan/avanti/commit/dc0bcf77538438c97ba8f7495636171b48c669ca))
+* **writer:** use rename-based atomic write instead of copyFileSync ([#79](https://github.com/udondan/avanti/issues/79)) ([639c7f1](https://github.com/udondan/avanti/commit/639c7f19d994d8c00a6b3a3064df17f351b0ac94)), closes [#62](https://github.com/udondan/avanti/issues/62)
+
+
+### Performance Improvements
+
+* cache parsed pulls.jsonl within HistoryManager instance ([#74](https://github.com/udondan/avanti/issues/74)) ([3ec9818](https://github.com/udondan/avanti/commit/3ec981822d10dad4651533cb9c9c2c49301051b8)), closes [#67](https://github.com/udondan/avanti/issues/67)
+* eliminate duplicate GitHub API call per file fetch ([#75](https://github.com/udondan/avanti/issues/75)) ([1f5cbf7](https://github.com/udondan/avanti/commit/1f5cbf7dd284f3353a121e643f81c720267d8468))
+
 ## [0.12.0](https://github.com/udondan/avanti/compare/v0.11.0...v0.12.0) (2026-05-08)
 
 
