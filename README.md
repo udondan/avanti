@@ -42,7 +42,7 @@ Options:
 Commands:
   diff [pullId]               Show diff between remote sources and local files, or vs a past pull
   pull [--yes]                Pull remote sources and write to local files
-  log [--file <path>]         Show pull history for the current project
+  log [file]                  Show pull history for the current project
   revert [pullId] [--yes]     Atomically revert all project files to a past pull state
   reset [--yes]               Restore all tracked files to their pre-avanti state
 ```
@@ -82,10 +82,10 @@ pull 7f8e9a0b  2026-05-07 09:15:44  .avanti.yml
   /project/config.yml         → v2  (modified)
 ```
 
-Show version history for a specific file with `--file`:
+Show version history for a specific file by passing it as an argument:
 
 ```sh
-avanti log --file config.yml
+avanti log config.yml
 ```
 
 ```text

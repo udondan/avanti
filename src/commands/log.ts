@@ -6,9 +6,8 @@ import { HistoryManager } from '../history';
 export function logCommand(): Command {
   return new Command('log')
     .description('Show pull history for the current project')
-    .option('--file <path>', 'show version history for a specific file')
-    .action((_options: unknown, cmd: Command) => {
-      const opts = _options as { file?: string };
+    .argument('[file]', 'show version history for a specific file')
+    .action((file: string | undefined, _options: unknown, cmd: Command) => {
       const configPath = resolveConfigPath(
         cmd.parent?.opts().config as string | undefined,
       );
@@ -19,8 +18,8 @@ export function logCommand(): Command {
 
       const history = new HistoryManager(configPath, workingDir);
 
-      if (opts.file !== undefined) {
-        showFileHistory(history, opts.file, workingDir);
+      if (file !== undefined) {
+        showFileHistory(history, file, workingDir);
       } else {
         showPullHistory(history);
       }
