@@ -13,6 +13,9 @@ import {
   Variables,
 } from './types';
 import { validateVariables } from './variables';
+import { fetchHttp } from './sources/http';
+import { fetchGitHub } from './sources/github';
+import { fetchGitLab } from './sources/gitlab';
 
 const CONFIG_CANDIDATES = [
   '.avanti.yml',
@@ -21,8 +24,20 @@ const CONFIG_CANDIDATES = [
   'avanti.yaml',
 ];
 
+export function isRemoteConfigSpec(s: string): boolean {
+  return (
+    s.startsWith('http://') ||
+    s.startsWith('https://') ||
+    s.startsWith('github:') ||
+    s.startsWith('gitlab:')
+  );
+}
+
 export function resolveConfigPath(explicit?: string): string {
-  if (explicit) return path.resolve(explicit);
+  if (explicit) {
+    if (isRemoteConfigSpec(explicit)) return explicit;
+    return path.resolve(explicit);
+  }
 
   const cwd = process.cwd();
   const entries = fs.readdirSync(cwd);
@@ -36,14 +51,96 @@ export function resolveConfigPath(explicit?: string): string {
   return path.resolve(cwd, CONFIG_CANDIDATES[0]);
 }
 
-export function loadConfig(configPath: string): FileFerryConfig {
-  if (!fs.existsSync(configPath)) {
-    throw new Error(`Config file not found: ${configPath}`);
+// Parses github:owner/repo:path/to/file.yml[@ref]
+function parseGitHubSpec(spec: string): {
+  repo: string;
+  file: string;
+  ref: string | undefined;
+} {
+  const body = spec.slice('github:'.length);
+  const colonIdx = body.indexOf(':');
+  if (colonIdx === -1) {
+    throw new Error(
+      `Invalid github config spec "${spec}". Expected: github:owner/repo:path/to/file.yml[@ref]`,
+    );
+  }
+  const repo = body.slice(0, colonIdx);
+  const rest = body.slice(colonIdx + 1);
+  const atIdx = rest.lastIndexOf('@');
+  const file = atIdx === -1 ? rest : rest.slice(0, atIdx);
+  const ref = atIdx === -1 ? undefined : rest.slice(atIdx + 1);
+  if (!repo || !file) {
+    throw new Error(
+      `Invalid github config spec "${spec}". Expected: github:owner/repo:path/to/file.yml[@ref]`,
+    );
+  }
+  return { repo, file, ref };
+}
+
+// Parses gitlab:group/project:path/to/file.yml[@ref]
+function parseGitLabSpec(spec: string): {
+  project: string;
+  file: string;
+  ref: string | undefined;
+} {
+  const body = spec.slice('gitlab:'.length);
+  const colonIdx = body.indexOf(':');
+  if (colonIdx === -1) {
+    throw new Error(
+      `Invalid gitlab config spec "${spec}". Expected: gitlab:group/project:path/to/file.yml[@ref]`,
+    );
+  }
+  const project = body.slice(0, colonIdx);
+  const rest = body.slice(colonIdx + 1);
+  const atIdx = rest.lastIndexOf('@');
+  const file = atIdx === -1 ? rest : rest.slice(0, atIdx);
+  const ref = atIdx === -1 ? undefined : rest.slice(atIdx + 1);
+  if (!project || !file) {
+    throw new Error(
+      `Invalid gitlab config spec "${spec}". Expected: gitlab:group/project:path/to/file.yml[@ref]`,
+    );
+  }
+  return { project, file, ref };
+}
+
+async function fetchConfigContent(spec: string): Promise<string> {
+  if (spec.startsWith('http://') || spec.startsWith('https://')) {
+    return fetchHttp(spec);
   }
 
+  if (spec.startsWith('github:')) {
+    const { repo, file, ref } = parseGitHubSpec(spec);
+    const result = await fetchGitHub(repo, file, ref);
+    if (result.files.size !== 1) {
+      throw new Error(
+        `Remote config must be a single file, got ${result.files.size} files from "${spec}"`,
+      );
+    }
+    return result.files.values().next().value as string;
+  }
+
+  if (spec.startsWith('gitlab:')) {
+    const { project, file, ref } = parseGitLabSpec(spec);
+    const result = await fetchGitLab(project, file, ref);
+    if (result.files.size !== 1) {
+      throw new Error(
+        `Remote config must be a single file, got ${result.files.size} files from "${spec}"`,
+      );
+    }
+    return result.files.values().next().value as string;
+  }
+
+  // Local file
+  if (!fs.existsSync(spec)) {
+    throw new Error(`Config file not found: ${spec}`);
+  }
+  return fs.readFileSync(spec, 'utf8');
+}
+
+export async function loadConfig(configPath: string): Promise<FileFerryConfig> {
   let raw: unknown;
   try {
-    const content = fs.readFileSync(configPath, 'utf8');
+    const content = await fetchConfigContent(configPath);
     raw = yaml.load(content);
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
