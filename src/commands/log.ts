@@ -1,6 +1,6 @@
 import { Command } from 'commander';
 import * as path from 'path';
-import { resolveConfigPath } from '../config';
+import { normalizeConfigKey, resolveConfigPath } from '../config';
 import { HistoryManager } from '../history';
 
 export function logCommand(): Command {
@@ -16,7 +16,10 @@ export function logCommand(): Command {
         ? path.resolve(rawWorkingDir)
         : process.cwd();
 
-      const history = new HistoryManager(configPath, workingDir);
+      const history = new HistoryManager(
+        normalizeConfigKey(configPath),
+        workingDir,
+      );
 
       if (file !== undefined) {
         showFileHistory(history, file, workingDir);

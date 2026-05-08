@@ -1,6 +1,6 @@
 import { Command } from 'commander';
 import * as path from 'path';
-import { resolveConfigPath } from '../config';
+import { normalizeConfigKey, resolveConfigPath } from '../config';
 import { HistoryManager } from '../history';
 import { computeDiff, computeDeleteDiff, printDiffs } from '../diff';
 import { atomicWrite, WriteTarget } from '../writer';
@@ -30,7 +30,10 @@ export function revertCommand(): Command {
           ? path.resolve(rawWorkingDir)
           : process.cwd();
 
-        const history = new HistoryManager(configPath, workingDir);
+        const history = new HistoryManager(
+          normalizeConfigKey(configPath),
+          workingDir,
+        );
         if (!history.hasHistory()) {
           console.error('No history found. Run avanti pull first.');
           process.exit(2);
