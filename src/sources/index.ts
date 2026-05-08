@@ -78,51 +78,49 @@ async function fetchOneSrc(
   src: FileSrc,
   workingDir: string,
   vars: Variables,
-): Promise<string> {
+): Promise<FetchResult> {
   if (typeof src === 'string') {
     const resolved = resolveVars(src, vars);
     if (resolved.startsWith('http://') || resolved.startsWith('https://')) {
-      return fetchHttp(resolved);
+      const content = await fetchHttp(resolved);
+      const filename = inferFilenameFromUrl(resolved) ?? 'download';
+      return { files: new Map([[filename, content]]) };
     }
-    const result = fetchLocal(resolved, workingDir);
-    const values = Array.from(result.files.values());
-    return values.join('\n');
+    return fetchLocal(resolved, workingDir);
   }
 
   if ('raw' in src) {
-    return resolveVars(src.raw, vars);
+    return { files: new Map([['output', resolveVars(src.raw, vars)]]) };
   }
 
   if ('exec' in src) {
-    return fetchExec(resolveVars(src.exec, vars));
+    return {
+      files: new Map([['output', fetchExec(resolveVars(src.exec, vars))]]),
+    };
   }
 
   if ('gitlab' in src) {
-    const result = await fetchGitLab(
+    return fetchGitLab(
       resolveVars(src.gitlab.project, vars),
       resolveVars(src.gitlab.file, vars),
       src.gitlab.ref !== undefined
         ? resolveVars(src.gitlab.ref, vars)
         : undefined,
     );
-    const values = Array.from(result.files.values());
-    return values.join('\n');
   }
 
   if ('github' in src) {
-    const result = await fetchGitHub(
+    return fetchGitHub(
       resolveVars(src.github.repo, vars),
       resolveVars(src.github.file, vars),
       src.github.ref !== undefined
         ? resolveVars(src.github.ref, vars)
         : undefined,
     );
-    const values = Array.from(result.files.values());
-    return values.join('\n');
   }
 
   if ('bitbucket' in src) {
-    const result = await fetchBitbucket(
+    return fetchBitbucket(
       resolveVars(src.bitbucket.workspace, vars),
       resolveVars(src.bitbucket.repo, vars),
       resolveVars(src.bitbucket.file, vars),
@@ -130,35 +128,27 @@ async function fetchOneSrc(
         ? resolveVars(src.bitbucket.ref, vars)
         : undefined,
     );
-    const values = Array.from(result.files.values());
-    return values.join('\n');
   }
 
   if ('git' in src) {
-    const result = fetchGit(
+    return fetchGit(
       resolveVars(src.git.repo, vars),
       resolveVars(src.git.file, vars),
       src.git.ref !== undefined ? resolveVars(src.git.ref, vars) : undefined,
     );
-    const values = Array.from(result.files.values());
-    return values.join('\n');
   }
 
   if ('s3' in src) {
-    const result = fetchS3(resolveVars(src.s3, vars));
-    const values = Array.from(result.files.values());
-    return values.join('\n');
+    return fetchS3(resolveVars(src.s3, vars));
   }
 
   if ('vault' in src) {
-    const result = await fetchVault(
+    return fetchVault(
       resolveVars(src.vault.path, vars),
       src.vault.field !== undefined
         ? resolveVars(src.vault.field, vars)
         : undefined,
     );
-    const values = Array.from(result.files.values());
-    return values.join('\n');
   }
 
   throw new Error(`Unknown source type: ${JSON.stringify(src)}`);
@@ -176,7 +166,8 @@ export async function fetchSource(
     const parts: string[] = [];
     for (let i = 0; i < src.length; i++) {
       try {
-        parts.push(await fetchOneSrc(src[i], workingDir, vars));
+        const result = await fetchOneSrc(src[i], workingDir, vars);
+        parts.push(Array.from(result.files.values()).join('\n'));
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
         throw new Error(`[source ${i}] ${msg}`, { cause: err });
@@ -196,80 +187,8 @@ export async function fetchSource(
     return { files: new Map([[filename, content]]) };
   }
 
-  // Single src — fetch then optionally format as JSON
-  let singleResult: FetchResult;
-
-  if (typeof src === 'string') {
-    const resolved = resolveVars(src, vars);
-    if (resolved.startsWith('http://') || resolved.startsWith('https://')) {
-      const content = await fetchHttp(resolved);
-      const filename = entry.target
-        ? path.basename(entry.target)
-        : (inferFilenameFromUrl(resolved) ?? 'download');
-      singleResult = { files: new Map([[filename, content]]) };
-    } else {
-      // Local path (absolute, ~/, or relative)
-      const result = fetchLocal(resolved, workingDir);
-      singleResult = { files: result.files };
-    }
-  } else if ('raw' in src) {
-    const filename = path.basename(entry.target!);
-    singleResult = {
-      files: new Map([[filename, resolveVars(src.raw, vars)]]),
-    };
-  } else if ('exec' in src) {
-    const content = fetchExec(resolveVars(src.exec, vars));
-    const filename = path.basename(entry.target!);
-    singleResult = { files: new Map([[filename, content]]) };
-  } else if ('gitlab' in src) {
-    const result = await fetchGitLab(
-      resolveVars(src.gitlab.project, vars),
-      resolveVars(src.gitlab.file, vars),
-      src.gitlab.ref !== undefined
-        ? resolveVars(src.gitlab.ref, vars)
-        : undefined,
-    );
-    singleResult = { files: result.files };
-  } else if ('github' in src) {
-    const result = await fetchGitHub(
-      resolveVars(src.github.repo, vars),
-      resolveVars(src.github.file, vars),
-      src.github.ref !== undefined
-        ? resolveVars(src.github.ref, vars)
-        : undefined,
-    );
-    singleResult = { files: result.files };
-  } else if ('bitbucket' in src) {
-    const result = await fetchBitbucket(
-      resolveVars(src.bitbucket.workspace, vars),
-      resolveVars(src.bitbucket.repo, vars),
-      resolveVars(src.bitbucket.file, vars),
-      src.bitbucket.ref !== undefined
-        ? resolveVars(src.bitbucket.ref, vars)
-        : undefined,
-    );
-    singleResult = { files: result.files };
-  } else if ('git' in src) {
-    const result = fetchGit(
-      resolveVars(src.git.repo, vars),
-      resolveVars(src.git.file, vars),
-      src.git.ref !== undefined ? resolveVars(src.git.ref, vars) : undefined,
-    );
-    singleResult = { files: result.files };
-  } else if ('s3' in src) {
-    const result = fetchS3(resolveVars(src.s3, vars));
-    singleResult = { files: result.files };
-  } else if ('vault' in src) {
-    const result = await fetchVault(
-      resolveVars(src.vault.path, vars),
-      src.vault.field !== undefined
-        ? resolveVars(src.vault.field, vars)
-        : undefined,
-    );
-    singleResult = { files: result.files };
-  } else {
-    throw new Error(`Unknown source type: ${JSON.stringify(src)}`);
-  }
+  // Single src — delegate dispatch to fetchOneSrc, then apply post-processing
+  const singleResult = await fetchOneSrc(src, workingDir, vars);
 
   // When a directory source resolves to multiple files but the target is a
   // single file (no trailing slash), merge all files sorted by name instead
