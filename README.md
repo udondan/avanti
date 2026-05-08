@@ -22,6 +22,7 @@ Assemble local files from any source via a declarative YAML spec.
   - [Source Types](#source-types)
   - [Directory Sources](#directory-sources)
   - [JSON Merging](#json-merging)
+  - [YAML Merging](#yaml-merging)
   - [Variables](#variables)
   - [Authentication](#authentication)
   - [Private Instances](#private-instances)
@@ -48,6 +49,7 @@ Assemble local files from any source via a declarative YAML spec.
 - **Post-processing** — apply text replacements (string or regex) and/or pipe content through a shell script
 - **Directory sync** — recursively sync directories from GitLab/GitHub/Bitbucket/git/S3/local sources
 - **JSON merging** — deep-merge multiple JSON/JSONC sources with configurable conflict, array, and object strategies
+- **YAML merging** — deep-merge multiple YAML/YML sources with the same strategies, with full comment preservation
 - **Variables** — define reusable values in a `variables:` block and reference them anywhere with `$name`; use `$env:NAME` for environment variables
 - **History** — every pull is recorded; inspect what changed, revert the whole project to a past state, or fully undo all avanti changes
 - **Stale file cleanup** — files dropped from a directory source are automatically deleted or restored to their pre-avanti content
@@ -272,6 +274,7 @@ files:
 | `replace` | No          | List of `{from, to}` replacement rules. `from` may be a plain string or `/pattern/flags` regex.                                                                                                                                          |
 | `post`    | No          | Shell script. Content is piped via stdin; stdout is used as the result. Runs after `replace`.                                                                                                                                            |
 | `json`    | No          | JSON merge/format options (see below). When omitted, merging is auto-enabled if all sources have a `.json` or `.jsonc` extension. Use `true`/`false` to force on or off regardless of extension.                                         |
+| `yaml`    | No          | YAML merge/format options (see below). When omitted, merging is auto-enabled if all sources have a `.yaml` or `.yml` extension. Use `true`/`false` to force on or off regardless of extension. Comments are preserved in merged output.  |
 
 ### Source Types
 
@@ -452,6 +455,70 @@ files:
 files:
   - src: ./minified.json
     target: pretty.json
+```
+
+### YAML Merging
+
+When all sources in a list have a `.yaml` or `.yml` extension, YAML merging is enabled automatically — no extra config needed:
+
+```yaml
+files:
+  - src:
+      - ./defaults.yaml
+      - ./overrides.yml
+    target: merged.yaml
+```
+
+To merge sources that don't have a YAML extension (e.g. `exec:`, `raw:`, or a URL without `.yaml`), set `yaml: true`:
+
+```yaml
+files:
+  - src:
+      - exec: cat defaults.yaml
+      - ./overrides.yaml
+    target: merged.yaml
+    yaml: true
+```
+
+To opt out of auto-detection and force plain concatenation, set `yaml: false`.
+
+**Fine-grained options** — pass an object to control merge behavior:
+
+```yaml
+files:
+  - src:
+      - ./defaults.yaml
+      - type: github
+        repo: org/configs
+        file: overrides.yaml
+    target: merged.yaml
+    yaml:
+      conflicts: last_wins # abort | first_wins | last_wins (default)
+      arrays: replace # replace (default) | concat
+      objects: merge # merge (default) | replace
+```
+
+The options behave identically to JSON merging:
+
+- `conflicts` — what to do when the same key holds a scalar (or an array/object when their strategy is `replace`):
+  - `last_wins` _(default)_ — the last source's value wins
+  - `first_wins` — the first source's value is kept
+  - `abort` — throw an error (identical values are not considered a conflict)
+- `arrays` — how to combine arrays at the same key:
+  - `replace` _(default)_ — the later source's array replaces the earlier one
+  - `concat` — arrays are concatenated (no deduplication)
+- `objects` — how to combine objects (maps) at the same key:
+  - `merge` _(default)_ — deep merge, applying the same rules recursively to nested keys
+  - `replace` — the later source's object replaces the earlier one entirely
+
+**Comment preservation** — YAML comments are preserved in the merged output. Comments from all sources are retained in their original positions.
+
+**Pretty-printing a single file** — `yaml` works on single-source entries too. Auto-detection applies here as well, so a single `.yaml` or `.yml` source is normalized automatically:
+
+```yaml
+files:
+  - src: ./config.yaml
+    target: config.yaml
 ```
 
 ### Variables

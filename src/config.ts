@@ -9,6 +9,10 @@ import {
   JsonConflictStrategy,
   JsonMergeOptions,
   JsonObjectStrategy,
+  YamlArrayStrategy,
+  YamlConflictStrategy,
+  YamlMergeOptions,
+  YamlObjectStrategy,
   ReplaceRule,
   Variables,
 } from './types';
@@ -216,6 +220,15 @@ export async function loadConfig(configPath: string): Promise<FileFerryConfig> {
         fileEntry.json = rawJson;
       } else {
         fileEntry.json = parseJsonMergeOptions(rawJson, i);
+      }
+    }
+
+    if (e['yaml'] !== undefined) {
+      const rawYaml = e['yaml'];
+      if (rawYaml === true || rawYaml === false) {
+        fileEntry.yaml = rawYaml;
+      } else {
+        fileEntry.yaml = parseYamlMergeOptions(rawYaml, i);
       }
     }
 
@@ -442,6 +455,50 @@ function parseJsonMergeOptions(raw: unknown, i: number): JsonMergeOptions {
       );
     }
     opts.objects = obj['objects'] as JsonObjectStrategy;
+  }
+
+  return opts;
+}
+
+function parseYamlMergeOptions(raw: unknown, i: number): YamlMergeOptions {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new Error(`files[${i}]: "yaml" must be an object`);
+  }
+  const obj = raw as Record<string, unknown>;
+  const opts: YamlMergeOptions = {};
+
+  const conflictValues: YamlConflictStrategy[] = [
+    'abort',
+    'first_wins',
+    'last_wins',
+  ];
+  if (obj['conflicts'] !== undefined) {
+    if (!conflictValues.includes(obj['conflicts'] as YamlConflictStrategy)) {
+      throw new Error(
+        `files[${i}].yaml.conflicts: must be one of ${conflictValues.join(', ')}`,
+      );
+    }
+    opts.conflicts = obj['conflicts'] as YamlConflictStrategy;
+  }
+
+  const arrayValues: YamlArrayStrategy[] = ['replace', 'concat'];
+  if (obj['arrays'] !== undefined) {
+    if (!arrayValues.includes(obj['arrays'] as YamlArrayStrategy)) {
+      throw new Error(
+        `files[${i}].yaml.arrays: must be one of ${arrayValues.join(', ')}`,
+      );
+    }
+    opts.arrays = obj['arrays'] as YamlArrayStrategy;
+  }
+
+  const objectValues: YamlObjectStrategy[] = ['replace', 'merge'];
+  if (obj['objects'] !== undefined) {
+    if (!objectValues.includes(obj['objects'] as YamlObjectStrategy)) {
+      throw new Error(
+        `files[${i}].yaml.objects: must be one of ${objectValues.join(', ')}`,
+      );
+    }
+    opts.objects = obj['objects'] as YamlObjectStrategy;
   }
 
   return opts;
