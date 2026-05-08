@@ -30,6 +30,10 @@
     "type": "github",
     "url": "https://github.com/sponsors/udondan"
   },
+  "files": [
+    "dist",
+    "LICENSE"
+  ],
   "license": "MIT",
   "repository": {
     "type": "git",
