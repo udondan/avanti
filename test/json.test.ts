@@ -23,7 +23,7 @@ describe('mergeJson — basic', () => {
   });
 
   it('merges disjoint keys', () => {
-    const result = JSON.parse(mergeJson(['{"a":1}', '{"b":2}']));
+    const result = JSON.parse(mergeJson(['{"a":1}', '{"b":2}'])) as unknown;
     expect(result).toEqual({ a: 1, b: 2 });
   });
 
@@ -36,14 +36,16 @@ describe('mergeJson — basic', () => {
 
 describe('mergeJson — conflicts (scalars)', () => {
   it('last_wins by default', () => {
-    const result = JSON.parse(mergeJson(['{"a":1}', '{"a":2}']));
+    const result = JSON.parse(mergeJson(['{"a":1}', '{"a":2}'])) as {
+      a: number;
+    };
     expect(result.a).toBe(2);
   });
 
   it('first_wins keeps first value', () => {
     const result = JSON.parse(
       mergeJson(['{"a":1}', '{"a":2}'], { conflicts: 'first_wins' }),
-    );
+    ) as { a: number };
     expect(result.a).toBe(1);
   });
 
@@ -64,7 +66,7 @@ describe('mergeJson — objects', () => {
   it('deep-merges nested objects by default', () => {
     const result = JSON.parse(
       mergeJson(['{"db":{"host":"a","port":5432}}', '{"db":{"port":5433}}']),
-    );
+    ) as unknown;
     expect(result).toEqual({ db: { host: 'a', port: 5433 } });
   });
 
@@ -73,7 +75,7 @@ describe('mergeJson — objects', () => {
       mergeJson(['{"db":{"host":"a","port":5432}}', '{"db":{"port":5433}}'], {
         objects: 'replace',
       }),
-    );
+    ) as unknown;
     expect(result).toEqual({ db: { port: 5433 } });
   });
 
@@ -88,14 +90,16 @@ describe('mergeJson — objects', () => {
 
 describe('mergeJson — arrays', () => {
   it('replace overwrites array by default', () => {
-    const result = JSON.parse(mergeJson(['{"x":[1,2]}', '{"x":[3,4]}']));
+    const result = JSON.parse(mergeJson(['{"x":[1,2]}', '{"x":[3,4]}'])) as {
+      x: number[];
+    };
     expect(result.x).toEqual([3, 4]);
   });
 
   it('concat appends arrays', () => {
     const result = JSON.parse(
       mergeJson(['{"x":[1,2]}', '{"x":[3,4]}'], { arrays: 'concat' }),
-    );
+    ) as { x: number[] };
     expect(result.x).toEqual([1, 2, 3, 4]);
   });
 
@@ -154,7 +158,9 @@ describe('mergeJson — JSONC', () => {
 
 describe('mergeJson — three sources', () => {
   it('applies last_wins across all sources', () => {
-    const result = JSON.parse(mergeJson(['{"a":1}', '{"a":2}', '{"a":3}']));
+    const result = JSON.parse(mergeJson(['{"a":1}', '{"a":2}', '{"a":3}'])) as {
+      a: number;
+    };
     expect(result.a).toBe(3);
   });
 
@@ -163,7 +169,7 @@ describe('mergeJson — three sources', () => {
       mergeJson(['{"a":1}', '{"a":2}', '{"a":3}'], {
         conflicts: 'first_wins',
       }),
-    );
+    ) as { a: number };
     expect(result.a).toBe(1);
   });
 });
