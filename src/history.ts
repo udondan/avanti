@@ -117,9 +117,11 @@ export class HistoryManager {
     const metaPath = path.join(fileDir, 'meta.json');
     let meta: FileHistoryMeta;
 
+    let isFirstSeen = false;
     if (fs.existsSync(metaPath)) {
       meta = JSON.parse(fs.readFileSync(metaPath, 'utf8')) as FileHistoryMeta;
     } else {
+      isFirstSeen = true;
       const existedBeforeAvanti = !isNew && fs.existsSync(targetPath);
       if (existedBeforeAvanti) {
         const originalContent = fs.readFileSync(targetPath, 'utf8');
@@ -132,15 +134,18 @@ export class HistoryManager {
         existedBeforeAvanti,
         currentVersion: 0,
       };
+    }
+
+    const nextVersion = meta.currentVersion + 1;
+    fs.writeFileSync(path.join(fileDir, `v${nextVersion}`), newContent, 'utf8');
+
+    if (isFirstSeen) {
       fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2), 'utf8');
 
       const index = this.readIndex();
       index[targetPath] = slug;
       this.writeIndex(index);
     }
-
-    const nextVersion = meta.currentVersion + 1;
-    fs.writeFileSync(path.join(fileDir, `v${nextVersion}`), newContent, 'utf8');
 
     const fileRef: PullLogFileRef = {
       absolutePath: targetPath,
