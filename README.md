@@ -656,6 +656,22 @@ files:
         ref: $standards_ref
 ```
 
+For YAML-based configs (Helm values, k8s manifests, Docker Compose overrides), use YAML merge to layer a shared base with project-specific values. Comments in both files are preserved in the merged output:
+
+```yaml
+files:
+  - src:
+      - github:
+          repo: org/platform
+          file: helm/base-values.yaml # shared defaults for all services
+          ref: $standards_ref
+      - ./helm/values.yaml # project overrides
+    target: ./helm/merged-values.yaml
+    yaml:
+      conflicts: last_wins # project overrides win
+      arrays: concat # e.g. extra env vars are appended, not replaced
+```
+
 ### CI/CD: Shared Workflow Fragments
 
 Pull reusable CI steps from a central repo into each project. A managed header makes it obvious the file should not be edited by hand.
@@ -864,6 +880,32 @@ files:
         file: .gitconfig
     target: ~/.gitconfig
 ```
+
+**Composable self-managing config** — YAML merge takes this further. Instead of one canonical config, compose your `~/.avanti.yml` from org-wide defaults, team additions, and personal overrides — all merged automatically on every pull:
+
+```yaml
+# ~/.avanti.yml — bootstrapped once, then self-updating via YAML merge
+files:
+  - src:
+      - github:
+          repo: myorg/platform
+          file: avanti/base.yml # org-wide entries and variables
+          ref: $latest
+      - github:
+          repo: myorg/backend-team
+          file: avanti/team.yml # team-specific additions
+          ref: main
+      - github:
+          repo: myuser/dotfiles
+          file: avanti/personal.yml # personal overrides and extras
+          ref: main
+    target: ~/.avanti.yml
+    yaml:
+      conflicts: last_wins # personal overrides win over team, team over org
+      arrays: concat # file lists from all layers are merged, not replaced
+```
+
+Each layer only needs to declare what it owns. The org config defines shared tooling. The team config adds team-specific sources. The personal config overrides variables or adds private entries. Every `avanti pull` rebuilds the merged config and applies all the files it describes — org-wide config drift and personal customisation coexist without conflict.
 
 For first-time setup on a new machine, pass a remote config directly to `--config` — no local file needed:
 
