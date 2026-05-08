@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.0](https://github.com/udondan/avanti/compare/v0.7.0...v0.8.0) (2026-05-08)
+
+
+### Features
+
+* support remote config files via --config ([#38](https://github.com/udondan/avanti/issues/38)) ([559be5d](https://github.com/udondan/avanti/commit/559be5d1e9536d3975194626c9cb23b84be33e2a))
+
 ## [0.7.0](https://github.com/udondan/avanti/compare/v0.6.0...v0.7.0) (2026-05-08)
 
 
