@@ -153,7 +153,7 @@ files:
       gitlab:
         project: group/project
         file: renovate.json
-        ref: \$latest
+        ref: $latest
 `);
     const cfg = await loadConfig(f);
     const src = cfg.files[0].src as {

@@ -3,6 +3,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
   writeFileSync,
@@ -10,6 +11,7 @@ import {
 import { tmpdir } from 'os';
 import { join, resolve } from 'path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { parseDocument } from 'yaml';
 
 const CLI = resolve(__dirname, '../src/cli.ts');
 const PROJECT_ROOT = resolve(__dirname, '..');
@@ -126,8 +128,9 @@ describe('Integration', () => {
       const { exitCode } = runAvanti(config, tmpDir);
       expect(exitCode).toBe(0);
       const content = readFileSync(join(tmpDir, 'docker-compose.yml'), 'utf8');
-      const { parseDocument } = require('yaml');
-      const parsed = parseDocument(content).toJSON();
+      const parsed = parseDocument(content).toJSON() as {
+        services: { db: { image: string }; app: { image: string } };
+      };
       expect(parsed.services).toHaveProperty('db');
       expect(parsed.services).toHaveProperty('app');
       expect(parsed.services.db.image).toBe('postgres');
@@ -151,8 +154,10 @@ describe('Integration', () => {
       const { exitCode } = runAvanti(config, tmpDir);
       expect(exitCode).toBe(0);
       const content = readFileSync(join(tmpDir, 'config.yml'), 'utf8');
-      const { parseDocument } = require('yaml');
-      const parsed = parseDocument(content).toJSON();
+      const parsed = parseDocument(content).toJSON() as {
+        env: string;
+        version: number;
+      };
       expect(parsed.env).toBe('prod');
       expect(parsed.version).toBe(1);
     });
@@ -181,7 +186,7 @@ describe('Integration', () => {
       expect(exitCode).toBe(0);
       const merged = JSON.parse(
         readFileSync(join(tmpDir, 'merged.json'), 'utf8'),
-      );
+      ) as { a: number; b: string; c: number };
       expect(merged.a).toBe(1);
       expect(merged.b).toBe('overridden');
       expect(merged.c).toBe(3);
@@ -323,9 +328,7 @@ describe('Integration', () => {
         expect(exitCode).toBe(0);
         const outputDir = join(tmpDir, 'config');
         expect(existsSync(outputDir)).toBe(true);
-        const entries = require('fs').readdirSync(outputDir, {
-          recursive: true,
-        });
+        const entries = readdirSync(outputDir, { recursive: true });
         expect(entries.length).toBeGreaterThan(0);
       },
     );
@@ -443,9 +446,7 @@ describe('Integration', () => {
         expect(exitCode).toBe(0);
         const outputDir = join(tmpDir, 'licenses');
         expect(existsSync(outputDir)).toBe(true);
-        const entries = require('fs').readdirSync(outputDir, {
-          recursive: true,
-        });
+        const entries = readdirSync(outputDir, { recursive: true });
         expect(entries.length).toBeGreaterThan(0);
       },
     );
@@ -626,7 +627,7 @@ describe('Integration', () => {
       expect(exitCode).toBe(0);
       const merged = JSON.parse(
         readFileSync(join(tmpDir, 'merged.json'), 'utf8'),
-      );
+      ) as unknown;
       expect(merged).toMatchObject({ a: 1, b: 'original', c: 3, d: 4 });
     });
 
@@ -652,7 +653,7 @@ describe('Integration', () => {
       expect(exitCode).toBe(0);
       const merged = JSON.parse(
         readFileSync(join(tmpDir, 'merged.json'), 'utf8'),
-      );
+      ) as { key: string };
       expect(merged.key).toBe('second');
     });
 
@@ -678,7 +679,7 @@ describe('Integration', () => {
       expect(exitCode).toBe(0);
       const merged = JSON.parse(
         readFileSync(join(tmpDir, 'merged.json'), 'utf8'),
-      );
+      ) as { key: string };
       expect(merged.key).toBe('first');
     });
 
@@ -704,7 +705,7 @@ describe('Integration', () => {
       expect(exitCode).toBe(0);
       const merged = JSON.parse(
         readFileSync(join(tmpDir, 'merged.json'), 'utf8'),
-      );
+      ) as { items: number[] };
       expect(merged.items).toEqual([1, 2, 3, 4]);
     });
 
@@ -730,7 +731,7 @@ describe('Integration', () => {
       expect(exitCode).toBe(0);
       const merged = JSON.parse(
         readFileSync(join(tmpDir, 'merged.json'), 'utf8'),
-      );
+      ) as { nested: Record<string, number> };
       expect(merged.nested).toEqual({ x: 1, y: 2, z: 3 });
     });
 
@@ -774,7 +775,7 @@ describe('Integration', () => {
       expect(exitCode).toBe(0);
       const merged = JSON.parse(
         readFileSync(join(tmpDir, 'merged.json'), 'utf8'),
-      );
+      ) as { name: string; extra: boolean };
       expect(merged.name).toBe('@udondan/avanti');
       expect(merged.extra).toBe(true);
     });
@@ -848,7 +849,7 @@ files:
       expect(exitCode).toBe(0);
       const merged = JSON.parse(
         readFileSync(join(tmpDir, 'merged.json'), 'utf8'),
-      );
+      ) as unknown;
       expect(merged).toMatchObject({ from: 'b', extra: 1 });
     });
 
@@ -872,7 +873,7 @@ files:
       expect(exitCode).toBe(0);
       const merged = JSON.parse(
         readFileSync(join(tmpDir, 'merged.jsonc'), 'utf8'),
-      );
+      ) as unknown;
       expect(merged).toEqual({ x: 1, y: 2 });
     });
 
@@ -921,7 +922,7 @@ files:
       expect(exitCode).toBe(0);
       const merged = JSON.parse(
         readFileSync(join(tmpDir, 'merged.json'), 'utf8'),
-      );
+      ) as unknown;
       expect(merged).toMatchObject({ key: 'second', a: 1, b: 2 });
     });
 
@@ -971,8 +972,7 @@ files:
       const { exitCode } = runAvanti(config, tmpDir);
       expect(exitCode).toBe(0);
       const content = readFileSync(join(tmpDir, 'merged.yaml'), 'utf8');
-      const { parseDocument } = require('yaml');
-      const merged = parseDocument(content).toJSON();
+      const merged = parseDocument(content).toJSON() as unknown;
       expect(merged).toMatchObject({ a: 1, b: 'original', c: 3, d: 4 });
     });
 
@@ -995,8 +995,7 @@ files:
       const { exitCode } = runAvanti(config, tmpDir);
       expect(exitCode).toBe(0);
       const content = readFileSync(join(tmpDir, 'merged.yaml'), 'utf8');
-      const { parseDocument } = require('yaml');
-      const merged = parseDocument(content).toJSON();
+      const merged = parseDocument(content).toJSON() as unknown;
       expect(merged).toMatchObject({ from: 'b', extra: 1 });
     });
 
@@ -1019,8 +1018,10 @@ files:
       const { exitCode } = runAvanti(config, tmpDir);
       expect(exitCode).toBe(0);
       const content = readFileSync(join(tmpDir, 'merged.yml'), 'utf8');
-      const { parseDocument } = require('yaml');
-      expect(parseDocument(content).toJSON()).toEqual({ x: 1, y: 2 });
+      expect(parseDocument(content).toJSON() as unknown).toEqual({
+        x: 1,
+        y: 2,
+      });
     });
 
     it('resolves conflicts with last_wins strategy', () => {
@@ -1044,8 +1045,9 @@ files:
       const { exitCode } = runAvanti(config, tmpDir);
       expect(exitCode).toBe(0);
       const content = readFileSync(join(tmpDir, 'merged.yaml'), 'utf8');
-      const { parseDocument } = require('yaml');
-      expect(parseDocument(content).toJSON().key).toBe('second');
+      expect((parseDocument(content).toJSON() as { key: string }).key).toBe(
+        'second',
+      );
     });
 
     it('deep-merges nested objects', () => {
@@ -1067,8 +1069,7 @@ files:
       const { exitCode } = runAvanti(config, tmpDir);
       expect(exitCode).toBe(0);
       const content = readFileSync(join(tmpDir, 'merged.yaml'), 'utf8');
-      const { parseDocument } = require('yaml');
-      expect(parseDocument(content).toJSON()).toEqual({
+      expect(parseDocument(content).toJSON() as unknown).toEqual({
         db: { host: 'localhost', port: 5433 },
       });
     });
@@ -1094,12 +1095,9 @@ files:
       const { exitCode } = runAvanti(config, tmpDir);
       expect(exitCode).toBe(0);
       const content = readFileSync(join(tmpDir, 'merged.yaml'), 'utf8');
-      const { parseDocument } = require('yaml');
-      expect(parseDocument(content).toJSON().tags).toEqual([
-        'alpha',
-        'beta',
-        'gamma',
-      ]);
+      expect(
+        (parseDocument(content).toJSON() as { tags: string[] }).tags,
+      ).toEqual(['alpha', 'beta', 'gamma']);
     });
 
     it('yaml: false disables auto-merge even for .yaml sources', () => {
@@ -1164,7 +1162,6 @@ files:
       const { exitCode } = runAvanti(config, tmpDir);
       expect(exitCode).toBe(0);
       const content = readFileSync(join(tmpDir, 'out.yaml'), 'utf8');
-      const { parseDocument } = require('yaml');
       expect(parseDocument(content).toJSON()).toEqual({
         host: 'localhost',
         port: 5432,
@@ -1200,8 +1197,7 @@ files:
       expect(content).toContain('# primary');
       expect(content).toContain('# app settings');
       expect(content).toContain('# service name');
-      const { parseDocument } = require('yaml');
-      expect(parseDocument(content).toJSON()).toEqual({
+      expect(parseDocument(content).toJSON() as unknown).toEqual({
         db: { host: 'localhost', port: 5432 },
         app: { name: 'myapp' },
       });

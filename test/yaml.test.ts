@@ -29,7 +29,9 @@ describe('mergeYaml — basic', () => {
   });
 
   it('merges disjoint keys', () => {
-    const result = parseDocument(mergeYaml(['a: 1\n', 'b: 2\n'])).toJSON();
+    const result = parseDocument(
+      mergeYaml(['a: 1\n', 'b: 2\n']),
+    ).toJSON() as unknown;
     expect(result).toEqual({ a: 1, b: 2 });
   });
 
@@ -46,14 +48,16 @@ describe('mergeYaml — basic', () => {
 
 describe('mergeYaml — conflicts (scalars)', () => {
   it('last_wins by default', () => {
-    const result = parseDocument(mergeYaml(['a: 1\n', 'a: 2\n'])).toJSON();
+    const result = parseDocument(mergeYaml(['a: 1\n', 'a: 2\n'])).toJSON() as {
+      a: number;
+    };
     expect(result.a).toBe(2);
   });
 
   it('first_wins keeps first value', () => {
     const result = parseDocument(
       mergeYaml(['a: 1\n', 'a: 2\n'], { conflicts: 'first_wins' }),
-    ).toJSON();
+    ).toJSON() as { a: number };
     expect(result.a).toBe(1);
   });
 
@@ -74,7 +78,7 @@ describe('mergeYaml — objects', () => {
   it('deep-merges nested objects by default', () => {
     const result = parseDocument(
       mergeYaml(['db:\n  host: a\n  port: 5432\n', 'db:\n  port: 5433\n']),
-    ).toJSON();
+    ).toJSON() as unknown;
     expect(result).toEqual({ db: { host: 'a', port: 5433 } });
   });
 
@@ -83,7 +87,7 @@ describe('mergeYaml — objects', () => {
       mergeYaml(['db:\n  host: a\n  port: 5432\n', 'db:\n  port: 5433\n'], {
         objects: 'replace',
       }),
-    ).toJSON();
+    ).toJSON() as unknown;
     expect(result).toEqual({ db: { port: 5433 } });
   });
 
@@ -100,7 +104,7 @@ describe('mergeYaml — arrays', () => {
   it('replace overwrites array by default', () => {
     const result = parseDocument(
       mergeYaml(['x:\n  - 1\n  - 2\n', 'x:\n  - 3\n  - 4\n']),
-    ).toJSON();
+    ).toJSON() as { x: number[] };
     expect(result.x).toEqual([3, 4]);
   });
 
@@ -109,7 +113,7 @@ describe('mergeYaml — arrays', () => {
       mergeYaml(['x:\n  - 1\n  - 2\n', 'x:\n  - 3\n  - 4\n'], {
         arrays: 'concat',
       }),
-    ).toJSON();
+    ).toJSON() as { x: number[] };
     expect(result.x).toEqual([1, 2, 3, 4]);
   });
 
@@ -138,7 +142,10 @@ describe('mergeYaml — comment preservation', () => {
     const b = 'port: 8080\n';
     const result = mergeYaml([a, b]);
     expect(result).toContain('# server');
-    expect(parseDocument(result).toJSON()).toEqual({ host: 'a', port: 8080 });
+    expect(parseDocument(result).toJSON() as unknown).toEqual({
+      host: 'a',
+      port: 8080,
+    });
   });
 
   it('preserves comments from both sources', () => {
@@ -161,14 +168,14 @@ describe('mergeYaml — three sources', () => {
   it('applies last_wins across all sources', () => {
     const result = parseDocument(
       mergeYaml(['a: 1\n', 'a: 2\n', 'a: 3\n']),
-    ).toJSON();
+    ).toJSON() as { a: number };
     expect(result.a).toBe(3);
   });
 
   it('first_wins across all sources', () => {
     const result = parseDocument(
       mergeYaml(['a: 1\n', 'a: 2\n', 'a: 3\n'], { conflicts: 'first_wins' }),
-    ).toJSON();
+    ).toJSON() as { a: number };
     expect(result.a).toBe(1);
   });
 });

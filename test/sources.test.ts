@@ -31,7 +31,7 @@ describe('fetchSource — local directory → single file target', () => {
       expect(result.files.has('docker-compose.yaml')).toBe(true);
       const content = result.files.get('docker-compose.yaml')!;
       const { parseDocument } = await import('yaml');
-      const parsed = parseDocument(content).toJSON();
+      const parsed = parseDocument(content).toJSON() as unknown;
       expect(parsed).toMatchObject({
         db: { host: 'localhost' },
         app: { port: 8080 },
@@ -51,7 +51,9 @@ describe('fetchSource — local directory → single file target', () => {
 
       expect(result.files.size).toBe(1);
       const { parseDocument } = await import('yaml');
-      const parsed = parseDocument(result.files.get('out.yml')!).toJSON();
+      const parsed = parseDocument(
+        result.files.get('out.yml')!,
+      ).toJSON() as unknown;
       expect(parsed).toEqual({ x: 1, y: 2 });
     });
 
@@ -68,7 +70,9 @@ describe('fetchSource — local directory → single file target', () => {
       );
 
       const { parseDocument } = await import('yaml');
-      const parsed = parseDocument(result.files.get('out.yml')!).toJSON();
+      const parsed = parseDocument(result.files.get('out.yml')!).toJSON() as {
+        key: string;
+      };
       // z-override.yml comes after a-base.yml → last_wins default
       expect(parsed.key).toBe('z');
     });
@@ -86,7 +90,9 @@ describe('fetchSource — local directory → single file target', () => {
 
       expect(result.files.size).toBe(1);
       const { parseDocument } = await import('yaml');
-      const parsed = parseDocument(result.files.get('out.yaml')!).toJSON();
+      const parsed = parseDocument(
+        result.files.get('out.yaml')!,
+      ).toJSON() as unknown;
       expect(parsed).toMatchObject({ from: 'a', extra: 1 });
     });
 
@@ -119,7 +125,7 @@ describe('fetchSource — local directory → single file target', () => {
       );
 
       expect(result.files.size).toBe(1);
-      const parsed = JSON.parse(result.files.get('merged.json')!);
+      const parsed = JSON.parse(result.files.get('merged.json')!) as unknown;
       expect(parsed).toMatchObject({ a: 1, b: 2 });
     });
 
@@ -135,7 +141,7 @@ describe('fetchSource — local directory → single file target', () => {
       );
 
       expect(result.files.size).toBe(1);
-      const parsed = JSON.parse(result.files.get('merged.json')!);
+      const parsed = JSON.parse(result.files.get('merged.json')!) as unknown;
       expect(parsed).toMatchObject({ x: 1, y: 2 });
     });
   });
