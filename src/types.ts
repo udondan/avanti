@@ -79,6 +79,16 @@ export interface JsonMergeOptions {
   objects?: JsonObjectStrategy;
 }
 
+export type YamlConflictStrategy = 'abort' | 'first_wins' | 'last_wins';
+export type YamlArrayStrategy = 'replace' | 'concat';
+export type YamlObjectStrategy = 'replace' | 'merge';
+
+export interface YamlMergeOptions {
+  conflicts?: YamlConflictStrategy;
+  arrays?: YamlArrayStrategy;
+  objects?: YamlObjectStrategy;
+}
+
 export interface FileEntry {
   src: FileSrc | FileSrc[];
   target?: string;
@@ -86,6 +96,7 @@ export interface FileEntry {
   replace?: ReplaceRule[];
   post?: string;
   json?: JsonMergeOptions | boolean;
+  yaml?: YamlMergeOptions | boolean;
 }
 
 export interface FileFerryConfig {

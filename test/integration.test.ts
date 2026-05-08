@@ -866,6 +866,264 @@ files:
     });
   });
 
+  describe('YAML merge', () => {
+    it('merges two disjoint YAML files', () => {
+      const aFile = join(tmpDir, 'a.yaml');
+      const bFile = join(tmpDir, 'b.yaml');
+      writeFileSync(aFile, 'a: 1\nb: original\n');
+      writeFileSync(bFile, 'c: 3\nd: 4\n');
+
+      const config = writeConfig(
+        tmpDir,
+        `files:
+  - src:
+      - ${aFile}
+      - ${bFile}
+    target: ./merged.yaml
+    yaml: {}
+`,
+      );
+
+      const { exitCode } = runAvanti(config, tmpDir);
+      expect(exitCode).toBe(0);
+      const content = readFileSync(join(tmpDir, 'merged.yaml'), 'utf8');
+      const { parseDocument } = require('yaml');
+      const merged = parseDocument(content).toJSON();
+      expect(merged).toMatchObject({ a: 1, b: 'original', c: 3, d: 4 });
+    });
+
+    it('auto-merges when all sources are .yaml files', () => {
+      const aFile = join(tmpDir, 'a.yaml');
+      const bFile = join(tmpDir, 'b.yaml');
+      writeFileSync(aFile, 'from: a\n');
+      writeFileSync(bFile, 'from: b\nextra: 1\n');
+
+      const config = writeConfig(
+        tmpDir,
+        `files:
+  - src:
+      - ${aFile}
+      - ${bFile}
+    target: ./merged.yaml
+`,
+      );
+
+      const { exitCode } = runAvanti(config, tmpDir);
+      expect(exitCode).toBe(0);
+      const content = readFileSync(join(tmpDir, 'merged.yaml'), 'utf8');
+      const { parseDocument } = require('yaml');
+      const merged = parseDocument(content).toJSON();
+      expect(merged).toMatchObject({ from: 'b', extra: 1 });
+    });
+
+    it('auto-merges when all sources are .yml files', () => {
+      const aFile = join(tmpDir, 'a.yml');
+      const bFile = join(tmpDir, 'b.yml');
+      writeFileSync(aFile, 'x: 1\n');
+      writeFileSync(bFile, 'y: 2\n');
+
+      const config = writeConfig(
+        tmpDir,
+        `files:
+  - src:
+      - ${aFile}
+      - ${bFile}
+    target: ./merged.yml
+`,
+      );
+
+      const { exitCode } = runAvanti(config, tmpDir);
+      expect(exitCode).toBe(0);
+      const content = readFileSync(join(tmpDir, 'merged.yml'), 'utf8');
+      const { parseDocument } = require('yaml');
+      expect(parseDocument(content).toJSON()).toEqual({ x: 1, y: 2 });
+    });
+
+    it('resolves conflicts with last_wins strategy', () => {
+      const aFile = join(tmpDir, 'a.yaml');
+      const bFile = join(tmpDir, 'b.yaml');
+      writeFileSync(aFile, 'key: first\n');
+      writeFileSync(bFile, 'key: second\n');
+
+      const config = writeConfig(
+        tmpDir,
+        `files:
+  - src:
+      - ${aFile}
+      - ${bFile}
+    target: ./merged.yaml
+    yaml:
+      conflicts: last_wins
+`,
+      );
+
+      const { exitCode } = runAvanti(config, tmpDir);
+      expect(exitCode).toBe(0);
+      const content = readFileSync(join(tmpDir, 'merged.yaml'), 'utf8');
+      const { parseDocument } = require('yaml');
+      expect(parseDocument(content).toJSON().key).toBe('second');
+    });
+
+    it('deep-merges nested objects', () => {
+      const aFile = join(tmpDir, 'a.yaml');
+      const bFile = join(tmpDir, 'b.yaml');
+      writeFileSync(aFile, 'db:\n  host: localhost\n  port: 5432\n');
+      writeFileSync(bFile, 'db:\n  port: 5433\n');
+
+      const config = writeConfig(
+        tmpDir,
+        `files:
+  - src:
+      - ${aFile}
+      - ${bFile}
+    target: ./merged.yaml
+`,
+      );
+
+      const { exitCode } = runAvanti(config, tmpDir);
+      expect(exitCode).toBe(0);
+      const content = readFileSync(join(tmpDir, 'merged.yaml'), 'utf8');
+      const { parseDocument } = require('yaml');
+      expect(parseDocument(content).toJSON()).toEqual({
+        db: { host: 'localhost', port: 5433 },
+      });
+    });
+
+    it('concatenates arrays with arrays: concat', () => {
+      const aFile = join(tmpDir, 'a.yaml');
+      const bFile = join(tmpDir, 'b.yaml');
+      writeFileSync(aFile, 'tags:\n  - alpha\n  - beta\n');
+      writeFileSync(bFile, 'tags:\n  - gamma\n');
+
+      const config = writeConfig(
+        tmpDir,
+        `files:
+  - src:
+      - ${aFile}
+      - ${bFile}
+    target: ./merged.yaml
+    yaml:
+      arrays: concat
+`,
+      );
+
+      const { exitCode } = runAvanti(config, tmpDir);
+      expect(exitCode).toBe(0);
+      const content = readFileSync(join(tmpDir, 'merged.yaml'), 'utf8');
+      const { parseDocument } = require('yaml');
+      expect(parseDocument(content).toJSON().tags).toEqual([
+        'alpha',
+        'beta',
+        'gamma',
+      ]);
+    });
+
+    it('yaml: false disables auto-merge even for .yaml sources', () => {
+      const aFile = join(tmpDir, 'a.yaml');
+      const bFile = join(tmpDir, 'b.yaml');
+      writeFileSync(aFile, 'a: 1\n');
+      writeFileSync(bFile, 'b: 2\n');
+
+      const config = writeConfig(
+        tmpDir,
+        `files:
+  - src:
+      - ${aFile}
+      - ${bFile}
+    target: ./output.yaml
+    yaml: false
+`,
+      );
+
+      const { exitCode } = runAvanti(config, tmpDir);
+      expect(exitCode).toBe(0);
+      const content = readFileSync(join(tmpDir, 'output.yaml'), 'utf8');
+      expect(content).toContain('a: 1');
+      expect(content).toContain('b: 2');
+    });
+
+    it('does NOT auto-merge when sources have mixed extensions', () => {
+      const aFile = join(tmpDir, 'a.yaml');
+      const bFile = join(tmpDir, 'b.txt');
+      writeFileSync(aFile, 'a: 1\n');
+      writeFileSync(bFile, 'b: 2\n');
+
+      const config = writeConfig(
+        tmpDir,
+        `files:
+  - src:
+      - ${aFile}
+      - ${bFile}
+    target: ./output.txt
+`,
+      );
+
+      const { exitCode } = runAvanti(config, tmpDir);
+      expect(exitCode).toBe(0);
+      const content = readFileSync(join(tmpDir, 'output.txt'), 'utf8');
+      expect(content).toContain('a: 1');
+      expect(content).toContain('b: 2');
+    });
+
+    it('pretty-prints a single .yaml source', () => {
+      const srcFile = join(tmpDir, 'input.yaml');
+      writeFileSync(srcFile, 'host: localhost\nport: 5432\n');
+
+      const config = writeConfig(
+        tmpDir,
+        `files:
+  - src: ${srcFile}
+    target: ./out.yaml
+`,
+      );
+
+      const { exitCode } = runAvanti(config, tmpDir);
+      expect(exitCode).toBe(0);
+      const content = readFileSync(join(tmpDir, 'out.yaml'), 'utf8');
+      const { parseDocument } = require('yaml');
+      expect(parseDocument(content).toJSON()).toEqual({
+        host: 'localhost',
+        port: 5432,
+      });
+    });
+
+    it('preserves comments from all sources in merged output', () => {
+      const aFile = join(tmpDir, 'a.yaml');
+      const bFile = join(tmpDir, 'b.yaml');
+      writeFileSync(
+        aFile,
+        '# database config\ndb:\n  host: localhost # primary\n  port: 5432\n',
+      );
+      writeFileSync(
+        bFile,
+        '# app settings\napp:\n  name: myapp # service name\n',
+      );
+
+      const config = writeConfig(
+        tmpDir,
+        `files:
+  - src:
+      - ${aFile}
+      - ${bFile}
+    target: ./merged.yaml
+`,
+      );
+
+      const { exitCode } = runAvanti(config, tmpDir);
+      expect(exitCode).toBe(0);
+      const content = readFileSync(join(tmpDir, 'merged.yaml'), 'utf8');
+      expect(content).toContain('# database config');
+      expect(content).toContain('# primary');
+      expect(content).toContain('# app settings');
+      expect(content).toContain('# service name');
+      const { parseDocument } = require('yaml');
+      expect(parseDocument(content).toJSON()).toEqual({
+        db: { host: 'localhost', port: 5432 },
+        app: { name: 'myapp' },
+      });
+    });
+  });
+
   describe('multi-source concatenation', () => {
     it('concatenates multiple text sources with newlines', () => {
       const aFile = join(tmpDir, 'a.txt');
