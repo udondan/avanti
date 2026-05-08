@@ -271,6 +271,50 @@ export async function fetchSource(
     throw new Error(`Unknown source type: ${JSON.stringify(src)}`);
   }
 
+  // When a directory source resolves to multiple files but the target is a
+  // single file (no trailing slash), merge all files sorted by name instead
+  // of clobbering. Auto-detects JSON/YAML from the contained file extensions
+  // when no explicit merge option is set.
+  const isSingleFileTarget =
+    entry.target !== undefined &&
+    !entry.target.endsWith('/') &&
+    !entry.target.endsWith(path.sep);
+
+  if (singleResult.files.size > 1 && isSingleFileTarget) {
+    let dirJsonOpts = resolveJsonOptions(entry, [src]);
+    let dirYamlOpts =
+      dirJsonOpts === null ? resolveYamlOptions(entry, [src]) : null;
+
+    if (dirJsonOpts === null && dirYamlOpts === null) {
+      const keys = Array.from(singleResult.files.keys());
+      if (
+        entry.json !== false &&
+        keys.every((k) => JSON_EXTENSIONS.has(path.extname(k).toLowerCase()))
+      ) {
+        dirJsonOpts = {};
+      } else if (
+        entry.yaml !== false &&
+        keys.every((k) => YAML_EXTENSIONS.has(path.extname(k).toLowerCase()))
+      ) {
+        dirYamlOpts = {};
+      }
+    }
+
+    if (dirJsonOpts !== null || dirYamlOpts !== null) {
+      const sortedValues = Array.from(singleResult.files.entries())
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([, v]) => v);
+      const filename = path.basename(entry.target!);
+      const merged =
+        dirJsonOpts !== null
+          ? mergeJson(sortedValues, dirJsonOpts)
+          : mergeYaml(sortedValues, dirYamlOpts!);
+      return { files: new Map([[filename, merged]]) };
+    }
+
+    return singleResult;
+  }
+
   const singleJsonOpts = resolveJsonOptions(entry, [src]);
   const singleYamlOpts =
     singleJsonOpts === null ? resolveYamlOptions(entry, [src]) : null;
