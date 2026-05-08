@@ -29,8 +29,45 @@ export interface RawSrc {
   raw: string;
 }
 
-/** src can be a plain string (http/https URL or local path) or a map for gitlab/github/exec/raw */
-export type FileSrc = string | GitLabSrc | GitHubSrc | ExecSrc | RawSrc;
+export interface BitbucketSrc {
+  bitbucket: {
+    workspace: string;
+    repo: string;
+    file: string;
+    ref?: string;
+  };
+}
+
+export interface GitSrc {
+  git: {
+    repo: string;
+    file: string;
+    ref?: string;
+  };
+}
+
+export interface S3Src {
+  s3: string;
+}
+
+export interface VaultSrc {
+  vault: {
+    path: string;
+    field?: string;
+  };
+}
+
+/** src can be a plain string (http/https URL or local path) or a typed source map */
+export type FileSrc =
+  | string
+  | GitLabSrc
+  | GitHubSrc
+  | BitbucketSrc
+  | GitSrc
+  | ExecSrc
+  | RawSrc
+  | S3Src
+  | VaultSrc;
 
 export type JsonConflictStrategy = 'abort' | 'first_wins' | 'last_wins';
 export type JsonArrayStrategy = 'replace' | 'concat';

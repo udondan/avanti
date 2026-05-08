@@ -6,6 +6,10 @@ import { fetchLocal } from './local';
 import { fetchExec } from './exec';
 import { fetchGitLab } from './gitlab';
 import { fetchGitHub } from './github';
+import { fetchBitbucket } from './bitbucket';
+import { fetchGit } from './git';
+import { fetchS3 } from './s3';
+import { fetchVault } from './vault';
 import { mergeJson, formatJson } from '../processors/json';
 
 const JSON_EXTENSIONS = new Set(['.json', '.jsonc']);
@@ -14,6 +18,9 @@ function srcFilename(src: FileSrc): string | null {
   if (typeof src === 'string') return src;
   if ('gitlab' in src) return src.gitlab.file;
   if ('github' in src) return src.github.file;
+  if ('bitbucket' in src) return src.bitbucket.file;
+  if ('git' in src) return src.git.file;
+  if ('s3' in src) return src.s3;
   return null;
 }
 
@@ -81,6 +88,46 @@ async function fetchOneSrc(
       resolveVars(src.github.file, vars),
       src.github.ref !== undefined
         ? resolveVars(src.github.ref, vars)
+        : undefined,
+    );
+    const values = Array.from(result.files.values());
+    return values.join('\n');
+  }
+
+  if ('bitbucket' in src) {
+    const result = await fetchBitbucket(
+      resolveVars(src.bitbucket.workspace, vars),
+      resolveVars(src.bitbucket.repo, vars),
+      resolveVars(src.bitbucket.file, vars),
+      src.bitbucket.ref !== undefined
+        ? resolveVars(src.bitbucket.ref, vars)
+        : undefined,
+    );
+    const values = Array.from(result.files.values());
+    return values.join('\n');
+  }
+
+  if ('git' in src) {
+    const result = fetchGit(
+      resolveVars(src.git.repo, vars),
+      resolveVars(src.git.file, vars),
+      src.git.ref !== undefined ? resolveVars(src.git.ref, vars) : undefined,
+    );
+    const values = Array.from(result.files.values());
+    return values.join('\n');
+  }
+
+  if ('s3' in src) {
+    const result = fetchS3(resolveVars(src.s3, vars));
+    const values = Array.from(result.files.values());
+    return values.join('\n');
+  }
+
+  if ('vault' in src) {
+    const result = await fetchVault(
+      resolveVars(src.vault.path, vars),
+      src.vault.field !== undefined
+        ? resolveVars(src.vault.field, vars)
         : undefined,
     );
     const values = Array.from(result.files.values());
@@ -155,6 +202,34 @@ export async function fetchSource(
       resolveVars(src.github.file, vars),
       src.github.ref !== undefined
         ? resolveVars(src.github.ref, vars)
+        : undefined,
+    );
+    singleResult = { files: result.files };
+  } else if ('bitbucket' in src) {
+    const result = await fetchBitbucket(
+      resolveVars(src.bitbucket.workspace, vars),
+      resolveVars(src.bitbucket.repo, vars),
+      resolveVars(src.bitbucket.file, vars),
+      src.bitbucket.ref !== undefined
+        ? resolveVars(src.bitbucket.ref, vars)
+        : undefined,
+    );
+    singleResult = { files: result.files };
+  } else if ('git' in src) {
+    const result = fetchGit(
+      resolveVars(src.git.repo, vars),
+      resolveVars(src.git.file, vars),
+      src.git.ref !== undefined ? resolveVars(src.git.ref, vars) : undefined,
+    );
+    singleResult = { files: result.files };
+  } else if ('s3' in src) {
+    const result = fetchS3(resolveVars(src.s3, vars));
+    singleResult = { files: result.files };
+  } else if ('vault' in src) {
+    const result = await fetchVault(
+      resolveVars(src.vault.path, vars),
+      src.vault.field !== undefined
+        ? resolveVars(src.vault.field, vars)
         : undefined,
     );
     singleResult = { files: result.files };
