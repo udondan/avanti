@@ -76,7 +76,7 @@ npx @udondan/avanti --help
 avanti [options] [command]
 
 Options:
-  -c, --config <path>         path to config file (default: auto-detected)
+  -c, --config <path|url>     path or remote spec for config file (default: auto-detected)
   -w, --working-dir <path>    working directory for resolving paths (default: current directory)
 
 Commands:
@@ -726,23 +726,23 @@ files:
     target: ~/.gitconfig
 ```
 
-For first-time setup on a new machine, bootstrap with a minimal one-liner config that only fetches the real one:
-
-```yaml
-# bootstrap.avanti.yml — run once, then discard
-files:
-  - src:
-      github:
-        repo: myorg/dotfiles
-        file: avanti.yml
-        ref: $latest
-    target: ~/.avanti.yml
-```
+For first-time setup on a new machine, pass a remote config directly to `--config` — no local file needed:
 
 ```sh
-avanti pull -c bootstrap.avanti.yml  # installs ~/.avanti.yml
-avanti pull                          # syncs everything, self-updates from now on
+# From a GitHub repo
+avanti pull -c github:myorg/dotfiles:avanti.yml
+
+# Pinned to a specific ref
+avanti pull -c github:myorg/dotfiles:avanti.yml@v2.1.0
+
+# From a GitLab project (nested groups supported)
+avanti pull -c gitlab:myorg/infra/dotfiles:avanti.yml@main
+
+# Or a plain HTTPS URL
+avanti pull -c https://configs.example.com/bootstrap.yml
 ```
+
+The config format is `github:owner/repo:path/to/file.yml[@ref]` and `gitlab:group/project:path/to/file.yml[@ref]`. The same token auth and `gh`/`glab` CLI fallback that applies to sources also applies here, so private repos work without any extra setup.
 
 This scales to any number of machines or containers. Update the central repo once; every client picks up the change on its next pull. No config drift, no manual distribution.
 
