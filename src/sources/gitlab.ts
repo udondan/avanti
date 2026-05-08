@@ -46,7 +46,8 @@ async function resolveRef(
   project: string,
   ref: string | undefined,
 ): Promise<string> {
-  if (!ref || ref === '$latest') {
+  if (ref === undefined || ref === '') return 'HEAD';
+  if (ref === '$latest') {
     const host = getHost();
     const res = await fetchWithRetry(
       `https://${host}/api/v4/projects/${encodeURIComponent(project)}/repository/tags?order_by=version&sort=desc&per_page=1`,

@@ -29,13 +29,17 @@ async function resolveRef(
 ): Promise<string> {
   if (ref && ref !== '$latest') return ref;
 
-  const tagsRes = await fetchWithRetry(
-    `${API_BASE}/repositories/${workspace}/${repo}/refs/tags?sort=-name&pagelen=1`,
-    { headers: apiHeaders() },
-  );
-  if (tagsRes.ok) {
-    const data = (await tagsRes.json()) as { values: Array<{ name: string }> };
-    if (data.values.length > 0) return data.values[0].name;
+  if (ref === '$latest') {
+    const tagsRes = await fetchWithRetry(
+      `${API_BASE}/repositories/${workspace}/${repo}/refs/tags?sort=-name&pagelen=1`,
+      { headers: apiHeaders() },
+    );
+    if (tagsRes.ok) {
+      const data = (await tagsRes.json()) as {
+        values: Array<{ name: string }>;
+      };
+      if (data.values.length > 0) return data.values[0].name;
+    }
   }
 
   const repoRes = await fetchWithRetry(
