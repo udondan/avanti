@@ -268,6 +268,46 @@ describe('HistoryManager.getFilesAtPull', () => {
     expect(snap2.get(f1)?.version).toBe(2);
     expect(snap2.get(f2)?.version).toBe(1);
   });
+
+  it('returns correct version for file updated in pull 1 and pull 3 when queried at pull 2', () => {
+    const f1 = path.join(tmpDir, 'a.txt');
+    const f2 = path.join(tmpDir, 'b.txt');
+    fs.writeFileSync(f1, 'orig-a', 'utf8');
+
+    const h = makeManager();
+    h.ensureStorageDir();
+
+    // Pull 1: update f1 to 'a-v1'
+    const p1 = h.openPullSession();
+    const { fileRef: r1a } = h.stageFileVersion(p1, f1, 'a-v1', false);
+    h.closePullSession(p1, '/project/.avanti.yml', [r1a]);
+
+    // Pull 2: update f1 to 'a-v2', add new file f2 to 'b-v1'
+    const p2 = h.openPullSession();
+    const { fileRef: r2a } = h.stageFileVersion(p2, f1, 'a-v2', false);
+    const { fileRef: r2b } = h.stageFileVersion(p2, f2, 'b-v1', true);
+    h.closePullSession(p2, '/project/.avanti.yml', [r2a, r2b]);
+
+    // Pull 3: update f1 to 'a-v3'
+    const p3 = h.openPullSession();
+    const { fileRef: r3a } = h.stageFileVersion(p3, f1, 'a-v3', false);
+    h.closePullSession(p3, '/project/.avanti.yml', [r3a]);
+
+    // Query at pull 2: f1 at v2, f2 at v1
+    const snapP2 = h.getFilesAtPull(p2);
+    expect(snapP2.get(f1)?.version).toBe(2);
+    expect(snapP2.get(f2)?.version).toBe(1);
+
+    // Query at pull 1: f1 at v1, f2 should not exist
+    const snapP1 = h.getFilesAtPull(p1);
+    expect(snapP1.get(f1)?.version).toBe(1);
+    expect(snapP1.has(f2)).toBe(false);
+
+    // Query at pull 3: f1 at v3, f2 at v1
+    const snapP3 = h.getFilesAtPull(p3);
+    expect(snapP3.get(f1)?.version).toBe(3);
+    expect(snapP3.get(f2)?.version).toBe(1);
+  });
 });
 
 describe('HistoryManager.getLastPullFiles', () => {
