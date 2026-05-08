@@ -33,6 +33,14 @@ export function isRemoteConfigSpec(s: string): boolean {
   );
 }
 
+export function normalizeConfigKey(spec: string): string {
+  if (spec.startsWith('github:') || spec.startsWith('gitlab:')) {
+    const atIdx = spec.lastIndexOf('@');
+    if (atIdx !== -1) return spec.slice(0, atIdx);
+  }
+  return spec;
+}
+
 export function resolveConfigPath(explicit?: string): string {
   if (explicit) {
     if (isRemoteConfigSpec(explicit)) return explicit;

@@ -1,6 +1,6 @@
 import { Command } from 'commander';
 import * as path from 'path';
-import { loadConfig, resolveConfigPath } from '../config';
+import { loadConfig, normalizeConfigKey, resolveConfigPath } from '../config';
 import { fetchSource } from '../sources';
 import { applyReplace } from '../processors/replace';
 import { applyPost } from '../processors/post';
@@ -35,7 +35,11 @@ export function diffCommand(): Command {
           : process.cwd();
 
         if (pullId !== undefined) {
-          diffAgainstHistory(pullId, configPath, workingDir);
+          diffAgainstHistory(
+            pullId,
+            normalizeConfigKey(configPath),
+            workingDir,
+          );
           return;
         }
 
@@ -89,7 +93,10 @@ function diffAgainstHistory(
   configPath: string,
   workingDir: string,
 ): void {
-  const history = new HistoryManager(configPath, workingDir);
+  const history = new HistoryManager(
+    normalizeConfigKey(configPath),
+    workingDir,
+  );
   if (!history.hasHistory()) {
     console.error('No history found. Run avanti pull first.');
     process.exit(2);

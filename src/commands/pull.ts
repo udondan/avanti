@@ -1,6 +1,6 @@
 import { Command } from 'commander';
 import * as path from 'path';
-import { loadConfig, resolveConfigPath } from '../config';
+import { loadConfig, normalizeConfigKey, resolveConfigPath } from '../config';
 import { fetchSource } from '../sources';
 import { applyReplace } from '../processors/replace';
 import { applyPost } from '../processors/post';
@@ -36,7 +36,10 @@ export function pullCommand(): Command {
         process.exit(2);
       }
 
-      const history = new HistoryManager(configPath, workingDir);
+      const history = new HistoryManager(
+        normalizeConfigKey(configPath),
+        workingDir,
+      );
       const historyAvailable = history.ensureStorageDir();
       const pullId = historyAvailable ? history.openPullSession() : null;
 
@@ -159,7 +162,11 @@ export function pullCommand(): Command {
       // Only record to pulls.jsonl if at least one file was actually written
       if (pullId && stagedFileRefs.length > 0) {
         try {
-          history.closePullSession(pullId, configPath, stagedFileRefs);
+          history.closePullSession(
+            pullId,
+            normalizeConfigKey(configPath),
+            stagedFileRefs,
+          );
         } catch {
           console.warn('Warning: could not save pull history.');
         }
