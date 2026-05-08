@@ -1,6 +1,6 @@
 import { Command } from 'commander';
 import * as path from 'path';
-import { resolveConfigPath } from '../config';
+import { normalizeConfigKey, resolveConfigPath } from '../config';
 import { HistoryManager } from '../history';
 import { computeDiff, computeDeleteDiff, printDiffs } from '../diff';
 import { atomicWrite, WriteTarget } from '../writer';
@@ -23,7 +23,10 @@ export function resetCommand(): Command {
         ? path.resolve(rawWorkingDir)
         : process.cwd();
 
-      const history = new HistoryManager(configPath, workingDir);
+      const history = new HistoryManager(
+        normalizeConfigKey(configPath),
+        workingDir,
+      );
       if (!history.hasHistory()) {
         console.log('No avanti history found. Nothing to reset.');
         process.exit(0);
