@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.0](https://github.com/udondan/avanti/compare/v0.8.1...v0.9.0) (2026-05-08)
+
+
+### Features
+
+* add Bitbucket, git, S3, and Vault source types ([#42](https://github.com/udondan/avanti/issues/42)) ([73e43a0](https://github.com/udondan/avanti/commit/73e43a03992019451cb7c995da6050762e3a708c))
+
 ## [0.8.1](https://github.com/udondan/avanti/compare/v0.8.0...v0.8.1) (2026-05-08)
 
 
