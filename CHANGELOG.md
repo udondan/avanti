@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.12.0](https://github.com/udondan/avanti/compare/v0.11.0...v0.12.0) (2026-05-08)
+
+
+### Features
+
+* merge local directory files into a single target file ([#50](https://github.com/udondan/avanti/issues/50)) ([e715ddc](https://github.com/udondan/avanti/commit/e715ddc20312edd14d682dd22803f1c1b7bf0029))
+
 ## [0.11.0](https://github.com/udondan/avanti/compare/v0.10.0...v0.11.0) (2026-05-08)
 
 
