@@ -1,5 +1,11 @@
 import * as path from 'path';
-import { FileEntry, FileSrc, JsonMergeOptions, Variables } from '../types';
+import {
+  FileEntry,
+  FileSrc,
+  JsonMergeOptions,
+  YamlMergeOptions,
+  Variables,
+} from '../types';
 import { resolveVars } from '../variables';
 import { fetchHttp, inferFilenameFromUrl } from './http';
 import { fetchLocal } from './local';
@@ -11,8 +17,10 @@ import { fetchGit } from './git';
 import { fetchS3 } from './s3';
 import { fetchVault } from './vault';
 import { mergeJson, formatJson } from '../processors/json';
+import { mergeYaml, formatYaml } from '../processors/yaml';
 
 const JSON_EXTENSIONS = new Set(['.json', '.jsonc']);
+const YAML_EXTENSIONS = new Set(['.yaml', '.yml']);
 
 function srcFilename(src: FileSrc): string | null {
   if (typeof src === 'string') return src;
@@ -30,6 +38,12 @@ function hasJsonExtension(src: FileSrc): boolean {
   return JSON_EXTENSIONS.has(path.extname(name).toLowerCase());
 }
 
+function hasYamlExtension(src: FileSrc): boolean {
+  const name = srcFilename(src);
+  if (!name) return false;
+  return YAML_EXTENSIONS.has(path.extname(name).toLowerCase());
+}
+
 function resolveJsonOptions(
   entry: FileEntry,
   srcs: FileSrc[],
@@ -40,6 +54,19 @@ function resolveJsonOptions(
   if (json !== undefined && typeof json === 'object') return json;
   // Auto-detect: all sources have a JSON/JSONC file extension
   if (srcs.length > 0 && srcs.every(hasJsonExtension)) return {};
+  return null;
+}
+
+function resolveYamlOptions(
+  entry: FileEntry,
+  srcs: FileSrc[],
+): YamlMergeOptions | null {
+  const { yaml } = entry;
+  if (yaml === false) return null;
+  if (yaml === true) return {};
+  if (yaml !== undefined && typeof yaml === 'object') return yaml;
+  // Auto-detect: all sources have a YAML file extension
+  if (srcs.length > 0 && srcs.every(hasYamlExtension)) return {};
   return null;
 }
 
@@ -157,8 +184,15 @@ export async function fetchSource(
     }
     const filename = path.basename(entry.target!);
     const jsonOpts = resolveJsonOptions(entry, src);
-    const content =
-      jsonOpts !== null ? mergeJson(parts, jsonOpts) : parts.join('\n');
+    const yamlOpts = jsonOpts === null ? resolveYamlOptions(entry, src) : null;
+    let content: string;
+    if (jsonOpts !== null) {
+      content = mergeJson(parts, jsonOpts);
+    } else if (yamlOpts !== null) {
+      content = mergeYaml(parts, yamlOpts);
+    } else {
+      content = parts.join('\n');
+    }
     return { files: new Map([[filename, content]]) };
   }
 
@@ -238,11 +272,18 @@ export async function fetchSource(
   }
 
   const singleJsonOpts = resolveJsonOptions(entry, [src]);
-  if (singleJsonOpts === null) return singleResult;
+  const singleYamlOpts =
+    singleJsonOpts === null ? resolveYamlOptions(entry, [src]) : null;
+
+  if (singleJsonOpts === null && singleYamlOpts === null) return singleResult;
 
   const formatted = new Map<string, string>();
   for (const [k, v] of singleResult.files) {
-    formatted.set(k, formatJson(v));
+    if (singleJsonOpts !== null) {
+      formatted.set(k, formatJson(v));
+    } else {
+      formatted.set(k, formatYaml(v));
+    }
   }
   return { files: formatted };
 }

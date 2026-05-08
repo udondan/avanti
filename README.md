@@ -22,6 +22,7 @@ Assemble local files from any source via a declarative YAML spec.
   - [Source Types](#source-types)
   - [Directory Sources](#directory-sources)
   - [JSON Merging](#json-merging)
+  - [YAML Merging](#yaml-merging)
   - [Variables](#variables)
   - [Authentication](#authentication)
   - [Private Instances](#private-instances)
@@ -33,6 +34,7 @@ Assemble local files from any source via a declarative YAML spec.
   - [Environment-Specific Config from a Single Spec](#environment-specific-config-from-a-single-spec)
   - [Secrets from Vault or S3](#secrets-from-vault-or-s3)
   - [Multi-Project Deployment](#multi-project-deployment)
+  - [Docker Compose Layering](#docker-compose-layering)
   - [Developer Onboarding Bootstrap](#developer-onboarding-bootstrap)
   - [Self-managing Config](#self-managing-config)
   - [Avanti as a Package Manager](#avanti-as-a-package-manager)
@@ -48,6 +50,7 @@ Assemble local files from any source via a declarative YAML spec.
 - **Post-processing** — apply text replacements (string or regex) and/or pipe content through a shell script
 - **Directory sync** — recursively sync directories from GitLab/GitHub/Bitbucket/git/S3/local sources
 - **JSON merging** — deep-merge multiple JSON/JSONC sources with configurable conflict, array, and object strategies
+- **YAML merging** — deep-merge multiple YAML/YML sources with the same strategies, with full comment preservation
 - **Variables** — define reusable values in a `variables:` block and reference them anywhere with `$name`; use `$env:NAME` for environment variables
 - **History** — every pull is recorded; inspect what changed, revert the whole project to a past state, or fully undo all avanti changes
 - **Stale file cleanup** — files dropped from a directory source are automatically deleted or restored to their pre-avanti content
@@ -272,6 +275,7 @@ files:
 | `replace` | No          | List of `{from, to}` replacement rules. `from` may be a plain string or `/pattern/flags` regex.                                                                                                                                          |
 | `post`    | No          | Shell script. Content is piped via stdin; stdout is used as the result. Runs after `replace`.                                                                                                                                            |
 | `json`    | No          | JSON merge/format options (see below). When omitted, merging is auto-enabled if all sources have a `.json` or `.jsonc` extension. Use `true`/`false` to force on or off regardless of extension.                                         |
+| `yaml`    | No          | YAML merge/format options (see below). When omitted, merging is auto-enabled if all sources have a `.yaml` or `.yml` extension. Use `true`/`false` to force on or off regardless of extension. Comments are preserved in merged output.  |
 
 ### Source Types
 
@@ -454,6 +458,70 @@ files:
     target: pretty.json
 ```
 
+### YAML Merging
+
+When all sources in a list have a `.yaml` or `.yml` extension, YAML merging is enabled automatically — no extra config needed:
+
+```yaml
+files:
+  - src:
+      - ./defaults.yaml
+      - ./overrides.yml
+    target: merged.yaml
+```
+
+To merge sources that don't have a YAML extension (e.g. `exec:`, `raw:`, or a URL without `.yaml`), set `yaml: true`:
+
+```yaml
+files:
+  - src:
+      - exec: cat defaults.yaml
+      - ./overrides.yaml
+    target: merged.yaml
+    yaml: true
+```
+
+To opt out of auto-detection and force plain concatenation, set `yaml: false`.
+
+**Fine-grained options** — pass an object to control merge behavior:
+
+```yaml
+files:
+  - src:
+      - ./defaults.yaml
+      - type: github
+        repo: org/configs
+        file: overrides.yaml
+    target: merged.yaml
+    yaml:
+      conflicts: last_wins # abort | first_wins | last_wins (default)
+      arrays: replace # replace (default) | concat
+      objects: merge # merge (default) | replace
+```
+
+The options behave identically to JSON merging:
+
+- `conflicts` — what to do when the same key holds a scalar (or an array/object when their strategy is `replace`):
+  - `last_wins` _(default)_ — the last source's value wins
+  - `first_wins` — the first source's value is kept
+  - `abort` — throw an error (identical values are not considered a conflict)
+- `arrays` — how to combine arrays at the same key:
+  - `replace` _(default)_ — the later source's array replaces the earlier one
+  - `concat` — arrays are concatenated (no deduplication)
+- `objects` — how to combine objects (maps) at the same key:
+  - `merge` _(default)_ — deep merge, applying the same rules recursively to nested keys
+  - `replace` — the later source's object replaces the earlier one entirely
+
+**Comment preservation** — YAML comments are preserved in the merged output. Comments from all sources are retained in their original positions.
+
+**Pretty-printing a single file** — `yaml` works on single-source entries too. Auto-detection applies here as well, so a single `.yaml` or `.yml` source is normalized automatically:
+
+```yaml
+files:
+  - src: ./config.yaml
+    target: config.yaml
+```
+
 ### Variables
 
 Define reusable values at the top level under `variables:`:
@@ -587,6 +655,22 @@ files:
         repo: org/standards
         file: tsconfig.base.json
         ref: $standards_ref
+```
+
+For YAML-based configs (Helm values, k8s manifests, Docker Compose overrides), use YAML merge to layer a shared base with project-specific values. Comments in both files are preserved in the merged output:
+
+```yaml
+files:
+  - src:
+      - github:
+          repo: org/platform
+          file: helm/base-values.yaml # shared defaults for all services
+          ref: $standards_ref
+      - ./helm/values.yaml # project overrides
+    target: ./helm/merged-values.yaml
+    yaml:
+      conflicts: last_wins # project overrides win
+      arrays: concat # e.g. extra env vars are appended, not replaced
 ```
 
 ### CI/CD: Shared Workflow Fragments
@@ -730,6 +814,26 @@ for dir in services/*/; do
 done
 ```
 
+### Docker Compose Layering
+
+Maintain a shared `docker-compose.yml` in a central repo and let each project layer its own overrides on top. A `avanti pull` merges them into a single ready-to-run file — no manual copy-paste, no diverging base definitions.
+
+```yaml
+files:
+  - src:
+      - github:
+          repo: org/platform
+          file: docker/compose-base.yml # shared service definitions and networks
+          ref: main
+      - ./docker-compose.override.yml # project-specific ports, volumes, env vars
+    target: ./docker-compose.yml
+    yaml:
+      conflicts: last_wins # local overrides win
+      arrays: concat # environment and volumes lists are appended, not replaced
+```
+
+The base file defines the canonical service images, healthchecks, and network topology. Each project's override only declares what differs — a different port, an extra volume mount, a local build context. Comments from both files survive in the merged output, so the generated `docker-compose.yml` stays readable and self-documenting.
+
 ### Developer Onboarding Bootstrap
 
 A single `avanti pull` populates a new project with everything it needs: editor config, CI workflows, linting rules, AI instructions — all from blessed central sources, all up to date.
@@ -797,6 +901,32 @@ files:
         file: .gitconfig
     target: ~/.gitconfig
 ```
+
+**Composable self-managing config** — YAML merge takes this further. Instead of one canonical config, compose your `~/.avanti.yml` from org-wide defaults, team additions, and personal overrides — all merged automatically on every pull:
+
+```yaml
+# ~/.avanti.yml — bootstrapped once, then self-updating via YAML merge
+files:
+  - src:
+      - github:
+          repo: myorg/platform
+          file: avanti/base.yml # org-wide entries and variables
+          ref: $latest
+      - github:
+          repo: myorg/backend-team
+          file: avanti/team.yml # team-specific additions
+          ref: main
+      - github:
+          repo: myuser/dotfiles
+          file: avanti/personal.yml # personal overrides and extras
+          ref: main
+    target: ~/.avanti.yml
+    yaml:
+      conflicts: last_wins # personal overrides win over team, team over org
+      arrays: concat # file lists from all layers are merged, not replaced
+```
+
+Each layer only needs to declare what it owns. The org config defines shared tooling. The team config adds team-specific sources. The personal config overrides variables or adds private entries. Every `avanti pull` rebuilds the merged config and applies all the files it describes — org-wide config drift and personal customisation coexist without conflict.
 
 For first-time setup on a new machine, pass a remote config directly to `--config` — no local file needed:
 
