@@ -258,7 +258,7 @@ function parseSingleSrc(
 
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
     throw new Error(
-      `${loc}: must be a string or a map with one of: exec, gitlab, github`,
+      `${loc}: must be a string or a map with one of: exec, gitlab, github, bitbucket, git, s3, vault`,
     );
   }
 
@@ -320,8 +320,78 @@ function parseSingleSrc(
     };
   }
 
+  if ('bitbucket' in obj) {
+    const bb = obj['bitbucket'];
+    if (!bb || typeof bb !== 'object' || Array.isArray(bb)) {
+      throw new Error(`${loc}.bitbucket: must be an object`);
+    }
+    const b = bb as Record<string, unknown>;
+    if (typeof b['workspace'] !== 'string' || !b['workspace']) {
+      throw new Error(`${loc}.bitbucket.workspace: required string`);
+    }
+    if (typeof b['repo'] !== 'string' || !b['repo']) {
+      throw new Error(`${loc}.bitbucket.repo: required string`);
+    }
+    if (typeof b['file'] !== 'string' || !b['file']) {
+      throw new Error(`${loc}.bitbucket.file: required string`);
+    }
+    return {
+      bitbucket: {
+        workspace: b['workspace'],
+        repo: b['repo'],
+        file: b['file'],
+        ref: typeof b['ref'] === 'string' ? b['ref'] : undefined,
+      },
+    };
+  }
+
+  if ('git' in obj) {
+    const g = obj['git'];
+    if (!g || typeof g !== 'object' || Array.isArray(g)) {
+      throw new Error(`${loc}.git: must be an object`);
+    }
+    const gt = g as Record<string, unknown>;
+    if (typeof gt['repo'] !== 'string' || !gt['repo']) {
+      throw new Error(`${loc}.git.repo: required string`);
+    }
+    if (typeof gt['file'] !== 'string' || !gt['file']) {
+      throw new Error(`${loc}.git.file: required string`);
+    }
+    return {
+      git: {
+        repo: gt['repo'],
+        file: gt['file'],
+        ref: typeof gt['ref'] === 'string' ? gt['ref'] : undefined,
+      },
+    };
+  }
+
+  if ('s3' in obj) {
+    if (typeof obj['s3'] !== 'string' || !obj['s3']) {
+      throw new Error(`${loc}.s3: must be a non-empty string (s3:// URI)`);
+    }
+    return { s3: obj['s3'] };
+  }
+
+  if ('vault' in obj) {
+    const v = obj['vault'];
+    if (!v || typeof v !== 'object' || Array.isArray(v)) {
+      throw new Error(`${loc}.vault: must be an object`);
+    }
+    const vt = v as Record<string, unknown>;
+    if (typeof vt['path'] !== 'string' || !vt['path']) {
+      throw new Error(`${loc}.vault.path: required string`);
+    }
+    return {
+      vault: {
+        path: vt['path'],
+        field: typeof vt['field'] === 'string' ? vt['field'] : undefined,
+      },
+    };
+  }
+
   throw new Error(
-    `${loc}: unknown source type. Must be a string or map with exec/gitlab/github/raw`,
+    `${loc}: unknown source type. Must be a string or map with exec/gitlab/github/bitbucket/git/s3/vault/raw`,
   );
 }
 
