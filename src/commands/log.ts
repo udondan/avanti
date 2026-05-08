@@ -71,7 +71,7 @@ function showFileHistory(
     const vLabel = `v${v.version}`;
     const ts = v.pulledAt
       ? formatTimestamp(v.pulledAt)
-      : '—                   ';
+      : '—                         ';
     const pullRef = v.pullId ? `pull ${v.pullId.slice(0, 8)}` : '—        ';
     let suffix = '';
     if (v.version === fileHistory.currentVersion) suffix = '  (current)';
@@ -83,8 +83,12 @@ function showFileHistory(
 function formatTimestamp(iso: string): string {
   const d = new Date(iso);
   const pad = (n: number): string => String(n).padStart(2, '0');
+  const offsetMin = -d.getTimezoneOffset();
+  const sign = offsetMin >= 0 ? '+' : '-';
+  const absMin = Math.abs(offsetMin);
+  const tz = `${sign}${pad(Math.floor(absMin / 60))}:${pad(absMin % 60)}`;
   return (
     `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ` +
-    `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
+    `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())} ${tz}`
   );
 }
