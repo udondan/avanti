@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.6.0](https://github.com/udondan/avanti/compare/v0.5.0...v0.6.0) (2026-05-08)
+
+
+### Features
+
+* **history:** add pull history, versioning, and restore commands ([#30](https://github.com/udondan/avanti/issues/30)) ([c46bf83](https://github.com/udondan/avanti/commit/c46bf835e9b55cb28ed802ef8c758e65d46352a2))
+* **json:** add JSONC support with comment preservation ([#28](https://github.com/udondan/avanti/issues/28)) ([5da8c4d](https://github.com/udondan/avanti/commit/5da8c4d48660c587e6ffe1aac7c4454f9af960f7))
+
 ## [0.5.0](https://github.com/udondan/avanti/compare/v0.4.0...v0.5.0) (2026-05-07)
 
 
