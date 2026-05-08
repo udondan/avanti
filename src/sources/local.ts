@@ -8,7 +8,13 @@ export interface LocalResult {
 export function fetchLocal(src: string, workingDir: string): LocalResult {
   let resolved: string;
   if (src.startsWith('~/')) {
-    resolved = path.join(process.env['HOME'] ?? '~', src.slice(2));
+    const home = process.env['HOME'];
+    if (!home) {
+      throw new Error(
+        `Cannot expand '~/' in source '${src}': HOME environment variable is not set`,
+      );
+    }
+    resolved = path.join(home, src.slice(2));
   } else if (path.isAbsolute(src)) {
     resolved = src;
   } else {
