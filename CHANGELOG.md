@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.11.0](https://github.com/udondan/avanti/compare/v0.10.0...v0.11.0) (2026-05-08)
+
+
+### Features
+
+* re-evaluate config in-memory when avanti updates its own config file ([#46](https://github.com/udondan/avanti/issues/46)) ([45b7abc](https://github.com/udondan/avanti/commit/45b7abce78ad48a4f16c4100a1b63c2acb5269d5))
+
 ## [0.10.0](https://github.com/udondan/avanti/compare/v0.9.0...v0.10.0) (2026-05-08)
 
 
