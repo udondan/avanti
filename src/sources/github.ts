@@ -129,8 +129,14 @@ async function listTree(
     );
   }
   const data = (await res.json()) as {
+    truncated: boolean;
     tree: Array<{ type: string; path: string }>;
   };
+  if (data.truncated) {
+    throw new Error(
+      `Repository ${repo} exceeds the GitHub Trees API limit (100,000 entries). The directory listing for ${dirPath} is incomplete. Use a more specific path to reduce the result set.`,
+    );
+  }
   const prefix = `${dirPath}/`;
   return data.tree
     .filter((item) => item.type === 'blob' && item.path.startsWith(prefix))
@@ -145,9 +151,14 @@ function listTreeViaCli(repo: string, dirPath: string, ref: string): string[] {
     'dirPath',
     dirPath,
     '--jq',
-    '.tree[] | select(.type == "blob") | select(.path | startswith($dirPath + "/")) | .path',
+    'if .truncated then error("truncated") else .tree[] | select(.type == "blob") | select(.path | startswith($dirPath + "/")) | .path end',
   ]);
   if (res.status !== 0) {
+    if (res.stderr.includes('truncated')) {
+      throw new Error(
+        `Repository ${repo} exceeds the GitHub Trees API limit (100,000 entries). The directory listing for ${dirPath} is incomplete. Use a more specific path to reduce the result set.`,
+      );
+    }
     throw new Error(
       `Failed to list tree ${dirPath} in ${repo}@${ref}: ${res.stderr}`,
     );
