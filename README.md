@@ -40,8 +40,11 @@ Options:
   -w, --working-dir <path>    working directory for resolving paths (default: current directory)
 
 Commands:
-  diff                        Show diff between remote sources and local files
+  diff [pullId]               Show diff between remote sources and local files, or vs a past pull
   pull [--yes]                Pull remote sources and write to local files
+  log [--file <path>]         Show pull history for the current project
+  revert [pullId] [--yes]     Atomically revert all project files to a past pull state
+  reset [--yes]               Restore all tracked files to their pre-avanti state
 ```
 
 ### `avanti diff`
@@ -51,6 +54,103 @@ Shows a colored git-diff-like output of what would change. Exits `0` if no chang
 ### `avanti pull`
 
 Fetches all sources, shows the diff, and prompts for confirmation before writing. Use `--yes` to skip the prompt.
+
+When avanti has previously synced a directory from a remote source and a file is no longer present in that source, the file is treated as stale: if avanti created it, it is deleted; if it existed before avanti first touched it, the original content is restored. Stale file changes appear in the diff before you confirm.
+
+## History
+
+Every successful `avanti pull` that writes at least one file is recorded in a local history store. This lets you inspect what changed, preview past states, revert the whole project, or fully undo all avanti changes.
+
+History is stored under `~/.config/avanti/` by default. Set `AVANTI_HISTORY_DIR` to override — useful for CI or when you want to keep history inside a repository:
+
+```sh
+AVANTI_HISTORY_DIR=.avanti-history avanti pull
+```
+
+History is scoped by the **combination of config file path and working directory**, so different projects and different configs are always isolated from each other. If the history directory is missing or corrupt, all commands warn and continue — no crash, no data loss.
+
+### `avanti log`
+
+List all pull runs for the current project, newest first:
+
+```text
+pull a1b2c3d4  2026-05-08 14:32:11  .avanti.yml
+  /project/config.yml         → v3  (modified)
+  /project/scripts/deploy.sh  → v1  (new file)
+
+pull 7f8e9a0b  2026-05-07 09:15:44  .avanti.yml
+  /project/config.yml         → v2  (modified)
+```
+
+Show version history for a specific file with `--file`:
+
+```sh
+avanti log --file config.yml
+```
+
+```text
+/project/config.yml
+
+  v3  2026-05-08 14:32:11  pull a1b2c3d4  (current)
+  v2  2026-05-07 09:15:44  pull 7f8e9a0b
+  v0  —                    —              (original, before avanti)
+```
+
+`v0` is the content the file had before avanti ever touched it. If the file did not exist before avanti, `v0` is not shown.
+
+### `avanti diff <pullId>`
+
+Preview what would change if you reverted to a specific past pull state — without applying anything. Use the short pull ID shown in `avanti log`:
+
+```sh
+avanti diff 7f8e9a0b
+```
+
+Exits `0` if the current files already match that state, `1` if there are differences.
+
+### `avanti revert [pullId]`
+
+Atomically revert **all** project files to a past state. Revert always operates on the whole project — there is no per-file revert.
+
+**Undo the last pull** (no argument):
+
+```sh
+avanti revert
+```
+
+**Revert to a specific past pull** (files are restored to the state they were in after that pull):
+
+```sh
+avanti revert 7f8e9a0b
+```
+
+Files written by pulls after the target are handled automatically: if avanti created them, they are deleted; if they existed before avanti, their original content is restored.
+
+The command always shows a diff before prompting. Use `--yes` to skip the prompt:
+
+```sh
+avanti revert 7f8e9a0b --yes
+```
+
+The history log is not modified by a revert. The next `avanti pull` after a revert records a new history entry as usual.
+
+### `avanti reset`
+
+Restore **all** tracked files to their state before avanti ever touched them. Files avanti created are deleted; files avanti modified are restored to their original content:
+
+```sh
+avanti reset
+```
+
+```text
+This will restore 4 tracked file(s) to their pre-avanti state:
+  /project/config.yml  v3 → v0 (original)
+  /project/deploy.sh   v2 → delete (did not exist before avanti)
+
+Apply? [y/N]
+```
+
+Use `--yes` to skip the prompt. The history log is preserved — you can still run `avanti log` after a reset.
 
 ## Working Directory
 
