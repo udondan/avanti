@@ -54,7 +54,7 @@ export function fetchS3(uri: string): S3Result {
     return { files: new Map([[filename, res.stdout]]) };
   }
 
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'scync-s3-'));
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'avanti-s3-'));
   try {
     const res = awsRun(['s3', 'sync', uri, tmpDir]);
     if (res.status !== 0) {
