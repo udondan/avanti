@@ -87,7 +87,7 @@ export function mergeJson(
     }
   });
 
-  let result = parsed[0];
+  let result: JsonValue = parsed[0];
   for (let i = 1; i < parsed.length; i++) {
     result = mergeValues('', result, parsed[i], resolved);
   }
