@@ -2,13 +2,49 @@ import { describe, it, expect } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { loadConfig, isRemoteConfigSpec } from '../src/config';
+import {
+  loadConfig,
+  isRemoteConfigSpec,
+  normalizeConfigKey,
+} from '../src/config';
 
 function writeTmp(content: string): string {
   const f = path.join(os.tmpdir(), `fileferry-test-${Date.now()}.yml`);
   fs.writeFileSync(f, content, 'utf8');
   return f;
 }
+
+describe('normalizeConfigKey', () => {
+  it('strips @ref from github: specs', () => {
+    expect(normalizeConfigKey('github:owner/repo:config.yml@main')).toBe(
+      'github:owner/repo:config.yml',
+    );
+  });
+
+  it('strips @ref from gitlab: specs', () => {
+    expect(normalizeConfigKey('gitlab:group/project:config.yml@v1.2.3')).toBe(
+      'gitlab:group/project:config.yml',
+    );
+  });
+
+  it('leaves github: specs without a ref unchanged', () => {
+    expect(normalizeConfigKey('github:owner/repo:config.yml')).toBe(
+      'github:owner/repo:config.yml',
+    );
+  });
+
+  it('leaves https URLs unchanged', () => {
+    expect(normalizeConfigKey('https://example.com/config.yml')).toBe(
+      'https://example.com/config.yml',
+    );
+  });
+
+  it('leaves local paths unchanged', () => {
+    expect(normalizeConfigKey('/absolute/path/config.yml')).toBe(
+      '/absolute/path/config.yml',
+    );
+  });
+});
 
 describe('isRemoteConfigSpec', () => {
   it('detects http URLs', () => {
