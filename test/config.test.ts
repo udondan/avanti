@@ -237,6 +237,216 @@ files:
     await expect(loadConfig(f)).rejects.toThrow('github.repo');
   });
 
+  it('loads a bitbucket src map', async () => {
+    const f = writeTmp(`
+files:
+  - src:
+      bitbucket:
+        workspace: my-workspace
+        repo: my-repo
+        file: path/to/file.txt
+        ref: main
+    target: file.txt
+`);
+    const cfg = await loadConfig(f);
+    const src = cfg.files[0].src as {
+      bitbucket: {
+        workspace: string;
+        repo: string;
+        file: string;
+        ref: string;
+      };
+    };
+    expect(src.bitbucket.workspace).toBe('my-workspace');
+    expect(src.bitbucket.repo).toBe('my-repo');
+    expect(src.bitbucket.file).toBe('path/to/file.txt');
+    expect(src.bitbucket.ref).toBe('main');
+  });
+
+  it('loads a bitbucket src map without ref', async () => {
+    const f = writeTmp(`
+files:
+  - src:
+      bitbucket:
+        workspace: acme
+        repo: shared
+        file: config.yml
+    target: config.yml
+`);
+    const cfg = await loadConfig(f);
+    const src = cfg.files[0].src as {
+      bitbucket: {
+        workspace: string;
+        repo: string;
+        file: string;
+        ref?: string;
+      };
+    };
+    expect(src.bitbucket.workspace).toBe('acme');
+    expect(src.bitbucket.ref).toBeUndefined();
+  });
+
+  it('throws if bitbucket src missing workspace', async () => {
+    const f = writeTmp(`
+files:
+  - src:
+      bitbucket:
+        repo: my-repo
+        file: foo.txt
+    target: foo.txt
+`);
+    await expect(loadConfig(f)).rejects.toThrow('bitbucket.workspace');
+  });
+
+  it('throws if bitbucket src missing repo', async () => {
+    const f = writeTmp(`
+files:
+  - src:
+      bitbucket:
+        workspace: acme
+        file: foo.txt
+    target: foo.txt
+`);
+    await expect(loadConfig(f)).rejects.toThrow('bitbucket.repo');
+  });
+
+  it('throws if bitbucket src missing file', async () => {
+    const f = writeTmp(`
+files:
+  - src:
+      bitbucket:
+        workspace: acme
+        repo: my-repo
+    target: foo.txt
+`);
+    await expect(loadConfig(f)).rejects.toThrow('bitbucket.file');
+  });
+
+  it('loads a git src map', async () => {
+    const f = writeTmp(`
+files:
+  - src:
+      git:
+        repo: https://github.com/org/repo.git
+        file: scripts/deploy.sh
+        ref: v1.2.3
+    target: deploy.sh
+`);
+    const cfg = await loadConfig(f);
+    const src = cfg.files[0].src as {
+      git: { repo: string; file: string; ref: string };
+    };
+    expect(src.git.repo).toBe('https://github.com/org/repo.git');
+    expect(src.git.file).toBe('scripts/deploy.sh');
+    expect(src.git.ref).toBe('v1.2.3');
+  });
+
+  it('loads a git src map without ref', async () => {
+    const f = writeTmp(`
+files:
+  - src:
+      git:
+        repo: git@github.com:org/repo.git
+        file: config.yml
+    target: config.yml
+`);
+    const cfg = await loadConfig(f);
+    const src = cfg.files[0].src as {
+      git: { repo: string; file: string; ref?: string };
+    };
+    expect(src.git.repo).toBe('git@github.com:org/repo.git');
+    expect(src.git.ref).toBeUndefined();
+  });
+
+  it('throws if git src missing repo', async () => {
+    const f = writeTmp(`
+files:
+  - src:
+      git:
+        file: foo.txt
+    target: foo.txt
+`);
+    await expect(loadConfig(f)).rejects.toThrow('git.repo');
+  });
+
+  it('throws if git src missing file', async () => {
+    const f = writeTmp(`
+files:
+  - src:
+      git:
+        repo: https://github.com/org/repo.git
+    target: foo.txt
+`);
+    await expect(loadConfig(f)).rejects.toThrow('git.file');
+  });
+
+  it('loads an s3 src', async () => {
+    const f = writeTmp(`
+files:
+  - src:
+      s3: s3://my-bucket/path/to/config.yml
+    target: config.yml
+`);
+    const cfg = await loadConfig(f);
+    const src = cfg.files[0].src as { s3: string };
+    expect(src.s3).toBe('s3://my-bucket/path/to/config.yml');
+  });
+
+  it('throws if s3 src is not a string', async () => {
+    const f = writeTmp(`
+files:
+  - src:
+      s3:
+        bucket: my-bucket
+    target: config.yml
+`);
+    await expect(loadConfig(f)).rejects.toThrow('s3:');
+  });
+
+  it('loads a vault src map', async () => {
+    const f = writeTmp(`
+files:
+  - src:
+      vault:
+        path: secret/myapp/db
+        field: password
+    target: db_password.txt
+`);
+    const cfg = await loadConfig(f);
+    const src = cfg.files[0].src as {
+      vault: { path: string; field: string };
+    };
+    expect(src.vault.path).toBe('secret/myapp/db');
+    expect(src.vault.field).toBe('password');
+  });
+
+  it('loads a vault src map without field', async () => {
+    const f = writeTmp(`
+files:
+  - src:
+      vault:
+        path: secret/myapp/config
+    target: config.json
+`);
+    const cfg = await loadConfig(f);
+    const src = cfg.files[0].src as {
+      vault: { path: string; field?: string };
+    };
+    expect(src.vault.path).toBe('secret/myapp/config');
+    expect(src.vault.field).toBeUndefined();
+  });
+
+  it('throws if vault src missing path', async () => {
+    const f = writeTmp(`
+files:
+  - src:
+      vault:
+        field: password
+    target: out.txt
+`);
+    await expect(loadConfig(f)).rejects.toThrow('vault.path');
+  });
+
   it('loads replace rules', async () => {
     const f = writeTmp(`
 files:

@@ -247,6 +247,126 @@ describe('Integration', () => {
     );
   });
 
+  describe('git source', () => {
+    it(
+      'fetches a single file from a public git remote',
+      { timeout: 60_000 },
+      () => {
+        const config = writeConfig(
+          tmpDir,
+          `files:
+  - src:
+      git:
+        repo: https://github.com/udondan/avanti.git
+        file: LICENSE
+        ref: v0.4.0
+    target: ./license.txt
+`,
+        );
+
+        const { exitCode } = runAvanti(config, tmpDir);
+        expect(exitCode).toBe(0);
+        const content = readFileSync(join(tmpDir, 'license.txt'), 'utf8');
+        expect(content).toContain('MIT');
+        expect(content).toContain('Daniel Schroeder');
+      },
+    );
+
+    it(
+      'fetches a directory from a public git remote',
+      { timeout: 60_000 },
+      () => {
+        const config = writeConfig(
+          tmpDir,
+          `files:
+  - src:
+      git:
+        repo: https://github.com/udondan/avanti.git
+        file: src/processors
+        ref: v0.4.0
+    target: ./processors/
+`,
+        );
+
+        const { exitCode } = runAvanti(config, tmpDir);
+        expect(exitCode).toBe(0);
+        expect(existsSync(join(tmpDir, 'processors', 'json.ts'))).toBe(true);
+        expect(existsSync(join(tmpDir, 'processors', 'post.ts'))).toBe(true);
+        expect(existsSync(join(tmpDir, 'processors', 'replace.ts'))).toBe(true);
+      },
+    );
+
+    it('fetches a file at a specific commit hash', { timeout: 60_000 }, () => {
+      const config = writeConfig(
+        tmpDir,
+        `files:
+  - src:
+      git:
+        repo: https://github.com/udondan/avanti.git
+        file: LICENSE
+        ref: 8e12e2a0c9f1e4c9c39e89aef1a4f2c8d3b7e5f1
+    target: ./license.txt
+`,
+      );
+
+      // Invalid commit hash → should fail cleanly with exit code 2
+      const { exitCode } = runAvanti(config, tmpDir);
+      expect(exitCode).toBe(2);
+    });
+  });
+
+  describe('Bitbucket source', () => {
+    it(
+      'fetches a single file from a public Bitbucket repo',
+      { timeout: 30_000 },
+      () => {
+        const config = writeConfig(
+          tmpDir,
+          `files:
+  - src:
+      bitbucket:
+        workspace: atlassian
+        repo: aui
+        file: LICENSE
+    target: ./license.txt
+`,
+        );
+
+        const { exitCode } = runAvanti(config, tmpDir);
+        expect(exitCode).toBe(0);
+        const content = readFileSync(join(tmpDir, 'license.txt'), 'utf8');
+        expect(content.length).toBeGreaterThan(0);
+      },
+    );
+
+    it(
+      'fetches a directory from a public Bitbucket repo',
+      { timeout: 30_000 },
+      () => {
+        const config = writeConfig(
+          tmpDir,
+          `files:
+  - src:
+      bitbucket:
+        workspace: atlassian
+        repo: aui
+        file: licenses/
+    target: ./licenses/
+`,
+        );
+
+        const { exitCode } = runAvanti(config, tmpDir);
+        expect(exitCode).toBe(0);
+        const outputDir = join(tmpDir, 'licenses');
+        expect(existsSync(outputDir)).toBe(true);
+        const entries = require('fs').readdirSync(outputDir, {
+          recursive: true,
+        });
+        expect(entries.length).toBeGreaterThan(0);
+      },
+    );
+  });
+
   describe('exec source', () => {
     it('runs a shell command and captures its output', () => {
       const config = writeConfig(

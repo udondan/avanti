@@ -31,7 +31,7 @@ Assemble local files from any source via a declarative YAML spec.
   - [CI/CD: Shared Workflow Fragments](#cicd-shared-workflow-fragments)
   - [CI/CD: Scheduled Sync PR](#cicd-scheduled-sync-pr)
   - [Environment-Specific Config from a Single Spec](#environment-specific-config-from-a-single-spec)
-  - [Secrets from Vault or AWS SSM](#secrets-from-vault-or-aws-ssm)
+  - [Secrets from Vault or S3](#secrets-from-vault-or-s3)
   - [Multi-Project Deployment](#multi-project-deployment)
   - [Developer Onboarding Bootstrap](#developer-onboarding-bootstrap)
   - [Self-managing Config](#self-managing-config)
@@ -41,12 +41,12 @@ Assemble local files from any source via a declarative YAML spec.
 
 ## Features
 
-- Fetch files from **HTTP/HTTPS**, **local paths**, **GitLab** (via `glab`), **GitHub** (via `gh`), **shell commands**, or **inline raw content**
+- Fetch files from **HTTP/HTTPS**, **local paths**, **GitLab** (via `glab`), **GitHub** (via `gh`), **Bitbucket**, **any git remote**, **S3**, **HashiCorp Vault**, **shell commands**, or **inline raw content**
 - **Multi-source entries** — combine multiple sources into a single file by providing `src` as a list
 - **Atomic writes** — all files are staged to a temp dir first; targets are only written if everything succeeds
 - **Diff preview** — see exactly what will change before applying, or compare against any past pull
 - **Post-processing** — apply text replacements (string or regex) and/or pipe content through a shell script
-- **Directory sync** — recursively sync directories from GitLab/GitHub/local sources
+- **Directory sync** — recursively sync directories from GitLab/GitHub/Bitbucket/git/S3/local sources
 - **JSON merging** — deep-merge multiple JSON/JSONC sources with configurable conflict, array, and object strategies
 - **Variables** — define reusable values in a `variables:` block and reference them anywhere with `$name`; use `$env:NAME` for environment variables
 - **History** — every pull is recorded; inspect what changed, revert the whole project to a past state, or fully undo all avanti changes
@@ -283,7 +283,7 @@ src: ~/templates/file.txt
 src: /absolute/path/file.txt
 ```
 
-**Map** — for exec, gitlab, github, raw:
+**Map** — for exec, gitlab, github, bitbucket, git, s3, vault, raw:
 
 ```yaml
 src:
@@ -304,11 +304,32 @@ src:
     repo: owner/repo             # GitHub owner/repo
     file: path/to/file.txt       # file or directory in repo
     ref: main                    # branch, tag, or $latest (optional)
+
+src:
+  bitbucket:
+    workspace: my-workspace      # Bitbucket workspace slug
+    repo: my-repo                # repository slug
+    file: path/to/file.txt       # file or directory in repo
+    ref: main                    # branch, tag, or $latest (optional)
+
+src:
+  git:
+    repo: https://github.com/org/repo.git  # any git remote (HTTPS or SSH)
+    file: path/to/file.txt                 # file or directory in repo
+    ref: main                              # branch, tag, or commit hash (optional)
+
+src:
+  s3: s3://my-bucket/path/to/file.txt      # S3 URI; end with / for a prefix sync
+
+src:
+  vault:
+    path: secret/myapp/config   # Vault KV path (mount/subpath)
+    field: db_password          # specific field to extract (optional; omit for full JSON)
 ```
 
 ### Directory Sources
 
-Any source type that references a path (local, GitLab, GitHub) can point to a directory instead of a single file. End the path with `/` to declare it a directory explicitly; without a trailing slash the tool probes the remote to decide.
+Any source type that references a path (local, GitLab, GitHub, Bitbucket, git, S3) can point to a directory instead of a single file. End the path with `/` to declare it a directory explicitly; without a trailing slash the tool probes the remote to decide.
 
 When `src` is a directory, the matched files are written individually under `target` (which must also end with `/`), preserving the subdirectory structure relative to the source root:
 
@@ -328,6 +349,28 @@ When `src` is a directory, the matched files are written individually under `tar
       file: .github/workflows/
       ref: main
   target: .github/workflows/
+
+# Bitbucket directory → local directory
+- src:
+    bitbucket:
+      workspace: my-workspace
+      repo: shared-configs
+      file: eslint/
+      ref: main
+  target: eslint/
+
+# git remote directory → local directory (any host)
+- src:
+    git:
+      repo: https://github.com/org/repo.git
+      file: .github/workflows/
+      ref: main
+  target: .github/workflows/
+
+# S3 prefix → local directory (trailing / triggers sync)
+- src:
+    s3: s3://my-bucket/configs/
+  target: configs/
 
 # Local directory → local directory
 - src: ~/shared/hooks/
@@ -453,14 +496,22 @@ Referencing an undefined variable or a missing environment variable is an error.
 
 ### Authentication
 
-Public repositories on github.com and gitlab.com work without any configuration. For private repositories or private instances, supply a token via environment variable:
+Public repositories on github.com and gitlab.com work without any configuration. For private repositories or instances, supply credentials via environment variables:
 
-| Platform | Environment variable                     | Header sent                     |
-| -------- | ---------------------------------------- | ------------------------------- |
-| GitHub   | `GITHUB_TOKEN`                           | `Authorization: Bearer <token>` |
-| GitLab   | `GITLAB_TOKEN` or `GITLAB_PRIVATE_TOKEN` | `PRIVATE-TOKEN: <token>`        |
+| Platform  | Environment variable(s)                                          | Notes                                      |
+| --------- | ---------------------------------------------------------------- | ------------------------------------------ |
+| GitHub    | `GITHUB_TOKEN`                                                   | `Authorization: Bearer <token>`            |
+| GitLab    | `GITLAB_TOKEN` or `GITLAB_PRIVATE_TOKEN`                         | `PRIVATE-TOKEN: <token>`                   |
+| Bitbucket | `BITBUCKET_TOKEN`                                                | `Authorization: Bearer <token>`            |
+| Bitbucket | `BITBUCKET_USERNAME` + `BITBUCKET_APP_PASSWORD`                  | Basic auth (alternative to token)          |
+| S3        | Standard AWS env vars (`AWS_ACCESS_KEY_ID`, `AWS_PROFILE`, etc.) | Delegates entirely to the `aws` CLI        |
+| Vault     | `VAULT_TOKEN` + `VAULT_ADDR` (and optionally `VAULT_NAMESPACE`)  | Used when the `vault` CLI is not installed |
 
-If a request fails with a 401, 403, or 404 response and `gh` / `glab` is installed and authenticated, the tool falls back to the CLI automatically. This means existing CLI setups continue to work for private repos without any extra configuration.
+If a GitHub or GitLab request fails with a 401, 403, or 404 response and `gh` / `glab` is installed and authenticated, the tool falls back to the CLI automatically. This means existing CLI setups continue to work for private repos without any extra configuration.
+
+**Vault** uses the `vault` CLI when it is installed (picks up `VAULT_TOKEN`, `~/.vault-token`, and any other auth methods configured in the CLI). If the CLI is not available, it falls back to the HTTP API using `VAULT_ADDR` and `VAULT_TOKEN`.
+
+**S3** delegates entirely to the `aws` CLI, so any credential method that works with `aws s3 cp` (env vars, `~/.aws/credentials`, instance profiles, etc.) works here too.
 
 ### Private Instances
 
@@ -627,21 +678,42 @@ files:
 
 CI sets `DEPLOY_VERSION` and `ENVIRONMENT`; the config pins every file to exactly the version being deployed.
 
-### Secrets from Vault or AWS SSM
+### Secrets from Vault or S3
 
-Use `exec:` to pull secrets at runtime and write them to a local file. Config variables handle structure; env vars keep credentials out of git.
+Pull secrets at runtime and write them to local files with tight permissions. The native `vault:` and `s3:` sources handle auth automatically via the CLI or env vars — no shell scripting needed.
 
 ```yaml
-variables:
-  org: acme
-  region: us-east-1
+files:
+  # Single field from a Vault KV secret
+  - src:
+      vault:
+        path: secret/myapp/db
+        field: password
+    target: config/db_password.txt
+    mode: '0600'
 
+  # Full Vault secret as JSON
+  - src:
+      vault:
+        path: secret/myapp/config
+    target: config/secrets.json
+    mode: '0600'
+
+  # Config file stored in S3
+  - src:
+      s3: s3://my-bucket/configs/app.json
+    target: config/app.json
+    mode: '0600'
+```
+
+For AWS SSM or other secret stores without a dedicated source type, `exec:` still works:
+
+```yaml
 files:
   - src:
       exec: >
         aws ssm get-parameter
-        --name /$org/$region/db-config
-        --profile $env:AWS_PROFILE
+        --name /myapp/db-config
         --with-decryption
         --query Parameter.Value --output text
     target: config/db.json
