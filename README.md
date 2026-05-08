@@ -397,6 +397,8 @@ files:
 
 Variables are resolved in every string field: `target`, `ref`, `exec` commands, HTTP URLs, local paths, `raw` content, `replace` rules (`from` and `to`), and `post` scripts.
 
+For `raw:` sources, variables are resolved in the content itself. For all other source types (`http`, `local`, `github`, `gitlab`, `exec`), variables are only resolved in the fields that locate the source (URL, path, command) — not in the fetched content. Use a `replace:` rule if you need to substitute values in fetched content.
+
 **Environment variables** use the `$env:NAME` form:
 
 ```yaml
