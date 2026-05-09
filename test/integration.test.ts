@@ -69,8 +69,8 @@ describe('Integration', () => {
       const config = writeConfig(
         tmpDir,
         `files:
-  - src: ${sourceFile}
-    target: ./output.txt
+  ./output.txt:
+    src: ${sourceFile}
 `,
       );
 
@@ -90,8 +90,8 @@ describe('Integration', () => {
       const config = writeConfig(
         tmpDir,
         `files:
-  - src: ${sourceDir}
-    target: ./output-dir/
+  ./output-dir/:
+    src: ${sourceDir}
 `,
       );
 
@@ -120,8 +120,8 @@ describe('Integration', () => {
       const config = writeConfig(
         tmpDir,
         `files:
-  - src: ${sourceDir}
-    target: ./docker-compose.yml
+  ./docker-compose.yml:
+    src: ${sourceDir}
 `,
       );
 
@@ -146,8 +146,8 @@ describe('Integration', () => {
       const config = writeConfig(
         tmpDir,
         `files:
-  - src: ${sourceDir}
-    target: ./config.yml
+  ./config.yml:
+    src: ${sourceDir}
 `,
       );
 
@@ -177,8 +177,8 @@ describe('Integration', () => {
       const config = writeConfig(
         tmpDir,
         `files:
-  - src: ${sourceDir}
-    target: ./merged.json
+  ./merged.json:
+    src: ${sourceDir}
 `,
       );
 
@@ -198,8 +198,8 @@ describe('Integration', () => {
       const config = writeConfig(
         tmpDir,
         `files:
-  - src: https://raw.githubusercontent.com/udondan/avanti/v0.4.0/LICENSE
-    target: ./license.txt
+  ./license.txt:
+    src: https://raw.githubusercontent.com/udondan/avanti/v0.4.0/LICENSE
 `,
       );
 
@@ -219,12 +219,12 @@ describe('Integration', () => {
         const config = writeConfig(
           tmpDir,
           `files:
-  - src:
+  ./license.txt:
+    src:
       github:
         repo: udondan/avanti
         file: LICENSE
         ref: v0.4.0
-    target: ./license.txt
 `,
         );
 
@@ -242,12 +242,12 @@ describe('Integration', () => {
         const config = writeConfig(
           tmpDir,
           `files:
-  - src:
+  ./processors/:
+    src:
       github:
         repo: udondan/avanti
         file: src/processors
         ref: v0.4.0
-    target: ./processors/
 `,
         );
 
@@ -266,12 +266,12 @@ describe('Integration', () => {
         const config = writeConfig(
           tmpDir,
           `files:
-  - src:
+  ./license.txt:
+    src:
       github:
         repo: udondan/avanti
         file: LICENSE
         ref: $latest
-    target: ./license.txt
 `,
         );
 
@@ -292,12 +292,12 @@ describe('Integration', () => {
         const config = writeConfig(
           tmpDir,
           `files:
-  - src:
+  ./license.txt:
+    src:
       gitlab:
         project: gitlab-org/cli
         file: LICENSE
         ref: main
-    target: ./license.txt
 `,
         );
 
@@ -315,12 +315,12 @@ describe('Integration', () => {
         const config = writeConfig(
           tmpDir,
           `files:
-  - src:
+  ./config/:
+    src:
       gitlab:
         project: gitlab-org/cli
         file: internal/config
         ref: main
-    target: ./config/
 `,
         );
 
@@ -342,12 +342,12 @@ describe('Integration', () => {
         const config = writeConfig(
           tmpDir,
           `files:
-  - src:
+  ./license.txt:
+    src:
       git:
         repo: https://github.com/udondan/avanti.git
         file: LICENSE
         ref: v0.4.0
-    target: ./license.txt
 `,
         );
 
@@ -366,12 +366,12 @@ describe('Integration', () => {
         const config = writeConfig(
           tmpDir,
           `files:
-  - src:
+  ./processors/:
+    src:
       git:
         repo: https://github.com/udondan/avanti.git
         file: src/processors
         ref: v0.4.0
-    target: ./processors/
 `,
         );
 
@@ -387,12 +387,12 @@ describe('Integration', () => {
       const config = writeConfig(
         tmpDir,
         `files:
-  - src:
+  ./license.txt:
+    src:
       git:
         repo: https://github.com/udondan/avanti.git
         file: LICENSE
         ref: 8e12e2a0c9f1e4c9c39e89aef1a4f2c8d3b7e5f1
-    target: ./license.txt
 `,
       );
 
@@ -410,12 +410,12 @@ describe('Integration', () => {
         const config = writeConfig(
           tmpDir,
           `files:
-  - src:
+  ./license.txt:
+    src:
       bitbucket:
         workspace: atlassian
         repo: aui
         file: LICENSE
-    target: ./license.txt
 `,
         );
 
@@ -433,12 +433,12 @@ describe('Integration', () => {
         const config = writeConfig(
           tmpDir,
           `files:
-  - src:
+  ./licenses/:
+    src:
       bitbucket:
         workspace: atlassian
         repo: aui
         file: licenses/
-    target: ./licenses/
 `,
         );
 
@@ -457,9 +457,9 @@ describe('Integration', () => {
       const config = writeConfig(
         tmpDir,
         `files:
-  - src:
+  ./output.txt:
+    src:
       exec: printf 'hello from exec'
-    target: ./output.txt
 `,
       );
 
@@ -476,9 +476,9 @@ describe('Integration', () => {
       const config = writeConfig(
         tmpDir,
         `files:
-  - src:
+  ./output.txt:
+    src:
       raw: "this is raw inline content"
-    target: ./output.txt
 `,
       );
 
@@ -498,8 +498,8 @@ describe('Integration', () => {
       const config = writeConfig(
         tmpDir,
         `files:
-  - src: ${sourceFile}
-    target: ./output.txt
+  ./output.txt:
+    src: ${sourceFile}
     replace:
       - from: foo
         to: bar
@@ -520,8 +520,8 @@ describe('Integration', () => {
       const config = writeConfig(
         tmpDir,
         `files:
-  - src: ${sourceFile}
-    target: ./output.txt
+  ./output.txt:
+    src: ${sourceFile}
     replace:
       - from: "/\\\\d+/g"
         to: NUM
@@ -542,8 +542,8 @@ describe('Integration', () => {
       const config = writeConfig(
         tmpDir,
         `files:
-  - src: ${sourceFile}
-    target: ./output.txt
+  ./output.txt:
+    src: ${sourceFile}
     replace:
       - from: one
         to: "1"
@@ -568,8 +568,8 @@ describe('Integration', () => {
       const config = writeConfig(
         tmpDir,
         `files:
-  - src: ${sourceFile}
-    target: ./output.txt
+  ./output.txt:
+    src: ${sourceFile}
     post: "tr a-z A-Z"
 `,
       );
@@ -588,8 +588,8 @@ describe('Integration', () => {
       const config = writeConfig(
         tmpDir,
         `files:
-  - src: ${sourceFile}
-    target: ./output.txt
+  ./output.txt:
+    src: ${sourceFile}
     replace:
       - from: foo
         to: hello
@@ -615,10 +615,10 @@ describe('Integration', () => {
       const config = writeConfig(
         tmpDir,
         `files:
-  - src:
+  ./merged.json:
+    src:
       - ${aFile}
       - ${bFile}
-    target: ./merged.json
     json: {}
 `,
       );
@@ -640,10 +640,10 @@ describe('Integration', () => {
       const config = writeConfig(
         tmpDir,
         `files:
-  - src:
+  ./merged.json:
+    src:
       - ${aFile}
       - ${bFile}
-    target: ./merged.json
     json:
       conflicts: last_wins
 `,
@@ -666,10 +666,10 @@ describe('Integration', () => {
       const config = writeConfig(
         tmpDir,
         `files:
-  - src:
+  ./merged.json:
+    src:
       - ${aFile}
       - ${bFile}
-    target: ./merged.json
     json:
       conflicts: first_wins
 `,
@@ -692,10 +692,10 @@ describe('Integration', () => {
       const config = writeConfig(
         tmpDir,
         `files:
-  - src:
+  ./merged.json:
+    src:
       - ${aFile}
       - ${bFile}
-    target: ./merged.json
     json:
       arrays: concat
 `,
@@ -718,10 +718,10 @@ describe('Integration', () => {
       const config = writeConfig(
         tmpDir,
         `files:
-  - src:
+  ./merged.json:
+    src:
       - ${aFile}
       - ${bFile}
-    target: ./merged.json
     json:
       objects: merge
 `,
@@ -742,8 +742,8 @@ describe('Integration', () => {
       const config = writeConfig(
         tmpDir,
         `files:
-  - src: ${sourceFile}
-    target: ./pretty.json
+  ./pretty.json:
+    src: ${sourceFile}
     json: {}
 `,
       );
@@ -762,10 +762,10 @@ describe('Integration', () => {
       const config = writeConfig(
         tmpDir,
         `files:
-  - src:
+  ./merged.json:
+    src:
       - https://raw.githubusercontent.com/udondan/avanti/v0.4.0/package.json
       - ${localFile}
-    target: ./merged.json
     json:
       conflicts: last_wins
 `,
@@ -791,8 +791,8 @@ describe('Integration', () => {
         `variables:
   word: hello
 files:
-  - src: ${sourceFile}
-    target: ./output.txt
+  ./output.txt:
+    src: ${sourceFile}
     replace:
       - from: hi
         to: $word
@@ -813,8 +813,8 @@ files:
       const config = writeConfig(
         tmpDir,
         `files:
-  - src: ${sourceFile}
-    target: ./output.txt
+  ./output.txt:
+    src: ${sourceFile}
     replace:
       - from: PLACEHOLDER
         to: $env:USER
@@ -838,10 +838,10 @@ files:
       const config = writeConfig(
         tmpDir,
         `files:
-  - src:
+  ./merged.json:
+    src:
       - ${aFile}
       - ${bFile}
-    target: ./merged.json
 `,
       );
 
@@ -862,10 +862,10 @@ files:
       const config = writeConfig(
         tmpDir,
         `files:
-  - src:
+  ./merged.jsonc:
+    src:
       - ${aFile}
       - ${bFile}
-    target: ./merged.jsonc
 `,
       );
 
@@ -886,10 +886,10 @@ files:
       const config = writeConfig(
         tmpDir,
         `files:
-  - src:
+  ./output.txt:
+    src:
       - ${aFile}
       - ${bFile}
-    target: ./output.txt
 `,
       );
 
@@ -910,10 +910,10 @@ files:
       const config = writeConfig(
         tmpDir,
         `files:
-  - src:
+  ./merged.json:
+    src:
       - ${aFile}
       - ${bFile}
-    target: ./merged.json
     json: true
 `,
       );
@@ -935,10 +935,10 @@ files:
       const config = writeConfig(
         tmpDir,
         `files:
-  - src:
+  ./output.json:
+    src:
       - ${aFile}
       - ${bFile}
-    target: ./output.json
     json: false
 `,
       );
@@ -961,10 +961,10 @@ files:
       const config = writeConfig(
         tmpDir,
         `files:
-  - src:
+  ./merged.yaml:
+    src:
       - ${aFile}
       - ${bFile}
-    target: ./merged.yaml
     yaml: {}
 `,
       );
@@ -985,10 +985,10 @@ files:
       const config = writeConfig(
         tmpDir,
         `files:
-  - src:
+  ./merged.yaml:
+    src:
       - ${aFile}
       - ${bFile}
-    target: ./merged.yaml
 `,
       );
 
@@ -1008,10 +1008,10 @@ files:
       const config = writeConfig(
         tmpDir,
         `files:
-  - src:
+  ./merged.yml:
+    src:
       - ${aFile}
       - ${bFile}
-    target: ./merged.yml
 `,
       );
 
@@ -1033,10 +1033,10 @@ files:
       const config = writeConfig(
         tmpDir,
         `files:
-  - src:
+  ./merged.yaml:
+    src:
       - ${aFile}
       - ${bFile}
-    target: ./merged.yaml
     yaml:
       conflicts: last_wins
 `,
@@ -1059,10 +1059,10 @@ files:
       const config = writeConfig(
         tmpDir,
         `files:
-  - src:
+  ./merged.yaml:
+    src:
       - ${aFile}
       - ${bFile}
-    target: ./merged.yaml
 `,
       );
 
@@ -1083,10 +1083,10 @@ files:
       const config = writeConfig(
         tmpDir,
         `files:
-  - src:
+  ./merged.yaml:
+    src:
       - ${aFile}
       - ${bFile}
-    target: ./merged.yaml
     yaml:
       arrays: concat
 `,
@@ -1109,10 +1109,10 @@ files:
       const config = writeConfig(
         tmpDir,
         `files:
-  - src:
+  ./output.yaml:
+    src:
       - ${aFile}
       - ${bFile}
-    target: ./output.yaml
     yaml: false
 `,
       );
@@ -1133,10 +1133,10 @@ files:
       const config = writeConfig(
         tmpDir,
         `files:
-  - src:
+  ./output.txt:
+    src:
       - ${aFile}
       - ${bFile}
-    target: ./output.txt
 `,
       );
 
@@ -1154,8 +1154,8 @@ files:
       const config = writeConfig(
         tmpDir,
         `files:
-  - src: ${srcFile}
-    target: ./out.yaml
+  ./out.yaml:
+    src: ${srcFile}
 `,
       );
 
@@ -1183,10 +1183,10 @@ files:
       const config = writeConfig(
         tmpDir,
         `files:
-  - src:
+  ./merged.yaml:
+    src:
       - ${aFile}
       - ${bFile}
-    target: ./merged.yaml
 `,
       );
 
@@ -1214,8 +1214,8 @@ files:
       writeFileSync(
         configV2Path,
         `files:
-  - src: ${fileBSource}
-    target: ./file-b.txt
+  ./file-b.txt:
+    src: ${fileBSource}
 `,
       );
 
@@ -1226,10 +1226,10 @@ files:
       const config = writeConfig(
         tmpDir,
         `files:
-  - src: ${fileASource}
-    target: ./file-a.txt
-  - src: ${configV2Path}
-    target: ./avanti.yml
+  ./file-a.txt:
+    src: ${fileASource}
+  ./avanti.yml:
+    src: ${configV2Path}
 `,
       );
 
@@ -1265,10 +1265,10 @@ files:
       const config = writeConfig(
         tmpDir,
         `files:
-  - src: ${fileASource}
-    target: ./file-a.txt
-  - src: ${invalidConfigPath}
-    target: ./avanti.yml
+  ./file-a.txt:
+    src: ${fileASource}
+  ./avanti.yml:
+    src: ${invalidConfigPath}
 `,
       );
 
@@ -1290,10 +1290,10 @@ files:
       const config = writeConfig(
         tmpDir,
         `files:
-  - src:
+  ./output.txt:
+    src:
       - ${aFile}
       - ${bFile}
-    target: ./output.txt
 `,
       );
 

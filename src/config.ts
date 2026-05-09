@@ -165,52 +165,49 @@ export function parseConfigContent(content: string): AvantiConfig {
 
   const obj = raw as Record<string, unknown>;
 
-  if (!Array.isArray(obj['files'])) {
-    throw new Error('Config must have a "files" array');
+  if (
+    !obj['files'] ||
+    typeof obj['files'] !== 'object' ||
+    Array.isArray(obj['files'])
+  ) {
+    throw new Error('Config must have a "files" map');
   }
 
   const variables = parseVariables(obj['variables']);
 
-  const files: FileEntry[] = (obj['files'] as unknown[]).map((entry, i) => {
+  const filesRaw = obj['files'] as Record<string, unknown>;
+  const files: Record<string, FileEntry> = Object.create(null) as Record<
+    string,
+    FileEntry
+  >;
+
+  for (const [target, entry] of Object.entries(filesRaw)) {
     if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
-      throw new Error(`files[${i}]: must be an object`);
+      throw new Error(`files["${target}"]: must be an object`);
     }
     const e = entry as Record<string, unknown>;
 
     if (e['src'] === undefined || e['src'] === null) {
-      throw new Error(`files[${i}]: "src" is required`);
+      throw new Error(`files["${target}"]: "src" is required`);
     }
 
     const src = Array.isArray(e['src'])
-      ? (e['src'] as unknown[]).map((item, j) => parseSingleSrc(item, i, j))
-      : parseSingleSrc(e['src'], i, undefined);
+      ? (e['src'] as unknown[]).map((item, j) =>
+          parseSingleSrc(item, target, j),
+        )
+      : parseSingleSrc(e['src'], target, undefined);
 
-    // list src must have an explicit target
-    if (Array.isArray(src) && !e['target']) {
-      throw new Error(`files[${i}]: "target" is required when "src" is a list`);
-    }
+    const fileEntry: FileEntry = { src, target };
 
-    // exec/raw sources must have a target
-    if (
-      !Array.isArray(src) &&
-      (isExecSrc(src) || isRawSrc(src)) &&
-      !e['target']
-    ) {
-      throw new Error(`files[${i}]: "target" is required for exec/raw sources`);
-    }
-
-    const fileEntry: FileEntry = { src };
-
-    if (typeof e['target'] === 'string') fileEntry.target = e['target'];
     if (typeof e['mode'] === 'string') fileEntry.mode = e['mode'];
     if (typeof e['post'] === 'string') fileEntry.post = e['post'];
 
     if (e['replace'] !== undefined) {
       if (!Array.isArray(e['replace'])) {
-        throw new Error(`files[${i}]: "replace" must be an array`);
+        throw new Error(`files["${target}"]: "replace" must be an array`);
       }
       fileEntry.replace = (e['replace'] as unknown[]).map((r, j) =>
-        parseReplaceRule(r, i, j),
+        parseReplaceRule(r, target, j),
       );
     }
 
@@ -219,7 +216,7 @@ export function parseConfigContent(content: string): AvantiConfig {
       if (rawJson === true || rawJson === false) {
         fileEntry.json = rawJson;
       } else {
-        fileEntry.json = parseJsonMergeOptions(rawJson, i);
+        fileEntry.json = parseJsonMergeOptions(rawJson, target);
       }
     }
 
@@ -228,12 +225,12 @@ export function parseConfigContent(content: string): AvantiConfig {
       if (rawYaml === true || rawYaml === false) {
         fileEntry.yaml = rawYaml;
       } else {
-        fileEntry.yaml = parseYamlMergeOptions(rawYaml, i);
+        fileEntry.yaml = parseYamlMergeOptions(rawYaml, target);
       }
     }
 
-    return fileEntry;
-  });
+    files[target] = fileEntry;
+  }
 
   return { variables, files };
 }
@@ -281,10 +278,11 @@ function parseSha(value: unknown, loc: string): string | undefined {
 
 function parseSingleSrc(
   raw: unknown,
-  i: number,
+  target: string,
   j: number | undefined,
 ): FileSrc {
-  const loc = j !== undefined ? `files[${i}].src[${j}]` : `files[${i}].src`;
+  const loc =
+    j !== undefined ? `files["${target}"].src[${j}]` : `files["${target}"].src`;
 
   // Plain string → http/https URL or local path
   if (typeof raw === 'string') {
@@ -462,28 +460,20 @@ function parseSingleSrc(
   );
 }
 
-function isExecSrc(src: FileSrc): boolean {
-  return typeof src === 'object' && 'exec' in src;
-}
-
-function isRawSrc(src: FileSrc): boolean {
-  return typeof src === 'object' && 'raw' in src;
-}
-
 function parseMergeOptions<
   C extends string,
   A extends string,
   O extends string,
 >(
   raw: unknown,
-  i: number,
+  target: string,
   kind: string,
   conflictValues: C[],
   arrayValues: A[],
   objectValues: O[],
 ): { conflicts?: C; arrays?: A; objects?: O } {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
-    throw new Error(`files[${i}]: "${kind}" must be an object`);
+    throw new Error(`files["${target}"]: "${kind}" must be an object`);
   }
   const obj = raw as Record<string, unknown>;
   const opts: { conflicts?: C; arrays?: A; objects?: O } = {};
@@ -491,7 +481,7 @@ function parseMergeOptions<
   if (obj['conflicts'] !== undefined) {
     if (!conflictValues.includes(obj['conflicts'] as C)) {
       throw new Error(
-        `files[${i}].${kind}.conflicts: must be one of ${conflictValues.join(', ')}`,
+        `files["${target}"].${kind}.conflicts: must be one of ${conflictValues.join(', ')}`,
       );
     }
     opts.conflicts = obj['conflicts'] as C;
@@ -500,7 +490,7 @@ function parseMergeOptions<
   if (obj['arrays'] !== undefined) {
     if (!arrayValues.includes(obj['arrays'] as A)) {
       throw new Error(
-        `files[${i}].${kind}.arrays: must be one of ${arrayValues.join(', ')}`,
+        `files["${target}"].${kind}.arrays: must be one of ${arrayValues.join(', ')}`,
       );
     }
     opts.arrays = obj['arrays'] as A;
@@ -509,7 +499,7 @@ function parseMergeOptions<
   if (obj['objects'] !== undefined) {
     if (!objectValues.includes(obj['objects'] as O)) {
       throw new Error(
-        `files[${i}].${kind}.objects: must be one of ${objectValues.join(', ')}`,
+        `files["${target}"].${kind}.objects: must be one of ${objectValues.join(', ')}`,
       );
     }
     opts.objects = obj['objects'] as O;
@@ -518,14 +508,14 @@ function parseMergeOptions<
   return opts;
 }
 
-function parseJsonMergeOptions(raw: unknown, i: number): JsonMergeOptions {
+function parseJsonMergeOptions(raw: unknown, target: string): JsonMergeOptions {
   return parseMergeOptions<
     JsonConflictStrategy,
     JsonArrayStrategy,
     JsonObjectStrategy
   >(
     raw,
-    i,
+    target,
     'json',
     ['abort', 'first_wins', 'last_wins'],
     ['replace', 'concat'],
@@ -533,14 +523,14 @@ function parseJsonMergeOptions(raw: unknown, i: number): JsonMergeOptions {
   );
 }
 
-function parseYamlMergeOptions(raw: unknown, i: number): YamlMergeOptions {
+function parseYamlMergeOptions(raw: unknown, target: string): YamlMergeOptions {
   return parseMergeOptions<
     YamlConflictStrategy,
     YamlArrayStrategy,
     YamlObjectStrategy
   >(
     raw,
-    i,
+    target,
     'yaml',
     ['abort', 'first_wins', 'last_wins'],
     ['replace', 'concat'],
@@ -548,16 +538,18 @@ function parseYamlMergeOptions(raw: unknown, i: number): YamlMergeOptions {
   );
 }
 
-function parseReplaceRule(r: unknown, i: number, j: number): ReplaceRule {
+function parseReplaceRule(r: unknown, target: string, j: number): ReplaceRule {
   if (!r || typeof r !== 'object' || Array.isArray(r)) {
-    throw new Error(`files[${i}].replace[${j}]: must be an object`);
+    throw new Error(`files["${target}"].replace[${j}]: must be an object`);
   }
   const rule = r as Record<string, unknown>;
   if (typeof rule['from'] !== 'string') {
-    throw new Error(`files[${i}].replace[${j}]: "from" must be a string`);
+    throw new Error(
+      `files["${target}"].replace[${j}]: "from" must be a string`,
+    );
   }
   if (typeof rule['to'] !== 'string') {
-    throw new Error(`files[${i}].replace[${j}]: "to" must be a string`);
+    throw new Error(`files["${target}"].replace[${j}]: "to" must be a string`);
   }
   return { from: rule['from'], to: rule['to'] };
 }

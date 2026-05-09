@@ -49,7 +49,7 @@ async function runFetchLoop(
   const sourceRecordsByTarget = new Map<string, SourceFetchRecord[]>();
   let hasError = false;
 
-  for (const entry of config.files) {
+  for (const entry of Object.values(config.files)) {
     try {
       const result = await fetchSource(entry, workingDir, vars);
 

@@ -1,5 +1,5 @@
 import * as fs from 'fs';
-import { parseDocument, isSeq } from 'yaml';
+import { parseDocument, isMap, isScalar, isSeq } from 'yaml';
 import { atomicWrite } from './writer';
 
 /**
@@ -14,17 +14,21 @@ export function applyUpdatedShas(
   const doc = parseDocument(raw);
 
   const filesNode = doc.get('files', true);
-  if (!isSeq(filesNode)) return null;
+  if (!isMap(filesNode)) return null;
 
   let changed = false;
 
-  filesNode.items.forEach((fileItem, fileIdx) => {
-    if (!fileItem || typeof fileItem !== 'object') return;
-    // YAML sequence items are the nodes themselves (YAMLMap) — no .value wrapper
-    const entryNode = fileItem as {
+  filesNode.items.forEach((pair) => {
+    if (!pair || typeof pair !== 'object') return;
+    const p = pair as { key?: unknown; value?: unknown };
+    const targetKey =
+      p.key != null && isScalar(p.key) ? String(p.key.value) : null;
+    if (!targetKey) return;
+
+    const entryNode = p.value as {
       get?: (k: string, keepScalar?: boolean) => unknown;
-    };
-    if (!entryNode.get) return;
+    } | null;
+    if (!entryNode?.get) return;
 
     const srcNode = entryNode.get('src', true);
     if (!srcNode) return;
@@ -41,8 +45,8 @@ export function applyUpdatedShas(
       if (!n.get) return;
 
       const srcBase: (string | number)[] = inSeq
-        ? ['files', fileIdx, 'src', srcIdx]
-        : ['files', fileIdx, 'src'];
+        ? ['files', targetKey, 'src', srcIdx]
+        : ['files', targetKey, 'src'];
 
       let label: string | null = null;
       let shaPath: (string | number)[] | null = null;
