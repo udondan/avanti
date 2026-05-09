@@ -11,8 +11,24 @@ export function inferFilenameFromUrl(url: string): string | undefined {
   }
 }
 
-export async function fetchHttp(url: string): Promise<string> {
+export async function fetchHttp(url: string): Promise<string>;
+export async function fetchHttp(url: string, optional: false): Promise<string>;
+export async function fetchHttp(
+  url: string,
+  optional: true,
+): Promise<string | null>;
+export async function fetchHttp(
+  url: string,
+  optional: boolean,
+): Promise<string | null>;
+export async function fetchHttp(
+  url: string,
+  optional = false,
+): Promise<string | null> {
   const res = await fetchWithRetry(url);
-  if (!res.ok) throw new Error(`HTTP ${res.status} fetching ${url}`);
+  if (!res.ok) {
+    if (optional && res.status === 404) return null;
+    throw new Error(`HTTP ${res.status} fetching ${url}`);
+  }
   return res.text();
 }

@@ -1,8 +1,10 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fetchLocal } from '../src/sources/local';
+import { fetchHttp } from '../src/sources/http';
+import { _testable } from '../src/fetch';
 import { fetchSource } from '../src/sources';
 
 describe('fetchLocal — ~/  expansion', () => {
@@ -16,6 +18,87 @@ describe('fetchLocal — ~/  expansion', () => {
     } finally {
       if (orig !== undefined) process.env['HOME'] = orig;
     }
+  });
+});
+
+describe('fetchLocal — optional flag', () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'avanti-sources-test-'));
+  });
+
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('returns content for an existing file', () => {
+    const file = join(tmpDir, 'hello.txt');
+    writeFileSync(file, 'hello');
+    const result = fetchLocal(file, tmpDir);
+    expect(result.files.get('hello.txt')).toBe('hello');
+  });
+
+  it('throws for a missing file when optional is false', () => {
+    expect(() =>
+      fetchLocal(join(tmpDir, 'nonexistent.txt'), tmpDir, false),
+    ).toThrow(/Local source not found/);
+  });
+
+  it('throws for a missing file when optional is omitted', () => {
+    expect(() => fetchLocal(join(tmpDir, 'nonexistent.txt'), tmpDir)).toThrow(
+      /Local source not found/,
+    );
+  });
+
+  it('returns empty map with missing=true for a missing file when optional is true', () => {
+    const result = fetchLocal(join(tmpDir, 'nonexistent.txt'), tmpDir, true);
+    expect(result.files.size).toBe(0);
+    expect(result.missing).toBe(true);
+  });
+
+  it('returns empty map without missing flag for an existing empty directory', () => {
+    const emptyDir = join(tmpDir, 'empty');
+    mkdirSync(emptyDir);
+    const result = fetchLocal(emptyDir, tmpDir, true);
+    expect(result.files.size).toBe(0);
+    expect(result.missing).toBeUndefined();
+  });
+});
+
+describe('fetchHttp — optional flag', () => {
+  beforeEach(() => {
+    vi.spyOn(_testable, 'sleep').mockResolvedValue(undefined);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('returns null for a 404 when optional is true', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response('Not Found', { status: 404 }),
+    );
+    const result = await fetchHttp('https://example.com/missing.txt', true);
+    expect(result).toBeNull();
+  });
+
+  it('throws for a 404 when optional is false', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response('Not Found', { status: 404 }),
+    );
+    await expect(
+      fetchHttp('https://example.com/missing.txt', false),
+    ).rejects.toThrow('HTTP 404');
+  });
+
+  it('throws for a 500 even when optional is true', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response('Server Error', { status: 500 }),
+    );
+    await expect(
+      fetchHttp('https://example.com/error.txt', true),
+    ).rejects.toThrow('HTTP 500');
   });
 });
 
@@ -192,5 +275,140 @@ describe('fetchSource — local directory → single file target', () => {
       // Mixed extensions → no auto-detect → mirrors
       expect(result.files.size).toBe(2);
     });
+  });
+});
+
+describe('fetchSource — path source type', () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'avanti-sources-test-'));
+  });
+
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('fetches an existing file via path src', async () => {
+    const file = join(tmpDir, 'data.txt');
+    writeFileSync(file, 'content');
+    const result = await fetchSource(
+      { src: { path: file }, target: 'data.txt' },
+      tmpDir,
+    );
+    expect(result.files.get('data.txt')).toBe('content');
+  });
+
+  it('throws for a missing path src without optional', async () => {
+    await expect(
+      fetchSource(
+        { src: { path: join(tmpDir, 'missing.txt') }, target: 'out.txt' },
+        tmpDir,
+      ),
+    ).rejects.toThrow(/Local source not found/);
+  });
+
+  it('returns empty files map for a missing optional path src', async () => {
+    const result = await fetchSource(
+      {
+        src: { path: join(tmpDir, 'missing.txt'), optional: true },
+        target: 'out.txt',
+      },
+      tmpDir,
+    );
+    expect(result.files.size).toBe(0);
+    expect(result.sourceRecords).toHaveLength(0);
+  });
+
+  it('skips missing optional path in array without injecting blank line', async () => {
+    const file = join(tmpDir, 'base.txt');
+    writeFileSync(file, 'first');
+    const result = await fetchSource(
+      {
+        src: [
+          file,
+          { path: join(tmpDir, 'missing.txt'), optional: true },
+          { path: file },
+        ],
+        target: 'out.txt',
+      },
+      tmpDir,
+    );
+    expect(result.files.get('out.txt')).toBe('first\nfirst');
+  });
+});
+
+describe('fetchSource — url source type', () => {
+  beforeEach(() => {
+    vi.spyOn(_testable, 'sleep').mockResolvedValue(undefined);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('returns empty files map for optional url src returning 404', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response('Not Found', { status: 404 }),
+    );
+    const result = await fetchSource(
+      {
+        src: { url: 'https://example.com/missing.txt', optional: true },
+        target: 'out.txt',
+      },
+      '/tmp',
+    );
+    expect(result.files.size).toBe(0);
+    expect(result.sourceRecords).toHaveLength(0);
+  });
+
+  it('throws for optional url src returning 500', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response('Server Error', { status: 500 }),
+    );
+    await expect(
+      fetchSource(
+        {
+          src: { url: 'https://example.com/error.txt', optional: true },
+          target: 'out.txt',
+        },
+        '/tmp',
+      ),
+    ).rejects.toThrow('HTTP 500');
+  });
+
+  it('skips missing optional url in array without injecting blank line', async () => {
+    vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response('Not Found', { status: 404 }))
+      .mockResolvedValueOnce(new Response('second', { status: 200 }));
+    const result = await fetchSource(
+      {
+        src: [
+          { url: 'https://example.com/missing.txt', optional: true },
+          'https://example.com/second.txt',
+        ],
+        target: 'out.txt',
+      },
+      '/tmp',
+    );
+    expect(result.files.get('out.txt')).toBe('second');
+  });
+
+  it('returns empty files map when all array sources are skipped', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response('Not Found', { status: 404 }),
+    );
+    const result = await fetchSource(
+      {
+        src: [
+          { url: 'https://example.com/a.txt', optional: true },
+          { url: 'https://example.com/b.txt', optional: true },
+        ],
+        target: 'out.txt',
+      },
+      '/tmp',
+    );
+    expect(result.files.size).toBe(0);
+    expect(result.sourceRecords).toHaveLength(0);
   });
 });
