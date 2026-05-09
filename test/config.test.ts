@@ -113,36 +113,36 @@ describe('loadConfig', () => {
   it('loads a valid http src', async () => {
     const f = writeTmp(`
 files:
-  - src: https://example.com/foo.txt
-    target: foo.txt
+  foo.txt:
+    src: https://example.com/foo.txt
 `);
     const cfg = await loadConfig(f);
-    expect(cfg.files).toHaveLength(1);
-    expect(cfg.files[0].src).toBe('https://example.com/foo.txt');
-    expect(cfg.files[0].target).toBe('foo.txt');
+    expect(Object.keys(cfg.files)).toHaveLength(1);
+    expect(cfg.files['foo.txt'].src).toBe('https://example.com/foo.txt');
+    expect(cfg.files['foo.txt'].target).toBe('foo.txt');
   });
 
   it('loads a local path src', async () => {
     const f = writeTmp(`
 files:
-  - src: ~/some/file.sh
-    target: file.sh
+  file.sh:
+    src: ~/some/file.sh
     mode: "0777"
 `);
     const cfg = await loadConfig(f);
-    expect(cfg.files[0].src).toBe('~/some/file.sh');
-    expect(cfg.files[0].mode).toBe('0777');
+    expect(cfg.files['file.sh'].src).toBe('~/some/file.sh');
+    expect(cfg.files['file.sh'].mode).toBe('0777');
   });
 
   it('loads an exec src map', async () => {
     const f = writeTmp(`
 files:
-  - src:
+  out.txt:
+    src:
       exec: echo hello
-    target: out.txt
 `);
     const cfg = await loadConfig(f);
-    const src = cfg.files[0].src;
+    const src = cfg.files['out.txt'].src;
     expect(typeof src).toBe('object');
     expect(src).toHaveProperty('exec', 'echo hello');
   });
@@ -150,40 +150,41 @@ files:
   it('loads a gitlab src map', async () => {
     const f = writeTmp(`
 files:
-  - src:
+  renovate.json:
+    src:
       gitlab:
         project: group/project
         file: renovate.json
         ref: $latest
 `);
     const cfg = await loadConfig(f);
-    const src = cfg.files[0].src as {
+    const src = cfg.files['renovate.json'].src as {
       gitlab: { project: string; file: string; ref: string };
     };
     expect(src.gitlab.project).toBe('group/project');
     expect(src.gitlab.file).toBe('renovate.json');
     expect(src.gitlab.ref).toBe('$latest');
-    expect(cfg.files[0].target).toBeUndefined();
+    expect(cfg.files['renovate.json'].target).toBe('renovate.json');
   });
 
   it('loads a github src map', async () => {
     const f = writeTmp(`
 files:
-  - src:
+  local-scripts/:
+    src:
       github:
         repo: org/repo
         file: scripts/
         ref: main
-    target: local-scripts/
 `);
     const cfg = await loadConfig(f);
-    const src = cfg.files[0].src as {
+    const src = cfg.files['local-scripts/'].src as {
       github: { repo: string; file: string; ref: string };
     };
     expect(src.github.repo).toBe('org/repo');
     expect(src.github.file).toBe('scripts/');
     expect(src.github.ref).toBe('main');
-    expect(cfg.files[0].target).toBe('local-scripts/');
+    expect(cfg.files['local-scripts/'].target).toBe('local-scripts/');
   });
 
   it('throws if config file not found', async () => {
@@ -199,29 +200,24 @@ files:
 
   it('throws if files is missing', async () => {
     const f = writeTmp('foo: bar\n');
-    await expect(loadConfig(f)).rejects.toThrow('"files" array');
+    await expect(loadConfig(f)).rejects.toThrow('"files" map');
+  });
+
+  it('throws if files is a list', async () => {
+    const f = writeTmp('files:\n  - src: foo.txt\n');
+    await expect(loadConfig(f)).rejects.toThrow('"files" map');
   });
 
   it('throws if src is missing', async () => {
-    const f = writeTmp('files:\n  - target: foo.txt\n');
+    const f = writeTmp('files:\n  foo.txt:\n    mode: "0644"\n');
     await expect(loadConfig(f)).rejects.toThrow('"src" is required');
-  });
-
-  it('throws if exec src has no target', async () => {
-    const f = writeTmp(`
-files:
-  - src:
-      exec: echo hello
-`);
-    await expect(loadConfig(f)).rejects.toThrow(
-      '"target" is required for exec/raw sources',
-    );
   });
 
   it('throws if gitlab src missing project', async () => {
     const f = writeTmp(`
 files:
-  - src:
+  foo.txt:
+    src:
       gitlab:
         file: foo.txt
 `);
@@ -231,7 +227,8 @@ files:
   it('throws if github src missing repo', async () => {
     const f = writeTmp(`
 files:
-  - src:
+  foo.txt:
+    src:
       github:
         file: foo.txt
 `);
@@ -241,16 +238,16 @@ files:
   it('loads a bitbucket src map', async () => {
     const f = writeTmp(`
 files:
-  - src:
+  file.txt:
+    src:
       bitbucket:
         workspace: my-workspace
         repo: my-repo
         file: path/to/file.txt
         ref: main
-    target: file.txt
 `);
     const cfg = await loadConfig(f);
-    const src = cfg.files[0].src as {
+    const src = cfg.files['file.txt'].src as {
       bitbucket: {
         workspace: string;
         repo: string;
@@ -267,15 +264,15 @@ files:
   it('loads a bitbucket src map without ref', async () => {
     const f = writeTmp(`
 files:
-  - src:
+  config.yml:
+    src:
       bitbucket:
         workspace: acme
         repo: shared
         file: config.yml
-    target: config.yml
 `);
     const cfg = await loadConfig(f);
-    const src = cfg.files[0].src as {
+    const src = cfg.files['config.yml'].src as {
       bitbucket: {
         workspace: string;
         repo: string;
@@ -290,11 +287,11 @@ files:
   it('throws if bitbucket src missing workspace', async () => {
     const f = writeTmp(`
 files:
-  - src:
+  foo.txt:
+    src:
       bitbucket:
         repo: my-repo
         file: foo.txt
-    target: foo.txt
 `);
     await expect(loadConfig(f)).rejects.toThrow('bitbucket.workspace');
   });
@@ -302,11 +299,11 @@ files:
   it('throws if bitbucket src missing repo', async () => {
     const f = writeTmp(`
 files:
-  - src:
+  foo.txt:
+    src:
       bitbucket:
         workspace: acme
         file: foo.txt
-    target: foo.txt
 `);
     await expect(loadConfig(f)).rejects.toThrow('bitbucket.repo');
   });
@@ -314,11 +311,11 @@ files:
   it('throws if bitbucket src missing file', async () => {
     const f = writeTmp(`
 files:
-  - src:
+  foo.txt:
+    src:
       bitbucket:
         workspace: acme
         repo: my-repo
-    target: foo.txt
 `);
     await expect(loadConfig(f)).rejects.toThrow('bitbucket.file');
   });
@@ -326,15 +323,15 @@ files:
   it('loads a git src map', async () => {
     const f = writeTmp(`
 files:
-  - src:
+  deploy.sh:
+    src:
       git:
         repo: https://github.com/org/repo.git
         file: scripts/deploy.sh
         ref: v1.2.3
-    target: deploy.sh
 `);
     const cfg = await loadConfig(f);
-    const src = cfg.files[0].src as {
+    const src = cfg.files['deploy.sh'].src as {
       git: { repo: string; file: string; ref: string };
     };
     expect(src.git.repo).toBe('https://github.com/org/repo.git');
@@ -345,14 +342,14 @@ files:
   it('loads a git src map without ref', async () => {
     const f = writeTmp(`
 files:
-  - src:
+  config.yml:
+    src:
       git:
         repo: git@github.com:org/repo.git
         file: config.yml
-    target: config.yml
 `);
     const cfg = await loadConfig(f);
-    const src = cfg.files[0].src as {
+    const src = cfg.files['config.yml'].src as {
       git: { repo: string; file: string; ref?: string };
     };
     expect(src.git.repo).toBe('git@github.com:org/repo.git');
@@ -362,10 +359,10 @@ files:
   it('throws if git src missing repo', async () => {
     const f = writeTmp(`
 files:
-  - src:
+  foo.txt:
+    src:
       git:
         file: foo.txt
-    target: foo.txt
 `);
     await expect(loadConfig(f)).rejects.toThrow('git.repo');
   });
@@ -373,10 +370,10 @@ files:
   it('throws if git src missing file', async () => {
     const f = writeTmp(`
 files:
-  - src:
+  foo.txt:
+    src:
       git:
         repo: https://github.com/org/repo.git
-    target: foo.txt
 `);
     await expect(loadConfig(f)).rejects.toThrow('git.file');
   });
@@ -384,22 +381,22 @@ files:
   it('loads an s3 src', async () => {
     const f = writeTmp(`
 files:
-  - src:
+  config.yml:
+    src:
       s3: s3://my-bucket/path/to/config.yml
-    target: config.yml
 `);
     const cfg = await loadConfig(f);
-    const src = cfg.files[0].src as { s3: string };
+    const src = cfg.files['config.yml'].src as { s3: string };
     expect(src.s3).toBe('s3://my-bucket/path/to/config.yml');
   });
 
   it('throws if s3 src is not a string', async () => {
     const f = writeTmp(`
 files:
-  - src:
+  config.yml:
+    src:
       s3:
         bucket: my-bucket
-    target: config.yml
 `);
     await expect(loadConfig(f)).rejects.toThrow('s3:');
   });
@@ -407,14 +404,14 @@ files:
   it('loads a vault src map', async () => {
     const f = writeTmp(`
 files:
-  - src:
+  db_password.txt:
+    src:
       vault:
         path: secret/myapp/db
         field: password
-    target: db_password.txt
 `);
     const cfg = await loadConfig(f);
-    const src = cfg.files[0].src as {
+    const src = cfg.files['db_password.txt'].src as {
       vault: { path: string; field: string };
     };
     expect(src.vault.path).toBe('secret/myapp/db');
@@ -424,13 +421,13 @@ files:
   it('loads a vault src map without field', async () => {
     const f = writeTmp(`
 files:
-  - src:
+  config.json:
+    src:
       vault:
         path: secret/myapp/config
-    target: config.json
 `);
     const cfg = await loadConfig(f);
-    const src = cfg.files[0].src as {
+    const src = cfg.files['config.json'].src as {
       vault: { path: string; field?: string };
     };
     expect(src.vault.path).toBe('secret/myapp/config');
@@ -440,10 +437,10 @@ files:
   it('throws if vault src missing path', async () => {
     const f = writeTmp(`
 files:
-  - src:
+  out.txt:
+    src:
       vault:
         field: password
-    target: out.txt
 `);
     await expect(loadConfig(f)).rejects.toThrow('vault.path');
   });
@@ -451,8 +448,8 @@ files:
   it('loads replace rules', async () => {
     const f = writeTmp(`
 files:
-  - src: https://example.com/foo.txt
-    target: foo.txt
+  foo.txt:
+    src: https://example.com/foo.txt
     replace:
       - from: "{EMAIL}"
         to: deemes79@googlemail.com
@@ -460,7 +457,7 @@ files:
         to: number
 `);
     const cfg = await loadConfig(f);
-    expect(cfg.files[0].replace).toEqual([
+    expect(cfg.files['foo.txt'].replace).toEqual([
       { from: '{EMAIL}', to: 'deemes79@googlemail.com' },
       { from: '/\\d+/', to: 'number' },
     ]);
@@ -469,13 +466,13 @@ files:
   it('loads post field', async () => {
     const f = writeTmp(`
 files:
-  - src:
+  out.yml:
+    src:
       exec: glab api "projects/foo/bar"
-    target: out.yml
     post: "sed -e 's/v3/v4/g'"
 `);
     const cfg = await loadConfig(f);
-    expect(cfg.files[0].post).toBe("sed -e 's/v3/v4/g'");
+    expect(cfg.files['out.yml'].post).toBe("sed -e 's/v3/v4/g'");
   });
 
   // ── multi-source ──────────────────────────────────────────────────────────
@@ -483,17 +480,17 @@ files:
   it('loads a list src with mixed types', async () => {
     const f = writeTmp(`
 files:
-  - src:
+  combined.txt:
+    src:
       - https://example.com/header.txt
       - exec: echo "middle"
       - gitlab:
           project: org/repo
           file: footer.txt
           ref: main
-    target: combined.txt
 `);
     const cfg = await loadConfig(f);
-    const entry = cfg.files[0];
+    const entry = cfg.files['combined.txt'];
     expect(Array.isArray(entry.src)).toBe(true);
     const src = entry.src as unknown[];
     expect(src).toHaveLength(3);
@@ -505,27 +502,17 @@ files:
     expect(entry.target).toBe('combined.txt');
   });
 
-  it('throws when list src has no target', async () => {
+  it('reports correct target key in error for invalid list src item', async () => {
     const f = writeTmp(`
 files:
-  - src:
-      - https://example.com/a.txt
-      - https://example.com/b.txt
-`);
-    await expect(loadConfig(f)).rejects.toThrow(
-      /"target" is required when "src" is a list/,
-    );
-  });
-
-  it('reports correct index in error for invalid list src item', async () => {
-    const f = writeTmp(`
-files:
-  - src:
+  out.txt:
+    src:
       - https://example.com/a.txt
       - 42
-    target: out.txt
 `);
-    await expect(loadConfig(f)).rejects.toThrow(/files\[0\]\.src\[1\]/);
+    await expect(loadConfig(f)).rejects.toThrow(
+      /files\["out\.txt"\]\.src\[1\]/,
+    );
   });
 
   // ── variables ─────────────────────────────────────────────────────────────
@@ -536,8 +523,8 @@ variables:
   email: you@example.com
   version: "1.2.3"
 files:
-  - src: https://example.com/foo.txt
-    target: foo.txt
+  foo.txt:
+    src: https://example.com/foo.txt
 `);
     const cfg = await loadConfig(f);
     expect(cfg.variables).toEqual({
@@ -549,8 +536,8 @@ files:
   it('returns empty variables when block is absent', async () => {
     const f = writeTmp(`
 files:
-  - src: https://example.com/foo.txt
-    target: foo.txt
+  foo.txt:
+    src: https://example.com/foo.txt
 `);
     const cfg = await loadConfig(f);
     expect(cfg.variables).toEqual({});
@@ -561,8 +548,8 @@ files:
 variables:
   - email
 files:
-  - src: https://example.com/foo.txt
-    target: foo.txt
+  foo.txt:
+    src: https://example.com/foo.txt
 `);
     await expect(loadConfig(f)).rejects.toThrow('"variables" must be a map');
   });
@@ -572,8 +559,8 @@ files:
 variables:
   count: 42
 files:
-  - src: https://example.com/foo.txt
-    target: foo.txt
+  foo.txt:
+    src: https://example.com/foo.txt
 `);
     await expect(loadConfig(f)).rejects.toThrow(
       'variables.count: value must be a string',
@@ -585,8 +572,8 @@ files:
 variables:
   latest: "1.0.0"
 files:
-  - src: https://example.com/foo.txt
-    target: foo.txt
+  foo.txt:
+    src: https://example.com/foo.txt
 `);
     await expect(loadConfig(f)).rejects.toThrow('"latest" is reserved');
   });
@@ -596,28 +583,28 @@ files:
   it('loads an empty json block', async () => {
     const f = writeTmp(`
 files:
-  - src: https://example.com/foo.json
-    target: foo.json
+  foo.json:
+    src: https://example.com/foo.json
     json: {}
 `);
     const cfg = await loadConfig(f);
-    expect(cfg.files[0].json).toEqual({});
+    expect(cfg.files['foo.json'].json).toEqual({});
   });
 
   it('loads json block with all options', async () => {
     const f = writeTmp(`
 files:
-  - src:
+  merged.json:
+    src:
       - https://example.com/a.json
       - https://example.com/b.json
-    target: merged.json
     json:
       conflicts: first_wins
       arrays: concat
       objects: replace
 `);
     const cfg = await loadConfig(f);
-    expect(cfg.files[0].json).toEqual({
+    expect(cfg.files['merged.json'].json).toEqual({
       conflicts: 'first_wins',
       arrays: 'concat',
       objects: 'replace',
@@ -627,8 +614,8 @@ files:
   it('throws on invalid conflicts value', async () => {
     const f = writeTmp(`
 files:
-  - src: https://example.com/foo.json
-    target: foo.json
+  foo.json:
+    src: https://example.com/foo.json
     json:
       conflicts: overwrite
 `);
@@ -638,8 +625,8 @@ files:
   it('throws on invalid arrays value', async () => {
     const f = writeTmp(`
 files:
-  - src: https://example.com/foo.json
-    target: foo.json
+  foo.json:
+    src: https://example.com/foo.json
     json:
       arrays: append
 `);
@@ -649,8 +636,8 @@ files:
   it('throws on invalid objects value', async () => {
     const f = writeTmp(`
 files:
-  - src: https://example.com/foo.json
-    target: foo.json
+  foo.json:
+    src: https://example.com/foo.json
     json:
       objects: deep
 `);
@@ -660,30 +647,30 @@ files:
   it('accepts json: true', async () => {
     const f = writeTmp(`
 files:
-  - src: https://example.com/foo.json
-    target: foo.json
+  foo.json:
+    src: https://example.com/foo.json
     json: true
 `);
     const config = await loadConfig(f);
-    expect(config.files[0].json).toBe(true);
+    expect(config.files['foo.json'].json).toBe(true);
   });
 
   it('accepts json: false', async () => {
     const f = writeTmp(`
 files:
-  - src: https://example.com/foo.json
-    target: foo.json
+  foo.json:
+    src: https://example.com/foo.json
     json: false
 `);
     const config = await loadConfig(f);
-    expect(config.files[0].json).toBe(false);
+    expect(config.files['foo.json'].json).toBe(false);
   });
 
   it('throws when json is not an object, boolean, or null', async () => {
     const f = writeTmp(`
 files:
-  - src: https://example.com/foo.json
-    target: foo.json
+  foo.json:
+    src: https://example.com/foo.json
     json: "invalid"
 `);
     await expect(loadConfig(f)).rejects.toThrow('"json" must be an object');
@@ -738,21 +725,21 @@ describe('resolveConfigPath', () => {
   });
 
   it('auto-detects .avanti.yml in cwd when present', () => {
-    fs.writeFileSync(path.join(tmpDir, '.avanti.yml'), 'files: []', 'utf8');
+    fs.writeFileSync(path.join(tmpDir, '.avanti.yml'), 'files: {}', 'utf8');
     process.chdir(tmpDir);
     const result = resolveConfigPath();
     expect(result).toBe(path.join(tmpDir, '.avanti.yml'));
   });
 
   it('auto-detects config file case-insensitively (.AVANTI.YML)', () => {
-    fs.writeFileSync(path.join(tmpDir, '.AVANTI.YML'), 'files: []', 'utf8');
+    fs.writeFileSync(path.join(tmpDir, '.AVANTI.YML'), 'files: {}', 'utf8');
     process.chdir(tmpDir);
     const result = resolveConfigPath();
     expect(result).toBe(path.join(tmpDir, '.AVANTI.YML'));
   });
 
   it('auto-detects avanti.yaml when .avanti.yml is absent', () => {
-    fs.writeFileSync(path.join(tmpDir, 'avanti.yaml'), 'files: []', 'utf8');
+    fs.writeFileSync(path.join(tmpDir, 'avanti.yaml'), 'files: {}', 'utf8');
     process.chdir(tmpDir);
     const result = resolveConfigPath();
     expect(result).toBe(path.join(tmpDir, 'avanti.yaml'));
@@ -774,15 +761,15 @@ describe('parseSha validation in config parsing', () => {
     const sha = 'a'.repeat(64);
     const f = writeTmp(`
 files:
-  - src:
+  out.txt:
+    src:
       github:
         repo: org/repo
         file: file.txt
         sha: ${sha}
-    target: out.txt
 `);
     const cfg = await loadConfig(f);
-    const src = cfg.files[0].src as { github: { sha?: string } };
+    const src = cfg.files['out.txt'].src as { github: { sha?: string } };
     expect(src.github.sha).toBe(sha);
   });
 
@@ -790,27 +777,27 @@ files:
     const sha = 'A'.repeat(64);
     const f = writeTmp(`
 files:
-  - src:
+  out.txt:
+    src:
       github:
         repo: org/repo
         file: file.txt
         sha: ${sha}
-    target: out.txt
 `);
     const cfg = await loadConfig(f);
-    const src = cfg.files[0].src as { github: { sha?: string } };
+    const src = cfg.files['out.txt'].src as { github: { sha?: string } };
     expect(src.github.sha).toBe('a'.repeat(64));
   });
 
   it('throws on an invalid SHA (wrong length)', async () => {
     const f = writeTmp(`
 files:
-  - src:
+  out.txt:
+    src:
       github:
         repo: org/repo
         file: file.txt
         sha: tooshort
-    target: out.txt
 `);
     await expect(loadConfig(f)).rejects.toThrow('expected 64 hex characters');
   });
@@ -818,12 +805,12 @@ files:
   it('throws on an invalid SHA (non-hex chars)', async () => {
     const f = writeTmp(`
 files:
-  - src:
+  out.txt:
+    src:
       github:
         repo: org/repo
         file: file.txt
         sha: ${'z'.repeat(64)}
-    target: out.txt
 `);
     await expect(loadConfig(f)).rejects.toThrow('expected 64 hex characters');
   });
@@ -832,15 +819,15 @@ files:
     const sha = 'b'.repeat(64);
     const f = writeTmp(`
 files:
-  - src:
+  out.txt:
+    src:
       gitlab:
         project: group/proj
         file: config.yml
         sha: ${sha}
-    target: out.txt
 `);
     const cfg = await loadConfig(f);
-    const src = cfg.files[0].src as { gitlab: { sha?: string } };
+    const src = cfg.files['out.txt'].src as { gitlab: { sha?: string } };
     expect(src.gitlab.sha).toBe(sha);
   });
 });
@@ -849,12 +836,12 @@ describe('http source parsing', () => {
   it('accepts a valid https:// URL', async () => {
     const f = writeTmp(`
 files:
-  - src:
+  out.txt:
+    src:
       http: https://example.com/file.txt
-    target: out.txt
 `);
     const cfg = await loadConfig(f);
-    const src = cfg.files[0].src as { http: string };
+    const src = cfg.files['out.txt'].src as { http: string };
     expect(src.http).toBe('https://example.com/file.txt');
   });
 
@@ -862,22 +849,22 @@ files:
     const sha = 'A'.repeat(64);
     const f = writeTmp(`
 files:
-  - src:
+  out.txt:
+    src:
       http: https://example.com/file.txt
       sha: ${sha}
-    target: out.txt
 `);
     const cfg = await loadConfig(f);
-    const src = cfg.files[0].src as { http: string; sha?: string };
+    const src = cfg.files['out.txt'].src as { http: string; sha?: string };
     expect(src.sha).toBe('a'.repeat(64));
   });
 
   it('throws when http value does not start with http:// or https:// (literal)', async () => {
     const f = writeTmp(`
 files:
-  - src:
+  out.txt:
+    src:
       http: ftp://example.com/file.txt
-    target: out.txt
 `);
     await expect(loadConfig(f)).rejects.toThrow(
       'must start with http:// or https://',
@@ -889,12 +876,12 @@ files:
 variables:
   url: https://example.com/file.txt
 files:
-  - src:
+  out.txt:
+    src:
       http: $url
-    target: out.txt
 `);
     const cfg = await loadConfig(f);
-    const src = cfg.files[0].src as { http: string };
+    const src = cfg.files['out.txt'].src as { http: string };
     expect(src.http).toBe('$url');
   });
 });

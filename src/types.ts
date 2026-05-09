@@ -105,7 +105,7 @@ export interface YamlMergeOptions {
 
 export interface FileEntry {
   src: FileSrc | FileSrc[];
-  target?: string;
+  target: string;
   mode?: string;
   replace?: ReplaceRule[];
   post?: string;
@@ -115,5 +115,5 @@ export interface FileEntry {
 
 export interface AvantiConfig {
   variables?: Variables;
-  files: FileEntry[];
+  files: Record<string, FileEntry>;
 }

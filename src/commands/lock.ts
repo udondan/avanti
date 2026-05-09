@@ -38,7 +38,7 @@ export function lockCommand(): Command {
       let hasError = false;
       let remoteSourceCount = 0;
 
-      for (const entry of config.files) {
+      for (const entry of Object.values(config.files)) {
         try {
           const result = await fetchSource(entry, workingDir, vars);
           remoteSourceCount += result.sourceRecords.length;

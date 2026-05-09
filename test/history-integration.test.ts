@@ -75,7 +75,7 @@ describe('history integration', () => {
   describe('pull records history', () => {
     it('creates history after a successful pull', () => {
       const src = writeSource('src.txt', 'hello');
-      writeConfig(`files:\n  - src: ${src}\n    target: ./out.txt\n`);
+      writeConfig(`files:\n  ./out.txt:\n    src: ${src}\n`);
 
       run('pull --yes');
 
@@ -84,7 +84,7 @@ describe('history integration', () => {
 
     it('does not record history entry when nothing changed', () => {
       const src = writeSource('src.txt', 'hello');
-      writeConfig(`files:\n  - src: ${src}\n    target: ./out.txt\n`);
+      writeConfig(`files:\n  ./out.txt:\n    src: ${src}\n`);
 
       run('pull --yes');
       const { stdout: log1 } = run('log');
@@ -101,16 +101,14 @@ describe('history integration', () => {
 
   describe('avanti log', () => {
     it('shows "No history" when no pull has run', () => {
-      writeConfig(
-        `files:\n  - src:\n      raw: hello\n    target: ./out.txt\n`,
-      );
+      writeConfig(`files:\n  ./out.txt:\n    src:\n      raw: hello\n`);
       const { stdout } = run('log');
       expect(stdout).toContain('No history recorded yet.');
     });
 
     it('shows pull entry after a pull', () => {
       const src = writeSource('src.txt', 'v1');
-      writeConfig(`files:\n  - src: ${src}\n    target: ./out.txt\n`);
+      writeConfig(`files:\n  ./out.txt:\n    src: ${src}\n`);
 
       run('pull --yes');
       const { stdout } = run('log');
@@ -120,7 +118,7 @@ describe('history integration', () => {
 
     it('shows multiple pull entries newest first', () => {
       const src = writeSource('src.txt', 'v1');
-      writeConfig(`files:\n  - src: ${src}\n    target: ./out.txt\n`);
+      writeConfig(`files:\n  ./out.txt:\n    src: ${src}\n`);
       run('pull --yes');
 
       writeFileSync(src, 'v2');
@@ -135,7 +133,7 @@ describe('history integration', () => {
 
     it('shows (new file) label for newly created files', () => {
       const src = writeSource('src.txt', 'content');
-      writeConfig(`files:\n  - src: ${src}\n    target: ./out.txt\n`);
+      writeConfig(`files:\n  ./out.txt:\n    src: ${src}\n`);
       run('pull --yes');
       const { stdout } = run('log');
       expect(stdout).toContain('(new file)');
@@ -144,7 +142,7 @@ describe('history integration', () => {
     it('shows (modified) label for updated files', () => {
       writeSource('out.txt', 'original');
       const src = writeSource('src.txt', 'new content');
-      writeConfig(`files:\n  - src: ${src}\n    target: ./out.txt\n`);
+      writeConfig(`files:\n  ./out.txt:\n    src: ${src}\n`);
       run('pull --yes');
       const { stdout } = run('log');
       expect(stdout).toContain('(modified)');
@@ -153,16 +151,14 @@ describe('history integration', () => {
 
   describe('avanti log <file>', () => {
     it('shows "No history" for an untracked file', () => {
-      writeConfig(
-        `files:\n  - src:\n      raw: hello\n    target: ./out.txt\n`,
-      );
+      writeConfig(`files:\n  ./out.txt:\n    src:\n      raw: hello\n`);
       const { stdout } = run('log out.txt');
       expect(stdout).toContain('No history for');
     });
 
     it('shows version history for a tracked file', () => {
       const src = writeSource('src.txt', 'v1');
-      writeConfig(`files:\n  - src: ${src}\n    target: ./out.txt\n`);
+      writeConfig(`files:\n  ./out.txt:\n    src: ${src}\n`);
       run('pull --yes');
 
       writeFileSync(src, 'v2');
@@ -177,7 +173,7 @@ describe('history integration', () => {
     it('shows v0 when file existed before avanti', () => {
       writeSource('out.txt', 'pre-existing');
       const src = writeSource('src.txt', 'replaced');
-      writeConfig(`files:\n  - src: ${src}\n    target: ./out.txt\n`);
+      writeConfig(`files:\n  ./out.txt:\n    src: ${src}\n`);
       run('pull --yes');
 
       const { stdout } = run(`log ${join(tmpDir, 'out.txt')}`);
@@ -187,7 +183,7 @@ describe('history integration', () => {
 
     it('does not show v0 for files avanti created', () => {
       const src = writeSource('src.txt', 'content');
-      writeConfig(`files:\n  - src: ${src}\n    target: ./new-file.txt\n`);
+      writeConfig(`files:\n  ./new-file.txt:\n    src: ${src}\n`);
       run('pull --yes');
 
       const { stdout } = run(`log ${join(tmpDir, 'new-file.txt')}`);
@@ -199,7 +195,7 @@ describe('history integration', () => {
   describe('avanti diff <pullId>', () => {
     it('exits 0 when current files match the given pull state', () => {
       const src = writeSource('src.txt', 'content');
-      writeConfig(`files:\n  - src: ${src}\n    target: ./out.txt\n`);
+      writeConfig(`files:\n  ./out.txt:\n    src: ${src}\n`);
       run('pull --yes');
 
       const { stdout: logOut } = run('log');
@@ -212,7 +208,7 @@ describe('history integration', () => {
 
     it('exits 1 and shows diff when files differ from given pull state', () => {
       const src = writeSource('src.txt', 'v1');
-      writeConfig(`files:\n  - src: ${src}\n    target: ./out.txt\n`);
+      writeConfig(`files:\n  ./out.txt:\n    src: ${src}\n`);
       run('pull --yes');
 
       const { stdout: logAfterFirst } = run('log');
@@ -229,7 +225,7 @@ describe('history integration', () => {
 
     it('errors when pullId is not found', () => {
       const src = writeSource('src.txt', 'content');
-      writeConfig(`files:\n  - src: ${src}\n    target: ./out.txt\n`);
+      writeConfig(`files:\n  ./out.txt:\n    src: ${src}\n`);
       run('pull --yes');
 
       const { exitCode, stderr } = run('diff deadbeef');
@@ -242,7 +238,7 @@ describe('history integration', () => {
     it('restores file to state before last pull', () => {
       writeSource('out.txt', 'original');
       const src = writeSource('src.txt', 'v1');
-      writeConfig(`files:\n  - src: ${src}\n    target: ./out.txt\n`);
+      writeConfig(`files:\n  ./out.txt:\n    src: ${src}\n`);
       run('pull --yes');
       expect(readOutput('out.txt')).toBe('v1');
 
@@ -252,7 +248,7 @@ describe('history integration', () => {
 
     it('deletes files avanti created when undoing the only pull', () => {
       const src = writeSource('src.txt', 'content');
-      writeConfig(`files:\n  - src: ${src}\n    target: ./brand-new.txt\n`);
+      writeConfig(`files:\n  ./brand-new.txt:\n    src: ${src}\n`);
       run('pull --yes');
       expect(existsSync(join(tmpDir, 'brand-new.txt'))).toBe(true);
 
@@ -263,7 +259,7 @@ describe('history integration', () => {
     it('reverts to state after second-to-last pull when two pulls exist', () => {
       writeSource('out.txt', 'original');
       const src = writeSource('src.txt', 'v1');
-      writeConfig(`files:\n  - src: ${src}\n    target: ./out.txt\n`);
+      writeConfig(`files:\n  ./out.txt:\n    src: ${src}\n`);
       run('pull --yes');
 
       writeFileSync(src, 'v2');
@@ -277,7 +273,7 @@ describe('history integration', () => {
     it('prints "nothing to revert" when already at target state', () => {
       writeSource('out.txt', 'original');
       const src = writeSource('src.txt', 'v1');
-      writeConfig(`files:\n  - src: ${src}\n    target: ./out.txt\n`);
+      writeConfig(`files:\n  ./out.txt:\n    src: ${src}\n`);
       run('pull --yes');
       run('revert --yes');
 
@@ -291,7 +287,7 @@ describe('history integration', () => {
     it('restores files to the state at the specified pull', () => {
       writeSource('out.txt', 'original');
       const src = writeSource('src.txt', 'v1');
-      writeConfig(`files:\n  - src: ${src}\n    target: ./out.txt\n`);
+      writeConfig(`files:\n  ./out.txt:\n    src: ${src}\n`);
       run('pull --yes');
 
       const { stdout: logAfterFirst } = run('log');
@@ -311,7 +307,7 @@ describe('history integration', () => {
 
     it('deletes files introduced after the target pull', () => {
       const src1 = writeSource('src1.txt', 'content1');
-      writeConfig(`files:\n  - src: ${src1}\n    target: ./file1.txt\n`);
+      writeConfig(`files:\n  ./file1.txt:\n    src: ${src1}\n`);
       run('pull --yes');
 
       const { stdout: logAfterFirst } = run('log');
@@ -319,7 +315,7 @@ describe('history integration', () => {
 
       const src2 = writeSource('src2.txt', 'content2');
       writeConfig(
-        `files:\n  - src: ${src1}\n    target: ./file1.txt\n  - src: ${src2}\n    target: ./file2.txt\n`,
+        `files:\n  ./file1.txt:\n    src: ${src1}\n  ./file2.txt:\n    src: ${src2}\n`,
       );
       run('pull --yes');
       expect(existsSync(join(tmpDir, 'file2.txt'))).toBe(true);
@@ -332,7 +328,7 @@ describe('history integration', () => {
 
     it('errors for unknown pullId', () => {
       const src = writeSource('src.txt', 'x');
-      writeConfig(`files:\n  - src: ${src}\n    target: ./out.txt\n`);
+      writeConfig(`files:\n  ./out.txt:\n    src: ${src}\n`);
       run('pull --yes');
 
       const { exitCode, stderr } = run('revert deadbeef --yes');
@@ -345,7 +341,7 @@ describe('history integration', () => {
     it('restores modified files to their original content', () => {
       writeSource('out.txt', 'original content');
       const src = writeSource('src.txt', 'avanti content');
-      writeConfig(`files:\n  - src: ${src}\n    target: ./out.txt\n`);
+      writeConfig(`files:\n  ./out.txt:\n    src: ${src}\n`);
       run('pull --yes');
       expect(readOutput('out.txt')).toBe('avanti content');
 
@@ -355,9 +351,7 @@ describe('history integration', () => {
 
     it('deletes files avanti created', () => {
       const src = writeSource('src.txt', 'content');
-      writeConfig(
-        `files:\n  - src: ${src}\n    target: ./created-by-avanti.txt\n`,
-      );
+      writeConfig(`files:\n  ./created-by-avanti.txt:\n    src: ${src}\n`);
       run('pull --yes');
       expect(existsSync(join(tmpDir, 'created-by-avanti.txt'))).toBe(true);
 
@@ -373,7 +367,7 @@ describe('history integration', () => {
       );
       const srcNew = writeSource('src-new.txt', 'brand new file');
       writeConfig(
-        `files:\n  - src: ${srcExisting}\n    target: ./existing.txt\n  - src: ${srcNew}\n    target: ./new.txt\n`,
+        `files:\n  ./existing.txt:\n    src: ${srcExisting}\n  ./new.txt:\n    src: ${srcNew}\n`,
       );
       run('pull --yes');
 
@@ -383,7 +377,7 @@ describe('history integration', () => {
     });
 
     it('prints "No history found" when history dir is missing', () => {
-      writeConfig(`files:\n  - src:\n      raw: x\n    target: ./out.txt\n`);
+      writeConfig(`files:\n  ./out.txt:\n    src:\n      raw: x\n`);
       rmSync(historyDir, { recursive: true, force: true });
       const { stdout } = run('reset --yes');
       expect(stdout).toContain('No avanti history found');
@@ -392,7 +386,7 @@ describe('history integration', () => {
     it('prints "nothing to reset" when files are already at pre-avanti state', () => {
       writeSource('out.txt', 'original');
       const src = writeSource('src.txt', 'replaced');
-      writeConfig(`files:\n  - src: ${src}\n    target: ./out.txt\n`);
+      writeConfig(`files:\n  ./out.txt:\n    src: ${src}\n`);
       run('pull --yes');
       run('reset --yes');
 
@@ -408,7 +402,7 @@ describe('history integration', () => {
       writeFileSync(join(srcDir, 'a.txt'), 'file a');
       writeFileSync(join(srcDir, 'b.txt'), 'file b');
 
-      writeConfig(`files:\n  - src: ${srcDir}\n    target: ./out-dir/\n`);
+      writeConfig(`files:\n  ./out-dir/:\n    src: ${srcDir}\n`);
       run('pull --yes');
       expect(existsSync(join(tmpDir, 'out-dir', 'a.txt'))).toBe(true);
       expect(existsSync(join(tmpDir, 'out-dir', 'b.txt'))).toBe(true);
@@ -433,13 +427,13 @@ describe('history integration', () => {
 
       // First: pull two files
       writeConfig(
-        `files:\n  - src: ${srcDir}\n    target: ./out-dir/\n  - src: ${join(tmpDir, 'src-b.txt')}\n    target: ./out-dir-b\n`,
+        `files:\n  ./out-dir/:\n    src: ${srcDir}\n  ./out-dir-b:\n    src: ${join(tmpDir, 'src-b.txt')}\n`,
       );
       run('pull --yes');
       expect(readOutput('out-dir-b')).toBe('avanti version of b');
 
       // Now remove the second entry from config (simulate it disappearing)
-      writeConfig(`files:\n  - src: ${srcDir}\n    target: ./out-dir/\n`);
+      writeConfig(`files:\n  ./out-dir/:\n    src: ${srcDir}\n`);
       run('pull --yes');
 
       // out-dir-b should be restored to original since it existed before avanti
@@ -450,7 +444,7 @@ describe('history integration', () => {
   describe('graceful degradation', () => {
     it('pull works even when history write fails (read-only dir)', () => {
       const src = writeSource('src.txt', 'content');
-      writeConfig(`files:\n  - src: ${src}\n    target: ./out.txt\n`);
+      writeConfig(`files:\n  ./out.txt:\n    src: ${src}\n`);
 
       // Point history at a path that can't be created (file in the way)
       writeFileSync(join(tmpDir, 'blocked'), 'not a dir');
@@ -463,7 +457,7 @@ describe('history integration', () => {
 
     it('log shows "No history" when history dir was deleted', () => {
       const src = writeSource('src.txt', 'content');
-      writeConfig(`files:\n  - src: ${src}\n    target: ./out.txt\n`);
+      writeConfig(`files:\n  ./out.txt:\n    src: ${src}\n`);
       run('pull --yes');
 
       rmSync(historyDir, { recursive: true, force: true });
