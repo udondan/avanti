@@ -207,7 +207,7 @@ async function fetchOneSrc(
   if ('path' in src) {
     const resolved = resolveVars(src.path, vars);
     const result = fetchLocal(resolved, workingDir, src.optional ?? false);
-    if (result.files.size === 0 && src.optional) {
+    if (result.missing) {
       return { files: new Map(), record: null, skipped: true };
     }
     const observedSha = computeFilesSha(result.files);

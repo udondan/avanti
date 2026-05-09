@@ -3,6 +3,7 @@ import * as path from 'path';
 
 export interface LocalResult {
   files: Map<string, string>;
+  missing?: boolean;
 }
 
 export function fetchLocal(
@@ -25,7 +26,7 @@ export function fetchLocal(
     resolved = path.resolve(workingDir, src);
   }
   if (!fs.existsSync(resolved)) {
-    if (optional) return { files: new Map() };
+    if (optional) return { files: new Map(), missing: true };
     throw new Error(`Local source not found: ${resolved}`);
   }
   const stat = fs.statSync(resolved);

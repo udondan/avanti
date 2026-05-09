@@ -51,9 +51,18 @@ describe('fetchLocal — optional flag', () => {
     );
   });
 
-  it('returns empty map for a missing file when optional is true', () => {
+  it('returns empty map with missing=true for a missing file when optional is true', () => {
     const result = fetchLocal(join(tmpDir, 'nonexistent.txt'), tmpDir, true);
     expect(result.files.size).toBe(0);
+    expect(result.missing).toBe(true);
+  });
+
+  it('returns empty map without missing flag for an existing empty directory', () => {
+    const emptyDir = join(tmpDir, 'empty');
+    mkdirSync(emptyDir);
+    const result = fetchLocal(emptyDir, tmpDir, true);
+    expect(result.files.size).toBe(0);
+    expect(result.missing).toBeUndefined();
   });
 });
 
