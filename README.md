@@ -54,7 +54,7 @@ atomic rollbacks, and diff-before-apply safety.
 ## Features
 
 - Fetch files from **HTTP/HTTPS**, **local paths**, **GitLab** (via `glab`), **GitHub** (via `gh`), **Bitbucket**, **any git remote**, **S3**, **HashiCorp Vault**, **shell commands**, or **inline raw content**
-- **Optional sources** — mark any source `optional: true` to silently skip it when the file is missing or the URL returns 404; lets a central config reference per-user local overrides without erroring on machines that haven't created them
+- **Optional sources** — mark `path:` and `url:` sources `optional: true` to silently skip them when the file is missing or the URL returns 404; lets a central config reference per-user local overrides without erroring on machines that haven't created them
 - **Multi-source entries** — combine multiple sources into a single file by providing `src` as a list
 - **Atomic writes** — all files are staged to a temp dir first; targets are only written if everything succeeds
 - **Diff preview** — see exactly what will change before applying, or compare against any past pull

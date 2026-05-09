@@ -190,7 +190,7 @@ async function fetchOneSrc(
       const content = await fetchHttp(resolved);
       const filename = inferFilenameFromUrl(resolved) ?? 'download';
       return {
-        files: new Map([[filename, content!]]),
+        files: new Map([[filename, content]]),
         record: null,
       };
     }
@@ -246,7 +246,7 @@ async function fetchOneSrc(
     const resolvedUrl = resolveVars(src.http, vars);
     const content = await fetchHttp(resolvedUrl);
     const filename = inferFilenameFromUrl(resolvedUrl) ?? 'download';
-    files = new Map([[filename, content!]]);
+    files = new Map([[filename, content]]);
   } else if ('exec' in src) {
     files = new Map([
       ['output', fetchExec(resolveVarsShellSafe(src.exec, vars))],

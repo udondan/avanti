@@ -11,6 +11,16 @@ export function inferFilenameFromUrl(url: string): string | undefined {
   }
 }
 
+export async function fetchHttp(url: string): Promise<string>;
+export async function fetchHttp(url: string, optional: false): Promise<string>;
+export async function fetchHttp(
+  url: string,
+  optional: true,
+): Promise<string | null>;
+export async function fetchHttp(
+  url: string,
+  optional: boolean,
+): Promise<string | null>;
 export async function fetchHttp(
   url: string,
   optional = false,

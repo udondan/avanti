@@ -120,7 +120,7 @@ function parseGitLabSpec(spec: string): {
 
 async function fetchConfigContent(spec: string): Promise<string> {
   if (spec.startsWith('http://') || spec.startsWith('https://')) {
-    return (await fetchHttp(spec))!;
+    return await fetchHttp(spec);
   }
 
   if (spec.startsWith('github:')) {
