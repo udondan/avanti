@@ -846,7 +846,7 @@ files:
 });
 
 describe('http source parsing', () => {
-  it('accepts a valid http:// URL', async () => {
+  it('accepts a valid https:// URL', async () => {
     const f = writeTmp(`
 files:
   - src:

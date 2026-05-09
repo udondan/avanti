@@ -137,7 +137,7 @@ function computeFilesSha(files: Map<string, string>): string {
   // consistently, whether the source resolves to one file or many.
   const hash = crypto.createHash('sha256');
   const sorted = Array.from(files.entries()).sort(([a], [b]) =>
-    a.localeCompare(b),
+    a < b ? -1 : a > b ? 1 : 0,
   );
   for (const [k, v] of sorted) {
     hash.update(k, 'utf8');
