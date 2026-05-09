@@ -112,6 +112,8 @@ export function diffCommand(): Command {
         const firstPass = await runDiffLoop(config, workingDir);
         let { allDiffs, hasError } = firstPass;
 
+        if (hasError) process.exit(2);
+
         if (firstPass.selfContent !== undefined) {
           try {
             const newConfig = parseConfigContent(firstPass.selfContent);
