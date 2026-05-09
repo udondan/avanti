@@ -73,12 +73,16 @@ export function lockCommand(): Command {
         process.exit(2);
       }
 
-      writeUpdatedShas(configPath, toPin);
+      const pinned = writeUpdatedShas(configPath, toPin);
 
-      for (const [label, sha] of toPin) {
-        console.log(`  pinned  ${label}  ${sha.slice(0, 16)}`);
+      if (pinned) {
+        for (const [label, sha] of toPin) {
+          console.log(`  pinned  ${label}  ${sha.slice(0, 16)}`);
+        }
+        console.log(`\nPinned ${toPin.size} source(s).`);
+      } else {
+        console.log('All SHA values are already up to date.');
       }
-      console.log(`\nPinned ${toPin.size} source(s).`);
 
       process.exit(hasError ? 2 : 0);
     });

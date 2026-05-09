@@ -147,15 +147,21 @@ export function applyUpdatedShas(
   return changed ? doc.toString() : null;
 }
 
-/** Writes updated SHA values into the config YAML file in-place, preserving comments. */
+/**
+ * Writes updated SHA values into the config YAML file in-place, preserving comments.
+ * Returns true if the file was actually modified, false if no labels matched or all
+ * values were already up to date.
+ */
 export function writeUpdatedShas(
   configPath: string,
   updates: Map<string, string>, // sourceLabel → new sha
-): void {
-  if (updates.size === 0) return;
+): boolean {
+  if (updates.size === 0) return false;
   const raw = fs.readFileSync(configPath, 'utf8');
   const newContent = applyUpdatedShas(raw, updates);
   if (newContent !== null) {
     atomicWrite([{ targetPath: configPath, content: newContent }]);
+    return true;
   }
+  return false;
 }

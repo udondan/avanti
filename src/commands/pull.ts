@@ -365,8 +365,9 @@ export function pullCommand(): Command {
       // Skipped when config was a write target and already patched in-memory above.
       if (shaUpdates !== null && !configShaPreApplied) {
         try {
-          writeUpdatedShas(configPath, shaUpdates);
-          console.log(`Updated ${shaUpdates.size} SHA pin(s) in config.`);
+          const pinned = writeUpdatedShas(configPath, shaUpdates);
+          if (pinned)
+            console.log(`Updated ${shaUpdates.size} SHA pin(s) in config.`);
         } catch (err: unknown) {
           console.warn(
             `Warning: could not update SHA values in config: ${(err as Error).message}`,
