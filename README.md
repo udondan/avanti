@@ -1,17 +1,16 @@
 # Avanti!
 
-<img
-  src="https://raw.githubusercontent.com/udondan/avanti/main/avanti.png"
-  alt="Avanti!"
-  height="200"
-  align="left"
-/>
-
 A stateful package manager for arbitrary text files. Declare what you need and
 where to get it; avanti fetches, diffs, and writes with full version history,
 atomic rollbacks, and diff-before-apply safety.
 
-<br clear="left" />
+<div align="center">
+  <img
+    src="https://raw.githubusercontent.com/udondan/avanti/main/avanti.png"
+    alt="Avanti!"
+    height="200"
+  />
+</div>
 
 ## Table of Contents
 

@@ -1,0 +1,11 @@
+---
+name: Required
+
+on:
+  pull_request:
+
+jobs:
+  required:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Required check passed"
