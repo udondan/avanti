@@ -1,5 +1,5 @@
 import * as fs from 'fs';
-import { parseDocument } from 'yaml';
+import { parseDocument, isSeq } from 'yaml';
 import { atomicWrite } from './writer';
 
 /** Writes updated SHA values into the config YAML file in-place, preserving comments. */
@@ -27,10 +27,20 @@ export function writeUpdatedShas(
     const srcNode = entryNode.get('src', true);
     if (!srcNode) return;
 
-    const processSrcItem = (item: unknown, srcIdx: number): void => {
+    // inSeq=true → src is a sequence; shaPath includes the numeric srcIdx.
+    // inSeq=false → src is a single map; omit the index so the path matches.
+    const processSrcItem = (
+      item: unknown,
+      srcIdx: number,
+      inSeq: boolean,
+    ): void => {
       if (!item || typeof item !== 'object') return;
       const n = item as { get?: (k: string, keepScalar?: boolean) => unknown };
       if (!n.get) return;
+
+      const srcBase: (string | number)[] = inSeq
+        ? ['files', fileIdx, 'src', srcIdx]
+        : ['files', fileIdx, 'src'];
 
       let label: string | null = null;
       let shaPath: (string | number)[] | null = null;
@@ -45,7 +55,7 @@ export function writeUpdatedShas(
           const ref = gh.get('ref') as string | null;
           if (repo && file) {
             label = `github:${repo}:${file}${ref ? `@${ref}` : ''}`;
-            shaPath = ['files', fileIdx, 'src', srcIdx, 'github', 'sha'];
+            shaPath = [...srcBase, 'github', 'sha'];
           }
         }
       } else if (n.get('gitlab')) {
@@ -56,7 +66,7 @@ export function writeUpdatedShas(
           const ref = gl.get('ref') as string | null;
           if (project && file) {
             label = `gitlab:${project}:${file}${ref ? `@${ref}` : ''}`;
-            shaPath = ['files', fileIdx, 'src', srcIdx, 'gitlab', 'sha'];
+            shaPath = [...srcBase, 'gitlab', 'sha'];
           }
         }
       } else if (n.get('bitbucket')) {
@@ -70,7 +80,7 @@ export function writeUpdatedShas(
           const ref = bb.get('ref') as string | null;
           if (ws && repo && file) {
             label = `bitbucket:${ws}/${repo}:${file}${ref ? `@${ref}` : ''}`;
-            shaPath = ['files', fileIdx, 'src', srcIdx, 'bitbucket', 'sha'];
+            shaPath = [...srcBase, 'bitbucket', 'sha'];
           }
         }
       } else if (n.get('git')) {
@@ -81,20 +91,20 @@ export function writeUpdatedShas(
           const ref = gt.get('ref') as string | null;
           if (repo && file) {
             label = `git:${repo}:${file}${ref ? `@${ref}` : ''}`;
-            shaPath = ['files', fileIdx, 'src', srcIdx, 'git', 'sha'];
+            shaPath = [...srcBase, 'git', 'sha'];
           }
         }
       } else if (n.get('exec') !== undefined) {
         const cmd = n.get('exec') as string | null;
         if (cmd) {
           label = `exec:${cmd}`;
-          shaPath = ['files', fileIdx, 'src', srcIdx, 'sha'];
+          shaPath = [...srcBase, 'sha'];
         }
       } else if (n.get('s3') !== undefined) {
         const s3 = n.get('s3') as string | null;
         if (s3) {
           label = `s3:${s3}`;
-          shaPath = ['files', fileIdx, 'src', srcIdx, 'sha'];
+          shaPath = [...srcBase, 'sha'];
         }
       } else if (n.get('vault')) {
         const vt = n.get('vault') as { get?: (k: string) => unknown } | null;
@@ -103,14 +113,14 @@ export function writeUpdatedShas(
           const field = vt.get('field') as string | null;
           if (p) {
             label = `vault:${p}${field ? `#${field}` : ''}`;
-            shaPath = ['files', fileIdx, 'src', srcIdx, 'vault', 'sha'];
+            shaPath = [...srcBase, 'vault', 'sha'];
           }
         }
       } else if (n.get('http') !== undefined) {
         const url = n.get('http') as string | null;
         if (url) {
           label = `http:${url}`;
-          shaPath = ['files', fileIdx, 'src', srcIdx, 'sha'];
+          shaPath = [...srcBase, 'sha'];
         }
       }
 
@@ -119,17 +129,12 @@ export function writeUpdatedShas(
       }
     };
 
-    if (srcNode && typeof srcNode === 'object' && 'items' in srcNode) {
-      const srcSeq = srcNode as { items: unknown[] };
-      srcSeq.items.forEach((item, idx) => {
-        if (item && typeof item === 'object' && 'value' in item) {
-          processSrcItem((item as Record<string, unknown>).value, idx);
-        } else {
-          processSrcItem(item, idx);
-        }
+    if (isSeq(srcNode)) {
+      srcNode.items.forEach((item, idx) => {
+        processSrcItem(item, idx, true);
       });
     } else {
-      processSrcItem(srcNode, 0);
+      processSrcItem(srcNode, 0, false);
     }
   });
 

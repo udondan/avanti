@@ -84,7 +84,7 @@ Options:
 
 Commands:
   diff [pullId]               Show diff between remote sources and local files, or vs a past pull
-  pull [--yes]                Pull remote sources and write to local files
+  pull [--yes] [--accept-changes]  Pull remote sources and write to local files
   lock [--force]              Pin SHA values for all remote sources in the config
   log [file]                  Show pull history for the current project
   revert [pullId] [--yes]     Atomically revert all project files to a past pull state

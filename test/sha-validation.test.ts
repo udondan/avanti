@@ -170,6 +170,37 @@ files:
     const result = fs.readFileSync(cfg, 'utf8');
     expect(result).not.toContain(`sha:`);
   });
+
+  it('writes sha for single-map src (non-sequence form)', () => {
+    const sha = 'bb'.repeat(32);
+    const cfg = writeConfig(`files:
+  - target: out.txt
+    src:
+      github:
+        repo: org/repo
+        file: file.txt
+`);
+    writeUpdatedShas(cfg, new Map([['github:org/repo:file.txt', sha]]));
+    const result = fs.readFileSync(cfg, 'utf8');
+    expect(result).toContain(`sha: ${sha}`);
+  });
+
+  it('preserves comments in single-map src form', () => {
+    const sha = 'cc'.repeat(32);
+    const cfg = writeConfig(`# config comment
+files:
+  - target: out.txt # entry comment
+    src:
+      github:
+        repo: org/repo
+        file: file.txt
+`);
+    writeUpdatedShas(cfg, new Map([['github:org/repo:file.txt', sha]]));
+    const result = fs.readFileSync(cfg, 'utf8');
+    expect(result).toContain('# config comment');
+    expect(result).toContain('# entry comment');
+    expect(result).toContain(`sha: ${sha}`);
+  });
 });
 
 // ---------------------------------------------------------------------------

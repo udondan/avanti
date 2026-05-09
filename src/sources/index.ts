@@ -1,3 +1,4 @@
+import * as crypto from 'crypto';
 import * as path from 'path';
 import {
   FileEntry,
@@ -136,12 +137,19 @@ function computeFilesSha(files: Map<string, string>): string {
   if (files.size === 1) {
     return computeContentSha256(files.values().next().value as string);
   }
-  // Include filenames so renames and path changes affect the SHA
-  const sorted = Array.from(files.entries())
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([k, v]) => `${k}\n${v}`)
-    .join('\n');
-  return computeContentSha256(sorted);
+  // Stream entries sorted by filename so renames/path changes affect the SHA
+  // without allocating a large concatenation buffer.
+  const hash = crypto.createHash('sha256');
+  const sorted = Array.from(files.entries()).sort(([a], [b]) =>
+    a.localeCompare(b),
+  );
+  for (const [k, v] of sorted) {
+    hash.update(k, 'utf8');
+    hash.update('\0', 'utf8');
+    hash.update(v, 'utf8');
+    hash.update('\0', 'utf8');
+  }
+  return hash.digest('hex');
 }
 
 async function fetchOneSrc(
