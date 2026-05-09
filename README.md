@@ -1,4 +1,4 @@
-# avanti
+# Avanti!
 
 A stateful package manager for arbitrary text files. Declare what you need and where to get it; avanti fetches, diffs, and writes with full version history, atomic rollbacks, and diff-before-apply safety.
 
@@ -79,15 +79,16 @@ npx @udondan/avanti --help
 avanti [options] [command]
 
 Options:
-  -c, --config <path|url>     path or remote spec for config file (default: auto-detected)
-  -w, --working-dir <path>    working directory for resolving paths (default: current directory)
+  -c, --config <path|url>          path or remote spec for config file (default: auto-detected)
+  -w, --working-dir <path>         working directory for resolving paths (default: current directory)
 
 Commands:
-  diff [pullId]               Show diff between remote sources and local files, or vs a past pull
-  pull [--yes]                Pull remote sources and write to local files
-  log [file]                  Show pull history for the current project
-  revert [pullId] [--yes]     Atomically revert all project files to a past pull state
-  reset [--yes]               Restore all tracked files to their pre-avanti state
+  diff [pullId]                    Show diff between remote sources and local files, or vs a past pull
+  pull [--yes] [--accept-changes]  Pull remote sources and write to local files
+  lock [--force]                   Pin SHA values for all remote sources in the config
+  log [file]                       Show pull history for the current project
+  revert [pullId] [--yes]          Atomically revert all project files to a past pull state
+  reset [--yes]                    Restore all tracked files to their pre-avanti state
 ```
 
 ### `avanti diff`
@@ -98,7 +99,34 @@ Shows a colored git-diff-like output of what would change. Exits `0` if no chang
 
 Fetches all sources, shows the diff, and prompts for confirmation before writing. Use `--yes` to skip the prompt.
 
+If any source has a `sha` field and the fetched content's SHA no longer matches, the pull is aborted with a mismatch error. Use `--accept-changes` to review the diff, confirm, and automatically update the SHA values in the config file.
+
 When avanti has previously synced a directory from a remote source and a file is no longer present in that source, the file is treated as stale: if avanti created it, it is deleted; if it existed before avanti first touched it, the original content is restored. Stale file changes appear in the diff before you confirm.
+
+### `avanti lock`
+
+Fetches all remote sources and writes a SHA-256 fingerprint for each one into the config file. Comments and formatting are preserved.
+
+```sh
+avanti lock           # pin all unpinned remote sources
+avanti lock --force   # overwrite existing SHA values with fresh ones
+```
+
+Once a source is pinned, `avanti pull` will verify the fetched content's SHA before applying any changes. If the upstream changed unexpectedly, avanti aborts with a clear error pointing to the affected source:
+
+```text
+SHA mismatch for github:org/standards:company-rules.md
+  expected: abc123...
+  got:      def456...
+
+Run `avanti pull --accept-changes` to review the diff and update SHA values.
+```
+
+`avanti diff` shows a `⚠ SHA mismatch` warning inline for any source that no longer matches its pinned SHA.
+
+SHA is computed over the raw fetched content of each source, before any `replace` or `post` processing. Each file's path and content are fed into the hash in sorted order, separated by null bytes — so renames and additions affect the fingerprint even for single-file sources. Pull history records the observed SHA for every source, so `avanti log` shows a full audit trail of what changed and when.
+
+Excluded from SHA pinning: local paths and `raw:` sources (their content is either authored locally or inline in the config, so changes are always visible).
 
 ## History
 
@@ -287,27 +315,34 @@ src: ~/templates/file.txt
 src: /absolute/path/file.txt
 ```
 
-**Map** — for exec, gitlab, github, bitbucket, git, s3, vault, raw:
+**Map** — for exec, gitlab, github, bitbucket, git, s3, vault, http, raw:
 
 ```yaml
 src:
   exec: <shell command>          # stdout becomes file content; target required
+  sha: abc123...                 # optional SHA-256 to verify stdout (see below)
 
 src:
   raw: |                         # inline content; target required
     your content here
 
 src:
+  http: https://example.com/file.txt  # explicit http/https URL with optional SHA
+  sha: abc123...
+
+src:
   gitlab:
     project: group/repo          # GitLab project path
     file: path/to/file.txt       # file or directory in repo
     ref: main                    # branch, tag, or $latest (optional)
+    sha: abc123...               # optional SHA-256 fingerprint
 
 src:
   github:
     repo: owner/repo             # GitHub owner/repo
     file: path/to/file.txt       # file or directory in repo
     ref: main                    # branch, tag, or $latest (optional)
+    sha: abc123...               # optional SHA-256 fingerprint
 
 src:
   bitbucket:
@@ -315,21 +350,31 @@ src:
     repo: my-repo                # repository slug
     file: path/to/file.txt       # file or directory in repo
     ref: main                    # branch, tag, or $latest (optional)
+    sha: abc123...               # optional SHA-256 fingerprint
 
 src:
   git:
     repo: https://github.com/org/repo.git  # any git remote (HTTPS or SSH)
     file: path/to/file.txt                 # file or directory in repo
     ref: main                              # branch, tag, or commit hash (optional)
+    sha: abc123...                         # optional SHA-256 fingerprint
 
 src:
   s3: s3://my-bucket/path/to/file.txt      # S3 URI; end with / for a prefix sync
+  sha: abc123...                           # optional SHA-256 fingerprint
 
 src:
   vault:
     path: secret/myapp/config   # Vault KV path (mount/subpath)
     field: db_password          # specific field to extract (optional; omit for full JSON)
+    sha: abc123...              # optional SHA-256 fingerprint
 ```
+
+#### SHA pinning
+
+The optional `sha` field pins a source to a specific content fingerprint. When present, avanti verifies the SHA-256 of the raw fetched content matches before writing anything. This makes your config act as a selective lockfile — only sources you care about get pinned, and changes are surfaced explicitly rather than applied silently.
+
+Use `avanti lock` to compute and write SHA values automatically. Use `avanti pull --accept-changes` to review a mismatch and update the pinned SHA. Local paths and `raw:` sources do not support `sha` (changes to those are inherently visible).
 
 ### Directory Sources
 

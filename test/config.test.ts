@@ -764,3 +764,137 @@ describe('resolveConfigPath', () => {
     expect(result).toBe(path.join(tmpDir, '.avanti.yml'));
   });
 });
+
+// ---------------------------------------------------------------------------
+// parseSha — SHA format validation in config parsing
+// ---------------------------------------------------------------------------
+
+describe('parseSha validation in config parsing', () => {
+  it('accepts a valid 64-char lowercase hex SHA', async () => {
+    const sha = 'a'.repeat(64);
+    const f = writeTmp(`
+files:
+  - src:
+      github:
+        repo: org/repo
+        file: file.txt
+        sha: ${sha}
+    target: out.txt
+`);
+    const cfg = await loadConfig(f);
+    const src = cfg.files[0].src as { github: { sha?: string } };
+    expect(src.github.sha).toBe(sha);
+  });
+
+  it('normalizes uppercase SHA to lowercase', async () => {
+    const sha = 'A'.repeat(64);
+    const f = writeTmp(`
+files:
+  - src:
+      github:
+        repo: org/repo
+        file: file.txt
+        sha: ${sha}
+    target: out.txt
+`);
+    const cfg = await loadConfig(f);
+    const src = cfg.files[0].src as { github: { sha?: string } };
+    expect(src.github.sha).toBe('a'.repeat(64));
+  });
+
+  it('throws on an invalid SHA (wrong length)', async () => {
+    const f = writeTmp(`
+files:
+  - src:
+      github:
+        repo: org/repo
+        file: file.txt
+        sha: tooshort
+    target: out.txt
+`);
+    await expect(loadConfig(f)).rejects.toThrow('expected 64 hex characters');
+  });
+
+  it('throws on an invalid SHA (non-hex chars)', async () => {
+    const f = writeTmp(`
+files:
+  - src:
+      github:
+        repo: org/repo
+        file: file.txt
+        sha: ${'z'.repeat(64)}
+    target: out.txt
+`);
+    await expect(loadConfig(f)).rejects.toThrow('expected 64 hex characters');
+  });
+
+  it('accepts a valid SHA on a gitlab source', async () => {
+    const sha = 'b'.repeat(64);
+    const f = writeTmp(`
+files:
+  - src:
+      gitlab:
+        project: group/proj
+        file: config.yml
+        sha: ${sha}
+    target: out.txt
+`);
+    const cfg = await loadConfig(f);
+    const src = cfg.files[0].src as { gitlab: { sha?: string } };
+    expect(src.gitlab.sha).toBe(sha);
+  });
+});
+
+describe('http source parsing', () => {
+  it('accepts a valid https:// URL', async () => {
+    const f = writeTmp(`
+files:
+  - src:
+      http: https://example.com/file.txt
+    target: out.txt
+`);
+    const cfg = await loadConfig(f);
+    const src = cfg.files[0].src as { http: string };
+    expect(src.http).toBe('https://example.com/file.txt');
+  });
+
+  it('accepts an http source with sha and normalizes to lowercase', async () => {
+    const sha = 'A'.repeat(64);
+    const f = writeTmp(`
+files:
+  - src:
+      http: https://example.com/file.txt
+      sha: ${sha}
+    target: out.txt
+`);
+    const cfg = await loadConfig(f);
+    const src = cfg.files[0].src as { http: string; sha?: string };
+    expect(src.sha).toBe('a'.repeat(64));
+  });
+
+  it('throws when http value does not start with http:// or https:// (literal)', async () => {
+    const f = writeTmp(`
+files:
+  - src:
+      http: ftp://example.com/file.txt
+    target: out.txt
+`);
+    await expect(loadConfig(f)).rejects.toThrow(
+      'must start with http:// or https://',
+    );
+  });
+
+  it('accepts a variable-driven http URL without scheme validation', async () => {
+    const f = writeTmp(`
+variables:
+  url: https://example.com/file.txt
+files:
+  - src:
+      http: $url
+    target: out.txt
+`);
+    const cfg = await loadConfig(f);
+    const src = cfg.files[0].src as { http: string };
+    expect(src.http).toBe('$url');
+  });
+});
