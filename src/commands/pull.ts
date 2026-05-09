@@ -45,6 +45,7 @@ async function runFetchLoop(
   const writeTargets: WriteTarget[] = [];
   const allDiffs: FileDiff[] = [];
   const shaErrors: ShaError[] = [];
+  const seenShaErrorLabels = new Set<string>();
   const sourceRecordsByTarget = new Map<string, SourceFetchRecord[]>();
   let hasError = false;
 
@@ -53,7 +54,8 @@ async function runFetchLoop(
       const result = await fetchSource(entry, workingDir, vars);
 
       for (const rec of result.sourceRecords) {
-        if (!rec.matched) {
+        if (!rec.matched && !seenShaErrorLabels.has(rec.sourceLabel)) {
+          seenShaErrorLabels.add(rec.sourceLabel);
           shaErrors.push({
             sourceLabel: rec.sourceLabel,
             expectedSha: rec.expectedSha!,

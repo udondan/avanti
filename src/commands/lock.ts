@@ -36,10 +36,12 @@ export function lockCommand(): Command {
       const vars = config.variables ?? {};
       const toPin = new Map<string, string>(); // label → sha
       let hasError = false;
+      let remoteSourceCount = 0;
 
       for (const entry of config.files) {
         try {
           const result = await fetchSource(entry, workingDir, vars);
+          remoteSourceCount += result.sourceRecords.length;
           for (const rec of result.sourceRecords) {
             if (!opts.force && rec.expectedSha !== undefined) continue;
             toPin.set(rec.sourceLabel, rec.observedSha);
@@ -53,12 +55,15 @@ export function lockCommand(): Command {
       }
 
       if (toPin.size === 0) {
-        console.log(
-          opts.force
-            ? 'No remote sources found.'
-            : 'All remote sources already have SHA values pinned. Use --force to overwrite.',
-        );
-        process.exit(hasError ? 2 : 0);
+        if (hasError) process.exit(2);
+        if (remoteSourceCount === 0) {
+          console.log('No SHA-pinnable remote sources found in config.');
+        } else {
+          console.log(
+            'All remote sources already have SHA values pinned. Use --force to overwrite.',
+          );
+        }
+        process.exit(0);
       }
 
       if (hasError) {

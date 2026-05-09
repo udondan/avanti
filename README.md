@@ -124,7 +124,7 @@ Run `avanti pull --accept-changes` to review the diff and update SHA values.
 
 `avanti diff` shows a `⚠ SHA mismatch` warning inline for any source that no longer matches its pinned SHA.
 
-SHA is computed over the **raw fetched content** of each source, before any `replace` or `post` processing. For directory sources, it is computed over the sorted concatenation of all fetched files. Pull history records the observed SHA for every source, so `avanti log` shows a full audit trail of what changed and when.
+SHA is computed over the raw fetched content of each source, before any `replace` or `post` processing. Each file's path and content are fed into the hash in sorted order, separated by null bytes — so renames and additions affect the fingerprint even for single-file sources. Pull history records the observed SHA for every source, so `avanti log` shows a full audit trail of what changed and when.
 
 Excluded from SHA pinning: local paths and `raw:` sources (their content is either authored locally or inline in the config, so changes are always visible).
 
