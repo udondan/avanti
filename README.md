@@ -1110,10 +1110,10 @@ files:
 
 ### Self-managing Config
 
-avanti can manage any file — including its own config. The special `$self` key in the `files:` map fetches and merges one or more remote sources, uses the result as the active config, and then applies all the files it declares — in the same run, with a single confirmation prompt and a single atomic write.
+The special `$self` key in the `files:` map fetches and merges one or more remote avanti configs, uses the result as the active config for the current run, and applies all the files it declares — with a single confirmation prompt and a single atomic write.
 
 ```yaml
-# ~/.avanti.yml
+# bootstrap.yml
 files:
   $self:
     src:
@@ -1123,12 +1123,26 @@ files:
         ref: $latest
 ```
 
-When avanti runs, it fetches the remote `avanti.yml`, applies all the files it declares, and — because the config is a local file — also writes the fetched content back to `~/.avanti.yml` on disk. The local config stays in sync with the remote automatically; no manual update needed.
+When avanti runs this bootstrap config, it fetches the remote `avanti.yml`, applies all the files it declares, and — because the bootstrap is a local file — also writes the fetched content back to `bootstrap.yml` on disk, replacing the bootstrap with the materialized config. Subsequent runs use the materialized config directly and no longer need to fetch from the remote.
 
-**Composable config** — `$self` with multiple sources and YAML merge lets you assemble a config from independent layers. Org-wide defaults, team additions, and personal overrides all merge into one active config:
+To re-materialize (pick up remote changes), re-run the bootstrap config explicitly:
+
+```sh
+avanti pull --config bootstrap.yml
+```
+
+Or keep the bootstrap config stored remotely and use it directly from the source every time:
+
+```sh
+avanti pull --config github:myorg/dotfiles:bootstrap.yml
+```
+
+When using a remote `--config`, `$self` is in-memory only — the merged result drives the run but is not written anywhere, since there is no local config file to update.
+
+**Composable config** — `$self` with multiple sources and YAML merge lets you assemble a config from independent layers. Org-wide defaults, team additions, and personal overrides all merge into one materialized config:
 
 ```yaml
-# ~/.avanti.yml — bootstrapped once, then self-updating
+# bootstrap.yml — run this to re-materialize from remote layers
 files:
   $self:
     src:
@@ -1149,9 +1163,7 @@ files:
       arrays: concat # file lists from all layers are merged, not replaced
 ```
 
-Each layer only needs to declare what it owns. The org config defines shared tooling. The team config adds team-specific sources. The personal config overrides variables or adds private entries. Every `avanti pull` rebuilds the merged config, writes it to `~/.avanti.yml`, and applies all the files it describes — org-wide config drift and personal customisation coexist without conflict.
-
-When running with a remote config (`--config github:...`), `$self` is in-memory only — the merged result drives the run but is not persisted anywhere, since there is no local file to write back to.
+Each layer only needs to declare what it owns. Running `avanti pull --config bootstrap.yml` merges all layers, applies the resulting file entries, and writes the merged config to `bootstrap.yml` — ready to use for regular pulls without fetching from remote again.
 
 For first-time setup on a new machine, pass a remote config directly to `--config` — no local file needed:
 
