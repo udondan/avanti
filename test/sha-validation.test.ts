@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { computeContentSha256 } from '../src/sha';
-import { writeUpdatedShas } from '../src/config-writeback';
+import { applyUpdatedShas, writeUpdatedShas } from '../src/config-writeback';
 import { fetchSource } from '../src/sources';
 import { HistoryManager } from '../src/history';
 
@@ -199,6 +199,56 @@ files:
     const result = fs.readFileSync(cfg, 'utf8');
     expect(result).toContain('# config comment');
     expect(result).toContain('# entry comment');
+    expect(result).toContain(`sha: ${sha}`);
+  });
+
+  it('does not rewrite the file when no label matches', () => {
+    const original = `files:
+  - target: out.txt
+    src:
+      - github:
+          repo: org/repo
+          file: file.txt
+`;
+    const cfg = writeConfig(original);
+    const mtime0 = fs.statSync(cfg).mtimeMs;
+    writeUpdatedShas(
+      cfg,
+      new Map([['github:other/repo:file.txt', 'a'.repeat(64)]]),
+    );
+    expect(fs.statSync(cfg).mtimeMs).toBe(mtime0);
+    expect(fs.readFileSync(cfg, 'utf8')).toBe(original);
+  });
+
+  it('applyUpdatedShas returns null when no label matches', () => {
+    const raw = `files:
+  - target: out.txt
+    src:
+      - github:
+          repo: org/repo
+          file: file.txt
+`;
+    const result = applyUpdatedShas(
+      raw,
+      new Map([['github:other/repo:file.txt', 'a'.repeat(64)]]),
+    );
+    expect(result).toBeNull();
+  });
+
+  it('applyUpdatedShas returns updated content when a label matches', () => {
+    const sha = 'ee'.repeat(32);
+    const raw = `files:
+  - target: out.txt
+    src:
+      - github:
+          repo: org/repo
+          file: file.txt
+`;
+    const result = applyUpdatedShas(
+      raw,
+      new Map([['github:org/repo:file.txt', sha]]),
+    );
+    expect(result).not.toBeNull();
     expect(result).toContain(`sha: ${sha}`);
   });
 });

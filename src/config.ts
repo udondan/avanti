@@ -269,7 +269,9 @@ function parseVariables(raw: unknown): Variables {
 
 function parseSha(value: unknown, loc: string): string | undefined {
   if (value === undefined || value === null) return undefined;
-  if (typeof value !== 'string') return undefined;
+  if (typeof value !== 'string') {
+    throw new Error(`${loc}.sha: must be a string, got ${typeof value}`);
+  }
   const normalized = value.toLowerCase();
   if (!/^[0-9a-f]{64}$/.test(normalized)) {
     throw new Error(`${loc}.sha: expected 64 hex characters, got "${value}"`);

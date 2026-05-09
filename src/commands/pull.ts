@@ -21,7 +21,7 @@ import { FileDiff } from '../diff';
 import { AvantiConfig } from '../types';
 import { HistoryManager, PullLogFileRef, SourceShaRecord } from '../history';
 import { confirm } from '../prompt';
-import { writeUpdatedShas } from '../config-writeback';
+import { applyUpdatedShas, writeUpdatedShas } from '../config-writeback';
 
 interface ShaError {
   sourceLabel: string;
@@ -247,6 +247,36 @@ export function pullCommand(): Command {
         }
       }
 
+      // Pre-apply SHA updates to the config write target in-memory so that both
+      // history and the on-disk file reflect the final pinned state in one pass.
+      const shaUpdates =
+        opts.acceptChanges &&
+        firstPass.shaErrors.length > 0 &&
+        !isRemoteConfigSpec(configPath)
+          ? new Map(
+              firstPass.shaErrors.map((e) => [e.sourceLabel, e.observedSha]),
+            )
+          : null;
+      let configShaPreApplied = false;
+      if (shaUpdates !== null) {
+        const configTargetIdx = writeTargets.findIndex(
+          (t) => t.targetPath === configPath,
+        );
+        if (configTargetIdx !== -1) {
+          const patched = applyUpdatedShas(
+            writeTargets[configTargetIdx].content,
+            shaUpdates,
+          );
+          if (patched !== null) {
+            writeTargets[configTargetIdx] = {
+              ...writeTargets[configTargetIdx],
+              content: patched,
+            };
+          }
+          configShaPreApplied = true;
+        }
+      }
+
       // Stage history versions before atomicWrite so v0 is captured before overwrite
       const stagedFileRefs: PullLogFileRef[] = [];
       if (pullId) {
@@ -303,17 +333,11 @@ export function pullCommand(): Command {
         process.exit(2);
       }
 
-      // SHA writeback: write updated sha values into config file after all writes complete
-      if (
-        opts.acceptChanges &&
-        firstPass.shaErrors.length > 0 &&
-        !isRemoteConfigSpec(configPath)
-      ) {
+      // SHA writeback: write updated sha values into config file after all writes complete.
+      // Skipped when config was a write target and already patched in-memory above.
+      if (shaUpdates !== null && !configShaPreApplied) {
         try {
-          const updates = new Map(
-            firstPass.shaErrors.map((e) => [e.sourceLabel, e.observedSha]),
-          );
-          writeUpdatedShas(configPath, updates);
+          writeUpdatedShas(configPath, shaUpdates);
         } catch (err: unknown) {
           console.warn(
             `Warning: could not update SHA values in config: ${(err as Error).message}`,

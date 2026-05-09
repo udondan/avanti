@@ -2,21 +2,23 @@ import * as fs from 'fs';
 import { parseDocument, isSeq } from 'yaml';
 import { atomicWrite } from './writer';
 
-/** Writes updated SHA values into the config YAML file in-place, preserving comments. */
-export function writeUpdatedShas(
-  configPath: string,
+/**
+ * Applies updated SHA values into a parsed YAML config string in-place,
+ * preserving comments. Returns the new content, or null if no updates matched.
+ */
+export function applyUpdatedShas(
+  raw: string,
   updates: Map<string, string>, // sourceLabel → new sha
-): void {
-  if (updates.size === 0) return;
-  const raw = fs.readFileSync(configPath, 'utf8');
+): string | null {
+  if (updates.size === 0) return null;
   const doc = parseDocument(raw);
 
   const filesNode = doc.get('files', true);
-  if (!filesNode || typeof filesNode !== 'object' || !('items' in filesNode))
-    return;
+  if (!isSeq(filesNode)) return null;
 
-  const filesSeq = filesNode as { items: unknown[] };
-  filesSeq.items.forEach((fileItem, fileIdx) => {
+  let changed = false;
+
+  filesNode.items.forEach((fileItem, fileIdx) => {
     if (!fileItem || typeof fileItem !== 'object') return;
     // YAML sequence items are the nodes themselves (YAMLMap) — no .value wrapper
     const entryNode = fileItem as {
@@ -126,6 +128,7 @@ export function writeUpdatedShas(
 
       if (label && shaPath && updates.has(label)) {
         doc.setIn(shaPath, updates.get(label)!);
+        changed = true;
       }
     };
 
@@ -138,5 +141,18 @@ export function writeUpdatedShas(
     }
   });
 
-  atomicWrite([{ targetPath: configPath, content: doc.toString() }]);
+  return changed ? doc.toString() : null;
+}
+
+/** Writes updated SHA values into the config YAML file in-place, preserving comments. */
+export function writeUpdatedShas(
+  configPath: string,
+  updates: Map<string, string>, // sourceLabel → new sha
+): void {
+  if (updates.size === 0) return;
+  const raw = fs.readFileSync(configPath, 'utf8');
+  const newContent = applyUpdatedShas(raw, updates);
+  if (newContent !== null) {
+    atomicWrite([{ targetPath: configPath, content: newContent }]);
+  }
 }
