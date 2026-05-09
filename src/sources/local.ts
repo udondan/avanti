@@ -5,7 +5,11 @@ export interface LocalResult {
   files: Map<string, string>;
 }
 
-export function fetchLocal(src: string, workingDir: string): LocalResult {
+export function fetchLocal(
+  src: string,
+  workingDir: string,
+  optional = false,
+): LocalResult {
   let resolved: string;
   if (src.startsWith('~/')) {
     const home = process.env['HOME'];
@@ -21,6 +25,7 @@ export function fetchLocal(src: string, workingDir: string): LocalResult {
     resolved = path.resolve(workingDir, src);
   }
   if (!fs.existsSync(resolved)) {
+    if (optional) return { files: new Map() };
     throw new Error(`Local source not found: ${resolved}`);
   }
   const stat = fs.statSync(resolved);

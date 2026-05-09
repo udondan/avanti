@@ -70,6 +70,20 @@ export interface HttpSrc {
   sha?: string;
 }
 
+/** An explicit local filesystem path; optional: true silently skips if the path does not exist */
+export interface LocalSrc {
+  path: string;
+  optional?: boolean;
+  sha?: string;
+}
+
+/** An explicit http/https URL; optional: true silently skips on 404 */
+export interface UrlSrc {
+  url: string;
+  optional?: boolean;
+  sha?: string;
+}
+
 /** src can be a plain string (http/https URL or local path) or a typed source map */
 export type FileSrc =
   | string
@@ -81,7 +95,9 @@ export type FileSrc =
   | RawSrc
   | S3Src
   | VaultSrc
-  | HttpSrc;
+  | HttpSrc
+  | LocalSrc
+  | UrlSrc;
 
 export type JsonConflictStrategy = 'abort' | 'first_wins' | 'last_wins';
 export type JsonArrayStrategy = 'replace' | 'concat';

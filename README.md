@@ -8,7 +8,7 @@ atomic rollbacks, and diff-before-apply safety.
   <img
     src="https://raw.githubusercontent.com/udondan/avanti/main/avanti.png"
     alt="Avanti!"
-    height="200"
+    height="300"
   />
 </div>
 

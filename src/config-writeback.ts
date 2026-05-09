@@ -128,6 +128,18 @@ export function applyUpdatedShas(
           label = `http:${url}`;
           shaPath = [...srcBase, 'sha'];
         }
+      } else if (n.get('path') !== undefined) {
+        const p = n.get('path') as string | null;
+        if (p) {
+          label = `path:${p}`;
+          shaPath = [...srcBase, 'sha'];
+        }
+      } else if (n.get('url') !== undefined) {
+        const u = n.get('url') as string | null;
+        if (u) {
+          label = `url:${u}`;
+          shaPath = [...srcBase, 'sha'];
+        }
       }
 
       if (label && shaPath && updates.has(label)) {

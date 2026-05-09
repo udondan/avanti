@@ -6,6 +6,8 @@ import {
   FileEntry,
   FileSrc,
   HttpSrc,
+  LocalSrc,
+  UrlSrc,
   JsonArrayStrategy,
   JsonConflictStrategy,
   JsonMergeOptions,
@@ -118,7 +120,7 @@ function parseGitLabSpec(spec: string): {
 
 async function fetchConfigContent(spec: string): Promise<string> {
   if (spec.startsWith('http://') || spec.startsWith('https://')) {
-    return fetchHttp(spec);
+    return (await fetchHttp(spec))!;
   }
 
   if (spec.startsWith('github:')) {
@@ -297,6 +299,49 @@ function parseSingleSrc(
 
   const obj = raw as Record<string, unknown>;
 
+  if ('path' in obj) {
+    if (typeof obj['path'] !== 'string' || !obj['path']) {
+      throw new Error(`${loc}.path: must be a non-empty string`);
+    }
+    const result: LocalSrc = { path: obj['path'] };
+    if (obj['optional'] !== undefined) {
+      if (typeof obj['optional'] !== 'boolean') {
+        throw new Error(`${loc}.optional: must be a boolean`);
+      }
+      result.optional = obj['optional'];
+    }
+    const pathSha = parseSha(obj['sha'], loc);
+    if (pathSha !== undefined) result.sha = pathSha;
+    return result;
+  }
+
+  if ('url' in obj) {
+    if (typeof obj['url'] !== 'string' || !obj['url']) {
+      throw new Error(
+        `${loc}.url: must be a non-empty string (http/https URL)`,
+      );
+    }
+    if (
+      !obj['url'].includes('$') &&
+      !obj['url'].startsWith('http://') &&
+      !obj['url'].startsWith('https://')
+    ) {
+      throw new Error(
+        `${loc}.url: must start with http:// or https://, got "${obj['url']}"`,
+      );
+    }
+    const result: UrlSrc = { url: obj['url'] };
+    if (obj['optional'] !== undefined) {
+      if (typeof obj['optional'] !== 'boolean') {
+        throw new Error(`${loc}.optional: must be a boolean`);
+      }
+      result.optional = obj['optional'];
+    }
+    const urlSha = parseSha(obj['sha'], loc);
+    if (urlSha !== undefined) result.sha = urlSha;
+    return result;
+  }
+
   if ('http' in obj) {
     if (typeof obj['http'] !== 'string' || !obj['http']) {
       throw new Error(
@@ -456,7 +501,7 @@ function parseSingleSrc(
   }
 
   throw new Error(
-    `${loc}: unknown source type. Must be a string or map with exec/gitlab/github/bitbucket/git/s3/vault/http/raw`,
+    `${loc}: unknown source type. Must be a string or map with exec/gitlab/github/bitbucket/git/s3/vault/http/url/path/raw`,
   );
 }
 
