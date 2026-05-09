@@ -255,6 +255,19 @@ export function pullCommand(): Command {
         }
       }
 
+      // Warn when --accept-changes is used with a remote config: SHA values
+      // cannot be written back, so the mismatch will recur on the next pull.
+      if (
+        opts.acceptChanges &&
+        firstPass.shaErrors.length > 0 &&
+        isRemoteConfigSpec(configPath)
+      ) {
+        console.warn(
+          'Warning: config is remote; SHA values cannot be written back. ' +
+            'Mismatches accepted for this session only.',
+        );
+      }
+
       // Pre-apply SHA updates to the config write target in-memory so that both
       // history and the on-disk file reflect the final pinned state in one pass.
       const shaUpdates =
@@ -357,7 +370,8 @@ export function pullCommand(): Command {
         }
       }
 
-      // Only record to pulls.jsonl if at least one file was actually written
+      // Only record to pulls.jsonl if at least one file was staged (written or
+      // SHA-accepted via --accept-changes with no content diff)
       if (pullId && stagedFileRefs.length > 0) {
         try {
           history.closePullSession(

@@ -844,3 +844,57 @@ files:
     expect(src.gitlab.sha).toBe(sha);
   });
 });
+
+describe('http source parsing', () => {
+  it('accepts a valid http:// URL', async () => {
+    const f = writeTmp(`
+files:
+  - src:
+      http: https://example.com/file.txt
+    target: out.txt
+`);
+    const cfg = await loadConfig(f);
+    const src = cfg.files[0].src as { http: string };
+    expect(src.http).toBe('https://example.com/file.txt');
+  });
+
+  it('accepts an http source with sha and normalizes to lowercase', async () => {
+    const sha = 'A'.repeat(64);
+    const f = writeTmp(`
+files:
+  - src:
+      http: https://example.com/file.txt
+      sha: ${sha}
+    target: out.txt
+`);
+    const cfg = await loadConfig(f);
+    const src = cfg.files[0].src as { http: string; sha?: string };
+    expect(src.sha).toBe('a'.repeat(64));
+  });
+
+  it('throws when http value does not start with http:// or https:// (literal)', async () => {
+    const f = writeTmp(`
+files:
+  - src:
+      http: ftp://example.com/file.txt
+    target: out.txt
+`);
+    await expect(loadConfig(f)).rejects.toThrow(
+      'must start with http:// or https://',
+    );
+  });
+
+  it('accepts a variable-driven http URL without scheme validation', async () => {
+    const f = writeTmp(`
+variables:
+  url: https://example.com/file.txt
+files:
+  - src:
+      http: $url
+    target: out.txt
+`);
+    const cfg = await loadConfig(f);
+    const src = cfg.files[0].src as { http: string };
+    expect(src.http).toBe('$url');
+  });
+});

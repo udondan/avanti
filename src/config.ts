@@ -306,6 +306,7 @@ function parseSingleSrc(
       );
     }
     if (
+      !obj['http'].includes('$') &&
       !obj['http'].startsWith('http://') &&
       !obj['http'].startsWith('https://')
     ) {
