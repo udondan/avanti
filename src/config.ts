@@ -5,6 +5,7 @@ import {
   AvantiConfig,
   FileEntry,
   FileSrc,
+  HttpSrc,
   JsonArrayStrategy,
   JsonConflictStrategy,
   JsonMergeOptions,
@@ -280,17 +281,30 @@ function parseSingleSrc(
 
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
     throw new Error(
-      `${loc}: must be a string or a map with one of: exec, gitlab, github, bitbucket, git, s3, vault`,
+      `${loc}: must be a string or a map with one of: exec, gitlab, github, bitbucket, git, s3, vault, http`,
     );
   }
 
   const obj = raw as Record<string, unknown>;
 
+  if ('http' in obj) {
+    if (typeof obj['http'] !== 'string' || !obj['http']) {
+      throw new Error(
+        `${loc}.http: must be a non-empty string (http/https URL)`,
+      );
+    }
+    const result: HttpSrc = { http: obj['http'] };
+    if (typeof obj['sha'] === 'string') result.sha = obj['sha'];
+    return result;
+  }
+
   if ('exec' in obj) {
     if (typeof obj['exec'] !== 'string' || !obj['exec']) {
       throw new Error(`${loc}.exec: must be a non-empty string`);
     }
-    return { exec: obj['exec'] };
+    const result = { exec: obj['exec'] } as { exec: string; sha?: string };
+    if (typeof obj['sha'] === 'string') result.sha = obj['sha'];
+    return result;
   }
 
   if ('gitlab' in obj) {
@@ -310,6 +324,7 @@ function parseSingleSrc(
         project: g['project'],
         file: g['file'],
         ref: typeof g['ref'] === 'string' ? g['ref'] : undefined,
+        sha: typeof g['sha'] === 'string' ? g['sha'] : undefined,
       },
     };
   }
@@ -338,6 +353,7 @@ function parseSingleSrc(
         repo: g['repo'],
         file: g['file'],
         ref: typeof g['ref'] === 'string' ? g['ref'] : undefined,
+        sha: typeof g['sha'] === 'string' ? g['sha'] : undefined,
       },
     };
   }
@@ -363,6 +379,7 @@ function parseSingleSrc(
         repo: b['repo'],
         file: b['file'],
         ref: typeof b['ref'] === 'string' ? b['ref'] : undefined,
+        sha: typeof b['sha'] === 'string' ? b['sha'] : undefined,
       },
     };
   }
@@ -384,6 +401,7 @@ function parseSingleSrc(
         repo: gt['repo'],
         file: gt['file'],
         ref: typeof gt['ref'] === 'string' ? gt['ref'] : undefined,
+        sha: typeof gt['sha'] === 'string' ? gt['sha'] : undefined,
       },
     };
   }
@@ -392,7 +410,9 @@ function parseSingleSrc(
     if (typeof obj['s3'] !== 'string' || !obj['s3']) {
       throw new Error(`${loc}.s3: must be a non-empty string (s3:// URI)`);
     }
-    return { s3: obj['s3'] };
+    const result = { s3: obj['s3'] } as { s3: string; sha?: string };
+    if (typeof obj['sha'] === 'string') result.sha = obj['sha'];
+    return result;
   }
 
   if ('vault' in obj) {
@@ -408,12 +428,13 @@ function parseSingleSrc(
       vault: {
         path: vt['path'],
         field: typeof vt['field'] === 'string' ? vt['field'] : undefined,
+        sha: typeof vt['sha'] === 'string' ? vt['sha'] : undefined,
       },
     };
   }
 
   throw new Error(
-    `${loc}: unknown source type. Must be a string or map with exec/gitlab/github/bitbucket/git/s3/vault/raw`,
+    `${loc}: unknown source type. Must be a string or map with exec/gitlab/github/bitbucket/git/s3/vault/http/raw`,
   );
 }
 

@@ -1,7 +1,8 @@
-import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import * as crypto from 'crypto';
+import { computeContentSha256 } from './sha';
 
 export interface FileHistoryMeta {
   absolutePath: string;
@@ -18,11 +19,19 @@ export interface PullLogEntry {
   files: PullLogFileRef[];
 }
 
+export interface SourceShaRecord {
+  label: string;
+  observedSha: string;
+  expectedSha: string | undefined;
+  accepted: boolean;
+}
+
 export interface PullLogFileRef {
   absolutePath: string;
   slug: string;
   version: number;
   wasNew: boolean;
+  sources?: SourceShaRecord[];
 }
 
 export interface FileVersionInfo {
@@ -47,7 +56,7 @@ function defaultBaseDir(): string {
 }
 
 function sha256(input: string): string {
-  return crypto.createHash('sha256').update(input).digest('hex');
+  return computeContentSha256(input);
 }
 
 function uuid(): string {
@@ -109,6 +118,7 @@ export class HistoryManager {
     targetPath: string,
     newContent: string,
     isNew: boolean,
+    sources?: SourceShaRecord[],
   ): { version: number; fileRef: PullLogFileRef } {
     const slug = sha256(targetPath);
     const fileDir = path.join(this.filesDir, slug);
@@ -152,6 +162,7 @@ export class HistoryManager {
       slug,
       version: nextVersion,
       wasNew: isNew,
+      ...(sources !== undefined && { sources }),
     };
 
     return { version: nextVersion, fileRef };

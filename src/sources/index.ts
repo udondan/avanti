@@ -18,6 +18,7 @@ import { fetchS3 } from './s3';
 import { fetchVault } from './vault';
 import { mergeJson, formatJson } from '../processors/json';
 import { mergeYaml, formatYaml } from '../processors/yaml';
+import { computeContentSha256 } from '../sha';
 
 const JSON_EXTENSIONS = new Set(['.json', '.jsonc']);
 const YAML_EXTENSIONS = new Set(['.yaml', '.yml']);
@@ -29,6 +30,7 @@ function srcFilename(src: FileSrc): string | null {
   if ('bitbucket' in src) return src.bitbucket.file;
   if ('git' in src) return src.git.file;
   if ('s3' in src) return src.s3;
+  if ('http' in src) return src.http;
   return null;
 }
 
@@ -70,59 +72,119 @@ function resolveYamlOptions(
   return null;
 }
 
+export interface SourceFetchRecord {
+  sourceLabel: string;
+  observedSha: string;
+  expectedSha: string | undefined;
+  matched: boolean;
+}
+
 export interface FetchResult {
   files: Map<string, string>;
+  sourceRecords: SourceFetchRecord[];
+}
+
+function labelForSrc(src: FileSrc, vars: Variables): string {
+  if (typeof src === 'string') return resolveVars(src, vars);
+  if ('github' in src) return `github:${src.github.repo}:${src.github.file}`;
+  if ('gitlab' in src) return `gitlab:${src.gitlab.project}:${src.gitlab.file}`;
+  if ('bitbucket' in src)
+    return `bitbucket:${src.bitbucket.workspace}/${src.bitbucket.repo}:${src.bitbucket.file}`;
+  if ('git' in src) return `git:${src.git.repo}:${src.git.file}`;
+  if ('exec' in src) return `exec:${src.exec}`;
+  if ('s3' in src) return `s3:${src.s3}`;
+  if ('vault' in src) return `vault:${src.vault.path}`;
+  if ('http' in src) return `http:${src.http}`;
+  if ('raw' in src) return 'raw';
+  return JSON.stringify(src);
+}
+
+function expectedShaForSrc(src: FileSrc): string | undefined {
+  if (typeof src === 'string') return undefined;
+  if ('github' in src) return src.github.sha;
+  if ('gitlab' in src) return src.gitlab.sha;
+  if ('bitbucket' in src) return src.bitbucket.sha;
+  if ('git' in src) return src.git.sha;
+  if ('exec' in src) return src.sha;
+  if ('s3' in src) return src.sha;
+  if ('vault' in src) return src.vault.sha;
+  if ('http' in src) return src.sha;
+  return undefined;
+}
+
+function shaSupported(src: FileSrc): boolean {
+  if (typeof src === 'string') return false; // local paths excluded; plain string HTTP has no sha field
+  if ('raw' in src) return false;
+  return true;
+}
+
+function computeFilesSha(files: Map<string, string>): string {
+  if (files.size === 1) {
+    return computeContentSha256(files.values().next().value as string);
+  }
+  const sorted = Array.from(files.entries())
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([, v]) => v)
+    .join('\n');
+  return computeContentSha256(sorted);
 }
 
 async function fetchOneSrc(
   src: FileSrc,
   workingDir: string,
   vars: Variables,
-): Promise<FetchResult> {
+): Promise<{ files: Map<string, string>; record: SourceFetchRecord | null }> {
   if (typeof src === 'string') {
     const resolved = resolveVars(src, vars);
     if (resolved.startsWith('http://') || resolved.startsWith('https://')) {
       const content = await fetchHttp(resolved);
       const filename = inferFilenameFromUrl(resolved) ?? 'download';
-      return { files: new Map([[filename, content]]) };
+      return {
+        files: new Map([[filename, content]]),
+        record: null,
+      };
     }
-    return fetchLocal(resolved, workingDir);
+    return { files: fetchLocal(resolved, workingDir).files, record: null };
   }
 
   if ('raw' in src) {
-    return { files: new Map([['output', resolveVars(src.raw, vars)]]) };
-  }
-
-  if ('exec' in src) {
     return {
-      files: new Map([
-        ['output', fetchExec(resolveVarsShellSafe(src.exec, vars))],
-      ]),
+      files: new Map([['output', resolveVars(src.raw, vars)]]),
+      record: null,
     };
   }
 
-  if ('gitlab' in src) {
-    return fetchGitLab(
+  let files: Map<string, string>;
+
+  if ('http' in src) {
+    const content = await fetchHttp(resolveVars(src.http, vars));
+    const filename =
+      inferFilenameFromUrl(resolveVars(src.http, vars)) ?? 'download';
+    files = new Map([[filename, content]]);
+  } else if ('exec' in src) {
+    files = new Map([
+      ['output', fetchExec(resolveVarsShellSafe(src.exec, vars))],
+    ]);
+  } else if ('gitlab' in src) {
+    const result = await fetchGitLab(
       resolveVars(src.gitlab.project, vars),
       resolveVars(src.gitlab.file, vars),
       src.gitlab.ref !== undefined
         ? resolveVars(src.gitlab.ref, vars)
         : undefined,
     );
-  }
-
-  if ('github' in src) {
-    return fetchGitHub(
+    files = result.files;
+  } else if ('github' in src) {
+    const result = await fetchGitHub(
       resolveVars(src.github.repo, vars),
       resolveVars(src.github.file, vars),
       src.github.ref !== undefined
         ? resolveVars(src.github.ref, vars)
         : undefined,
     );
-  }
-
-  if ('bitbucket' in src) {
-    return fetchBitbucket(
+    files = result.files;
+  } else if ('bitbucket' in src) {
+    const result = await fetchBitbucket(
       resolveVars(src.bitbucket.workspace, vars),
       resolveVars(src.bitbucket.repo, vars),
       resolveVars(src.bitbucket.file, vars),
@@ -130,30 +192,39 @@ async function fetchOneSrc(
         ? resolveVars(src.bitbucket.ref, vars)
         : undefined,
     );
-  }
-
-  if ('git' in src) {
-    return fetchGit(
+    files = result.files;
+  } else if ('git' in src) {
+    const result = fetchGit(
       resolveVars(src.git.repo, vars),
       resolveVars(src.git.file, vars),
       src.git.ref !== undefined ? resolveVars(src.git.ref, vars) : undefined,
     );
-  }
-
-  if ('s3' in src) {
-    return fetchS3(resolveVars(src.s3, vars));
-  }
-
-  if ('vault' in src) {
-    return fetchVault(
+    files = result.files;
+  } else if ('s3' in src) {
+    const result = fetchS3(resolveVars(src.s3, vars));
+    files = result.files;
+  } else if ('vault' in src) {
+    const result = await fetchVault(
       resolveVars(src.vault.path, vars),
       src.vault.field !== undefined
         ? resolveVars(src.vault.field, vars)
         : undefined,
     );
+    files = result.files;
+  } else {
+    throw new Error(`Unknown source type: ${JSON.stringify(src)}`);
   }
 
-  throw new Error(`Unknown source type: ${JSON.stringify(src)}`);
+  const observedSha = computeFilesSha(files);
+  const expectedSha = shaSupported(src) ? expectedShaForSrc(src) : undefined;
+  const record: SourceFetchRecord = {
+    sourceLabel: labelForSrc(src, vars),
+    observedSha,
+    expectedSha,
+    matched: expectedSha === undefined || expectedSha === observedSha,
+  };
+
+  return { files, record };
 }
 
 export async function fetchSource(
@@ -166,10 +237,12 @@ export async function fetchSource(
   // List src → fetch each, then merge as JSON or concatenate with newline
   if (Array.isArray(src)) {
     const parts: string[] = [];
+    const sourceRecords: SourceFetchRecord[] = [];
     for (let i = 0; i < src.length; i++) {
       try {
-        const result = await fetchOneSrc(src[i], workingDir, vars);
-        parts.push(Array.from(result.files.values()).join('\n'));
+        const { files, record } = await fetchOneSrc(src[i], workingDir, vars);
+        parts.push(Array.from(files.values()).join('\n'));
+        if (record !== null) sourceRecords.push(record);
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
         throw new Error(`[source ${i}] ${msg}`, { cause: err });
@@ -186,11 +259,18 @@ export async function fetchSource(
     } else {
       content = parts.join('\n');
     }
-    return { files: new Map([[filename, content]]) };
+    return { files: new Map([[filename, content]]), sourceRecords };
   }
 
   // Single src — delegate dispatch to fetchOneSrc, then apply post-processing
-  const singleResult = await fetchOneSrc(src, workingDir, vars);
+  const { files: singleFiles, record: singleRecord } = await fetchOneSrc(
+    src,
+    workingDir,
+    vars,
+  );
+  const singleResult = { files: singleFiles };
+  const sourceRecords: SourceFetchRecord[] =
+    singleRecord !== null ? [singleRecord] : [];
 
   // When a directory source resolves to multiple files but the target is a
   // single file (no trailing slash), merge all files sorted by name instead
@@ -230,17 +310,18 @@ export async function fetchSource(
         dirJsonOpts !== null
           ? mergeJson(sortedValues, dirJsonOpts)
           : mergeYaml(sortedValues, dirYamlOpts!);
-      return { files: new Map([[filename, merged]]) };
+      return { files: new Map([[filename, merged]]), sourceRecords };
     }
 
-    return singleResult;
+    return { ...singleResult, sourceRecords };
   }
 
   const singleJsonOpts = resolveJsonOptions(entry, [src]);
   const singleYamlOpts =
     singleJsonOpts === null ? resolveYamlOptions(entry, [src]) : null;
 
-  if (singleJsonOpts === null && singleYamlOpts === null) return singleResult;
+  if (singleJsonOpts === null && singleYamlOpts === null)
+    return { ...singleResult, sourceRecords };
 
   const formatted = new Map<string, string>();
   for (const [k, v] of singleResult.files) {
@@ -250,5 +331,5 @@ export async function fetchSource(
       formatted.set(k, formatYaml(v));
     }
   }
-  return { files: formatted };
+  return { files: formatted, sourceRecords };
 }

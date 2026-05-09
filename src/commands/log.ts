@@ -1,7 +1,7 @@
 import { Command } from 'commander';
 import * as path from 'path';
 import { normalizeConfigKey, resolveConfigPath } from '../config';
-import { HistoryManager } from '../history';
+import { HistoryManager, PullLogEntry } from '../history';
 
 export function logCommand(): Command {
   return new Command('log')
@@ -44,6 +44,19 @@ function showPullHistory(history: HistoryManager): void {
     for (const ref of pull.files) {
       const label = ref.wasNew ? '(new file)' : '(modified)';
       console.log(`  ${ref.absolutePath}  → v${ref.version}  ${label}`);
+      if (ref.sources && ref.sources.length > 0) {
+        for (const s of ref.sources) {
+          const shaShort = s.observedSha.slice(0, 16);
+          if (s.accepted && s.expectedSha) {
+            const prevShort = s.expectedSha.slice(0, 16);
+            console.log(
+              `    ${s.label}  sha:${shaShort}  ⚠ accepted (was: ${prevShort})`,
+            );
+          } else {
+            console.log(`    ${s.label}  sha:${shaShort}`);
+          }
+        }
+      }
     }
     console.log('');
   }
@@ -66,6 +79,11 @@ function showFileHistory(
 
   console.log(`${absolutePath}\n`);
 
+  const pulls = history.listPulls();
+  const pullsById = new Map<string, PullLogEntry>(
+    pulls.map((p) => [p.pullId, p]),
+  );
+
   const versions = [...fileHistory.versions].reverse();
   for (const v of versions) {
     const vLabel = `v${v.version}`;
@@ -77,6 +95,26 @@ function showFileHistory(
     if (v.version === fileHistory.currentVersion) suffix = '  (current)';
     if (v.isOriginal) suffix = '  (original, before avanti)';
     console.log(`  ${vLabel.padEnd(4)}  ${ts}  ${pullRef}${suffix}`);
+
+    if (v.pullId) {
+      const pullEntry = pullsById.get(v.pullId);
+      const fileRef = pullEntry?.files.find(
+        (f) => f.absolutePath === absolutePath && f.version === v.version,
+      );
+      if (fileRef?.sources && fileRef.sources.length > 0) {
+        for (const s of fileRef.sources) {
+          const shaShort = s.observedSha.slice(0, 16);
+          if (s.accepted && s.expectedSha) {
+            const prevShort = s.expectedSha.slice(0, 16);
+            console.log(
+              `         ${s.label}  sha:${shaShort}  ⚠ accepted (was: ${prevShort})`,
+            );
+          } else {
+            console.log(`         ${s.label}  sha:${shaShort}`);
+          }
+        }
+      }
+    }
   }
 }
 
