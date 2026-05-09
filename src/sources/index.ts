@@ -46,6 +46,14 @@ function srcFilename(src: FileSrc): string | null {
       return src.http; // variable-driven URL; pathname unavailable at parse time
     }
   }
+  if ('path' in src) return src.path;
+  if ('url' in src) {
+    try {
+      return new URL(src.url).pathname;
+    } catch {
+      return src.url;
+    }
+  }
   return null;
 }
 
@@ -124,6 +132,8 @@ function labelForSrc(src: FileSrc, vars: Variables): string {
     return `vault:${src.vault.path}${field}`;
   }
   if ('http' in src) return `http:${src.http}`;
+  if ('path' in src) return `path:${src.path}`;
+  if ('url' in src) return `url:${src.url}`;
   if ('raw' in src) return 'raw';
   return JSON.stringify(src);
 }
@@ -138,6 +148,8 @@ function expectedShaForSrc(src: FileSrc): string | undefined {
   if ('s3' in src) return src.sha;
   if ('vault' in src) return src.vault.sha;
   if ('http' in src) return src.sha;
+  if ('path' in src) return src.sha;
+  if ('url' in src) return src.sha;
   return undefined;
 }
 
@@ -167,7 +179,11 @@ async function fetchOneSrc(
   src: FileSrc,
   workingDir: string,
   vars: Variables,
-): Promise<{ files: Map<string, string>; record: SourceFetchRecord | null }> {
+): Promise<{
+  files: Map<string, string>;
+  record: SourceFetchRecord | null;
+  skipped?: boolean;
+}> {
   if (typeof src === 'string') {
     const resolved = resolveVars(src, vars);
     if (resolved.startsWith('http://') || resolved.startsWith('https://')) {
@@ -186,6 +202,42 @@ async function fetchOneSrc(
       files: new Map([['output', resolveVars(src.raw, vars)]]),
       record: null,
     };
+  }
+
+  if ('path' in src) {
+    const resolved = resolveVars(src.path, vars);
+    const result = fetchLocal(resolved, workingDir, src.optional ?? false);
+    if (result.missing) {
+      return { files: new Map(), record: null, skipped: true };
+    }
+    const observedSha = computeFilesSha(result.files);
+    const expectedSha = src.sha;
+    const record: SourceFetchRecord = {
+      sourceLabel: labelForSrc(src, vars),
+      observedSha,
+      expectedSha,
+      matched: expectedSha === undefined || expectedSha === observedSha,
+    };
+    return { files: result.files, record };
+  }
+
+  if ('url' in src) {
+    const resolved = resolveVars(src.url, vars);
+    const content = await fetchHttp(resolved, src.optional ?? false);
+    if (content === null) {
+      return { files: new Map(), record: null, skipped: true };
+    }
+    const filename = inferFilenameFromUrl(resolved) ?? 'download';
+    const files = new Map([[filename, content]]);
+    const observedSha = computeFilesSha(files);
+    const expectedSha = src.sha;
+    const record: SourceFetchRecord = {
+      sourceLabel: labelForSrc(src, vars),
+      observedSha,
+      expectedSha,
+      matched: expectedSha === undefined || expectedSha === observedSha,
+    };
+    return { files, record };
   }
 
   let files: Map<string, string>;
@@ -274,7 +326,12 @@ export async function fetchSource(
     const sourceRecords: SourceFetchRecord[] = [];
     for (let i = 0; i < src.length; i++) {
       try {
-        const { files, record } = await fetchOneSrc(src[i], workingDir, vars);
+        const { files, record, skipped } = await fetchOneSrc(
+          src[i],
+          workingDir,
+          vars,
+        );
+        if (skipped) continue;
         parts.push(Array.from(files.values()).join('\n'));
         if (record !== null) sourceRecords.push(record);
       } catch (err: unknown) {
@@ -282,6 +339,7 @@ export async function fetchSource(
         throw new Error(`[source ${i}] ${msg}`, { cause: err });
       }
     }
+    if (parts.length === 0) return { files: new Map(), sourceRecords: [] };
     const filename = path.basename(entry.target);
     const jsonOpts = resolveJsonOptions(entry, src);
     const yamlOpts = jsonOpts === null ? resolveYamlOptions(entry, src) : null;
@@ -297,11 +355,12 @@ export async function fetchSource(
   }
 
   // Single src — delegate dispatch to fetchOneSrc, then apply post-processing
-  const { files: singleFiles, record: singleRecord } = await fetchOneSrc(
-    src,
-    workingDir,
-    vars,
-  );
+  const {
+    files: singleFiles,
+    record: singleRecord,
+    skipped,
+  } = await fetchOneSrc(src, workingDir, vars);
+  if (skipped) return { files: new Map(), sourceRecords: [] };
   const singleResult = { files: singleFiles };
   const sourceRecords: SourceFetchRecord[] =
     singleRecord !== null ? [singleRecord] : [];

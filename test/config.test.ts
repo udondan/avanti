@@ -884,4 +884,179 @@ files:
     const src = cfg.files['out.txt'].src as { http: string };
     expect(src.http).toBe('$url');
   });
+
+  it('loads a path src map', async () => {
+    const f = writeTmp(`
+files:
+  out.txt:
+    src:
+      path: ~/custom.md
+`);
+    const cfg = await loadConfig(f);
+    const src = cfg.files['out.txt'].src as { path: string };
+    expect(src.path).toBe('~/custom.md');
+  });
+
+  it('loads a path src map with optional: true', async () => {
+    const f = writeTmp(`
+files:
+  out.txt:
+    src:
+      path: ~/custom.md
+      optional: true
+`);
+    const cfg = await loadConfig(f);
+    const src = cfg.files['out.txt'].src as { path: string; optional: boolean };
+    expect(src.path).toBe('~/custom.md');
+    expect(src.optional).toBe(true);
+  });
+
+  it('loads a path src map with optional: false', async () => {
+    const f = writeTmp(`
+files:
+  out.txt:
+    src:
+      path: ~/custom.md
+      optional: false
+`);
+    const cfg = await loadConfig(f);
+    const src = cfg.files['out.txt'].src as { path: string; optional: boolean };
+    expect(src.optional).toBe(false);
+  });
+
+  it('loads a path src map with sha', async () => {
+    const f = writeTmp(`
+files:
+  out.txt:
+    src:
+      path: ~/custom.md
+      sha: ${'a'.repeat(64)}
+`);
+    const cfg = await loadConfig(f);
+    const src = cfg.files['out.txt'].src as { path: string; sha?: string };
+    expect(src.sha).toBe('a'.repeat(64));
+  });
+
+  it('throws when path value is not a string', async () => {
+    const f = writeTmp(`
+files:
+  out.txt:
+    src:
+      path: 123
+`);
+    await expect(loadConfig(f)).rejects.toThrow(
+      'path: must be a non-empty string',
+    );
+  });
+
+  it('throws when path value is empty', async () => {
+    const f = writeTmp(`
+files:
+  out.txt:
+    src:
+      path: ""
+`);
+    await expect(loadConfig(f)).rejects.toThrow(
+      'path: must be a non-empty string',
+    );
+  });
+
+  it('throws when optional is not a boolean in path src', async () => {
+    const f = writeTmp(`
+files:
+  out.txt:
+    src:
+      path: ~/custom.md
+      optional: "yes"
+`);
+    await expect(loadConfig(f)).rejects.toThrow('optional: must be a boolean');
+  });
+
+  it('loads a url src map', async () => {
+    const f = writeTmp(`
+files:
+  out.txt:
+    src:
+      url: https://example.com/file.txt
+`);
+    const cfg = await loadConfig(f);
+    const src = cfg.files['out.txt'].src as { url: string };
+    expect(src.url).toBe('https://example.com/file.txt');
+  });
+
+  it('loads a url src map with optional: true', async () => {
+    const f = writeTmp(`
+files:
+  out.txt:
+    src:
+      url: https://example.com/file.txt
+      optional: true
+`);
+    const cfg = await loadConfig(f);
+    const src = cfg.files['out.txt'].src as { url: string; optional: boolean };
+    expect(src.url).toBe('https://example.com/file.txt');
+    expect(src.optional).toBe(true);
+  });
+
+  it('loads a url src map with sha', async () => {
+    const f = writeTmp(`
+files:
+  out.txt:
+    src:
+      url: https://example.com/file.txt
+      sha: ${'b'.repeat(64)}
+`);
+    const cfg = await loadConfig(f);
+    const src = cfg.files['out.txt'].src as { url: string; sha?: string };
+    expect(src.sha).toBe('b'.repeat(64));
+  });
+
+  it('throws when url does not start with http:// or https:// (literal)', async () => {
+    const f = writeTmp(`
+files:
+  out.txt:
+    src:
+      url: ftp://example.com/file.txt
+`);
+    await expect(loadConfig(f)).rejects.toThrow(
+      'must start with http:// or https://',
+    );
+  });
+
+  it('throws when url value is empty', async () => {
+    const f = writeTmp(`
+files:
+  out.txt:
+    src:
+      url: ""
+`);
+    await expect(loadConfig(f)).rejects.toThrow(
+      'url: must be a non-empty string',
+    );
+  });
+
+  it('throws when optional is not a boolean in url src', async () => {
+    const f = writeTmp(`
+files:
+  out.txt:
+    src:
+      url: https://example.com/file.txt
+      optional: 1
+`);
+    await expect(loadConfig(f)).rejects.toThrow('optional: must be a boolean');
+  });
+
+  it('accepts a variable-driven url without scheme validation', async () => {
+    const f = writeTmp(`
+variables:
+  endpoint: https://example.com/file.txt
+files:
+  out.txt:
+    src:
+      url: $endpoint
+`);
+    const cfg = await loadConfig(f);
+    const src = cfg.files['out.txt'].src as { url: string };
+    expect(src.url).toBe('$endpoint');
+  });
 });
