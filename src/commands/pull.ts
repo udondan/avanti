@@ -283,10 +283,7 @@ export function pullCommand(): Command {
         const configTargetIdx = writeTargets.findIndex(
           (t) => t.targetPath === configPath,
         );
-        // Only pre-apply when the config target has content changes and will be
-        // written by atomicWrite anyway; SHA-only updates fall through to
-        // writeUpdatedShas so that unchanged targets are never touched.
-        if (configTargetIdx !== -1 && allDiffs[configTargetIdx].hasChanges) {
+        if (configTargetIdx !== -1) {
           const patched = applyUpdatedShas(
             writeTargets[configTargetIdx].content,
             shaUpdates,
@@ -296,8 +293,14 @@ export function pullCommand(): Command {
               ...writeTargets[configTargetIdx],
               content: patched,
             };
+            // Recompute diff so staging and atomicWrite both see SHA-patched content,
+            // even when the original content diff was empty.
+            allDiffs[configTargetIdx] = computeDiff(
+              writeTargets[configTargetIdx].targetPath,
+              patched,
+            );
+            configShaPreApplied = true;
           }
-          configShaPreApplied = true;
         }
       }
 

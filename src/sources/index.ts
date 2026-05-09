@@ -176,9 +176,9 @@ async function fetchOneSrc(
   let files: Map<string, string>;
 
   if ('http' in src) {
-    const content = await fetchHttp(resolveVars(src.http, vars));
-    const filename =
-      inferFilenameFromUrl(resolveVars(src.http, vars)) ?? 'download';
+    const resolvedUrl = resolveVars(src.http, vars);
+    const content = await fetchHttp(resolvedUrl);
+    const filename = inferFilenameFromUrl(resolvedUrl) ?? 'download';
     files = new Map([[filename, content]]);
   } else if ('exec' in src) {
     files = new Map([
