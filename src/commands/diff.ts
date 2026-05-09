@@ -1,4 +1,5 @@
 import { Command } from 'commander';
+import * as fs from 'fs';
 import * as path from 'path';
 import {
   isRemoteConfigSpec,
@@ -36,8 +37,10 @@ async function runDiffLoop(
   let hasError = false;
   let selfContent: string | undefined;
 
+  const hasSelf = SELF_KEY in config.files;
   for (const [key, entry] of Object.entries(config.files)) {
     const isSelf = key === SELF_KEY;
+    if (hasSelf && !isSelf) continue;
     try {
       const result = await fetchSource(entry, workingDir, vars);
       for (const rec of result.sourceRecords) {
@@ -122,29 +125,58 @@ export function diffCommand(): Command {
         if (hasError) process.exit(2);
 
         if (firstPass.selfContent !== undefined) {
-          try {
-            const newConfig = parseConfigContent(firstPass.selfContent);
-            console.log(
-              '$self config resolved; re-evaluating with merged config...',
+          const selfUnchanged =
+            !isRemoteConfigSpec(configPath) &&
+            (() => {
+              try {
+                return (
+                  fs.existsSync(configPath) &&
+                  fs.readFileSync(configPath, 'utf8') === firstPass.selfContent
+                );
+              } catch {
+                return false;
+              }
+            })();
+
+          if (selfUnchanged) {
+            // $self matches disk — diff remaining files from current config
+            const filesWithoutSelf = Object.fromEntries(
+              Object.entries(config.files).filter(([k]) => k !== SELF_KEY),
             );
-            const second = await runDiffLoop(newConfig, workingDir);
-            if (second.selfContent !== undefined) {
+            if (Object.keys(filesWithoutSelf).length > 0) {
+              const remaining = await runDiffLoop(
+                { ...config, files: filesWithoutSelf },
+                workingDir,
+              );
+              allDiffs = remaining.allDiffs;
+              hasError = remaining.hasError;
+            }
+          } else {
+            // $self content changed or config is remote — re-evaluate with merged config
+            try {
+              const newConfig = parseConfigContent(firstPass.selfContent);
+              console.log(
+                '$self config resolved; re-evaluating with merged config...',
+              );
+              const second = await runDiffLoop(newConfig, workingDir);
+              if (second.selfContent !== undefined) {
+                console.warn(
+                  'Warning: merged $self config contains another $self entry; nested $self is not supported and will be ignored.',
+                );
+              }
+              allDiffs = second.allDiffs;
+              hasError = second.hasError;
+              if (
+                !isRemoteConfigSpec(configPath) &&
+                !allDiffs.some((d) => d.targetPath === configPath)
+              ) {
+                allDiffs.push(computeDiff(configPath, firstPass.selfContent));
+              }
+            } catch (err: unknown) {
               console.warn(
-                'Warning: merged $self config contains another $self entry; nested $self is not supported and will be ignored.',
+                `Warning: $self config is invalid, skipping re-evaluation: ${(err as Error).message}`,
               );
             }
-            allDiffs = second.allDiffs;
-            hasError = second.hasError;
-            if (
-              !isRemoteConfigSpec(configPath) &&
-              !allDiffs.some((d) => d.targetPath === configPath)
-            ) {
-              allDiffs.push(computeDiff(configPath, firstPass.selfContent));
-            }
-          } catch (err: unknown) {
-            console.warn(
-              `Warning: $self config is invalid, skipping re-evaluation: ${(err as Error).message}`,
-            );
           }
         }
 
