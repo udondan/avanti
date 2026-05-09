@@ -366,6 +366,7 @@ export function pullCommand(): Command {
       if (shaUpdates !== null && !configShaPreApplied) {
         try {
           writeUpdatedShas(configPath, shaUpdates);
+          console.log(`Updated ${shaUpdates.size} SHA pin(s) in config.`);
         } catch (err: unknown) {
           console.warn(
             `Warning: could not update SHA values in config: ${(err as Error).message}`,

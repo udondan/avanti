@@ -107,10 +107,20 @@ files:
           repo: org/repo
           file: second.txt
 `);
-    writeUpdatedShas(cfg, new Map([['github:org/repo:first.txt', sha1]]));
+    writeUpdatedShas(
+      cfg,
+      new Map([
+        ['github:org/repo:first.txt', sha1],
+        ['github:org/repo:second.txt', sha2],
+      ]),
+    );
     const result = fs.readFileSync(cfg, 'utf8');
-    expect(result).toContain(sha1);
-    expect(result).not.toContain(sha2);
+    // Verify each SHA landed on its own source block, not the other
+    const secondTxtPos = result.indexOf('second.txt');
+    expect(result.indexOf(sha1)).toBeGreaterThan(-1);
+    expect(result.indexOf(sha2)).toBeGreaterThan(-1);
+    expect(result.indexOf(sha1)).toBeLessThan(secondTxtPos);
+    expect(result.indexOf(sha2)).toBeGreaterThan(secondTxtPos);
   });
 
   it('includes ref in the label for github sources', () => {
@@ -124,6 +134,21 @@ files:
           ref: main
 `);
     writeUpdatedShas(cfg, new Map([['github:org/repo:file.txt@main', sha]]));
+    const result = fs.readFileSync(cfg, 'utf8');
+    expect(result).toContain(`sha: ${sha}`);
+  });
+
+  it('writes sha for http map source', () => {
+    const sha = 'c3'.repeat(32);
+    const cfg = writeConfig(`files:
+  - target: out.txt
+    src:
+      - http: https://example.com/file.txt
+`);
+    writeUpdatedShas(
+      cfg,
+      new Map([['http:https://example.com/file.txt', sha]]),
+    );
     const result = fs.readFileSync(cfg, 'utf8');
     expect(result).toContain(`sha: ${sha}`);
   });
