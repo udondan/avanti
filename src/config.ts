@@ -293,7 +293,7 @@ function parseSingleSrc(
 
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
     throw new Error(
-      `${loc}: must be a string or a map with one of: exec, gitlab, github, bitbucket, git, s3, vault, http`,
+      `${loc}: must be a string or a map with one of: exec, gitlab, github, bitbucket, git, s3, vault, http, raw`,
     );
   }
 

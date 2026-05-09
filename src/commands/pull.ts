@@ -268,7 +268,10 @@ export function pullCommand(): Command {
         const configTargetIdx = writeTargets.findIndex(
           (t) => t.targetPath === configPath,
         );
-        if (configTargetIdx !== -1) {
+        // Only pre-apply when the config target has content changes and will be
+        // written by atomicWrite anyway; SHA-only updates fall through to
+        // writeUpdatedShas so that unchanged targets are never touched.
+        if (configTargetIdx !== -1 && allDiffs[configTargetIdx].hasChanges) {
           const patched = applyUpdatedShas(
             writeTargets[configTargetIdx].content,
             shaUpdates,
@@ -328,11 +331,12 @@ export function pullCommand(): Command {
       }
 
       try {
-        atomicWrite([...writeTargets, ...staleToRestore], staleToDelete);
+        const changedTargets = writeTargets.filter(
+          (_, i) => allDiffs[i].hasChanges,
+        );
+        atomicWrite([...changedTargets, ...staleToRestore], staleToDelete);
         const written =
-          writeTargets.filter((_, i) => allDiffs[i].hasChanges).length +
-          staleToRestore.length +
-          staleToDelete.length;
+          changedTargets.length + staleToRestore.length + staleToDelete.length;
         console.log(`Wrote ${written} file(s).`);
       } catch (err: unknown) {
         console.error(`Write failed: ${(err as Error).message}`);
