@@ -127,8 +127,11 @@ export function applyUpdatedShas(
       }
 
       if (label && shaPath && updates.has(label)) {
-        doc.setIn(shaPath, updates.get(label)!);
-        changed = true;
+        const newSha = updates.get(label)!;
+        if ((doc.getIn(shaPath) as string | undefined) !== newSha) {
+          doc.setIn(shaPath, newSha);
+          changed = true;
+        }
       }
     };
 

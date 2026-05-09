@@ -61,6 +61,13 @@ export function lockCommand(): Command {
         process.exit(hasError ? 2 : 0);
       }
 
+      if (hasError) {
+        console.error(
+          'Aborting: one or more sources failed to fetch. No changes written.',
+        );
+        process.exit(2);
+      }
+
       writeUpdatedShas(configPath, toPin);
 
       for (const [label, sha] of toPin) {

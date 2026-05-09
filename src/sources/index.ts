@@ -19,7 +19,6 @@ import { fetchS3 } from './s3';
 import { fetchVault } from './vault';
 import { mergeJson, formatJson } from '../processors/json';
 import { mergeYaml, formatYaml } from '../processors/yaml';
-import { computeContentSha256 } from '../sha';
 
 const JSON_EXTENSIONS = new Set(['.json', '.jsonc']);
 const YAML_EXTENSIONS = new Set(['.yaml', '.yml']);
@@ -134,11 +133,8 @@ function shaSupported(src: FileSrc): boolean {
 }
 
 function computeFilesSha(files: Map<string, string>): string {
-  if (files.size === 1) {
-    return computeContentSha256(files.values().next().value as string);
-  }
-  // Stream entries sorted by filename so renames/path changes affect the SHA
-  // without allocating a large concatenation buffer.
+  // Always include filename in the hash so a rename/path change affects the SHA
+  // consistently, whether the source resolves to one file or many.
   const hash = crypto.createHash('sha256');
   const sorted = Array.from(files.entries()).sort(([a], [b]) =>
     a.localeCompare(b),

@@ -181,7 +181,13 @@ export function pullCommand(): Command {
             writeTargets = second.writeTargets;
             allDiffs = second.allDiffs;
             sourceRecordsByTarget = second.sourceRecordsByTarget;
-            firstPass.shaErrors.push(...second.shaErrors);
+            const existingLabels = new Set(
+              firstPass.shaErrors.map((e) => e.sourceLabel),
+            );
+            for (const e of second.shaErrors) {
+              if (!existingLabels.has(e.sourceLabel))
+                firstPass.shaErrors.push(e);
+            }
           } catch (err: unknown) {
             console.warn(
               `Warning: updated config is invalid, skipping re-evaluation: ${(err as Error).message}`,
