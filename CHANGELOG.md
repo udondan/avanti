@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.13.0](https://github.com/udondan/avanti/compare/v0.12.1...v0.13.0) (2026-05-09)
+
+
+### Features
+
+* **sha:** optional SHA validation per source entry ([#91](https://github.com/udondan/avanti/issues/91)) ([d226fc5](https://github.com/udondan/avanti/commit/d226fc56cbbf992237534fcd6a73cfbe7f966093))
+
 ## [0.12.1](https://github.com/udondan/avanti/compare/v0.12.0...v0.12.1) (2026-05-08)
 
 
