@@ -79,16 +79,16 @@ npx @udondan/avanti --help
 avanti [options] [command]
 
 Options:
-  -c, --config <path|url>     path or remote spec for config file (default: auto-detected)
-  -w, --working-dir <path>    working directory for resolving paths (default: current directory)
+  -c, --config <path|url>          path or remote spec for config file (default: auto-detected)
+  -w, --working-dir <path>         working directory for resolving paths (default: current directory)
 
 Commands:
-  diff [pullId]               Show diff between remote sources and local files, or vs a past pull
+  diff [pullId]                    Show diff between remote sources and local files, or vs a past pull
   pull [--yes] [--accept-changes]  Pull remote sources and write to local files
-  lock [--force]              Pin SHA values for all remote sources in the config
-  log [file]                  Show pull history for the current project
-  revert [pullId] [--yes]     Atomically revert all project files to a past pull state
-  reset [--yes]               Restore all tracked files to their pre-avanti state
+  lock [--force]                   Pin SHA values for all remote sources in the config
+  log [file]                       Show pull history for the current project
+  revert [pullId] [--yes]          Atomically revert all project files to a past pull state
+  reset [--yes]                    Restore all tracked files to their pre-avanti state
 ```
 
 ### `avanti diff`
