@@ -146,7 +146,7 @@ function computeFilesSha(files: Map<string, string>): string {
     a < b ? -1 : a > b ? 1 : 0,
   );
   for (const [k, v] of sorted) {
-    hash.update(k, 'utf8');
+    hash.update(k.replace(/\\/g, '/'), 'utf8');
     hash.update('\0', 'utf8');
     hash.update(v, 'utf8');
     hash.update('\0', 'utf8');

@@ -322,6 +322,47 @@ describe('fetchSource — sourceRecords', () => {
     );
     expect(result.sourceRecords).toHaveLength(0);
   });
+
+  it('populates sourceRecords with label, SHA, and matched=true for exec source with no expected SHA', async () => {
+    const result = await fetchSource(
+      { src: { exec: 'echo hello' }, target: 'out.txt' },
+      tmpDir,
+    );
+    expect(result.sourceRecords).toHaveLength(1);
+    const rec = result.sourceRecords[0];
+    expect(rec.sourceLabel).toBe('exec:echo hello');
+    expect(rec.observedSha).toMatch(/^[0-9a-f]{64}$/);
+    expect(rec.expectedSha).toBeUndefined();
+    expect(rec.matched).toBe(true);
+  });
+
+  it('sets matched=true when observed SHA equals expected SHA for exec source', async () => {
+    // Compute the expected SHA for "hello\n" (echo output)
+    const content = (
+      await fetchSource(
+        { src: { exec: 'echo hello' }, target: 'out.txt' },
+        tmpDir,
+      )
+    ).sourceRecords[0].observedSha;
+
+    const result = await fetchSource(
+      { src: { exec: 'echo hello', sha: content }, target: 'out.txt' },
+      tmpDir,
+    );
+    expect(result.sourceRecords[0].matched).toBe(true);
+    expect(result.sourceRecords[0].expectedSha).toBe(content);
+  });
+
+  it('sets matched=false when observed SHA differs from expected SHA for exec source', async () => {
+    const wrongSha = 'a'.repeat(64);
+    const result = await fetchSource(
+      { src: { exec: 'echo hello', sha: wrongSha }, target: 'out.txt' },
+      tmpDir,
+    );
+    expect(result.sourceRecords[0].matched).toBe(false);
+    expect(result.sourceRecords[0].expectedSha).toBe(wrongSha);
+    expect(result.sourceRecords[0].observedSha).not.toBe(wrongSha);
+  });
 });
 
 // ---------------------------------------------------------------------------
