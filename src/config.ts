@@ -267,6 +267,16 @@ function parseVariables(raw: unknown): Variables {
   return vars;
 }
 
+function parseSha(value: unknown, loc: string): string | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== 'string') return undefined;
+  const normalized = value.toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(normalized)) {
+    throw new Error(`${loc}.sha: expected 64 hex characters, got "${value}"`);
+  }
+  return normalized;
+}
+
 function parseSingleSrc(
   raw: unknown,
   i: number,
@@ -302,7 +312,8 @@ function parseSingleSrc(
       );
     }
     const result: HttpSrc = { http: obj['http'] };
-    if (typeof obj['sha'] === 'string') result.sha = obj['sha'];
+    const httpSha = parseSha(obj['sha'], loc);
+    if (httpSha !== undefined) result.sha = httpSha;
     return result;
   }
 
@@ -311,7 +322,8 @@ function parseSingleSrc(
       throw new Error(`${loc}.exec: must be a non-empty string`);
     }
     const result = { exec: obj['exec'] } as { exec: string; sha?: string };
-    if (typeof obj['sha'] === 'string') result.sha = obj['sha'];
+    const execSha = parseSha(obj['sha'], loc);
+    if (execSha !== undefined) result.sha = execSha;
     return result;
   }
 
@@ -332,7 +344,7 @@ function parseSingleSrc(
         project: g['project'],
         file: g['file'],
         ref: typeof g['ref'] === 'string' ? g['ref'] : undefined,
-        sha: typeof g['sha'] === 'string' ? g['sha'] : undefined,
+        sha: parseSha(g['sha'], `${loc}.gitlab`),
       },
     };
   }
@@ -361,7 +373,7 @@ function parseSingleSrc(
         repo: g['repo'],
         file: g['file'],
         ref: typeof g['ref'] === 'string' ? g['ref'] : undefined,
-        sha: typeof g['sha'] === 'string' ? g['sha'] : undefined,
+        sha: parseSha(g['sha'], `${loc}.github`),
       },
     };
   }
@@ -387,7 +399,7 @@ function parseSingleSrc(
         repo: b['repo'],
         file: b['file'],
         ref: typeof b['ref'] === 'string' ? b['ref'] : undefined,
-        sha: typeof b['sha'] === 'string' ? b['sha'] : undefined,
+        sha: parseSha(b['sha'], `${loc}.bitbucket`),
       },
     };
   }
@@ -409,7 +421,7 @@ function parseSingleSrc(
         repo: gt['repo'],
         file: gt['file'],
         ref: typeof gt['ref'] === 'string' ? gt['ref'] : undefined,
-        sha: typeof gt['sha'] === 'string' ? gt['sha'] : undefined,
+        sha: parseSha(gt['sha'], `${loc}.git`),
       },
     };
   }
@@ -419,7 +431,8 @@ function parseSingleSrc(
       throw new Error(`${loc}.s3: must be a non-empty string (s3:// URI)`);
     }
     const result = { s3: obj['s3'] } as { s3: string; sha?: string };
-    if (typeof obj['sha'] === 'string') result.sha = obj['sha'];
+    const s3Sha = parseSha(obj['sha'], loc);
+    if (s3Sha !== undefined) result.sha = s3Sha;
     return result;
   }
 
@@ -436,7 +449,7 @@ function parseSingleSrc(
       vault: {
         path: vt['path'],
         field: typeof vt['field'] === 'string' ? vt['field'] : undefined,
-        sha: typeof vt['sha'] === 'string' ? vt['sha'] : undefined,
+        sha: parseSha(vt['sha'], `${loc}.vault`),
       },
     };
   }

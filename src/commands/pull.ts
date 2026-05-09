@@ -173,6 +173,10 @@ export function pullCommand(): Command {
             if (configInSecond === -1) {
               second.writeTargets.push(writeTargets[configIdx]);
               second.allDiffs.push(allDiffs[configIdx]);
+              const firstPassRecords = sourceRecordsByTarget.get(configPath);
+              if (firstPassRecords) {
+                second.sourceRecordsByTarget.set(configPath, firstPassRecords);
+              }
             }
             writeTargets = second.writeTargets;
             allDiffs = second.allDiffs;
