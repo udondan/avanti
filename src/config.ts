@@ -176,7 +176,10 @@ export function parseConfigContent(content: string): AvantiConfig {
   const variables = parseVariables(obj['variables']);
 
   const filesRaw = obj['files'] as Record<string, unknown>;
-  const files: Record<string, FileEntry> = {};
+  const files: Record<string, FileEntry> = Object.create(null) as Record<
+    string,
+    FileEntry
+  >;
 
   for (const [target, entry] of Object.entries(filesRaw)) {
     if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {

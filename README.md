@@ -404,65 +404,71 @@ Any source type that references a path (local, GitLab, GitHub, Bitbucket, git, S
 **Directory → directory (mirror):** end the target key with `/` and each file is written individually, preserving subdirectory structure relative to the source root:
 
 ```yaml
-# All files under skills/ in the GitLab repo are written into local skills/
-skills/:
-  src:
-    gitlab:
-      project: group/repo
-      file: skills/
-      ref: main
+files:
+  # All files under skills/ in the GitLab repo are written into local skills/
+  skills/:
+    src:
+      gitlab:
+        project: group/repo
+        file: skills/
+        ref: main
 
-# GitHub directory → local directory
-.github/workflows/:
-  src:
-    github:
-      repo: org/repo
-      file: .github/workflows/
-      ref: main
+  # GitHub directory → local directory
+  .github/workflows/:
+    src:
+      github:
+        repo: org/repo
+        file: .github/workflows/
+        ref: main
 
-# Bitbucket directory → local directory
-eslint/:
-  src:
-    bitbucket:
-      workspace: my-workspace
-      repo: shared-configs
-      file: eslint/
-      ref: main
+  # Bitbucket directory → local directory
+  eslint/:
+    src:
+      bitbucket:
+        workspace: my-workspace
+        repo: shared-configs
+        file: eslint/
+        ref: main
 
-# git remote directory → local directory (any host)
-.github/workflows/:
-  src:
-    git:
-      repo: https://github.com/org/repo.git
-      file: .github/workflows/
-      ref: main
+  # git remote directory → local directory (any host)
+  .github/actions/:
+    src:
+      git:
+        repo: https://github.com/org/repo.git
+        file: .github/actions/
+        ref: main
 
-# S3 prefix → local directory (trailing / triggers sync)
-configs/:
-  src:
-    s3: s3://my-bucket/configs/
+  # S3 prefix → local directory (trailing / triggers sync)
+  configs/:
+    src:
+      s3: s3://my-bucket/configs/
 
-# Local directory → local directory
-.githooks/:
-  src: ~/shared/hooks/
+  # Local directory → local directory
+  .githooks/:
+    src: ~/shared/hooks/
 ```
 
 **Directory → single file (merge):** omit the trailing `/` from the target key and all files in the directory are merged into one. Files are sorted alphabetically — later names win on key conflicts. YAML/JSON merge is auto-detected from the contained file extensions, or forced with `yaml:`/`json:`:
 
 ```yaml
-# One folder per service, each a separate .yml file → single docker-compose.yml
-docker-compose.yml:
-  src: ./services/
+files:
+  # One folder per service, each a separate .yml file → single docker-compose.yml
+  docker-compose.yml:
+    src: ./services/
 
-# Same with explicit yaml merge options (e.g. to concat arrays)
-docker-compose.yml:
-  src: ./services/
-  yaml:
-    arrays: concat
+  # JSON: one file per environment → merged config
+  config.json:
+    src: ./config/
+```
 
-# JSON: one file per environment → merged config
-config.json:
-  src: ./config/
+With explicit YAML merge options (e.g. to concat arrays instead of replacing):
+
+```yaml
+files:
+  docker-compose.yml:
+    src: ./services/
+    yaml:
+      arrays: concat
 ```
 
 Directory sources cannot be mixed into a multi-source list (`src` as a list), because the list mode always produces a single file.
@@ -470,14 +476,15 @@ Directory sources cannot be mixed into a multi-source list (`src` as a list), be
 **List** — combine multiple sources into one file (all source types supported):
 
 ```yaml
-combined.txt:
-  src:
-    - https://example.com/header.txt
-    - exec: echo "# generated"
-    - gitlab:
-        project: org/repo
-        file: footer.txt
-        ref: main
+files:
+  combined.txt:
+    src:
+      - https://example.com/header.txt
+      - exec: echo "# generated"
+      - gitlab:
+          project: org/repo
+          file: footer.txt
+          ref: main
 ```
 
 Sources are fetched in order and joined with a newline. Post-processing (`replace`, `post`) is applied to the combined result. If any source fails, the entire entry is aborted.
