@@ -68,6 +68,12 @@ async function runFetchLoop(
         }
       }
 
+      if (isSelf && result.files.size !== 1) {
+        throw new Error(
+          `$self must resolve to exactly one file, got ${result.files.size}. Use yaml: true or json: true to merge multiple sources into one.`,
+        );
+      }
+
       for (const [relPath, rawContent] of result.files) {
         let content = rawContent;
         if (entry.replace?.length)
@@ -182,6 +188,11 @@ export function pullCommand(): Command {
               '\nRun `avanti pull --accept-changes` to review the diff and update SHA values.',
             );
             process.exit(2);
+          }
+          if (second.selfContent !== undefined) {
+            console.warn(
+              'Warning: merged $self config contains another $self entry; nested $self is not supported and will be ignored.',
+            );
           }
           writeTargets = second.writeTargets;
           allDiffs = second.allDiffs;

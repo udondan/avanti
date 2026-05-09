@@ -49,6 +49,12 @@ async function runDiffLoop(
           );
         }
       }
+      if (isSelf && result.files.size !== 1) {
+        throw new Error(
+          `$self must resolve to exactly one file, got ${result.files.size}. Use yaml: true or json: true to merge multiple sources into one.`,
+        );
+      }
+
       for (const [relPath, rawContent] of result.files) {
         let content = rawContent;
         if (entry.replace?.length)
@@ -122,6 +128,11 @@ export function diffCommand(): Command {
               '$self config resolved; re-evaluating with merged config...',
             );
             const second = await runDiffLoop(newConfig, workingDir);
+            if (second.selfContent !== undefined) {
+              console.warn(
+                'Warning: merged $self config contains another $self entry; nested $self is not supported and will be ignored.',
+              );
+            }
             allDiffs = second.allDiffs;
             hasError = second.hasError;
             if (
