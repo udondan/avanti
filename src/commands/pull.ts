@@ -6,6 +6,7 @@ import {
   normalizeConfigKey,
   parseConfigContent,
   resolveConfigPath,
+  SELF_KEY,
 } from '../config';
 import { fetchSource, SourceFetchRecord } from '../sources';
 import { applyReplace } from '../processors/replace';
@@ -35,6 +36,7 @@ interface FetchLoopResult {
   hasError: boolean;
   shaErrors: ShaError[];
   sourceRecordsByTarget: Map<string, SourceFetchRecord[]>;
+  selfContent?: string;
 }
 
 async function runFetchLoop(
@@ -48,8 +50,10 @@ async function runFetchLoop(
   const seenShaErrorLabels = new Set<string>();
   const sourceRecordsByTarget = new Map<string, SourceFetchRecord[]>();
   let hasError = false;
+  let selfContent: string | undefined;
 
-  for (const entry of Object.values(config.files)) {
+  for (const [key, entry] of Object.entries(config.files)) {
+    const isSelf = key === SELF_KEY;
     try {
       const result = await fetchSource(entry, workingDir, vars);
 
@@ -69,6 +73,10 @@ async function runFetchLoop(
         if (entry.replace?.length)
           content = applyReplace(content, entry.replace, vars);
         if (entry.post) content = applyPost(content, entry.post, vars);
+        if (isSelf) {
+          selfContent = content;
+          continue;
+        }
         const targetPath = resolveTargetPath(entry, relPath, workingDir, vars);
         allDiffs.push(computeDiff(targetPath, content));
         writeTargets.push({ targetPath, content, mode: entry.mode });
@@ -84,7 +92,14 @@ async function runFetchLoop(
     }
   }
 
-  return { writeTargets, allDiffs, hasError, shaErrors, sourceRecordsByTarget };
+  return {
+    writeTargets,
+    allDiffs,
+    hasError,
+    shaErrors,
+    sourceRecordsByTarget,
+    selfContent,
+  };
 }
 
 function printShaErrors(errors: ShaError[]): void {
@@ -147,54 +162,40 @@ export function pullCommand(): Command {
         process.exit(2);
       }
 
-      // Detect self-config update: only applies to local config files
-      if (!isRemoteConfigSpec(configPath)) {
-        const configIdx = writeTargets.findIndex(
-          (t) => t.targetPath === configPath,
-        );
-        if (configIdx !== -1 && allDiffs[configIdx].hasChanges) {
-          const newConfigContent = writeTargets[configIdx].content;
-          try {
-            const newConfig = parseConfigContent(newConfigContent);
-            console.log('Config updated; re-evaluating with new config...');
-            const second = await runFetchLoop(newConfig, workingDir);
-            if (second.hasError) {
-              console.error('Aborting due to errors in re-evaluated config.');
-              process.exit(2);
-            }
-            if (second.shaErrors.length > 0 && !opts.acceptChanges) {
-              printShaErrors(second.shaErrors);
-              console.error(
-                '\nRun `avanti pull --accept-changes` to review the diff and update SHA values.',
-              );
-              process.exit(2);
-            }
-            const configInSecond = second.writeTargets.findIndex(
-              (t) => t.targetPath === configPath,
+      // $self: re-evaluate with the in-memory merged config
+      if (firstPass.selfContent !== undefined) {
+        try {
+          const newConfig = parseConfigContent(firstPass.selfContent);
+          console.log(
+            '$self config resolved; re-evaluating with merged config...',
+          );
+          const second = await runFetchLoop(newConfig, workingDir);
+          if (second.hasError) {
+            console.error(
+              'Aborting due to errors in $self re-evaluated config.',
             );
-            if (configInSecond === -1) {
-              second.writeTargets.push(writeTargets[configIdx]);
-              second.allDiffs.push(allDiffs[configIdx]);
-              const firstPassRecords = sourceRecordsByTarget.get(configPath);
-              if (firstPassRecords) {
-                second.sourceRecordsByTarget.set(configPath, firstPassRecords);
-              }
-            }
-            writeTargets = second.writeTargets;
-            allDiffs = second.allDiffs;
-            sourceRecordsByTarget = second.sourceRecordsByTarget;
-            const existingLabels = new Set(
-              firstPass.shaErrors.map((e) => e.sourceLabel),
-            );
-            for (const e of second.shaErrors) {
-              if (!existingLabels.has(e.sourceLabel))
-                firstPass.shaErrors.push(e);
-            }
-          } catch (err: unknown) {
-            console.warn(
-              `Warning: updated config is invalid, skipping re-evaluation: ${(err as Error).message}`,
-            );
+            process.exit(2);
           }
+          if (second.shaErrors.length > 0 && !opts.acceptChanges) {
+            printShaErrors(second.shaErrors);
+            console.error(
+              '\nRun `avanti pull --accept-changes` to review the diff and update SHA values.',
+            );
+            process.exit(2);
+          }
+          writeTargets = second.writeTargets;
+          allDiffs = second.allDiffs;
+          sourceRecordsByTarget = second.sourceRecordsByTarget;
+          const existingLabels = new Set(
+            firstPass.shaErrors.map((e) => e.sourceLabel),
+          );
+          for (const e of second.shaErrors) {
+            if (!existingLabels.has(e.sourceLabel)) firstPass.shaErrors.push(e);
+          }
+        } catch (err: unknown) {
+          console.warn(
+            `Warning: $self config is invalid, skipping re-evaluation: ${(err as Error).message}`,
+          );
         }
       }
 

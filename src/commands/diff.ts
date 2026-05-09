@@ -1,6 +1,12 @@
 import { Command } from 'commander';
 import * as path from 'path';
-import { loadConfig, normalizeConfigKey, resolveConfigPath } from '../config';
+import {
+  loadConfig,
+  normalizeConfigKey,
+  parseConfigContent,
+  resolveConfigPath,
+  SELF_KEY,
+} from '../config';
 import { fetchSource } from '../sources';
 import { applyReplace } from '../processors/replace';
 import { applyPost } from '../processors/post';
@@ -11,7 +17,59 @@ import {
   resolveTargetPath,
 } from '../diff';
 import { FileDiff } from '../diff';
+import { AvantiConfig } from '../types';
 import { HistoryManager } from '../history';
+
+interface DiffLoopResult {
+  allDiffs: FileDiff[];
+  hasError: boolean;
+  selfContent?: string;
+}
+
+async function runDiffLoop(
+  config: AvantiConfig,
+  workingDir: string,
+): Promise<DiffLoopResult> {
+  const vars = config.variables ?? {};
+  const allDiffs: FileDiff[] = [];
+  let hasError = false;
+  let selfContent: string | undefined;
+
+  for (const [key, entry] of Object.entries(config.files)) {
+    const isSelf = key === SELF_KEY;
+    try {
+      const result = await fetchSource(entry, workingDir, vars);
+      for (const rec of result.sourceRecords) {
+        if (!rec.matched) {
+          console.error(
+            `⚠  SHA mismatch for ${rec.sourceLabel}\n` +
+              `   expected: ${rec.expectedSha}\n` +
+              `   got:      ${rec.observedSha}`,
+          );
+        }
+      }
+      for (const [relPath, rawContent] of result.files) {
+        let content = rawContent;
+        if (entry.replace?.length)
+          content = applyReplace(content, entry.replace, vars);
+        if (entry.post) content = applyPost(content, entry.post, vars);
+        if (isSelf) {
+          selfContent = content;
+          continue;
+        }
+        const targetPath = resolveTargetPath(entry, relPath, workingDir, vars);
+        allDiffs.push(computeDiff(targetPath, content));
+      }
+    } catch (err: unknown) {
+      console.error(
+        `Error processing ${JSON.stringify(entry.src)}: ${(err as Error).message}`,
+      );
+      hasError = true;
+    }
+  }
+
+  return { allDiffs, hasError, selfContent };
+}
 
 export function diffCommand(): Command {
   return new Command('diff')
@@ -50,41 +108,23 @@ export function diffCommand(): Command {
           console.error((err as Error).message);
           process.exit(2);
         }
-        const allDiffs: FileDiff[] = [];
-        let hasError = false;
 
-        const vars = config.variables ?? {};
+        const firstPass = await runDiffLoop(config, workingDir);
+        let { allDiffs, hasError } = firstPass;
 
-        for (const entry of Object.values(config.files)) {
+        if (firstPass.selfContent !== undefined) {
           try {
-            const result = await fetchSource(entry, workingDir, vars);
-            for (const rec of result.sourceRecords) {
-              if (!rec.matched) {
-                console.error(
-                  `⚠  SHA mismatch for ${rec.sourceLabel}\n` +
-                    `   expected: ${rec.expectedSha}\n` +
-                    `   got:      ${rec.observedSha}`,
-                );
-              }
-            }
-            for (const [relPath, rawContent] of result.files) {
-              let content = rawContent;
-              if (entry.replace?.length)
-                content = applyReplace(content, entry.replace, vars);
-              if (entry.post) content = applyPost(content, entry.post, vars);
-              const targetPath = resolveTargetPath(
-                entry,
-                relPath,
-                workingDir,
-                vars,
-              );
-              allDiffs.push(computeDiff(targetPath, content));
-            }
-          } catch (err: unknown) {
-            console.error(
-              `Error processing ${JSON.stringify(entry.src)}: ${(err as Error).message}`,
+            const newConfig = parseConfigContent(firstPass.selfContent);
+            console.log(
+              '$self config resolved; re-evaluating with merged config...',
             );
-            hasError = true;
+            const second = await runDiffLoop(newConfig, workingDir);
+            allDiffs = second.allDiffs;
+            hasError = second.hasError;
+          } catch (err: unknown) {
+            console.warn(
+              `Warning: $self config is invalid, skipping re-evaluation: ${(err as Error).message}`,
+            );
           }
         }
 

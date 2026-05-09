@@ -1204,25 +1204,20 @@ files:
     });
   });
 
-  describe('self-config re-evaluation', () => {
-    it('re-evaluates with the new config when the config file updates itself', () => {
-      // v2 config: pulls file-b.txt instead of file-a.txt
+  describe('config file as a write target', () => {
+    it('writes the config file to disk without triggering re-evaluation', () => {
       const fileBSource = join(tmpDir, 'file-b-source.txt');
       writeFileSync(fileBSource, 'content of file b');
 
       const configV2Path = join(tmpDir, 'config-v2.yml');
       writeFileSync(
         configV2Path,
-        `files:
-  ./file-b.txt:
-    src: ${fileBSource}
-`,
+        `files:\n  ./file-b.txt:\n    src: ${fileBSource}\n`,
       );
 
       const fileASource = join(tmpDir, 'file-a-source.txt');
       writeFileSync(fileASource, 'content of file a');
 
-      // v1 config: pulls file-a.txt and also updates the config file itself to v2
       const config = writeConfig(
         tmpDir,
         `files:
@@ -1235,48 +1230,15 @@ files:
 
       const { exitCode, stdout } = runAvanti(config, tmpDir);
       expect(exitCode).toBe(0);
-      expect(stdout).toContain('re-evaluating with new config');
-
-      // The config was updated to v2
+      // No re-evaluation message — writing to the config path is just a normal write now
+      expect(stdout).not.toContain('re-evaluating');
+      // file-a.txt is written (first-pass result)
+      expect(existsSync(join(tmpDir, 'file-a.txt'))).toBe(true);
+      // config is overwritten with v2 content
       const writtenConfig = readFileSync(join(tmpDir, 'avanti.yml'), 'utf8');
       expect(writtenConfig).toContain('file-b.txt');
-
-      // file-b.txt must exist (from v2 config)
-      expect(existsSync(join(tmpDir, 'file-b.txt'))).toBe(true);
-      expect(readFileSync(join(tmpDir, 'file-b.txt'), 'utf8')).toBe(
-        'content of file b',
-      );
-
-      // file-a.txt must NOT exist (v2 config doesn't include it, and it
-      // was never on disk before, so it should not have been created)
-      expect(existsSync(join(tmpDir, 'file-a.txt'))).toBe(false);
-    });
-
-    it('falls back to first-pass results when the updated config is invalid', () => {
-      // Valid YAML but not a valid avanti config (missing "files" key).
-      // Using a .yml source triggers auto-YAML-format, so the content must
-      // be parseable YAML; the failure must come from parseConfigContent.
-      const invalidConfigPath = join(tmpDir, 'invalid-config.yml');
-      writeFileSync(invalidConfigPath, 'not_an_avanti_config: true\n');
-
-      const fileASource = join(tmpDir, 'file-a-source.txt');
-      writeFileSync(fileASource, 'content of file a');
-
-      const config = writeConfig(
-        tmpDir,
-        `files:
-  ./file-a.txt:
-    src: ${fileASource}
-  ./avanti.yml:
-    src: ${invalidConfigPath}
-`,
-      );
-
-      const { exitCode } = runAvanti(config, tmpDir);
-      expect(exitCode).toBe(0);
-
-      // file-a.txt is still written (first-pass results used despite bad config)
-      expect(existsSync(join(tmpDir, 'file-a.txt'))).toBe(true);
+      // file-b.txt is NOT created (no second pass ran)
+      expect(existsSync(join(tmpDir, 'file-b.txt'))).toBe(false);
     });
   });
 
@@ -1302,6 +1264,57 @@ files:
       const content = readFileSync(join(tmpDir, 'output.txt'), 'utf8');
       expect(content).toContain('part one');
       expect(content).toContain('part two');
+    });
+  });
+
+  describe('$self', () => {
+    it('composes config from two local avanti YAMLs and applies the merged result', () => {
+      const sourceA = join(tmpDir, 'source-a.txt');
+      const sourceB = join(tmpDir, 'source-b.txt');
+      writeFileSync(sourceA, 'content from A');
+      writeFileSync(sourceB, 'content from B');
+
+      const remoteA = join(tmpDir, 'remote-a.yml');
+      const remoteB = join(tmpDir, 'remote-b.yml');
+      writeFileSync(
+        remoteA,
+        `files:\n  ./output-a.txt:\n    src: ${sourceA}\n`,
+      );
+      writeFileSync(
+        remoteB,
+        `files:\n  ./output-b.txt:\n    src: ${sourceB}\n`,
+      );
+
+      const config = writeConfig(
+        tmpDir,
+        `files:\n  $self:\n    src:\n      - path: ${remoteA}\n      - path: ${remoteB}\n    yaml: true\n`,
+      );
+
+      const { exitCode } = runAvanti(config, tmpDir);
+      expect(exitCode).toBe(0);
+      expect(readFileSync(join(tmpDir, 'output-a.txt'), 'utf8')).toBe(
+        'content from A',
+      );
+      expect(readFileSync(join(tmpDir, 'output-b.txt'), 'utf8')).toBe(
+        'content from B',
+      );
+    });
+
+    it('does not write a file named $self to disk', () => {
+      const source = join(tmpDir, 'source.txt');
+      writeFileSync(source, 'hello');
+
+      const remote = join(tmpDir, 'remote.yml');
+      writeFileSync(remote, `files:\n  ./output.txt:\n    src: ${source}\n`);
+
+      const config = writeConfig(
+        tmpDir,
+        `files:\n  $self:\n    src:\n      path: ${remote}\n`,
+      );
+
+      const { exitCode } = runAvanti(config, tmpDir);
+      expect(exitCode).toBe(0);
+      expect(existsSync(join(tmpDir, '$self'))).toBe(false);
     });
   });
 });
