@@ -58,6 +58,15 @@ export function diffCommand(): Command {
         for (const entry of config.files) {
           try {
             const result = await fetchSource(entry, workingDir, vars);
+            for (const rec of result.sourceRecords) {
+              if (!rec.matched) {
+                console.error(
+                  `⚠  SHA mismatch for ${rec.sourceLabel}\n` +
+                    `   expected: ${rec.expectedSha}\n` +
+                    `   got:      ${rec.observedSha}`,
+                );
+              }
+            }
             for (const [relPath, rawContent] of result.files) {
               let content = rawContent;
               if (entry.replace?.length)

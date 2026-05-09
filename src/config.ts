@@ -5,6 +5,7 @@ import {
   AvantiConfig,
   FileEntry,
   FileSrc,
+  HttpSrc,
   JsonArrayStrategy,
   JsonConflictStrategy,
   JsonMergeOptions,
@@ -266,6 +267,18 @@ function parseVariables(raw: unknown): Variables {
   return vars;
 }
 
+function parseSha(value: unknown, loc: string): string | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== 'string') {
+    throw new Error(`${loc}.sha: must be a string, got ${typeof value}`);
+  }
+  const normalized = value.toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(normalized)) {
+    throw new Error(`${loc}.sha: expected 64 hex characters, got "${value}"`);
+  }
+  return normalized;
+}
+
 function parseSingleSrc(
   raw: unknown,
   i: number,
@@ -280,17 +293,41 @@ function parseSingleSrc(
 
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
     throw new Error(
-      `${loc}: must be a string or a map with one of: exec, gitlab, github, bitbucket, git, s3, vault`,
+      `${loc}: must be a string or a map with one of: exec, gitlab, github, bitbucket, git, s3, vault, http, raw`,
     );
   }
 
   const obj = raw as Record<string, unknown>;
 
+  if ('http' in obj) {
+    if (typeof obj['http'] !== 'string' || !obj['http']) {
+      throw new Error(
+        `${loc}.http: must be a non-empty string (http/https URL)`,
+      );
+    }
+    if (
+      !obj['http'].includes('$') &&
+      !obj['http'].startsWith('http://') &&
+      !obj['http'].startsWith('https://')
+    ) {
+      throw new Error(
+        `${loc}.http: must start with http:// or https://, got "${obj['http']}"`,
+      );
+    }
+    const result: HttpSrc = { http: obj['http'] };
+    const httpSha = parseSha(obj['sha'], loc);
+    if (httpSha !== undefined) result.sha = httpSha;
+    return result;
+  }
+
   if ('exec' in obj) {
     if (typeof obj['exec'] !== 'string' || !obj['exec']) {
       throw new Error(`${loc}.exec: must be a non-empty string`);
     }
-    return { exec: obj['exec'] };
+    const result = { exec: obj['exec'] } as { exec: string; sha?: string };
+    const execSha = parseSha(obj['sha'], loc);
+    if (execSha !== undefined) result.sha = execSha;
+    return result;
   }
 
   if ('gitlab' in obj) {
@@ -310,6 +347,7 @@ function parseSingleSrc(
         project: g['project'],
         file: g['file'],
         ref: typeof g['ref'] === 'string' ? g['ref'] : undefined,
+        sha: parseSha(g['sha'], `${loc}.gitlab`),
       },
     };
   }
@@ -338,6 +376,7 @@ function parseSingleSrc(
         repo: g['repo'],
         file: g['file'],
         ref: typeof g['ref'] === 'string' ? g['ref'] : undefined,
+        sha: parseSha(g['sha'], `${loc}.github`),
       },
     };
   }
@@ -363,6 +402,7 @@ function parseSingleSrc(
         repo: b['repo'],
         file: b['file'],
         ref: typeof b['ref'] === 'string' ? b['ref'] : undefined,
+        sha: parseSha(b['sha'], `${loc}.bitbucket`),
       },
     };
   }
@@ -384,6 +424,7 @@ function parseSingleSrc(
         repo: gt['repo'],
         file: gt['file'],
         ref: typeof gt['ref'] === 'string' ? gt['ref'] : undefined,
+        sha: parseSha(gt['sha'], `${loc}.git`),
       },
     };
   }
@@ -392,7 +433,10 @@ function parseSingleSrc(
     if (typeof obj['s3'] !== 'string' || !obj['s3']) {
       throw new Error(`${loc}.s3: must be a non-empty string (s3:// URI)`);
     }
-    return { s3: obj['s3'] };
+    const result = { s3: obj['s3'] } as { s3: string; sha?: string };
+    const s3Sha = parseSha(obj['sha'], loc);
+    if (s3Sha !== undefined) result.sha = s3Sha;
+    return result;
   }
 
   if ('vault' in obj) {
@@ -408,12 +452,13 @@ function parseSingleSrc(
       vault: {
         path: vt['path'],
         field: typeof vt['field'] === 'string' ? vt['field'] : undefined,
+        sha: parseSha(vt['sha'], `${loc}.vault`),
       },
     };
   }
 
   throw new Error(
-    `${loc}: unknown source type. Must be a string or map with exec/gitlab/github/bitbucket/git/s3/vault/raw`,
+    `${loc}: unknown source type. Must be a string or map with exec/gitlab/github/bitbucket/git/s3/vault/http/raw`,
   );
 }
 

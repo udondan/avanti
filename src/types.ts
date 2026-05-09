@@ -10,6 +10,7 @@ export interface GitLabSrc {
     project: string;
     file: string;
     ref?: string;
+    sha?: string;
   };
 }
 
@@ -18,11 +19,13 @@ export interface GitHubSrc {
     repo: string;
     file: string;
     ref?: string;
+    sha?: string;
   };
 }
 
 export interface ExecSrc {
   exec: string;
+  sha?: string;
 }
 
 export interface RawSrc {
@@ -35,6 +38,7 @@ export interface BitbucketSrc {
     repo: string;
     file: string;
     ref?: string;
+    sha?: string;
   };
 }
 
@@ -43,18 +47,27 @@ export interface GitSrc {
     repo: string;
     file: string;
     ref?: string;
+    sha?: string;
   };
 }
 
 export interface S3Src {
   s3: string;
+  sha?: string;
 }
 
 export interface VaultSrc {
   vault: {
     path: string;
     field?: string;
+    sha?: string;
   };
+}
+
+/** An explicit http/https URL with optional SHA pinning */
+export interface HttpSrc {
+  http: string;
+  sha?: string;
 }
 
 /** src can be a plain string (http/https URL or local path) or a typed source map */
@@ -67,7 +80,8 @@ export type FileSrc =
   | ExecSrc
   | RawSrc
   | S3Src
-  | VaultSrc;
+  | VaultSrc
+  | HttpSrc;
 
 export type JsonConflictStrategy = 'abort' | 'first_wins' | 'last_wins';
 export type JsonArrayStrategy = 'replace' | 'concat';
