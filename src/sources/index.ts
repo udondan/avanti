@@ -24,7 +24,16 @@ const JSON_EXTENSIONS = new Set(['.json', '.jsonc']);
 const YAML_EXTENSIONS = new Set(['.yaml', '.yml']);
 
 function srcFilename(src: FileSrc): string | null {
-  if (typeof src === 'string') return src;
+  if (typeof src === 'string') {
+    if (src.startsWith('http://') || src.startsWith('https://')) {
+      try {
+        return new URL(src).pathname;
+      } catch {
+        return src;
+      }
+    }
+    return src;
+  }
   if ('gitlab' in src) return src.gitlab.file;
   if ('github' in src) return src.github.file;
   if ('bitbucket' in src) return src.bitbucket.file;
