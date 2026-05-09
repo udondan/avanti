@@ -328,7 +328,7 @@ export async function fetchSource(
 
     if (dirJsonOpts !== null || dirYamlOpts !== null) {
       const sortedValues = Array.from(singleResult.files.entries())
-        .sort(([a], [b]) => a.localeCompare(b))
+        .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
         .map(([, v]) => v);
       const filename = path.basename(entry.target!);
       const merged =
