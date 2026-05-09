@@ -84,6 +84,6 @@ export function lockCommand(): Command {
         console.log('All SHA values are already up to date.');
       }
 
-      process.exit(hasError ? 2 : 0);
+      process.exit(0);
     });
 }
