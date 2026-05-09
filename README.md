@@ -54,6 +54,7 @@ atomic rollbacks, and diff-before-apply safety.
 ## Features
 
 - Fetch files from **HTTP/HTTPS**, **local paths**, **GitLab** (via `glab`), **GitHub** (via `gh`), **Bitbucket**, **any git remote**, **S3**, **HashiCorp Vault**, **shell commands**, or **inline raw content**
+- **Optional sources** — mark any source `optional: true` to silently skip it when the file is missing or the URL returns 404; lets a central config reference per-user local overrides without erroring on machines that haven't created them
 - **Multi-source entries** — combine multiple sources into a single file by providing `src` as a list
 - **Atomic writes** — all files are staged to a temp dir first; targets are only written if everything succeeds
 - **Diff preview** — see exactly what will change before applying, or compare against any past pull
@@ -335,9 +336,19 @@ src: ~/templates/file.txt
 src: /absolute/path/file.txt
 ```
 
-**Map** — for exec, gitlab, github, bitbucket, git, s3, vault, http, raw:
+**Map** — for path, url, exec, gitlab, github, bitbucket, git, s3, vault, http, raw:
 
 ```yaml
+src:
+  path: ~/templates/file.txt    # explicit local path; supports optional and sha
+  optional: true                # silently skip if the file does not exist
+  sha: abc123...
+
+src:
+  url: https://example.com/file.txt  # explicit http/https URL; supports optional and sha
+  optional: true                     # silently skip if the URL returns 404
+  sha: abc123...
+
 src:
   exec: <shell command>          # stdout becomes file content; target required
   sha: abc123...                 # optional SHA-256 to verify stdout (see below)
@@ -394,7 +405,7 @@ src:
 
 The optional `sha` field pins a source to a specific content fingerprint. When present, avanti verifies the SHA-256 of the raw fetched content matches before writing anything. This makes your config act as a selective lockfile — only sources you care about get pinned, and changes are surfaced explicitly rather than applied silently.
 
-Use `avanti lock` to compute and write SHA values automatically. Use `avanti pull --accept-changes` to review a mismatch and update the pinned SHA. Local paths and `raw:` sources do not support `sha` (changes to those are inherently visible).
+Use `avanti lock` to compute and write SHA values automatically. Use `avanti pull --accept-changes` to review a mismatch and update the pinned SHA. Plain string sources (a bare local path or URL string) and `raw:` sources do not support `sha`. Use the explicit `path:` or `url:` map form to pin a local file or HTTP URL.
 
 ### Directory Sources
 
@@ -826,7 +837,11 @@ files:
           Team: $team
           Jira project: $jira_project
           Oncall: $oncall_channel
+      - path: ~/custom-claude.md # personal additions; silently skipped if absent
+        optional: true
 ```
+
+The `optional: true` source is the key to sharing a config across a whole team: the central spec references a well-known local path, and each developer either creates the file to add their own context or ignores it — `avanti pull` works either way. No per-person fork of the config needed.
 
 ### Shared Tooling Config (Renovate, ESLint, Prettier, TSConfig)
 
