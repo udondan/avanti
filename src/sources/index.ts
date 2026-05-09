@@ -30,7 +30,13 @@ function srcFilename(src: FileSrc): string | null {
   if ('bitbucket' in src) return src.bitbucket.file;
   if ('git' in src) return src.git.file;
   if ('s3' in src) return src.s3;
-  if ('http' in src) return src.http;
+  if ('http' in src) {
+    try {
+      return new URL(src.http).pathname;
+    } catch {
+      return src.http; // variable-driven URL; pathname unavailable at parse time
+    }
+  }
   return null;
 }
 
