@@ -393,4 +393,22 @@ describe('fetchSource — url source type', () => {
     );
     expect(result.files.get('out.txt')).toBe('second');
   });
+
+  it('returns empty files map when all array sources are skipped', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response('Not Found', { status: 404 }),
+    );
+    const result = await fetchSource(
+      {
+        src: [
+          { url: 'https://example.com/a.txt', optional: true },
+          { url: 'https://example.com/b.txt', optional: true },
+        ],
+        target: 'out.txt',
+      },
+      '/tmp',
+    );
+    expect(result.files.size).toBe(0);
+    expect(result.sourceRecords).toHaveLength(0);
+  });
 });

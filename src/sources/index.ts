@@ -339,6 +339,7 @@ export async function fetchSource(
         throw new Error(`[source ${i}] ${msg}`, { cause: err });
       }
     }
+    if (parts.length === 0) return { files: new Map(), sourceRecords: [] };
     const filename = path.basename(entry.target);
     const jsonOpts = resolveJsonOptions(entry, src);
     const yamlOpts = jsonOpts === null ? resolveYamlOptions(entry, src) : null;
