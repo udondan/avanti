@@ -1,6 +1,7 @@
 import { Command } from 'commander';
 import * as path from 'path';
 import {
+  isRemoteConfigSpec,
   loadConfig,
   normalizeConfigKey,
   parseConfigContent,
@@ -123,6 +124,12 @@ export function diffCommand(): Command {
             const second = await runDiffLoop(newConfig, workingDir);
             allDiffs = second.allDiffs;
             hasError = second.hasError;
+            if (
+              !isRemoteConfigSpec(configPath) &&
+              !allDiffs.some((d) => d.targetPath === configPath)
+            ) {
+              allDiffs.push(computeDiff(configPath, firstPass.selfContent));
+            }
           } catch (err: unknown) {
             console.warn(
               `Warning: $self config is invalid, skipping re-evaluation: ${(err as Error).message}`,

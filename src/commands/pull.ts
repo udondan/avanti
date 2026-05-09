@@ -192,6 +192,18 @@ export function pullCommand(): Command {
           for (const e of second.shaErrors) {
             if (!existingLabels.has(e.sourceLabel)) firstPass.shaErrors.push(e);
           }
+          // For local configs, write the merged $self content back to the
+          // config file on disk so it stays in sync with what was applied.
+          if (
+            !isRemoteConfigSpec(configPath) &&
+            !writeTargets.some((t) => t.targetPath === configPath)
+          ) {
+            writeTargets.push({
+              targetPath: configPath,
+              content: firstPass.selfContent,
+            });
+            allDiffs.push(computeDiff(configPath, firstPass.selfContent));
+          }
         } catch (err: unknown) {
           console.warn(
             `Warning: $self config is invalid, skipping re-evaluation: ${(err as Error).message}`,

@@ -1110,10 +1110,10 @@ files:
 
 ### Self-managing Config
 
-avanti can manage any file — including its own config. The special `$self` key in the `files:` map lets you compose the active config in memory from one or more remote sources and apply what it describes, all in a single run.
+avanti can manage any file — including its own config. The special `$self` key in the `files:` map fetches and merges one or more remote sources, uses the result as the active config, and then applies all the files it declares — in the same run, with a single confirmation prompt and a single atomic write.
 
 ```yaml
-# ~/.avanti.yml — thin bootstrap, never changes on disk
+# ~/.avanti.yml
 files:
   $self:
     src:
@@ -1123,12 +1123,12 @@ files:
         ref: $latest
 ```
 
-When avanti runs, it fetches the remote `avanti.yml`, treats it as the active config in memory, and applies all the files it declares — with a single confirmation prompt and a single atomic write. The local bootstrap file is untouched; only the files declared in the remote config are written to disk.
+When avanti runs, it fetches the remote `avanti.yml`, applies all the files it declares, and — because the config is a local file — also writes the fetched content back to `~/.avanti.yml` on disk. The local config stays in sync with the remote automatically; no manual update needed.
 
 **Composable config** — `$self` with multiple sources and YAML merge lets you assemble a config from independent layers. Org-wide defaults, team additions, and personal overrides all merge into one active config:
 
 ```yaml
-# ~/.avanti.yml — bootstrapped once, never needs to change
+# ~/.avanti.yml — bootstrapped once, then self-updating
 files:
   $self:
     src:
@@ -1149,9 +1149,9 @@ files:
       arrays: concat # file lists from all layers are merged, not replaced
 ```
 
-Each layer only needs to declare what it owns. The org config defines shared tooling. The team config adds team-specific sources. The personal config overrides variables or adds private entries. Every `avanti pull` rebuilds the merged config and applies all the files it describes — org-wide config drift and personal customisation coexist without conflict.
+Each layer only needs to declare what it owns. The org config defines shared tooling. The team config adds team-specific sources. The personal config overrides variables or adds private entries. Every `avanti pull` rebuilds the merged config, writes it to `~/.avanti.yml`, and applies all the files it describes — org-wide config drift and personal customisation coexist without conflict.
 
-`$self` never writes anything to disk for that entry — it is purely an in-memory composition mechanism. To also keep a local copy of the assembled config on disk, add a regular file entry pointing to the same sources alongside `$self`.
+When running with a remote config (`--config github:...`), `$self` is in-memory only — the merged result drives the run but is not persisted anywhere, since there is no local file to write back to.
 
 For first-time setup on a new machine, pass a remote config directly to `--config` — no local file needed:
 

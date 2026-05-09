@@ -1268,7 +1268,7 @@ files:
   });
 
   describe('$self', () => {
-    it('composes config from two local avanti YAMLs and applies the merged result', () => {
+    it('composes config from two local avanti YAMLs, applies the merged result, and writes it to the local config file', () => {
       const sourceA = join(tmpDir, 'source-a.txt');
       const sourceB = join(tmpDir, 'source-b.txt');
       writeFileSync(sourceA, 'content from A');
@@ -1292,28 +1292,21 @@ files:
 
       const { exitCode } = runAvanti(config, tmpDir);
       expect(exitCode).toBe(0);
+
+      // Files declared by the merged config are written
       expect(readFileSync(join(tmpDir, 'output-a.txt'), 'utf8')).toBe(
         'content from A',
       );
       expect(readFileSync(join(tmpDir, 'output-b.txt'), 'utf8')).toBe(
         'content from B',
       );
-    });
 
-    it('does not write a file named $self to disk', () => {
-      const source = join(tmpDir, 'source.txt');
-      writeFileSync(source, 'hello');
+      // The local config file is updated with the merged $self content
+      const writtenConfig = readFileSync(config, 'utf8');
+      expect(writtenConfig).toContain('output-a.txt');
+      expect(writtenConfig).toContain('output-b.txt');
 
-      const remote = join(tmpDir, 'remote.yml');
-      writeFileSync(remote, `files:\n  ./output.txt:\n    src: ${source}\n`);
-
-      const config = writeConfig(
-        tmpDir,
-        `files:\n  $self:\n    src:\n      path: ${remote}\n`,
-      );
-
-      const { exitCode } = runAvanti(config, tmpDir);
-      expect(exitCode).toBe(0);
+      // No file literally named $self is created
       expect(existsSync(join(tmpDir, '$self'))).toBe(false);
     });
   });
