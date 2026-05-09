@@ -1,7 +1,5 @@
 import { Command } from 'commander';
-import * as fs from 'fs';
 import * as path from 'path';
-import { parseDocument } from 'yaml';
 import {
   isRemoteConfigSpec,
   loadConfig,
@@ -23,6 +21,7 @@ import { FileDiff } from '../diff';
 import { AvantiConfig } from '../types';
 import { HistoryManager, PullLogFileRef, SourceShaRecord } from '../history';
 import { confirm } from '../prompt';
+import { writeUpdatedShas } from '../config-writeback';
 
 interface ShaError {
   sourceLabel: string;
@@ -94,162 +93,6 @@ function printShaErrors(errors: ShaError[]): void {
         `  got:      ${e.observedSha}`,
     );
   }
-}
-
-function writeUpdatedShas(configPath: string, accepted: ShaError[]): void {
-  if (accepted.length === 0) return;
-  const raw = fs.readFileSync(configPath, 'utf8');
-  const doc = parseDocument(raw);
-
-  const acceptedByLabel = new Map(
-    accepted.map((e) => [e.sourceLabel, e.observedSha]),
-  );
-
-  const filesNode = doc.get('files', true);
-  if (!filesNode || typeof filesNode !== 'object' || !('items' in filesNode))
-    return;
-
-  const filesSeq = filesNode as { items: unknown[] };
-  for (const fileItem of filesSeq.items) {
-    if (!fileItem || typeof fileItem !== 'object' || !('value' in fileItem))
-      continue;
-    const rawValue = (fileItem as Record<string, unknown>).value;
-    if (!rawValue || typeof rawValue !== 'object' || !('get' in rawValue))
-      continue;
-    const entryNode = rawValue as {
-      get: (k: string, keepScalar?: boolean) => unknown;
-    };
-
-    const srcNode = entryNode.get('src', true);
-    if (!srcNode) continue;
-
-    const processSrc = (
-      srcItem: unknown,
-      srcIdx: number,
-      fileIdx: number,
-    ): void => {
-      if (!srcItem || typeof srcItem !== 'object') return;
-
-      // Determine the source label to match
-      let label: string | null = null;
-      let shaPath: (string | number)[] | null = null;
-
-      const n = srcItem as {
-        get?: (k: string, keepScalar?: boolean) => unknown;
-      };
-      if (!n.get) return;
-
-      if (n.get('github')) {
-        const gh = n.get('github') as {
-          get?: (k: string, keepScalar?: boolean) => unknown;
-        } | null;
-        if (gh?.get) {
-          const repo = gh.get('repo') as string | null;
-          const file = gh.get('file') as string | null;
-          if (repo && file) {
-            label = `github:${repo}:${file}`;
-            shaPath = ['files', fileIdx, 'src', srcIdx, 'github', 'sha'];
-          }
-        }
-      } else if (n.get('gitlab')) {
-        const gl = n.get('gitlab') as {
-          get?: (k: string, keepScalar?: boolean) => unknown;
-        } | null;
-        if (gl?.get) {
-          const project = gl.get('project') as string | null;
-          const file = gl.get('file') as string | null;
-          if (project && file) {
-            label = `gitlab:${project}:${file}`;
-            shaPath = ['files', fileIdx, 'src', srcIdx, 'gitlab', 'sha'];
-          }
-        }
-      } else if (n.get('bitbucket')) {
-        const bb = n.get('bitbucket') as {
-          get?: (k: string, keepScalar?: boolean) => unknown;
-        } | null;
-        if (bb?.get) {
-          const ws = bb.get('workspace') as string | null;
-          const repo = bb.get('repo') as string | null;
-          const file = bb.get('file') as string | null;
-          if (ws && repo && file) {
-            label = `bitbucket:${ws}/${repo}:${file}`;
-            shaPath = ['files', fileIdx, 'src', srcIdx, 'bitbucket', 'sha'];
-          }
-        }
-      } else if (n.get('git')) {
-        const gt = n.get('git') as {
-          get?: (k: string, keepScalar?: boolean) => unknown;
-        } | null;
-        if (gt?.get) {
-          const repo = gt.get('repo') as string | null;
-          const file = gt.get('file') as string | null;
-          if (repo && file) {
-            label = `git:${repo}:${file}`;
-            shaPath = ['files', fileIdx, 'src', srcIdx, 'git', 'sha'];
-          }
-        }
-      } else if (n.get('exec') !== undefined) {
-        const cmd = n.get('exec') as string | null;
-        if (cmd) {
-          label = `exec:${cmd}`;
-          shaPath = ['files', fileIdx, 'src', srcIdx, 'sha'];
-        }
-      } else if (n.get('s3') !== undefined) {
-        const s3 = n.get('s3') as string | null;
-        if (s3) {
-          label = `s3:${s3}`;
-          shaPath = ['files', fileIdx, 'src', srcIdx, 'sha'];
-        }
-      } else if (n.get('vault')) {
-        const vt = n.get('vault') as {
-          get?: (k: string, keepScalar?: boolean) => unknown;
-        } | null;
-        if (vt?.get) {
-          const p = vt.get('path') as string | null;
-          if (p) {
-            label = `vault:${p}`;
-            shaPath = ['files', fileIdx, 'src', srcIdx, 'vault', 'sha'];
-          }
-        }
-      } else if (n.get('http') !== undefined) {
-        const url = n.get('http') as string | null;
-        if (url) {
-          label = `http:${url}`;
-          shaPath = ['files', fileIdx, 'src', srcIdx, 'sha'];
-        }
-      }
-
-      if (label && shaPath && acceptedByLabel.has(label)) {
-        doc.setIn(shaPath, acceptedByLabel.get(label)!);
-      }
-    };
-
-    if (srcNode && typeof srcNode === 'object' && 'items' in srcNode) {
-      const srcSeq = srcNode as { items: unknown[] };
-      let fileIdx = 0;
-      for (const fi of filesSeq.items) {
-        if (fi === fileItem) break;
-        fileIdx++;
-      }
-      srcSeq.items.forEach((item, idx) => {
-        if (item && typeof item === 'object' && 'value' in item) {
-          processSrc((item as Record<string, unknown>).value, idx, fileIdx);
-        } else {
-          processSrc(item, idx, fileIdx);
-        }
-      });
-    } else {
-      let fileIdx = 0;
-      for (const fi of filesSeq.items) {
-        if (fi === fileItem) break;
-        fileIdx++;
-      }
-      // Single src (not an array) — wrap in the map node directly
-      processSrc(srcNode, 0, fileIdx);
-    }
-  }
-
-  fs.writeFileSync(configPath, doc.toString(), 'utf8');
 }
 
 export function pullCommand(): Command {
@@ -403,11 +246,19 @@ export function pullCommand(): Command {
       // Stage history versions before atomicWrite so v0 is captured before overwrite
       const stagedFileRefs: PullLogFileRef[] = [];
       if (pullId) {
+        const acceptedShaLabels = new Set(
+          firstPass.shaErrors.map((e) => e.sourceLabel),
+        );
         for (let i = 0; i < writeTargets.length; i++) {
-          if (!allDiffs[i].hasChanges) continue;
+          const targetPath = writeTargets[i].targetPath;
+          const records = sourceRecordsByTarget.get(targetPath);
+          const hasAcceptedSha =
+            opts.acceptChanges &&
+            records?.some(
+              (r) => !r.matched && acceptedShaLabels.has(r.sourceLabel),
+            );
+          if (!allDiffs[i].hasChanges && !hasAcceptedSha) continue;
           try {
-            const targetPath = writeTargets[i].targetPath;
-            const records = sourceRecordsByTarget.get(targetPath);
             const sourceShaRecords: SourceShaRecord[] | undefined =
               records !== undefined
                 ? records.map((r) => ({
@@ -417,9 +268,7 @@ export function pullCommand(): Command {
                     accepted:
                       !r.matched &&
                       (opts.acceptChanges ?? false) &&
-                      firstPass.shaErrors.some(
-                        (e) => e.sourceLabel === r.sourceLabel,
-                      ),
+                      acceptedShaLabels.has(r.sourceLabel),
                   }))
                 : undefined;
             const { fileRef } = history.stageFileVersion(
@@ -457,7 +306,10 @@ export function pullCommand(): Command {
         !isRemoteConfigSpec(configPath)
       ) {
         try {
-          writeUpdatedShas(configPath, firstPass.shaErrors);
+          const updates = new Map(
+            firstPass.shaErrors.map((e) => [e.sourceLabel, e.observedSha]),
+          );
+          writeUpdatedShas(configPath, updates);
         } catch (err: unknown) {
           console.warn(
             `Warning: could not update SHA values in config: ${(err as Error).message}`,

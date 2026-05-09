@@ -293,6 +293,14 @@ function parseSingleSrc(
         `${loc}.http: must be a non-empty string (http/https URL)`,
       );
     }
+    if (
+      !obj['http'].startsWith('http://') &&
+      !obj['http'].startsWith('https://')
+    ) {
+      throw new Error(
+        `${loc}.http: must start with http:// or https://, got "${obj['http']}"`,
+      );
+    }
     const result: HttpSrc = { http: obj['http'] };
     if (typeof obj['sha'] === 'string') result.sha = obj['sha'];
     return result;

@@ -86,14 +86,28 @@ export interface FetchResult {
 
 function labelForSrc(src: FileSrc, vars: Variables): string {
   if (typeof src === 'string') return resolveVars(src, vars);
-  if ('github' in src) return `github:${src.github.repo}:${src.github.file}`;
-  if ('gitlab' in src) return `gitlab:${src.gitlab.project}:${src.gitlab.file}`;
-  if ('bitbucket' in src)
-    return `bitbucket:${src.bitbucket.workspace}/${src.bitbucket.repo}:${src.bitbucket.file}`;
-  if ('git' in src) return `git:${src.git.repo}:${src.git.file}`;
+  if ('github' in src) {
+    const ref = src.github.ref ? `@${src.github.ref}` : '';
+    return `github:${src.github.repo}:${src.github.file}${ref}`;
+  }
+  if ('gitlab' in src) {
+    const ref = src.gitlab.ref ? `@${src.gitlab.ref}` : '';
+    return `gitlab:${src.gitlab.project}:${src.gitlab.file}${ref}`;
+  }
+  if ('bitbucket' in src) {
+    const ref = src.bitbucket.ref ? `@${src.bitbucket.ref}` : '';
+    return `bitbucket:${src.bitbucket.workspace}/${src.bitbucket.repo}:${src.bitbucket.file}${ref}`;
+  }
+  if ('git' in src) {
+    const ref = src.git.ref ? `@${src.git.ref}` : '';
+    return `git:${src.git.repo}:${src.git.file}${ref}`;
+  }
   if ('exec' in src) return `exec:${src.exec}`;
   if ('s3' in src) return `s3:${src.s3}`;
-  if ('vault' in src) return `vault:${src.vault.path}`;
+  if ('vault' in src) {
+    const field = src.vault.field ? `#${src.vault.field}` : '';
+    return `vault:${src.vault.path}${field}`;
+  }
   if ('http' in src) return `http:${src.http}`;
   if ('raw' in src) return 'raw';
   return JSON.stringify(src);
@@ -122,9 +136,10 @@ function computeFilesSha(files: Map<string, string>): string {
   if (files.size === 1) {
     return computeContentSha256(files.values().next().value as string);
   }
+  // Include filenames so renames and path changes affect the SHA
   const sorted = Array.from(files.entries())
     .sort(([a], [b]) => a.localeCompare(b))
-    .map(([, v]) => v)
+    .map(([k, v]) => `${k}\n${v}`)
     .join('\n');
   return computeContentSha256(sorted);
 }
