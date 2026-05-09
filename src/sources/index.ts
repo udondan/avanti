@@ -282,7 +282,7 @@ export async function fetchSource(
         throw new Error(`[source ${i}] ${msg}`, { cause: err });
       }
     }
-    const filename = path.basename(entry.target!);
+    const filename = path.basename(entry.target);
     const jsonOpts = resolveJsonOptions(entry, src);
     const yamlOpts = jsonOpts === null ? resolveYamlOptions(entry, src) : null;
     let content: string;
@@ -339,7 +339,7 @@ export async function fetchSource(
       const sortedValues = Array.from(singleResult.files.entries())
         .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
         .map(([, v]) => v);
-      const filename = path.basename(entry.target!);
+      const filename = path.basename(entry.target);
       const merged =
         dirJsonOpts !== null
           ? mergeJson(sortedValues, dirJsonOpts)

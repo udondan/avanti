@@ -49,7 +49,7 @@ describe('writeUpdatedShas', () => {
 
   it('writes sha into a github source that has no existing sha', () => {
     const cfg = writeConfig(`files:
-  - target: out.txt
+  out.txt:
     src:
       - github:
           repo: org/repo
@@ -65,7 +65,7 @@ describe('writeUpdatedShas', () => {
     const oldSha = 'b'.repeat(64);
     const newSha = 'c'.repeat(64);
     const cfg = writeConfig(`files:
-  - target: out.txt
+  out.txt:
     src:
       - github:
           repo: org/repo
@@ -82,7 +82,7 @@ describe('writeUpdatedShas', () => {
     const sha = 'd'.repeat(64);
     const cfg = writeConfig(`# top-level comment
 files:
-  - target: out.txt # inline comment
+  out.txt: # inline comment
     src:
       - github:
           repo: org/repo
@@ -98,7 +98,7 @@ files:
     const sha1 = 'e'.repeat(64);
     const sha2 = 'f'.repeat(64);
     const cfg = writeConfig(`files:
-  - target: out.txt
+  out.txt:
     src:
       - github:
           repo: org/repo
@@ -126,7 +126,7 @@ files:
   it('includes ref in the label for github sources', () => {
     const sha = 'a1'.repeat(32);
     const cfg = writeConfig(`files:
-  - target: out.txt
+  out.txt:
     src:
       - github:
           repo: org/repo
@@ -141,7 +141,7 @@ files:
   it('writes sha for http map source', () => {
     const sha = 'c3'.repeat(32);
     const cfg = writeConfig(`files:
-  - target: out.txt
+  out.txt:
     src:
       - http: https://example.com/file.txt
 `);
@@ -156,7 +156,7 @@ files:
   it('updates vault source with field in label', () => {
     const sha = 'b2'.repeat(32);
     const cfg = writeConfig(`files:
-  - target: secret.txt
+  secret.txt:
     src:
       - vault:
           path: secret/data/app
@@ -169,7 +169,7 @@ files:
 
   it('is a no-op when the updates map is empty', () => {
     const original = `files:
-  - target: out.txt
+  out.txt:
     src:
       - github:
           repo: org/repo
@@ -183,7 +183,7 @@ files:
   it('does not match a label that differs only in ref', () => {
     const sha = 'aa'.repeat(32);
     const cfg = writeConfig(`files:
-  - target: out.txt
+  out.txt:
     src:
       - github:
           repo: org/repo
@@ -199,7 +199,7 @@ files:
   it('writes sha for single-map src (non-sequence form)', () => {
     const sha = 'bb'.repeat(32);
     const cfg = writeConfig(`files:
-  - target: out.txt
+  out.txt:
     src:
       github:
         repo: org/repo
@@ -214,7 +214,7 @@ files:
     const sha = 'cc'.repeat(32);
     const cfg = writeConfig(`# config comment
 files:
-  - target: out.txt # entry comment
+  out.txt: # entry comment
     src:
       github:
         repo: org/repo
@@ -229,7 +229,7 @@ files:
 
   it('does not rewrite the file when no label matches', () => {
     const original = `files:
-  - target: out.txt
+  out.txt:
     src:
       - github:
           repo: org/repo
@@ -247,7 +247,7 @@ files:
 
   it('applyUpdatedShas returns null when no label matches', () => {
     const raw = `files:
-  - target: out.txt
+  out.txt:
     src:
       - github:
           repo: org/repo
@@ -263,7 +263,7 @@ files:
   it('applyUpdatedShas returns updated content when a label matches', () => {
     const sha = 'ee'.repeat(32);
     const raw = `files:
-  - target: out.txt
+  out.txt:
     src:
       - github:
           repo: org/repo

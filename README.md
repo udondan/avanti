@@ -1,6 +1,17 @@
 # Avanti!
 
-A stateful package manager for arbitrary text files. Declare what you need and where to get it; avanti fetches, diffs, and writes with full version history, atomic rollbacks, and diff-before-apply safety.
+<img
+  src="https://raw.githubusercontent.com/udondan/avanti/main/avanti.png"
+  alt="Avanti!"
+  height="200"
+  align="left"
+/>
+
+A stateful package manager for arbitrary text files. Declare what you need and
+where to get it; avanti fetches, diffs, and writes with full version history,
+atomic rollbacks, and diff-before-apply safety.
+
+<br clear="left" />
 
 ## Table of Contents
 
@@ -261,49 +272,59 @@ variables:
   email: you@example.com
 
 files:
-  - src: http://www.example.com/example.yml
-    target: my-example.yml
+  my-example.yml:
+    src: http://www.example.com/example.yml
     replace:
       - from: '{EMAIL}'
         to: $email
       - from: /\d+/
         to: number
 
-  - src: ~/some/local/file.sh
-    target: file.sh
+  file.sh:
+    src: ~/some/local/file.sh
     mode: '0777'
 
-  - src:
+  some-file.yml:
+    src:
       exec: glab api "projects/group%2Fproject/repository/files/some-file.yaml/raw?ref=main"
-    target: some-file.yml
     post: sed -e 's/v3/v4/g'
 
-  - src:
+  renovate.json:
+    src:
       gitlab:
         project: group/project
         file: renovate.json
         ref: $latest
-    # target omitted → renovate.json
 
-  - src:
+  local-scripts/:
+    src:
       github:
         repo: org/repo
         file: scripts/
         ref: main
-    target: local-scripts/
 ```
 
 ### File Entry Fields
 
-| Field     | Required    | Description                                                                                                                                                                                                                                                                                                                                                                                                 |
-| --------- | ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `src`     | Yes         | Source (see below). May be a single source or a **list** of sources to concatenate.                                                                                                                                                                                                                                                                                                                         |
-| `target`  | Conditional | Local path to write to. Required for `exec:` and `raw:` sources and when `src` is a list. May be omitted when filename is inferable. End with `/` when `src` is a directory and you want the files written individually (directory mirror). Omit the trailing slash to merge all files from the directory into a single output file (YAML/JSON auto-detected by extension, or forced with `yaml:`/`json:`). |
-| `mode`    | No          | File permission mode, e.g. `"0755"`                                                                                                                                                                                                                                                                                                                                                                         |
-| `replace` | No          | List of `{from, to}` replacement rules. `from` may be a plain string or `/pattern/flags` regex.                                                                                                                                                                                                                                                                                                             |
-| `post`    | No          | Shell script. Content is piped via stdin; stdout is used as the result. Runs after `replace`.                                                                                                                                                                                                                                                                                                               |
-| `json`    | No          | JSON merge/format options (see below). When omitted, merging is auto-enabled if all sources have a `.json` or `.jsonc` extension. Use `true`/`false` to force on or off regardless of extension.                                                                                                                                                                                                            |
-| `yaml`    | No          | YAML merge/format options (see below). When omitted, merging is auto-enabled if all sources have a `.yaml` or `.yml` extension. Use `true`/`false` to force on or off regardless of extension. Comments are preserved in merged output.                                                                                                                                                                     |
+The `files` key is a **map** — each key is the local target path, and the value is the entry configuration:
+
+```yaml
+files:
+  <target-path>:
+    src: ...
+    # optional fields below
+```
+
+End the target path with `/` to write a directory source as a mirror; omit the trailing slash to merge all files from the directory into a single output file (YAML/JSON auto-detected by extension, or forced with `yaml:`/`json:`).
+
+| Field     | Required | Description                                                                                                                                                                                                                             |
+| --------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src`     | Yes      | Source (see below). May be a single source or a **list** of sources to concatenate.                                                                                                                                                     |
+| `mode`    | No       | File permission mode, e.g. `"0755"`                                                                                                                                                                                                     |
+| `replace` | No       | List of `{from, to}` replacement rules. `from` may be a plain string or `/pattern/flags` regex.                                                                                                                                         |
+| `post`    | No       | Shell script. Content is piped via stdin; stdout is used as the result. Runs after `replace`.                                                                                                                                           |
+| `json`    | No       | JSON merge/format options (see below). When omitted, merging is auto-enabled if all sources have a `.json` or `.jsonc` extension. Use `true`/`false` to force on or off regardless of extension.                                        |
+| `yaml`    | No       | YAML merge/format options (see below). When omitted, merging is auto-enabled if all sources have a `.yaml` or `.yml` extension. Use `true`/`false` to force on or off regardless of extension. Comments are preserved in merged output. |
 
 ### Source Types
 
@@ -380,83 +401,83 @@ Use `avanti lock` to compute and write SHA values automatically. Use `avanti pul
 
 Any source type that references a path (local, GitLab, GitHub, Bitbucket, git, S3) can point to a directory instead of a single file. End the path with `/` to declare it a directory explicitly; without a trailing slash the tool probes the remote to decide.
 
-**Directory → directory (mirror):** end `target` with `/` and each file is written individually, preserving subdirectory structure relative to the source root:
+**Directory → directory (mirror):** end the target key with `/` and each file is written individually, preserving subdirectory structure relative to the source root:
 
 ```yaml
-# All files under skills/ in the GitLab repo are written into local skills.new/
-- src:
+# All files under skills/ in the GitLab repo are written into local skills/
+skills/:
+  src:
     gitlab:
       project: group/repo
       file: skills/
       ref: main
-  target: skills/
 
 # GitHub directory → local directory
-- src:
+.github/workflows/:
+  src:
     github:
       repo: org/repo
       file: .github/workflows/
       ref: main
-  target: .github/workflows/
 
 # Bitbucket directory → local directory
-- src:
+eslint/:
+  src:
     bitbucket:
       workspace: my-workspace
       repo: shared-configs
       file: eslint/
       ref: main
-  target: eslint/
 
 # git remote directory → local directory (any host)
-- src:
+.github/workflows/:
+  src:
     git:
       repo: https://github.com/org/repo.git
       file: .github/workflows/
       ref: main
-  target: .github/workflows/
 
 # S3 prefix → local directory (trailing / triggers sync)
-- src:
+configs/:
+  src:
     s3: s3://my-bucket/configs/
-  target: configs/
 
 # Local directory → local directory
-- src: ~/shared/hooks/
-  target: .githooks/
+.githooks/:
+  src: ~/shared/hooks/
 ```
 
-**Directory → single file (merge):** omit the trailing `/` from `target` and all files in the directory are merged into one. Files are sorted alphabetically — later names win on key conflicts. YAML/JSON merge is auto-detected from the contained file extensions, or forced with `yaml:`/`json:`:
+**Directory → single file (merge):** omit the trailing `/` from the target key and all files in the directory are merged into one. Files are sorted alphabetically — later names win on key conflicts. YAML/JSON merge is auto-detected from the contained file extensions, or forced with `yaml:`/`json:`:
 
 ```yaml
 # One folder per service, each a separate .yml file → single docker-compose.yml
-- src: ./services/
-  target: docker-compose.yml
+docker-compose.yml:
+  src: ./services/
 
 # Same with explicit yaml merge options (e.g. to concat arrays)
-- src: ./services/
-  target: docker-compose.yml
+docker-compose.yml:
+  src: ./services/
   yaml:
     arrays: concat
 
 # JSON: one file per environment → merged config
-- src: ./config/
-  target: config.json
+config.json:
+  src: ./config/
 ```
 
 Directory sources cannot be mixed into a multi-source list (`src` as a list), because the list mode always produces a single file.
 
-**List** — combine multiple sources into one file (all source types supported; `target` required):
+**List** — combine multiple sources into one file (all source types supported):
 
 ```yaml
-src:
-  - https://example.com/header.txt
-  - exec: echo "# generated"
-  - gitlab:
-      project: org/repo
-      file: footer.txt
-      ref: main
-target: combined.txt
+combined.txt:
+  src:
+    - https://example.com/header.txt
+    - exec: echo "# generated"
+    - gitlab:
+        project: org/repo
+        file: footer.txt
+        ref: main
 ```
 
 Sources are fetched in order and joined with a newline. Post-processing (`replace`, `post`) is applied to the combined result. If any source fails, the entire entry is aborted.
@@ -467,20 +488,20 @@ When all sources in a list have a `.json` or `.jsonc` extension, JSON merging is
 
 ```yaml
 files:
-  - src:
+  merged.jsonc:
+    src:
       - ./team.jsonc
       - ./my.jsonc
-    target: merged.jsonc
 ```
 
 To merge sources that don't have a JSON extension (e.g. `exec:`, `raw:`, or a URL without `.json`), set `json: true`:
 
 ```yaml
 files:
-  - src:
+  merged.json:
+    src:
       - exec: cat defaults.json
       - ./overrides.json
-    target: merged.json
     json: true
 ```
 
@@ -490,12 +511,12 @@ To opt out of auto-detection and force plain concatenation, set `json: false`.
 
 ```yaml
 files:
-  - src:
+  merged.json:
+    src:
       - ./defaults.json
-      - type: github
-        repo: org/configs
-        file: overrides.json
-    target: merged.json
+      - github:
+          repo: org/configs
+          file: overrides.json
     json:
       conflicts: last_wins # abort | first_wins | last_wins (default)
       arrays: replace # replace (default) | concat
@@ -517,8 +538,8 @@ files:
 
 ```yaml
 files:
-  - src: ./minified.json
-    target: pretty.json
+  pretty.json:
+    src: ./minified.json
 ```
 
 ### YAML Merging
@@ -527,20 +548,20 @@ When all sources in a list have a `.yaml` or `.yml` extension, YAML merging is e
 
 ```yaml
 files:
-  - src:
+  merged.yaml:
+    src:
       - ./defaults.yaml
       - ./overrides.yml
-    target: merged.yaml
 ```
 
 To merge sources that don't have a YAML extension (e.g. `exec:`, `raw:`, or a URL without `.yaml`), set `yaml: true`:
 
 ```yaml
 files:
-  - src:
+  merged.yaml:
+    src:
       - exec: cat defaults.yaml
       - ./overrides.yaml
-    target: merged.yaml
     yaml: true
 ```
 
@@ -550,12 +571,12 @@ To opt out of auto-detection and force plain concatenation, set `yaml: false`.
 
 ```yaml
 files:
-  - src:
+  merged.yaml:
+    src:
       - ./defaults.yaml
-      - type: github
-        repo: org/configs
-        file: overrides.yaml
-    target: merged.yaml
+      - github:
+          repo: org/configs
+          file: overrides.yaml
     yaml:
       conflicts: last_wins # abort | first_wins | last_wins (default)
       arrays: replace # replace (default) | concat
@@ -581,8 +602,8 @@ The options behave identically to JSON merging:
 
 ```yaml
 files:
-  - src: ./config.yaml
-    target: config.yaml
+  config.yaml:
+    src: ./config.yaml
 ```
 
 ### Variables
@@ -599,7 +620,8 @@ Reference them anywhere in the config with `$name`:
 
 ```yaml
 files:
-  - src:
+  renovate.json:
+    src:
       gitlab:
         project: group/project
         file: renovate.json
@@ -609,7 +631,7 @@ files:
         to: $email # resolved to "you@example.com"
 ```
 
-Variables are resolved in every string field: `target`, `ref`, `exec` commands, HTTP URLs, local paths, `raw` content, `replace` rules (`from` and `to`), and `post` scripts.
+Variables are resolved in every string field: target keys, `ref`, `exec` commands, HTTP URLs, local paths, `raw` content, `replace` rules (`from` and `to`), and `post` scripts.
 
 For `raw:` sources, variables are resolved in the content itself. For all other source types (`http`, `local`, `github`, `gitlab`, `exec`), variables are only resolved in the fields that locate the source (URL, path, command) — not in the fetched content. Use a `replace:` rule if you need to substitute values in fetched content.
 
@@ -620,9 +642,9 @@ variables:
   version: '1.0'
 
 files:
-  - src:
+  data.json:
+    src:
       exec: curl https://example.com/api/$version/data # expands to: curl …/'1.0'/data
-    target: data.json
     post: sed 's/$version/replaced/g' # expands to: sed 's/'\''1.0'\''/replaced/g'
 ```
 
@@ -690,31 +712,33 @@ variables:
   standards_ref: v2.4.1 # pinned — bump here to upgrade
 
 files:
-  - src:
+  eslint.config.js:
+    src:
       github:
         repo: $frontend_standards
         file: eslint.config.js
         ref: $standards_ref
 
-  - src:
+  .prettierrc:
+    src:
       github:
         repo: $frontend_standards
         file: .prettierrc
         ref: $standards_ref
 
-  - src:
+  .github/workflows/test.yml:
+    src:
       github:
         repo: $platform
         file: workflows/test.yml
         ref: $standards_ref
-    target: .github/workflows/test.yml
 
-  - src:
+  .github/workflows/deploy.yml:
+    src:
       github:
         repo: $platform
         file: workflows/deploy.yml
         ref: $standards_ref
-    target: .github/workflows/deploy.yml
 ```
 
 **Review and apply upgrades** — the same workflow as reading a lockfile diff before committing:
@@ -731,13 +755,15 @@ avanti revert  # roll back instantly if something breaks
 ```yaml
 # myorg/frontend-standards:avanti-snippet.yml — published alongside eslint.config.js, .prettierrc, etc.
 files:
-  - src:
+  eslint.config.js:
+    src:
       github:
         repo: myorg/frontend-standards
         file: eslint.config.js
         ref: $latest
 
-  - src:
+  .prettierrc:
+    src:
       github:
         repo: myorg/frontend-standards
         file: .prettierrc
@@ -747,7 +773,8 @@ files:
 ```yaml
 # .avanti.yml — assembled from team snippets via YAML merge
 files:
-  - src:
+  .avanti.yml:
+    src:
       - github:
           repo: myorg/frontend-standards
           file: avanti-snippet.yml
@@ -756,7 +783,6 @@ files:
           repo: myorg/platform-templates
           file: avanti-snippet.yml
           ref: $latest
-    target: .avanti.yml
     yaml:
       arrays: concat # file lists from all snippets are concatenated
       conflicts: last_wins
@@ -776,7 +802,8 @@ variables:
   oncall_channel: '#backend-oncall'
 
 files:
-  - src:
+  CLAUDE.md:
+    src:
       - raw: |
           # AI Assistant Guidelines
           <!-- THIS FILE IS MANAGED — run `avanti pull` to update -->
@@ -793,7 +820,6 @@ files:
           Team: $team
           Jira project: $jira_project
           Oncall: $oncall_channel
-    target: CLAUDE.md
 ```
 
 ### Shared Tooling Config (Renovate, ESLint, Prettier, TSConfig)
@@ -805,19 +831,22 @@ variables:
   standards_ref: v2.4.1
 
 files:
-  - src:
+  renovate.json:
+    src:
       github:
         repo: org/standards
         file: renovate.json
         ref: $standards_ref
 
-  - src:
+  eslint.config.js:
+    src:
       github:
         repo: org/standards
         file: eslint.config.js
         ref: $standards_ref
 
-  - src:
+  tsconfig.base.json:
+    src:
       github:
         repo: org/standards
         file: tsconfig.base.json
@@ -828,13 +857,13 @@ For YAML-based configs (Helm values, k8s manifests, Docker Compose overrides), u
 
 ```yaml
 files:
-  - src:
+  ./helm/merged-values.yaml:
+    src:
       - github:
           repo: org/platform
           file: helm/base-values.yaml # shared defaults for all services
           ref: $standards_ref
       - ./helm/values.yaml # project overrides
-    target: ./helm/merged-values.yaml
     yaml:
       conflicts: last_wins # project overrides win
       arrays: concat # e.g. extra env vars are appended, not replaced
@@ -846,14 +875,14 @@ Pull reusable CI steps from a central repo into each project. A managed header m
 
 ```yaml
 files:
-  - src:
+  .github/workflows/security-scan.yml:
+    src:
       - raw: |
           # THIS FILE IS MANAGED — run `avanti pull` to update
       - github:
           repo: org/ci-templates
           file: workflows/security-scan.yml
           ref: main
-    target: .github/workflows/security-scan.yml
 ```
 
 Use `avanti diff` in CI to detect drift — if a project's checked-in file no longer matches the source, the pipeline fails.
@@ -914,12 +943,12 @@ variables:
   region: eu-west-1
 
 files:
-  - src:
+  k8s/deployment.yaml:
+    src:
       github:
         repo: org/infra
         file: k8s/deployment-template.yaml
         ref: $env:DEPLOY_VERSION
-    target: k8s/deployment.yaml
     replace:
       - from: '{ENV}'
         to: $env:ENVIRONMENT
@@ -936,24 +965,24 @@ Pull secrets at runtime and write them to local files with tight permissions. Th
 ```yaml
 files:
   # Single field from a Vault KV secret
-  - src:
+  config/db_password.txt:
+    src:
       vault:
         path: secret/myapp/db
         field: password
-    target: config/db_password.txt
     mode: '0600'
 
   # Full Vault secret as JSON
-  - src:
+  config/secrets.json:
+    src:
       vault:
         path: secret/myapp/config
-    target: config/secrets.json
     mode: '0600'
 
   # Config file stored in S3
-  - src:
+  config/app.json:
+    src:
       s3: s3://my-bucket/configs/app.json
-    target: config/app.json
     mode: '0600'
 ```
 
@@ -961,13 +990,13 @@ For AWS SSM or other secret stores without a dedicated source type, `exec:` stil
 
 ```yaml
 files:
-  - src:
+  config/db.json:
+    src:
       exec: >
         aws ssm get-parameter
         --name /myapp/db-config
         --with-decryption
         --query Parameter.Value --output text
-    target: config/db.json
     mode: '0600'
 ```
 
@@ -994,7 +1023,8 @@ variables:
   db_password: changeme
 
 files:
-  - src:
+  docker-compose.yml:
+    src:
       - github:
           repo: n8n-io/n8n-hosting
           file: docker-caddy/docker-compose.yml
@@ -1003,7 +1033,6 @@ files:
           repo: docker-library/docs
           file: postgres/compose.yaml
           ref: master
-    target: docker-compose.yml
     replace:
       - from: '${N8N_VERSION}'
         to: $n8n_version # pin version at pull time
@@ -1026,19 +1055,22 @@ A single `avanti pull` populates a new project with everything it needs: editor 
 
 ```yaml
 files:
-  - src:
+  .editorconfig:
+    src:
       github:
         repo: org/standards
         file: .editorconfig
         ref: main
 
-  - src:
+  .prettierrc:
+    src:
       github:
         repo: org/standards
         file: .prettierrc
         ref: main
 
-  - src:
+  CLAUDE.md:
+    src:
       - raw: |
           # AI Assistant Guidelines
           <!-- THIS FILE IS MANAGED — run `avanti pull` to update -->
@@ -1046,14 +1078,13 @@ files:
           repo: org/ai-standards
           file: CLAUDE.md
           ref: main
-    target: CLAUDE.md
 
-  - src:
+  .github/workflows/:
+    src:
       github:
         repo: org/ci-templates
         file: workflows/
         ref: main
-    target: .github/workflows/
 ```
 
 ### Self-managing Config
@@ -1069,25 +1100,25 @@ variables:
 
 files:
   # Keep this config itself up to date
-  - src:
+  ~/.avanti.yml:
+    src:
       github:
         repo: $dotfiles
         file: avanti.yml
         ref: $latest
-    target: ~/.avanti.yml
 
   # Everything else the config manages
-  - src:
+  ~/.zshrc:
+    src:
       github:
         repo: $dotfiles
         file: .zshrc
-    target: ~/.zshrc
 
-  - src:
+  ~/.gitconfig:
+    src:
       github:
         repo: $dotfiles
         file: .gitconfig
-    target: ~/.gitconfig
 ```
 
 **Composable self-managing config** — YAML merge takes this further. Instead of one canonical config, compose your `~/.avanti.yml` from org-wide defaults, team additions, and personal overrides — all merged automatically on every pull:
@@ -1095,7 +1126,8 @@ files:
 ```yaml
 # ~/.avanti.yml — bootstrapped once, then self-updating via YAML merge
 files:
-  - src:
+  ~/.avanti.yml:
+    src:
       - github:
           repo: myorg/platform
           file: avanti/base.yml # org-wide entries and variables
@@ -1108,7 +1140,6 @@ files:
           repo: myuser/dotfiles
           file: avanti/personal.yml # personal overrides and extras
           ref: main
-    target: ~/.avanti.yml
     yaml:
       conflicts: last_wins # personal overrides win over team, team over org
       arrays: concat # file lists from all layers are merged, not replaced

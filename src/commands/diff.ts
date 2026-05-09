@@ -55,7 +55,7 @@ export function diffCommand(): Command {
 
         const vars = config.variables ?? {};
 
-        for (const entry of config.files) {
+        for (const entry of Object.values(config.files)) {
           try {
             const result = await fetchSource(entry, workingDir, vars);
             for (const rec of result.sourceRecords) {
