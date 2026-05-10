@@ -1,7 +1,14 @@
 import { Command } from 'commander';
 import * as path from 'path';
-import { loadConfig, normalizeConfigKey, resolveConfigPath } from '../config';
-import { fetchSource } from '../sources';
+import {
+  isRemoteConfigSpec,
+  loadConfig,
+  normalizeConfigKey,
+  parseConfigContent,
+  resolveConfigPath,
+  SELF_KEY,
+} from '../config';
+import { fetchSource, FetchCache } from '../sources';
 import { applyReplace } from '../processors/replace';
 import { applyPost } from '../processors/post';
 import {
@@ -11,7 +18,68 @@ import {
   resolveTargetPath,
 } from '../diff';
 import { FileDiff } from '../diff';
+import { AvantiConfig } from '../types';
 import { HistoryManager } from '../history';
+
+interface DiffLoopResult {
+  allDiffs: FileDiff[];
+  hasError: boolean;
+  selfContent?: string;
+}
+
+async function runDiffLoop(
+  config: AvantiConfig,
+  workingDir: string,
+  cache?: FetchCache,
+): Promise<DiffLoopResult> {
+  const vars = config.variables ?? {};
+  const allDiffs: FileDiff[] = [];
+  let hasError = false;
+  let selfContent: string | undefined;
+
+  const hasSelf = SELF_KEY in config.files;
+  for (const [key, entry] of Object.entries(config.files)) {
+    const isSelf = key === SELF_KEY;
+    if (hasSelf && !isSelf) continue;
+    try {
+      const result = await fetchSource(entry, workingDir, vars, cache);
+      for (const rec of result.sourceRecords) {
+        if (!rec.matched) {
+          console.error(
+            `⚠  SHA mismatch for ${rec.sourceLabel}\n` +
+              `   expected: ${rec.expectedSha}\n` +
+              `   got:      ${rec.observedSha}`,
+          );
+        }
+      }
+      if (isSelf && result.files.size !== 1) {
+        throw new Error(
+          `$self must resolve to exactly one file, got ${result.files.size}. Use yaml: true or json: true to merge multiple sources into one.`,
+        );
+      }
+
+      for (const [relPath, rawContent] of result.files) {
+        let content = rawContent;
+        if (entry.replace?.length)
+          content = applyReplace(content, entry.replace, vars);
+        if (entry.post) content = applyPost(content, entry.post, vars);
+        if (isSelf) {
+          selfContent = content;
+          continue;
+        }
+        const targetPath = resolveTargetPath(entry, relPath, workingDir, vars);
+        allDiffs.push(computeDiff(targetPath, content));
+      }
+    } catch (err: unknown) {
+      console.error(
+        `Error processing ${JSON.stringify(entry.src)}: ${(err as Error).message}`,
+      );
+      hasError = true;
+    }
+  }
+
+  return { allDiffs, hasError, selfContent };
+}
 
 export function diffCommand(): Command {
   return new Command('diff')
@@ -50,41 +118,92 @@ export function diffCommand(): Command {
           console.error((err as Error).message);
           process.exit(2);
         }
-        const allDiffs: FileDiff[] = [];
-        let hasError = false;
 
-        const vars = config.variables ?? {};
+        const fetchCache: FetchCache | undefined =
+          SELF_KEY in config.files ? new Map() : undefined;
+        const firstPass = await runDiffLoop(config, workingDir, fetchCache);
+        let { allDiffs, hasError } = firstPass;
 
-        for (const entry of Object.values(config.files)) {
-          try {
-            const result = await fetchSource(entry, workingDir, vars);
-            for (const rec of result.sourceRecords) {
-              if (!rec.matched) {
-                console.error(
-                  `⚠  SHA mismatch for ${rec.sourceLabel}\n` +
-                    `   expected: ${rec.expectedSha}\n` +
-                    `   got:      ${rec.observedSha}`,
+        if (hasError) process.exit(2);
+
+        if (firstPass.selfContent !== undefined) {
+          let prevSelfContent: string | undefined;
+          let currentSelfContent = firstPass.selfContent;
+          let stableConfig: AvantiConfig | undefined;
+
+          while (stableConfig === undefined) {
+            let currentConfig: AvantiConfig;
+            try {
+              currentConfig = parseConfigContent(currentSelfContent);
+            } catch (err: unknown) {
+              console.error(
+                `$self config is invalid: ${(err as Error).message}`,
+              );
+              process.exit(2);
+            }
+
+            if (
+              !(SELF_KEY in currentConfig.files) ||
+              currentSelfContent === prevSelfContent
+            ) {
+              stableConfig = currentConfig;
+              break;
+            }
+
+            console.log(
+              '$self config resolved; re-evaluating with merged config...',
+            );
+            const next = await runDiffLoop(
+              currentConfig,
+              workingDir,
+              fetchCache,
+            );
+
+            if (next.hasError) {
+              hasError = true;
+              break;
+            }
+
+            if (next.selfContent === undefined) {
+              stableConfig = currentConfig;
+              break;
+            }
+
+            prevSelfContent = currentSelfContent;
+            currentSelfContent = next.selfContent;
+          }
+
+          if (stableConfig !== undefined) {
+            // Use Object.create(null) to preserve the null-prototype invariant
+            // established by parseConfigContent and avoid prototype pollution.
+            const filesWithoutSelf = Object.create(
+              null,
+            ) as typeof stableConfig.files;
+            for (const [k, v] of Object.entries(stableConfig.files)) {
+              if (k !== SELF_KEY) filesWithoutSelf[k] = v;
+            }
+            if (Object.keys(filesWithoutSelf).length > 0) {
+              const second = await runDiffLoop(
+                { ...stableConfig, files: filesWithoutSelf },
+                workingDir,
+                fetchCache,
+              );
+              allDiffs = second.allDiffs;
+              hasError = second.hasError;
+            }
+            if (!isRemoteConfigSpec(configPath)) {
+              const existingIdx = allDiffs.findIndex(
+                (d) => d.targetPath === configPath,
+              );
+              if (existingIdx === -1) {
+                allDiffs.push(computeDiff(configPath, currentSelfContent));
+              } else {
+                allDiffs[existingIdx] = computeDiff(
+                  configPath,
+                  currentSelfContent,
                 );
               }
             }
-            for (const [relPath, rawContent] of result.files) {
-              let content = rawContent;
-              if (entry.replace?.length)
-                content = applyReplace(content, entry.replace, vars);
-              if (entry.post) content = applyPost(content, entry.post, vars);
-              const targetPath = resolveTargetPath(
-                entry,
-                relPath,
-                workingDir,
-                vars,
-              );
-              allDiffs.push(computeDiff(targetPath, content));
-            }
-          } catch (err: unknown) {
-            console.error(
-              `Error processing ${JSON.stringify(entry.src)}: ${(err as Error).message}`,
-            );
-            hasError = true;
           }
         }
 
