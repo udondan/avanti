@@ -1110,44 +1110,29 @@ files:
 
 ### Self-managing Config
 
-avanti can sync any file — including its own config. Put the canonical config in a central repo and add a self-update entry. Every `avanti pull` refreshes the config alongside all other managed files.
-
-When avanti detects that a pull would update the local config file, it automatically re-evaluates the new config in memory and applies all the files it describes — in the same run, with a single confirmation prompt and a single atomic write. You don't need to run `avanti pull` twice to get the new config's files.
+avanti can manage any file — including its own config. The special `$self` key in the `files:` map fetches and merges one or more sources, uses the result as the active config, and then applies all the files it declares — in the same run, with a single confirmation prompt.
 
 ```yaml
 # ~/.avanti.yml
-variables:
-  dotfiles: myorg/dotfiles
-
 files:
-  # Keep this config itself up to date
-  ~/.avanti.yml:
+  $self:
     src:
       github:
-        repo: $dotfiles
+        repo: myorg/dotfiles
         file: avanti.yml
         ref: $latest
-
-  # Everything else the config manages
-  ~/.zshrc:
-    src:
-      github:
-        repo: $dotfiles
-        file: .zshrc
-
-  ~/.gitconfig:
-    src:
-      github:
-        repo: $dotfiles
-        file: .gitconfig
 ```
 
-**Composable self-managing config** — YAML merge takes this further. Instead of one canonical config, compose your `~/.avanti.yml` from org-wide defaults, team additions, and personal overrides — all merged automatically on every pull:
+Every `avanti pull` fetches the remote `avanti.yml`, applies all the files it declares, and writes the merged result back to `~/.avanti.yml`. If the remote `avanti.yml` itself contains a `$self` entry, avanti keeps re-fetching until the content stabilizes — so the remote config can keep pointing at itself and avanti will always pick up the latest version on every pull.
+
+When running with a remote config (`--config github:...`), `$self` is in-memory only — the merged result drives the run but is not persisted anywhere, since there is no local file to write back to.
+
+**Composable config** — `$self` with multiple sources and YAML merge lets you assemble a config from independent layers. Org-wide defaults, team additions, and personal overrides all merge into one active config:
 
 ```yaml
-# ~/.avanti.yml — bootstrapped once, then self-updating via YAML merge
+# ~/.avanti.yml
 files:
-  ~/.avanti.yml:
+  $self:
     src:
       - github:
           repo: myorg/platform

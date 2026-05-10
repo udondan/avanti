@@ -6,8 +6,9 @@ import {
   normalizeConfigKey,
   parseConfigContent,
   resolveConfigPath,
+  SELF_KEY,
 } from '../config';
-import { fetchSource, SourceFetchRecord } from '../sources';
+import { fetchSource, FetchCache, SourceFetchRecord } from '../sources';
 import { applyReplace } from '../processors/replace';
 import { applyPost } from '../processors/post';
 import {
@@ -35,11 +36,15 @@ interface FetchLoopResult {
   hasError: boolean;
   shaErrors: ShaError[];
   sourceRecordsByTarget: Map<string, SourceFetchRecord[]>;
+  selfContent?: string;
+  selfMode?: string;
+  selfSourceRecords?: SourceFetchRecord[];
 }
 
 async function runFetchLoop(
   config: AvantiConfig,
   workingDir: string,
+  cache?: FetchCache,
 ): Promise<FetchLoopResult> {
   const vars = config.variables ?? {};
   const writeTargets: WriteTarget[] = [];
@@ -48,10 +53,16 @@ async function runFetchLoop(
   const seenShaErrorLabels = new Set<string>();
   const sourceRecordsByTarget = new Map<string, SourceFetchRecord[]>();
   let hasError = false;
+  let selfContent: string | undefined;
+  let selfMode: string | undefined;
+  let selfSourceRecords: SourceFetchRecord[] | undefined;
 
-  for (const entry of Object.values(config.files)) {
+  const hasSelf = SELF_KEY in config.files;
+  for (const [key, entry] of Object.entries(config.files)) {
+    const isSelf = key === SELF_KEY;
+    if (hasSelf && !isSelf) continue;
     try {
-      const result = await fetchSource(entry, workingDir, vars);
+      const result = await fetchSource(entry, workingDir, vars, cache);
 
       for (const rec of result.sourceRecords) {
         if (!rec.matched && !seenShaErrorLabels.has(rec.sourceLabel)) {
@@ -64,11 +75,24 @@ async function runFetchLoop(
         }
       }
 
+      if (isSelf && result.files.size !== 1) {
+        throw new Error(
+          `$self must resolve to exactly one file, got ${result.files.size}. Use yaml: true or json: true to merge multiple sources into one.`,
+        );
+      }
+
       for (const [relPath, rawContent] of result.files) {
         let content = rawContent;
         if (entry.replace?.length)
           content = applyReplace(content, entry.replace, vars);
         if (entry.post) content = applyPost(content, entry.post, vars);
+        if (isSelf) {
+          selfContent = content;
+          selfMode = entry.mode;
+          if (result.sourceRecords.length > 0)
+            selfSourceRecords = result.sourceRecords;
+          continue;
+        }
         const targetPath = resolveTargetPath(entry, relPath, workingDir, vars);
         allDiffs.push(computeDiff(targetPath, content));
         writeTargets.push({ targetPath, content, mode: entry.mode });
@@ -84,7 +108,16 @@ async function runFetchLoop(
     }
   }
 
-  return { writeTargets, allDiffs, hasError, shaErrors, sourceRecordsByTarget };
+  return {
+    writeTargets,
+    allDiffs,
+    hasError,
+    shaErrors,
+    sourceRecordsByTarget,
+    selfContent,
+    selfMode,
+    selfSourceRecords,
+  };
 }
 
 function printShaErrors(errors: ShaError[]): void {
@@ -130,7 +163,9 @@ export function pullCommand(): Command {
       const historyAvailable = history.ensureStorageDir();
       const pullId = historyAvailable ? history.openPullSession() : null;
 
-      const firstPass = await runFetchLoop(config, workingDir);
+      const fetchCache: FetchCache | undefined =
+        SELF_KEY in config.files ? new Map() : undefined;
+      const firstPass = await runFetchLoop(config, workingDir, fetchCache);
       let { writeTargets, allDiffs, sourceRecordsByTarget } = firstPass;
 
       if (firstPass.hasError) {
@@ -147,19 +182,92 @@ export function pullCommand(): Command {
         process.exit(2);
       }
 
-      // Detect self-config update: only applies to local config files
-      if (!isRemoteConfigSpec(configPath)) {
-        const configIdx = writeTargets.findIndex(
-          (t) => t.targetPath === configPath,
-        );
-        if (configIdx !== -1 && allDiffs[configIdx].hasChanges) {
-          const newConfigContent = writeTargets[configIdx].content;
+      // $self stabilization loop: keep fetching $self until content converges,
+      // then fetch all non-$self file entries from the stable config.
+      if (firstPass.selfContent !== undefined) {
+        let prevSelfContent: string | undefined;
+        let currentSelfContent = firstPass.selfContent;
+        let currentSelfMode = firstPass.selfMode;
+        let currentSelfSourceRecords = firstPass.selfSourceRecords;
+        let stableConfig: AvantiConfig | undefined;
+
+        while (stableConfig === undefined) {
+          let currentConfig: AvantiConfig;
           try {
-            const newConfig = parseConfigContent(newConfigContent);
-            console.log('Config updated; re-evaluating with new config...');
-            const second = await runFetchLoop(newConfig, workingDir);
+            currentConfig = parseConfigContent(currentSelfContent);
+          } catch (err: unknown) {
+            console.error(`$self config is invalid: ${(err as Error).message}`);
+            process.exit(2);
+          }
+
+          // Stable when: merged config has no $self, or fetching $self produced
+          // the same content as the previous iteration (fixed point reached).
+          if (
+            !(SELF_KEY in currentConfig.files) ||
+            currentSelfContent === prevSelfContent
+          ) {
+            stableConfig = currentConfig;
+            break;
+          }
+
+          console.log(
+            '$self config resolved; re-evaluating with merged config...',
+          );
+          const next = await runFetchLoop(
+            currentConfig,
+            workingDir,
+            fetchCache,
+          );
+
+          if (next.hasError) {
+            console.error(
+              'Aborting due to errors in $self re-evaluated config.',
+            );
+            process.exit(2);
+          }
+          if (next.shaErrors.length > 0 && !opts.acceptChanges) {
+            printShaErrors(next.shaErrors);
+            console.error(
+              '\nRun `avanti pull --accept-changes` to review the diff and update SHA values.',
+            );
+            process.exit(2);
+          }
+          const seenInLoop = new Set(
+            firstPass.shaErrors.map((e) => e.sourceLabel),
+          );
+          for (const e of next.shaErrors) {
+            if (!seenInLoop.has(e.sourceLabel)) firstPass.shaErrors.push(e);
+          }
+
+          if (next.selfContent === undefined) {
+            stableConfig = currentConfig;
+            break;
+          }
+
+          prevSelfContent = currentSelfContent;
+          currentSelfContent = next.selfContent;
+          currentSelfMode = next.selfMode;
+          currentSelfSourceRecords = next.selfSourceRecords;
+        }
+
+        if (stableConfig !== undefined) {
+          // Fetch all non-$self entries from the stable config.
+          // Use Object.create(null) to preserve the null-prototype invariant
+          // established by parseConfigContent and avoid prototype pollution.
+          const filesWithoutSelf = Object.create(
+            null,
+          ) as typeof stableConfig.files;
+          for (const [k, v] of Object.entries(stableConfig.files)) {
+            if (k !== SELF_KEY) filesWithoutSelf[k] = v;
+          }
+          if (Object.keys(filesWithoutSelf).length > 0) {
+            const second = await runFetchLoop(
+              { ...stableConfig, files: filesWithoutSelf },
+              workingDir,
+              fetchCache,
+            );
             if (second.hasError) {
-              console.error('Aborting due to errors in re-evaluated config.');
+              console.error('Aborting due to errors.');
               process.exit(2);
             }
             if (second.shaErrors.length > 0 && !opts.acceptChanges) {
@@ -169,31 +277,49 @@ export function pullCommand(): Command {
               );
               process.exit(2);
             }
-            const configInSecond = second.writeTargets.findIndex(
-              (t) => t.targetPath === configPath,
-            );
-            if (configInSecond === -1) {
-              second.writeTargets.push(writeTargets[configIdx]);
-              second.allDiffs.push(allDiffs[configIdx]);
-              const firstPassRecords = sourceRecordsByTarget.get(configPath);
-              if (firstPassRecords) {
-                second.sourceRecordsByTarget.set(configPath, firstPassRecords);
-              }
-            }
             writeTargets = second.writeTargets;
             allDiffs = second.allDiffs;
             sourceRecordsByTarget = second.sourceRecordsByTarget;
-            const existingLabels = new Set(
+            const seenInSecond = new Set(
               firstPass.shaErrors.map((e) => e.sourceLabel),
             );
             for (const e of second.shaErrors) {
-              if (!existingLabels.has(e.sourceLabel))
-                firstPass.shaErrors.push(e);
+              if (!seenInSecond.has(e.sourceLabel)) firstPass.shaErrors.push(e);
             }
-          } catch (err: unknown) {
-            console.warn(
-              `Warning: updated config is invalid, skipping re-evaluation: ${(err as Error).message}`,
+          }
+          // For local configs, write the stable $self content back to disk.
+          // If the stable config also declares a file entry for configPath,
+          // replace it with the stabilized $self content so the on-disk config
+          // always matches what was actually used for this run.
+          if (!isRemoteConfigSpec(configPath)) {
+            const existingIdx = writeTargets.findIndex(
+              (t) => t.targetPath === configPath,
             );
+            if (existingIdx === -1) {
+              writeTargets.push({
+                targetPath: configPath,
+                content: currentSelfContent,
+                mode: currentSelfMode,
+              });
+              allDiffs.push(computeDiff(configPath, currentSelfContent));
+            } else {
+              writeTargets[existingIdx] = {
+                ...writeTargets[existingIdx],
+                content: currentSelfContent,
+                mode: currentSelfMode ?? writeTargets[existingIdx].mode,
+              };
+              allDiffs[existingIdx] = computeDiff(
+                configPath,
+                currentSelfContent,
+              );
+            }
+            // Content comes from $self — attribute the config file write to the
+            // $self sources so history reflects the actual origin.
+            if (currentSelfSourceRecords !== undefined) {
+              sourceRecordsByTarget.set(configPath, currentSelfSourceRecords);
+            } else {
+              sourceRecordsByTarget.delete(configPath);
+            }
           }
         }
       }

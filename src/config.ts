@@ -24,6 +24,8 @@ import { fetchHttp } from './sources/http';
 import { fetchGitHub } from './sources/github';
 import { fetchGitLab } from './sources/gitlab';
 
+export const SELF_KEY = '$self';
+
 const CONFIG_CANDIDATES = [
   '.avanti.yml',
   '.avanti.yaml',

@@ -82,4 +82,12 @@ describe('atomicWrite', () => {
     atomicWrite([{ targetPath: dest, content: 'new content' }]);
     expect(fs.readFileSync(dest, 'utf8')).toBe('new content');
   });
+
+  it('preserves existing file permission bits when no mode is specified', () => {
+    const dest = path.join(tmpDir, 'secret.txt');
+    fs.writeFileSync(dest, 'original', 'utf8');
+    fs.chmodSync(dest, 0o600);
+    atomicWrite([{ targetPath: dest, content: 'updated' }]);
+    expect(fs.statSync(dest).mode & 0o777).toBe(0o600);
+  });
 });

@@ -107,6 +107,13 @@ export interface FetchResult {
   sourceRecords: SourceFetchRecord[];
 }
 
+export type FetchCache = Map<string, { files: Map<string, string> }>;
+
+// labelForSrc returns the source label used in SourceFetchRecord. Structured
+// sources (github:, gitlab:, etc.) keep variable references unresolved so the
+// label matches the literal YAML values that applyUpdatedShas reads for SHA
+// writeback. Plain-string sources resolve variables since they don't support
+// SHA pinning.
 function labelForSrc(src: FileSrc, vars: Variables): string {
   if (typeof src === 'string') return resolveVars(src, vars);
   if ('github' in src) {
@@ -138,6 +145,45 @@ function labelForSrc(src: FileSrc, vars: Variables): string {
   return JSON.stringify(src);
 }
 
+// cacheKeyForSrc returns a fully-resolved key for FetchCache so that sources
+// using variables are correctly distinguished when vars change between
+// stabilization iterations, and raw: sources are keyed by their content.
+function cacheKeyForSrc(src: FileSrc, vars: Variables): string {
+  if (typeof src === 'string') return resolveVars(src, vars);
+  if ('github' in src) {
+    const ref = src.github.ref ? `@${resolveVars(src.github.ref, vars)}` : '';
+    return `github:${resolveVars(src.github.repo, vars)}:${resolveVars(src.github.file, vars)}${ref}`;
+  }
+  if ('gitlab' in src) {
+    const ref = src.gitlab.ref ? `@${resolveVars(src.gitlab.ref, vars)}` : '';
+    return `gitlab:${resolveVars(src.gitlab.project, vars)}:${resolveVars(src.gitlab.file, vars)}${ref}`;
+  }
+  if ('bitbucket' in src) {
+    const ref = src.bitbucket.ref
+      ? `@${resolveVars(src.bitbucket.ref, vars)}`
+      : '';
+    return `bitbucket:${resolveVars(src.bitbucket.workspace, vars)}/${resolveVars(src.bitbucket.repo, vars)}:${resolveVars(src.bitbucket.file, vars)}${ref}`;
+  }
+  if ('git' in src) {
+    const ref = src.git.ref ? `@${resolveVars(src.git.ref, vars)}` : '';
+    return `git:${resolveVars(src.git.repo, vars)}:${resolveVars(src.git.file, vars)}${ref}`;
+  }
+  if ('exec' in src) return `exec:${resolveVars(src.exec, vars)}`;
+  if ('s3' in src) return `s3:${resolveVars(src.s3, vars)}`;
+  if ('vault' in src) {
+    const field = src.vault.field
+      ? `#${resolveVars(src.vault.field, vars)}`
+      : '';
+    return `vault:${resolveVars(src.vault.path, vars)}${field}`;
+  }
+  if ('http' in src) return `http:${resolveVars(src.http, vars)}`;
+  if ('path' in src) return `path:${resolveVars(src.path, vars)}`;
+  if ('url' in src) return `url:${resolveVars(src.url, vars)}`;
+  // raw: key includes the resolved content so distinct raw values don't collide
+  if ('raw' in src) return `raw:${resolveVars(src.raw, vars)}`;
+  return JSON.stringify(src);
+}
+
 function expectedShaForSrc(src: FileSrc): string | undefined {
   if (typeof src === 'string') return undefined;
   if ('github' in src) return src.github.sha;
@@ -159,6 +205,22 @@ function shaSupported(src: FileSrc): boolean {
   return true;
 }
 
+function buildRecord(
+  src: FileSrc,
+  files: Map<string, string>,
+  vars: Variables,
+): SourceFetchRecord | null {
+  if (!shaSupported(src)) return null;
+  const observedSha = computeFilesSha(files);
+  const expectedSha = expectedShaForSrc(src);
+  return {
+    sourceLabel: labelForSrc(src, vars),
+    observedSha,
+    expectedSha,
+    matched: expectedSha === undefined || expectedSha === observedSha,
+  };
+}
+
 function computeFilesSha(files: Map<string, string>): string {
   // Always include filename in the hash so a rename/path change affects the SHA
   // consistently, whether the source resolves to one file or many.
@@ -175,69 +237,42 @@ function computeFilesSha(files: Map<string, string>): string {
   return hash.digest('hex');
 }
 
-async function fetchOneSrc(
+async function _fetchOneSrcRaw(
   src: FileSrc,
   workingDir: string,
   vars: Variables,
-): Promise<{
-  files: Map<string, string>;
-  record: SourceFetchRecord | null;
-  skipped?: boolean;
-}> {
+): Promise<{ files: Map<string, string>; skipped?: boolean }> {
   if (typeof src === 'string') {
     const resolved = resolveVars(src, vars);
     if (resolved.startsWith('http://') || resolved.startsWith('https://')) {
       const content = await fetchHttp(resolved);
       const filename = inferFilenameFromUrl(resolved) ?? 'download';
-      return {
-        files: new Map([[filename, content]]),
-        record: null,
-      };
+      return { files: new Map([[filename, content]]) };
     }
-    return { files: fetchLocal(resolved, workingDir).files, record: null };
+    return { files: fetchLocal(resolved, workingDir).files };
   }
 
   if ('raw' in src) {
-    return {
-      files: new Map([['output', resolveVars(src.raw, vars)]]),
-      record: null,
-    };
+    return { files: new Map([['output', resolveVars(src.raw, vars)]]) };
   }
 
   if ('path' in src) {
     const resolved = resolveVars(src.path, vars);
     const result = fetchLocal(resolved, workingDir, src.optional ?? false);
     if (result.missing) {
-      return { files: new Map(), record: null, skipped: true };
+      return { files: new Map(), skipped: true };
     }
-    const observedSha = computeFilesSha(result.files);
-    const expectedSha = src.sha;
-    const record: SourceFetchRecord = {
-      sourceLabel: labelForSrc(src, vars),
-      observedSha,
-      expectedSha,
-      matched: expectedSha === undefined || expectedSha === observedSha,
-    };
-    return { files: result.files, record };
+    return { files: result.files };
   }
 
   if ('url' in src) {
     const resolved = resolveVars(src.url, vars);
     const content = await fetchHttp(resolved, src.optional ?? false);
     if (content === null) {
-      return { files: new Map(), record: null, skipped: true };
+      return { files: new Map(), skipped: true };
     }
     const filename = inferFilenameFromUrl(resolved) ?? 'download';
-    const files = new Map([[filename, content]]);
-    const observedSha = computeFilesSha(files);
-    const expectedSha = src.sha;
-    const record: SourceFetchRecord = {
-      sourceLabel: labelForSrc(src, vars),
-      observedSha,
-      expectedSha,
-      matched: expectedSha === undefined || expectedSha === observedSha,
-    };
-    return { files, record };
+    return { files: new Map([[filename, content]]) };
   }
 
   let files: Map<string, string>;
@@ -301,22 +336,47 @@ async function fetchOneSrc(
     throw new Error(`Unknown source type: ${JSON.stringify(src)}`);
   }
 
-  const observedSha = computeFilesSha(files);
-  const expectedSha = shaSupported(src) ? expectedShaForSrc(src) : undefined;
-  const record: SourceFetchRecord = {
-    sourceLabel: labelForSrc(src, vars),
-    observedSha,
-    expectedSha,
-    matched: expectedSha === undefined || expectedSha === observedSha,
-  };
+  return { files };
+}
 
-  return { files, record };
+async function fetchOneSrc(
+  src: FileSrc,
+  workingDir: string,
+  vars: Variables,
+  cache?: FetchCache,
+): Promise<{
+  files: Map<string, string>;
+  record: SourceFetchRecord | null;
+  skipped?: boolean;
+}> {
+  const cacheKey = cacheKeyForSrc(src, vars);
+  const cached = cache?.get(cacheKey);
+
+  let files: Map<string, string>;
+  let skipped: boolean | undefined;
+
+  if (cached !== undefined) {
+    files = cached.files;
+  } else {
+    const raw = await _fetchOneSrcRaw(src, workingDir, vars);
+    files = raw.files;
+    skipped = raw.skipped;
+    // Don't cache skipped results: if optional changes to required between
+    // stabilization iterations, a cached skipped result would mask the error.
+    if (!skipped) cache?.set(cacheKey, { files });
+  }
+
+  if (skipped) return { files: new Map(), record: null, skipped: true };
+  // Recompute record from the current source spec so expectedSha/matched
+  // always reflect the caller's config iteration, not the first fetch.
+  return { files, record: buildRecord(src, files, vars) };
 }
 
 export async function fetchSource(
   entry: FileEntry,
   workingDir: string,
   vars: Variables = {},
+  cache?: FetchCache,
 ): Promise<FetchResult> {
   const { src } = entry;
 
@@ -330,6 +390,7 @@ export async function fetchSource(
           src[i],
           workingDir,
           vars,
+          cache,
         );
         if (skipped) continue;
         parts.push(Array.from(files.values()).join('\n'));
@@ -359,7 +420,7 @@ export async function fetchSource(
     files: singleFiles,
     record: singleRecord,
     skipped,
-  } = await fetchOneSrc(src, workingDir, vars);
+  } = await fetchOneSrc(src, workingDir, vars, cache);
   if (skipped) return { files: new Map(), sourceRecords: [] };
   const singleResult = { files: singleFiles };
   const sourceRecords: SourceFetchRecord[] =
