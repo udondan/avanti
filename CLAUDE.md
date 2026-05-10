@@ -9,19 +9,19 @@ This project uses **Bun**. Always use `bun` / `bunx` — never `npm` or `npx`.
 ## Commands
 
 ```bash
-bun run build        # Compile TypeScript → dist/
-bun run dev          # Run CLI directly via tsx (no build needed)
-bun test             # Run tests once
-bun run test:watch   # Run tests in watch mode
-bun run lint         # Run ESLint
-bun run format       # Format with Prettier
-bun run format:check # Check formatting without writing
+mise run build          # Compile TypeScript → dist/
+mise run dev            # Run CLI directly via tsx (no build needed)
+mise run test           # Run tests once
+mise run test:watch     # Run tests in watch mode
+mise run lint           # Run ESLint
+mise run format         # Format with Prettier
+mise run format:check   # Check formatting without writing
 ```
 
 Run a single test file:
 
 ```bash
-bunx vitest run test/config.test.ts
+mise exec -- bunx vitest run test/config.test.ts
 ```
 
 ## Architecture
