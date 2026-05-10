@@ -8,7 +8,7 @@ run = ["bun install", "mise run install-hooks"]
 
 [tasks."install-hooks"]
 description = "Symlink tracked hooks into .git/hooks"
-run = "ln -sf ../../hooks/pre-commit .git/hooks/pre-commit"
+run = "HOOKS_DIR=$(git rev-parse --git-path hooks) && mkdir -p \"$HOOKS_DIR\" && ln -sf \"$(git rev-parse --show-toplevel)/hooks/pre-commit\" \"$HOOKS_DIR/pre-commit\""
 
 [tasks.build]
 description = "Compile TypeScript to dist/"
