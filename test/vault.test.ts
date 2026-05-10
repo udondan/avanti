@@ -10,8 +10,11 @@ import { spawnSync, type SpawnSyncReturns } from 'child_process';
 import type { MockInstance } from 'vitest';
 // spawnSync is replaced by vi.fn() above; cast to access mock methods
 const mockSpawnSync = spawnSync as unknown as MockInstance<
-  [string, readonly string[], { encoding: BufferEncoding }],
-  SpawnSyncReturns<string>
+  (
+    command: string,
+    args: readonly string[],
+    options: { encoding: BufferEncoding },
+  ) => SpawnSyncReturns<string>
 >;
 
 function makeSpawnResult(opts: {
