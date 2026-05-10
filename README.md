@@ -733,9 +733,9 @@ files:
 **How it works:**
 
 1. avanti fetches only the `$self` sources first.
-2. The sources are assembled into a single document. With a single source this is just the fetched content. With multiple sources they are concatenated by default, or YAML/JSON-merged if `yaml:`/`json:` is set (or auto-detected from all source file extensions being `.yml`/`.yaml` or `.json`/`.jsonc`).
+2. The sources are assembled into a single document. With a single source the fetched content is used directly, though it may be normalized/formatted if `yaml:`/`json:` applies (explicit or auto-detected from the file extension). With multiple sources they are concatenated by default, or YAML/JSON-merged if `yaml:`/`json:` is set (or auto-detected from all source file extensions being `.yml`/`.yaml` or `.json`/`.jsonc`).
 3. The result is parsed as the new active config. If it also contains `$self`, avanti re-fetches until the content stabilizes (fixed point).
-4. The stable config drives all remaining file entries and is written back to the local config file (for local configs) or kept in memory only (for remote `--config` sources).
+4. The stable config drives all remaining file entries. On `avanti pull`, the stable content is written back to the local config file (for local configs) or kept in memory only (for remote `--config` sources). On `avanti diff`, the stable config is used in-memory to compute the diff and is never written.
 
 **Multi-layer config** — list multiple sources under `$self` and use `yaml:` to deep-merge them into one config:
 
