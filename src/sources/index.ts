@@ -109,8 +109,11 @@ export interface FetchResult {
 
 export type FetchCache = Map<string, { files: Map<string, string> }>;
 
-// labelForSrc returns the raw (unresolved) source label used in SourceFetchRecord
-// and matched by applyUpdatedShas against the literal YAML values in the config file.
+// labelForSrc returns the source label used in SourceFetchRecord. Structured
+// sources (github:, gitlab:, etc.) keep variable references unresolved so the
+// label matches the literal YAML values that applyUpdatedShas reads for SHA
+// writeback. Plain-string sources resolve variables since they don't support
+// SHA pinning.
 function labelForSrc(src: FileSrc, vars: Variables): string {
   if (typeof src === 'string') return resolveVars(src, vars);
   if ('github' in src) {
