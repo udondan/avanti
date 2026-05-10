@@ -9,10 +9,7 @@ vi.mock('child_process', () => ({
 import { spawnSync } from 'child_process';
 import type { MockInstance } from 'vitest';
 // spawnSync is replaced by vi.fn() above; cast to access mock methods
-const mockSpawnSync = spawnSync as unknown as MockInstance<
-  ReturnType<typeof spawnSync>,
-  Parameters<typeof spawnSync>
->;
+const mockSpawnSync = spawnSync as unknown as MockInstance;
 
 function makeSpawnResult(opts: {
   stdout?: string;

@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import type { MockInstance } from 'vitest';
 import { fetchWithRetry, _testable } from '../src/fetch';
 
 function makeResponse(
@@ -8,7 +9,7 @@ function makeResponse(
   return new Response(null, { status, headers });
 }
 
-let sleepSpy: ReturnType<typeof vi.spyOn<typeof _testable, 'sleep'>>;
+let sleepSpy: MockInstance<[number], Promise<void>>;
 
 beforeEach(() => {
   sleepSpy = vi.spyOn(_testable, 'sleep').mockResolvedValue(undefined);

@@ -22,6 +22,10 @@ run = "bun run test"
 description = "Run tests in watch mode"
 run = "bun run test:watch"
 
+[tasks.typecheck]
+description = "Type-check without emitting files"
+run = "bun run typecheck"
+
 [tasks.lint]
 description = "Run ESLint"
 run = "bun run lint"

@@ -16,6 +16,7 @@ mise run build          # Compile TypeScript → dist/
 mise run dev            # Run CLI directly via tsx (no build needed)
 mise run test           # Run tests once
 mise run test:watch     # Run tests in watch mode
+mise run typecheck      # Type-check without emitting files
 mise run lint           # Run ESLint
 mise run format         # Format with Prettier
 mise run format:check   # Check formatting without writing
