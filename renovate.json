@@ -1,6 +1,7 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": ["config:recommended"],
+  "mode": "auto",
   "minimumReleaseAge": "3 days",
   "automerge": true,
   "automergeType": "pr",
@@ -8,7 +9,10 @@
   "customManagers": [
     {
       "customType": "regex",
-      "fileMatch": ["^\\.github/workflows/.*\\.yml$", "^mise\\.toml$"],
+      "managerFilePatterns": [
+        "/^\\.github/workflows/.*\\.yml$/",
+        "/^mise\\.toml$/"
+      ],
       "matchStrings": [
         "bun-version: \"(?<currentValue>[^\"]+)\"",
         "bun = \"(?<currentValue>[^\"]+)\""
