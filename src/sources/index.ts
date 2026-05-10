@@ -107,10 +107,7 @@ export interface FetchResult {
   sourceRecords: SourceFetchRecord[];
 }
 
-export type FetchCache = Map<
-  string,
-  { files: Map<string, string>; skipped?: boolean }
->;
+export type FetchCache = Map<string, { files: Map<string, string> }>;
 
 // labelForSrc returns the raw (unresolved) source label used in SourceFetchRecord
 // and matched by applyUpdatedShas against the literal YAML values in the config file.
@@ -241,65 +238,38 @@ async function _fetchOneSrcRaw(
   src: FileSrc,
   workingDir: string,
   vars: Variables,
-): Promise<{
-  files: Map<string, string>;
-  record: SourceFetchRecord | null;
-  skipped?: boolean;
-}> {
+): Promise<{ files: Map<string, string>; skipped?: boolean }> {
   if (typeof src === 'string') {
     const resolved = resolveVars(src, vars);
     if (resolved.startsWith('http://') || resolved.startsWith('https://')) {
       const content = await fetchHttp(resolved);
       const filename = inferFilenameFromUrl(resolved) ?? 'download';
-      return {
-        files: new Map([[filename, content]]),
-        record: null,
-      };
+      return { files: new Map([[filename, content]]) };
     }
-    return { files: fetchLocal(resolved, workingDir).files, record: null };
+    return { files: fetchLocal(resolved, workingDir).files };
   }
 
   if ('raw' in src) {
-    return {
-      files: new Map([['output', resolveVars(src.raw, vars)]]),
-      record: null,
-    };
+    return { files: new Map([['output', resolveVars(src.raw, vars)]]) };
   }
 
   if ('path' in src) {
     const resolved = resolveVars(src.path, vars);
     const result = fetchLocal(resolved, workingDir, src.optional ?? false);
     if (result.missing) {
-      return { files: new Map(), record: null, skipped: true };
+      return { files: new Map(), skipped: true };
     }
-    const observedSha = computeFilesSha(result.files);
-    const expectedSha = src.sha;
-    const record: SourceFetchRecord = {
-      sourceLabel: labelForSrc(src, vars),
-      observedSha,
-      expectedSha,
-      matched: expectedSha === undefined || expectedSha === observedSha,
-    };
-    return { files: result.files, record };
+    return { files: result.files };
   }
 
   if ('url' in src) {
     const resolved = resolveVars(src.url, vars);
     const content = await fetchHttp(resolved, src.optional ?? false);
     if (content === null) {
-      return { files: new Map(), record: null, skipped: true };
+      return { files: new Map(), skipped: true };
     }
     const filename = inferFilenameFromUrl(resolved) ?? 'download';
-    const files = new Map([[filename, content]]);
-    const observedSha = computeFilesSha(files);
-    const expectedSha = src.sha;
-    const record: SourceFetchRecord = {
-      sourceLabel: labelForSrc(src, vars),
-      observedSha,
-      expectedSha,
-      matched: expectedSha === undefined || expectedSha === observedSha,
-    };
-    return { files, record };
+    return { files: new Map([[filename, content]]) };
   }
 
   let files: Map<string, string>;
@@ -363,16 +333,7 @@ async function _fetchOneSrcRaw(
     throw new Error(`Unknown source type: ${JSON.stringify(src)}`);
   }
 
-  const observedSha = computeFilesSha(files);
-  const expectedSha = shaSupported(src) ? expectedShaForSrc(src) : undefined;
-  const record: SourceFetchRecord = {
-    sourceLabel: labelForSrc(src, vars),
-    observedSha,
-    expectedSha,
-    matched: expectedSha === undefined || expectedSha === observedSha,
-  };
-
-  return { files, record };
+  return { files };
 }
 
 async function fetchOneSrc(
@@ -393,7 +354,6 @@ async function fetchOneSrc(
 
   if (cached !== undefined) {
     files = cached.files;
-    skipped = cached.skipped;
   } else {
     const raw = await _fetchOneSrcRaw(src, workingDir, vars);
     files = raw.files;
