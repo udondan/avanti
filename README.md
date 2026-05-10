@@ -54,16 +54,16 @@ atomic rollbacks, and diff-before-apply safety.
 ## Features
 
 - Fetch files from **HTTP/HTTPS**, **local paths**, **GitLab** (via `glab`), **GitHub** (via `gh`), **Bitbucket**, **any git remote**, **S3**, **HashiCorp Vault**, **shell commands**, or **inline raw content**
-- **Optional sources** — mark `path:` and `url:` sources `optional: true` to silently skip them when the file is missing or the URL returns 404; lets a central config reference per-user local overrides without erroring on machines that haven't created them
 - **Multi-source entries** — combine multiple sources into a single file by providing `src` as a list
-- **Atomic writes** — all files are staged to a temp dir first; targets are only written if everything succeeds
-- **Diff preview** — see exactly what will change before applying, or compare against any past pull
-- **Post-processing** — apply text replacements (string or regex) and/or pipe content through a shell script
-- **Directory sync** — recursively sync directories from GitLab/GitHub/Bitbucket/git/S3/local sources
 - **JSON merging** — deep-merge multiple JSON/JSONC sources with configurable conflict, array, and object strategies
 - **YAML merging** — deep-merge multiple YAML/YML sources with the same strategies, with full comment preservation
 - **Variables** — define reusable values in a `variables:` block and reference them anywhere with `$name`; use `$env:NAME` for environment variables
+- **Post-processing** — apply text replacements (string or regex) and/or pipe content through a shell script
+- **Directory sync** — recursively sync directories from GitLab/GitHub/Bitbucket/git/S3/local sources
+- **Diff preview** — see exactly what will change before applying, or compare against any past pull
+- **Atomic writes** — all files are staged to a temp dir first; targets are only written if everything succeeds
 - **History** — every pull is recorded; inspect what changed, revert the whole project to a past state, or fully undo all avanti changes
+- **Optional sources** — mark `path:` and `url:` sources `optional: true` to silently skip them when the file is missing or the URL returns 404; lets a central config reference per-user local overrides without erroring on machines that haven't created them
 - **Stale file cleanup** — files dropped from a directory source are automatically deleted or restored to their pre-avanti content
 
 ## Requirements
