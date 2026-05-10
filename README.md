@@ -1110,7 +1110,7 @@ files:
 
 ### Self-managing Config
 
-avanti can manage any file — including its own config. The special `$self` key in the `files:` map fetches and merges one or more remote sources, uses the result as the active config, and then applies all the files it declares — in the same run, with a single confirmation prompt.
+avanti can manage any file — including its own config. The special `$self` key in the `files:` map fetches and merges one or more sources, uses the result as the active config, and then applies all the files it declares — in the same run, with a single confirmation prompt.
 
 ```yaml
 # ~/.avanti.yml
