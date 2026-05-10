@@ -37,6 +37,7 @@ interface FetchLoopResult {
   shaErrors: ShaError[];
   sourceRecordsByTarget: Map<string, SourceFetchRecord[]>;
   selfContent?: string;
+  selfMode?: string;
   selfSourceRecords?: SourceFetchRecord[];
 }
 
@@ -53,6 +54,7 @@ async function runFetchLoop(
   const sourceRecordsByTarget = new Map<string, SourceFetchRecord[]>();
   let hasError = false;
   let selfContent: string | undefined;
+  let selfMode: string | undefined;
   let selfSourceRecords: SourceFetchRecord[] | undefined;
 
   const hasSelf = SELF_KEY in config.files;
@@ -86,6 +88,7 @@ async function runFetchLoop(
         if (entry.post) content = applyPost(content, entry.post, vars);
         if (isSelf) {
           selfContent = content;
+          selfMode = entry.mode;
           if (result.sourceRecords.length > 0)
             selfSourceRecords = result.sourceRecords;
           continue;
@@ -112,6 +115,7 @@ async function runFetchLoop(
     shaErrors,
     sourceRecordsByTarget,
     selfContent,
+    selfMode,
     selfSourceRecords,
   };
 }
@@ -182,6 +186,7 @@ export function pullCommand(): Command {
       if (firstPass.selfContent !== undefined) {
         let prevSelfContent: string | undefined;
         let currentSelfContent = firstPass.selfContent;
+        let currentSelfMode = firstPass.selfMode;
         let currentSelfSourceRecords = firstPass.selfSourceRecords;
         let stableConfig: AvantiConfig | undefined;
 
@@ -240,6 +245,7 @@ export function pullCommand(): Command {
 
           prevSelfContent = currentSelfContent;
           currentSelfContent = next.selfContent;
+          currentSelfMode = next.selfMode;
           currentSelfSourceRecords = next.selfSourceRecords;
         }
 
@@ -287,12 +293,14 @@ export function pullCommand(): Command {
               writeTargets.push({
                 targetPath: configPath,
                 content: currentSelfContent,
+                mode: currentSelfMode,
               });
               allDiffs.push(computeDiff(configPath, currentSelfContent));
             } else {
               writeTargets[existingIdx] = {
                 ...writeTargets[existingIdx],
                 content: currentSelfContent,
+                mode: currentSelfMode,
               };
               allDiffs[existingIdx] = computeDiff(
                 configPath,
