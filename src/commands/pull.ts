@@ -251,9 +251,14 @@ export function pullCommand(): Command {
 
         if (stableConfig !== undefined) {
           // Fetch all non-$self entries from the stable config.
-          const filesWithoutSelf = Object.fromEntries(
-            Object.entries(stableConfig.files).filter(([k]) => k !== SELF_KEY),
-          );
+          // Use Object.create(null) to preserve the null-prototype invariant
+          // established by parseConfigContent and avoid prototype pollution.
+          const filesWithoutSelf = Object.create(
+            null,
+          ) as typeof stableConfig.files;
+          for (const [k, v] of Object.entries(stableConfig.files)) {
+            if (k !== SELF_KEY) filesWithoutSelf[k] = v;
+          }
           if (Object.keys(filesWithoutSelf).length > 0) {
             const second = await runFetchLoop(
               { ...stableConfig, files: filesWithoutSelf },
