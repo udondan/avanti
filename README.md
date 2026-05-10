@@ -1185,8 +1185,8 @@ This scales to any number of machines or containers. Update the central repo onc
 
 ```sh
 git clone ...
-bun install
-bun run dev -- --help       # run via tsx
-bun test                    # run tests
-bun run build               # compile to dist/
+mise run install            # install dependencies and set up git hooks
+mise run dev -- --help      # run via tsx
+mise run test               # run tests
+mise run build              # compile to dist/
 ```
