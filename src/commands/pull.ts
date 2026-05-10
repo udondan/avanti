@@ -300,7 +300,7 @@ export function pullCommand(): Command {
               writeTargets[existingIdx] = {
                 ...writeTargets[existingIdx],
                 content: currentSelfContent,
-                mode: currentSelfMode,
+                mode: currentSelfMode ?? writeTargets[existingIdx].mode,
               };
               allDiffs[existingIdx] = computeDiff(
                 configPath,
