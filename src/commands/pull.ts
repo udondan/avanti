@@ -1,5 +1,4 @@
 import { Command } from 'commander';
-import * as fs from 'fs';
 import * as path from 'path';
 import {
   isRemoteConfigSpec,
@@ -171,65 +170,80 @@ export function pullCommand(): Command {
         process.exit(2);
       }
 
-      // $self short-circuit: branch on whether $self content changed
+      // $self stabilization loop: keep fetching $self until content converges,
+      // then fetch all non-$self file entries from the stable config.
       if (firstPass.selfContent !== undefined) {
-        const selfUnchanged =
-          !isRemoteConfigSpec(configPath) &&
-          (() => {
-            try {
-              return (
-                fs.existsSync(configPath) &&
-                fs.readFileSync(configPath, 'utf8') === firstPass.selfContent
-              );
-            } catch {
-              return false;
-            }
-          })();
+        let prevSelfContent: string | undefined;
+        let currentSelfContent = firstPass.selfContent;
+        let stableConfig: AvantiConfig | undefined;
 
-        if (selfUnchanged) {
-          // $self matches disk — process remaining files from current config
+        while (stableConfig === undefined) {
+          let currentConfig: AvantiConfig;
+          try {
+            currentConfig = parseConfigContent(currentSelfContent);
+          } catch (err: unknown) {
+            console.warn(
+              `Warning: $self config is invalid, skipping re-evaluation: ${(err as Error).message}`,
+            );
+            break;
+          }
+
+          // Stable when: merged config has no $self, or fetching $self produced
+          // the same content as the previous iteration (fixed point reached).
+          if (
+            !(SELF_KEY in currentConfig.files) ||
+            currentSelfContent === prevSelfContent
+          ) {
+            stableConfig = currentConfig;
+            break;
+          }
+
+          console.log(
+            '$self config resolved; re-evaluating with merged config...',
+          );
+          const next = await runFetchLoop(currentConfig, workingDir);
+
+          if (next.hasError) {
+            console.error(
+              'Aborting due to errors in $self re-evaluated config.',
+            );
+            process.exit(2);
+          }
+          if (next.shaErrors.length > 0 && !opts.acceptChanges) {
+            printShaErrors(next.shaErrors);
+            console.error(
+              '\nRun `avanti pull --accept-changes` to review the diff and update SHA values.',
+            );
+            process.exit(2);
+          }
+          const seenInLoop = new Set(
+            firstPass.shaErrors.map((e) => e.sourceLabel),
+          );
+          for (const e of next.shaErrors) {
+            if (!seenInLoop.has(e.sourceLabel)) firstPass.shaErrors.push(e);
+          }
+
+          if (next.selfContent === undefined) {
+            stableConfig = currentConfig;
+            break;
+          }
+
+          prevSelfContent = currentSelfContent;
+          currentSelfContent = next.selfContent;
+        }
+
+        if (stableConfig !== undefined) {
+          // Fetch all non-$self entries from the stable config.
           const filesWithoutSelf = Object.fromEntries(
-            Object.entries(config.files).filter(([k]) => k !== SELF_KEY),
+            Object.entries(stableConfig.files).filter(([k]) => k !== SELF_KEY),
           );
           if (Object.keys(filesWithoutSelf).length > 0) {
-            const remaining = await runFetchLoop(
-              { ...config, files: filesWithoutSelf },
+            const second = await runFetchLoop(
+              { ...stableConfig, files: filesWithoutSelf },
               workingDir,
             );
-            if (remaining.hasError) {
-              console.error('Aborting due to errors.');
-              process.exit(2);
-            }
-            if (remaining.shaErrors.length > 0 && !opts.acceptChanges) {
-              printShaErrors(remaining.shaErrors);
-              console.error(
-                '\nRun `avanti pull --accept-changes` to review the diff and update SHA values.',
-              );
-              process.exit(2);
-            }
-            writeTargets = remaining.writeTargets;
-            allDiffs = remaining.allDiffs;
-            sourceRecordsByTarget = remaining.sourceRecordsByTarget;
-            const existingLabels = new Set(
-              firstPass.shaErrors.map((e) => e.sourceLabel),
-            );
-            for (const e of remaining.shaErrors) {
-              if (!existingLabels.has(e.sourceLabel))
-                firstPass.shaErrors.push(e);
-            }
-          }
-        } else {
-          // $self content changed or config is remote — re-evaluate with merged config
-          try {
-            const newConfig = parseConfigContent(firstPass.selfContent);
-            console.log(
-              '$self config resolved; re-evaluating with merged config...',
-            );
-            const second = await runFetchLoop(newConfig, workingDir);
             if (second.hasError) {
-              console.error(
-                'Aborting due to errors in $self re-evaluated config.',
-              );
+              console.error('Aborting due to errors.');
               process.exit(2);
             }
             if (second.shaErrors.length > 0 && !opts.acceptChanges) {
@@ -239,36 +253,26 @@ export function pullCommand(): Command {
               );
               process.exit(2);
             }
-            if (second.selfContent !== undefined) {
-              console.warn(
-                'Warning: merged $self config contains another $self entry; nested $self is not supported and will be ignored.',
-              );
-            }
             writeTargets = second.writeTargets;
             allDiffs = second.allDiffs;
             sourceRecordsByTarget = second.sourceRecordsByTarget;
-            const existingLabels = new Set(
+            const seenInSecond = new Set(
               firstPass.shaErrors.map((e) => e.sourceLabel),
             );
             for (const e of second.shaErrors) {
-              if (!existingLabels.has(e.sourceLabel))
-                firstPass.shaErrors.push(e);
+              if (!seenInSecond.has(e.sourceLabel)) firstPass.shaErrors.push(e);
             }
-            // For local configs, write the merged $self content back to disk.
-            if (
-              !isRemoteConfigSpec(configPath) &&
-              !writeTargets.some((t) => t.targetPath === configPath)
-            ) {
-              writeTargets.push({
-                targetPath: configPath,
-                content: firstPass.selfContent,
-              });
-              allDiffs.push(computeDiff(configPath, firstPass.selfContent));
-            }
-          } catch (err: unknown) {
-            console.warn(
-              `Warning: $self config is invalid, skipping re-evaluation: ${(err as Error).message}`,
-            );
+          }
+          // For local configs, write the stable $self content back to disk.
+          if (
+            !isRemoteConfigSpec(configPath) &&
+            !writeTargets.some((t) => t.targetPath === configPath)
+          ) {
+            writeTargets.push({
+              targetPath: configPath,
+              content: currentSelfContent,
+            });
+            allDiffs.push(computeDiff(configPath, currentSelfContent));
           }
         }
       }

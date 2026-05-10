@@ -1,5 +1,4 @@
 import { Command } from 'commander';
-import * as fs from 'fs';
 import * as path from 'path';
 import {
   isRemoteConfigSpec,
@@ -125,57 +124,67 @@ export function diffCommand(): Command {
         if (hasError) process.exit(2);
 
         if (firstPass.selfContent !== undefined) {
-          const selfUnchanged =
-            !isRemoteConfigSpec(configPath) &&
-            (() => {
-              try {
-                return (
-                  fs.existsSync(configPath) &&
-                  fs.readFileSync(configPath, 'utf8') === firstPass.selfContent
-                );
-              } catch {
-                return false;
-              }
-            })();
+          let prevSelfContent: string | undefined;
+          let currentSelfContent = firstPass.selfContent;
+          let stableConfig: AvantiConfig | undefined;
 
-          if (selfUnchanged) {
-            // $self matches disk — diff remaining files from current config
-            const filesWithoutSelf = Object.fromEntries(
-              Object.entries(config.files).filter(([k]) => k !== SELF_KEY),
-            );
-            if (Object.keys(filesWithoutSelf).length > 0) {
-              const remaining = await runDiffLoop(
-                { ...config, files: filesWithoutSelf },
-                workingDir,
-              );
-              allDiffs = remaining.allDiffs;
-              hasError = remaining.hasError;
-            }
-          } else {
-            // $self content changed or config is remote — re-evaluate with merged config
+          while (stableConfig === undefined) {
+            let currentConfig: AvantiConfig;
             try {
-              const newConfig = parseConfigContent(firstPass.selfContent);
-              console.log(
-                '$self config resolved; re-evaluating with merged config...',
-              );
-              const second = await runDiffLoop(newConfig, workingDir);
-              if (second.selfContent !== undefined) {
-                console.warn(
-                  'Warning: merged $self config contains another $self entry; nested $self is not supported and will be ignored.',
-                );
-              }
-              allDiffs = second.allDiffs;
-              hasError = second.hasError;
-              if (
-                !isRemoteConfigSpec(configPath) &&
-                !allDiffs.some((d) => d.targetPath === configPath)
-              ) {
-                allDiffs.push(computeDiff(configPath, firstPass.selfContent));
-              }
+              currentConfig = parseConfigContent(currentSelfContent);
             } catch (err: unknown) {
               console.warn(
                 `Warning: $self config is invalid, skipping re-evaluation: ${(err as Error).message}`,
               );
+              break;
+            }
+
+            if (
+              !(SELF_KEY in currentConfig.files) ||
+              currentSelfContent === prevSelfContent
+            ) {
+              stableConfig = currentConfig;
+              break;
+            }
+
+            console.log(
+              '$self config resolved; re-evaluating with merged config...',
+            );
+            const next = await runDiffLoop(currentConfig, workingDir);
+
+            if (next.hasError) {
+              hasError = true;
+              break;
+            }
+
+            if (next.selfContent === undefined) {
+              stableConfig = currentConfig;
+              break;
+            }
+
+            prevSelfContent = currentSelfContent;
+            currentSelfContent = next.selfContent;
+          }
+
+          if (stableConfig !== undefined) {
+            const filesWithoutSelf = Object.fromEntries(
+              Object.entries(stableConfig.files).filter(
+                ([k]) => k !== SELF_KEY,
+              ),
+            );
+            if (Object.keys(filesWithoutSelf).length > 0) {
+              const second = await runDiffLoop(
+                { ...stableConfig, files: filesWithoutSelf },
+                workingDir,
+              );
+              allDiffs = second.allDiffs;
+              hasError = second.hasError;
+            }
+            if (
+              !isRemoteConfigSpec(configPath) &&
+              !allDiffs.some((d) => d.targetPath === configPath)
+            ) {
+              allDiffs.push(computeDiff(configPath, currentSelfContent));
             }
           }
         }
