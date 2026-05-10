@@ -83,7 +83,7 @@ describe('atomicWrite', () => {
     expect(fs.readFileSync(dest, 'utf8')).toBe('new content');
   });
 
-  it('preserves existing file mode when no mode is specified', () => {
+  it('preserves existing file permission bits (rwx) when no mode is specified', () => {
     const dest = path.join(tmpDir, 'secret.txt');
     fs.writeFileSync(dest, 'original', 'utf8');
     fs.chmodSync(dest, 0o600);
