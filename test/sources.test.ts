@@ -412,3 +412,30 @@ describe('fetchSource — url source type', () => {
     expect(result.sourceRecords).toHaveLength(0);
   });
 });
+
+describe('FetchCache — cross-target deduplication', () => {
+  beforeEach(() => {
+    vi.spyOn(_testable, 'sleep').mockResolvedValue(undefined);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('fetches an identical URL only once when a shared cache is provided', async () => {
+    const mockFetch = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response('content', { status: 200 }));
+
+    const cache = new Map();
+    const entry = {
+      src: 'https://example.com/shared.txt',
+      target: 'out.txt',
+    };
+
+    await fetchSource(entry, '/tmp', {}, cache);
+    await fetchSource(entry, '/tmp', {}, cache);
+
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+});
