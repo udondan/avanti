@@ -9,10 +9,7 @@ function makeResponse(
   return new Response(null, { status, headers });
 }
 
-let sleepSpy: MockInstance<
-  Parameters<typeof _testable.sleep>,
-  ReturnType<typeof _testable.sleep>
->;
+let sleepSpy: MockInstance<typeof _testable.sleep>;
 
 beforeEach(() => {
   sleepSpy = vi.spyOn(_testable, 'sleep').mockResolvedValue(undefined);
