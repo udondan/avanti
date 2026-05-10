@@ -37,6 +37,7 @@ interface FetchLoopResult {
   shaErrors: ShaError[];
   sourceRecordsByTarget: Map<string, SourceFetchRecord[]>;
   selfContent?: string;
+  selfSourceRecords?: SourceFetchRecord[];
 }
 
 async function runFetchLoop(
@@ -52,6 +53,7 @@ async function runFetchLoop(
   const sourceRecordsByTarget = new Map<string, SourceFetchRecord[]>();
   let hasError = false;
   let selfContent: string | undefined;
+  let selfSourceRecords: SourceFetchRecord[] | undefined;
 
   const hasSelf = SELF_KEY in config.files;
   for (const [key, entry] of Object.entries(config.files)) {
@@ -84,6 +86,8 @@ async function runFetchLoop(
         if (entry.post) content = applyPost(content, entry.post, vars);
         if (isSelf) {
           selfContent = content;
+          if (result.sourceRecords.length > 0)
+            selfSourceRecords = result.sourceRecords;
           continue;
         }
         const targetPath = resolveTargetPath(entry, relPath, workingDir, vars);
@@ -108,6 +112,7 @@ async function runFetchLoop(
     shaErrors,
     sourceRecordsByTarget,
     selfContent,
+    selfSourceRecords,
   };
 }
 
@@ -177,6 +182,7 @@ export function pullCommand(): Command {
       if (firstPass.selfContent !== undefined) {
         let prevSelfContent: string | undefined;
         let currentSelfContent = firstPass.selfContent;
+        let currentSelfSourceRecords = firstPass.selfSourceRecords;
         let stableConfig: AvantiConfig | undefined;
 
         while (stableConfig === undefined) {
@@ -234,6 +240,7 @@ export function pullCommand(): Command {
 
           prevSelfContent = currentSelfContent;
           currentSelfContent = next.selfContent;
+          currentSelfSourceRecords = next.selfSourceRecords;
         }
 
         if (stableConfig !== undefined) {
@@ -291,9 +298,12 @@ export function pullCommand(): Command {
                 configPath,
                 currentSelfContent,
               );
-              // The content now comes from $self, not from the file entry that
-              // previously targeted configPath — drop its source records so
-              // history doesn't attribute the wrong sources to this write.
+            }
+            // Content comes from $self — attribute the config file write to the
+            // $self sources so history reflects the actual origin.
+            if (currentSelfSourceRecords !== undefined) {
+              sourceRecordsByTarget.set(configPath, currentSelfSourceRecords);
+            } else {
               sourceRecordsByTarget.delete(configPath);
             }
           }
