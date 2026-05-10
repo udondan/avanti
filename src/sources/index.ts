@@ -109,40 +109,40 @@ export interface FetchResult {
 
 export type FetchCache = Map<
   string,
-  {
-    files: Map<string, string>;
-    record: SourceFetchRecord | null;
-    skipped?: boolean;
-  }
+  { files: Map<string, string>; skipped?: boolean }
 >;
 
 function labelForSrc(src: FileSrc, vars: Variables): string {
   if (typeof src === 'string') return resolveVars(src, vars);
   if ('github' in src) {
-    const ref = src.github.ref ? `@${src.github.ref}` : '';
-    return `github:${src.github.repo}:${src.github.file}${ref}`;
+    const ref = src.github.ref ? `@${resolveVars(src.github.ref, vars)}` : '';
+    return `github:${resolveVars(src.github.repo, vars)}:${resolveVars(src.github.file, vars)}${ref}`;
   }
   if ('gitlab' in src) {
-    const ref = src.gitlab.ref ? `@${src.gitlab.ref}` : '';
-    return `gitlab:${src.gitlab.project}:${src.gitlab.file}${ref}`;
+    const ref = src.gitlab.ref ? `@${resolveVars(src.gitlab.ref, vars)}` : '';
+    return `gitlab:${resolveVars(src.gitlab.project, vars)}:${resolveVars(src.gitlab.file, vars)}${ref}`;
   }
   if ('bitbucket' in src) {
-    const ref = src.bitbucket.ref ? `@${src.bitbucket.ref}` : '';
-    return `bitbucket:${src.bitbucket.workspace}/${src.bitbucket.repo}:${src.bitbucket.file}${ref}`;
+    const ref = src.bitbucket.ref
+      ? `@${resolveVars(src.bitbucket.ref, vars)}`
+      : '';
+    return `bitbucket:${resolveVars(src.bitbucket.workspace, vars)}/${resolveVars(src.bitbucket.repo, vars)}:${resolveVars(src.bitbucket.file, vars)}${ref}`;
   }
   if ('git' in src) {
-    const ref = src.git.ref ? `@${src.git.ref}` : '';
-    return `git:${src.git.repo}:${src.git.file}${ref}`;
+    const ref = src.git.ref ? `@${resolveVars(src.git.ref, vars)}` : '';
+    return `git:${resolveVars(src.git.repo, vars)}:${resolveVars(src.git.file, vars)}${ref}`;
   }
-  if ('exec' in src) return `exec:${src.exec}`;
-  if ('s3' in src) return `s3:${src.s3}`;
+  if ('exec' in src) return `exec:${resolveVars(src.exec, vars)}`;
+  if ('s3' in src) return `s3:${resolveVars(src.s3, vars)}`;
   if ('vault' in src) {
-    const field = src.vault.field ? `#${src.vault.field}` : '';
-    return `vault:${src.vault.path}${field}`;
+    const field = src.vault.field
+      ? `#${resolveVars(src.vault.field, vars)}`
+      : '';
+    return `vault:${resolveVars(src.vault.path, vars)}${field}`;
   }
-  if ('http' in src) return `http:${src.http}`;
-  if ('path' in src) return `path:${src.path}`;
-  if ('url' in src) return `url:${src.url}`;
+  if ('http' in src) return `http:${resolveVars(src.http, vars)}`;
+  if ('path' in src) return `path:${resolveVars(src.path, vars)}`;
+  if ('url' in src) return `url:${resolveVars(src.url, vars)}`;
   if ('raw' in src) return 'raw';
   return JSON.stringify(src);
 }
@@ -166,6 +166,22 @@ function shaSupported(src: FileSrc): boolean {
   if (typeof src === 'string') return false; // local paths excluded; plain string HTTP has no sha field
   if ('raw' in src) return false;
   return true;
+}
+
+function buildRecord(
+  src: FileSrc,
+  files: Map<string, string>,
+  vars: Variables,
+): SourceFetchRecord | null {
+  if (!shaSupported(src)) return null;
+  const observedSha = computeFilesSha(files);
+  const expectedSha = expectedShaForSrc(src);
+  return {
+    sourceLabel: labelForSrc(src, vars),
+    observedSha,
+    expectedSha,
+    matched: expectedSha === undefined || expectedSha === observedSha,
+  };
 }
 
 function computeFilesSha(files: Map<string, string>): string {
@@ -334,10 +350,24 @@ async function fetchOneSrc(
 }> {
   const cacheKey = labelForSrc(src, vars);
   const cached = cache?.get(cacheKey);
-  if (cached !== undefined) return cached;
-  const result = await _fetchOneSrcRaw(src, workingDir, vars);
-  cache?.set(cacheKey, result);
-  return result;
+
+  let files: Map<string, string>;
+  let skipped: boolean | undefined;
+
+  if (cached !== undefined) {
+    files = cached.files;
+    skipped = cached.skipped;
+  } else {
+    const raw = await _fetchOneSrcRaw(src, workingDir, vars);
+    files = raw.files;
+    skipped = raw.skipped;
+    cache?.set(cacheKey, { files, skipped });
+  }
+
+  if (skipped) return { files: new Map(), record: null, skipped: true };
+  // Recompute record from the current source spec so expectedSha/matched
+  // always reflect the caller's config iteration, not the first fetch.
+  return { files, record: buildRecord(src, files, vars) };
 }
 
 export async function fetchSource(

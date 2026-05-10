@@ -187,11 +187,18 @@ export function diffCommand(): Command {
               allDiffs = second.allDiffs;
               hasError = second.hasError;
             }
-            if (
-              !isRemoteConfigSpec(configPath) &&
-              !allDiffs.some((d) => d.targetPath === configPath)
-            ) {
-              allDiffs.push(computeDiff(configPath, currentSelfContent));
+            if (!isRemoteConfigSpec(configPath)) {
+              const existingIdx = allDiffs.findIndex(
+                (d) => d.targetPath === configPath,
+              );
+              if (existingIdx === -1) {
+                allDiffs.push(computeDiff(configPath, currentSelfContent));
+              } else {
+                allDiffs[existingIdx] = computeDiff(
+                  configPath,
+                  currentSelfContent,
+                );
+              }
             }
           }
         }

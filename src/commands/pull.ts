@@ -271,15 +271,29 @@ export function pullCommand(): Command {
             }
           }
           // For local configs, write the stable $self content back to disk.
-          if (
-            !isRemoteConfigSpec(configPath) &&
-            !writeTargets.some((t) => t.targetPath === configPath)
-          ) {
-            writeTargets.push({
-              targetPath: configPath,
-              content: currentSelfContent,
-            });
-            allDiffs.push(computeDiff(configPath, currentSelfContent));
+          // If the stable config also declares a file entry for configPath,
+          // replace it with the stabilized $self content so the on-disk config
+          // always matches what was actually used for this run.
+          if (!isRemoteConfigSpec(configPath)) {
+            const existingIdx = writeTargets.findIndex(
+              (t) => t.targetPath === configPath,
+            );
+            if (existingIdx === -1) {
+              writeTargets.push({
+                targetPath: configPath,
+                content: currentSelfContent,
+              });
+              allDiffs.push(computeDiff(configPath, currentSelfContent));
+            } else {
+              writeTargets[existingIdx] = {
+                ...writeTargets[existingIdx],
+                content: currentSelfContent,
+              };
+              allDiffs[existingIdx] = computeDiff(
+                configPath,
+                currentSelfContent,
+              );
+            }
           }
         }
       }
