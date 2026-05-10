@@ -4,24 +4,27 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Package manager
 
-This project uses **Bun**. Always use `bun` / `bunx` — never `npm` or `npx`.
+This project uses **mise** as the task runner and **Bun** as the package manager.
+Always use `mise run <task>` to run commands — this ensures the correct Node/Bun
+versions are active. Never use `npm` or `npx`. Use `bun`/`bunx` directly only
+when there is no corresponding mise task.
 
 ## Commands
 
 ```bash
-bun run build        # Compile TypeScript → dist/
-bun run dev          # Run CLI directly via tsx (no build needed)
-bun test             # Run tests once
-bun run test:watch   # Run tests in watch mode
-bun run lint         # Run ESLint
-bun run format       # Format with Prettier
-bun run format:check # Check formatting without writing
+mise run build          # Compile TypeScript → dist/
+mise run dev            # Run CLI directly via tsx (no build needed)
+mise run test           # Run tests once
+mise run test:watch     # Run tests in watch mode
+mise run lint           # Run ESLint
+mise run format         # Format with Prettier
+mise run format:check   # Check formatting without writing
 ```
 
 Run a single test file:
 
 ```bash
-bunx vitest run test/config.test.ts
+mise exec -- bunx vitest run test/config.test.ts
 ```
 
 ## Architecture
