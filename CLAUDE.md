@@ -4,7 +4,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Package manager
 
-This project uses **Bun**. Always use `bun` / `bunx` — never `npm` or `npx`.
+This project uses **mise** as the task runner and **Bun** as the package manager.
+Always use `mise run <task>` to run commands — this ensures the correct Node/Bun
+versions are active. Never use `npm` or `npx`. Use `bun`/`bunx` directly only
+when there is no corresponding mise task.
 
 ## Commands
 
