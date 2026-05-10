@@ -8,7 +8,7 @@ import {
   resolveConfigPath,
   SELF_KEY,
 } from '../config';
-import { fetchSource } from '../sources';
+import { fetchSource, FetchCache } from '../sources';
 import { applyReplace } from '../processors/replace';
 import { applyPost } from '../processors/post';
 import {
@@ -30,6 +30,7 @@ interface DiffLoopResult {
 async function runDiffLoop(
   config: AvantiConfig,
   workingDir: string,
+  cache?: FetchCache,
 ): Promise<DiffLoopResult> {
   const vars = config.variables ?? {};
   const allDiffs: FileDiff[] = [];
@@ -41,7 +42,7 @@ async function runDiffLoop(
     const isSelf = key === SELF_KEY;
     if (hasSelf && !isSelf) continue;
     try {
-      const result = await fetchSource(entry, workingDir, vars);
+      const result = await fetchSource(entry, workingDir, vars, cache);
       for (const rec of result.sourceRecords) {
         if (!rec.matched) {
           console.error(
@@ -118,7 +119,8 @@ export function diffCommand(): Command {
           process.exit(2);
         }
 
-        const firstPass = await runDiffLoop(config, workingDir);
+        const fetchCache: FetchCache = new Map();
+        const firstPass = await runDiffLoop(config, workingDir, fetchCache);
         let { allDiffs, hasError } = firstPass;
 
         if (hasError) process.exit(2);
@@ -150,7 +152,11 @@ export function diffCommand(): Command {
             console.log(
               '$self config resolved; re-evaluating with merged config...',
             );
-            const next = await runDiffLoop(currentConfig, workingDir);
+            const next = await runDiffLoop(
+              currentConfig,
+              workingDir,
+              fetchCache,
+            );
 
             if (next.hasError) {
               hasError = true;
@@ -176,6 +182,7 @@ export function diffCommand(): Command {
               const second = await runDiffLoop(
                 { ...stableConfig, files: filesWithoutSelf },
                 workingDir,
+                fetchCache,
               );
               allDiffs = second.allDiffs;
               hasError = second.hasError;

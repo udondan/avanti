@@ -8,7 +8,7 @@ import {
   resolveConfigPath,
   SELF_KEY,
 } from '../config';
-import { fetchSource, SourceFetchRecord } from '../sources';
+import { fetchSource, FetchCache, SourceFetchRecord } from '../sources';
 import { applyReplace } from '../processors/replace';
 import { applyPost } from '../processors/post';
 import {
@@ -42,6 +42,7 @@ interface FetchLoopResult {
 async function runFetchLoop(
   config: AvantiConfig,
   workingDir: string,
+  cache?: FetchCache,
 ): Promise<FetchLoopResult> {
   const vars = config.variables ?? {};
   const writeTargets: WriteTarget[] = [];
@@ -57,7 +58,7 @@ async function runFetchLoop(
     const isSelf = key === SELF_KEY;
     if (hasSelf && !isSelf) continue;
     try {
-      const result = await fetchSource(entry, workingDir, vars);
+      const result = await fetchSource(entry, workingDir, vars, cache);
 
       for (const rec of result.sourceRecords) {
         if (!rec.matched && !seenShaErrorLabels.has(rec.sourceLabel)) {
@@ -153,7 +154,8 @@ export function pullCommand(): Command {
       const historyAvailable = history.ensureStorageDir();
       const pullId = historyAvailable ? history.openPullSession() : null;
 
-      const firstPass = await runFetchLoop(config, workingDir);
+      const fetchCache: FetchCache = new Map();
+      const firstPass = await runFetchLoop(config, workingDir, fetchCache);
       let { writeTargets, allDiffs, sourceRecordsByTarget } = firstPass;
 
       if (firstPass.hasError) {
@@ -201,7 +203,11 @@ export function pullCommand(): Command {
           console.log(
             '$self config resolved; re-evaluating with merged config...',
           );
-          const next = await runFetchLoop(currentConfig, workingDir);
+          const next = await runFetchLoop(
+            currentConfig,
+            workingDir,
+            fetchCache,
+          );
 
           if (next.hasError) {
             console.error(
@@ -241,6 +247,7 @@ export function pullCommand(): Command {
             const second = await runFetchLoop(
               { ...stableConfig, files: filesWithoutSelf },
               workingDir,
+              fetchCache,
             );
             if (second.hasError) {
               console.error('Aborting due to errors.');

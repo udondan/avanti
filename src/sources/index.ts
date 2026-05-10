@@ -107,6 +107,15 @@ export interface FetchResult {
   sourceRecords: SourceFetchRecord[];
 }
 
+export type FetchCache = Map<
+  string,
+  {
+    files: Map<string, string>;
+    record: SourceFetchRecord | null;
+    skipped?: boolean;
+  }
+>;
+
 function labelForSrc(src: FileSrc, vars: Variables): string {
   if (typeof src === 'string') return resolveVars(src, vars);
   if ('github' in src) {
@@ -175,7 +184,7 @@ function computeFilesSha(files: Map<string, string>): string {
   return hash.digest('hex');
 }
 
-async function fetchOneSrc(
+async function _fetchOneSrcRaw(
   src: FileSrc,
   workingDir: string,
   vars: Variables,
@@ -313,10 +322,29 @@ async function fetchOneSrc(
   return { files, record };
 }
 
+async function fetchOneSrc(
+  src: FileSrc,
+  workingDir: string,
+  vars: Variables,
+  cache?: FetchCache,
+): Promise<{
+  files: Map<string, string>;
+  record: SourceFetchRecord | null;
+  skipped?: boolean;
+}> {
+  const cacheKey = labelForSrc(src, vars);
+  const cached = cache?.get(cacheKey);
+  if (cached !== undefined) return cached;
+  const result = await _fetchOneSrcRaw(src, workingDir, vars);
+  cache?.set(cacheKey, result);
+  return result;
+}
+
 export async function fetchSource(
   entry: FileEntry,
   workingDir: string,
   vars: Variables = {},
+  cache?: FetchCache,
 ): Promise<FetchResult> {
   const { src } = entry;
 
@@ -330,6 +358,7 @@ export async function fetchSource(
           src[i],
           workingDir,
           vars,
+          cache,
         );
         if (skipped) continue;
         parts.push(Array.from(files.values()).join('\n'));
@@ -359,7 +388,7 @@ export async function fetchSource(
     files: singleFiles,
     record: singleRecord,
     skipped,
-  } = await fetchOneSrc(src, workingDir, vars);
+  } = await fetchOneSrc(src, workingDir, vars, cache);
   if (skipped) return { files: new Map(), sourceRecords: [] };
   const singleResult = { files: singleFiles };
   const sourceRecords: SourceFetchRecord[] =
