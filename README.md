@@ -29,6 +29,7 @@ atomic rollbacks, and diff-before-apply safety.
   - [JSON Merging](#json-merging)
   - [YAML Merging](#yaml-merging)
   - [Variables](#variables)
+  - [$self — Self-managing Config](#self--self-managing-config)
   - [Authentication](#authentication)
   - [Private Instances](#private-instances)
 - [Use Cases](#use-cases)
@@ -714,6 +715,50 @@ Referencing an undefined variable or a missing environment variable is an error.
 `$latest` is a reserved keyword that resolves to the latest published version and cannot be used as a variable name. For GitLab it resolves to the latest tag sorted by semantic version. For GitHub it resolves to the tag of the latest release; if the repository has no releases, it falls back to the most recently created tag. For Bitbucket it resolves to the latest tag sorted by name; if no tags exist, it falls back to the repository's default branch.
 
 When `ref` is omitted, all source types (GitHub, GitLab, Bitbucket, git) resolve to the repository's default branch.
+
+### $self — Self-managing Config
+
+The special `$self` key in the `files:` map tells avanti to manage its own config file. When `$self` is present, avanti fetches the listed sources and uses the result as the active config for the rest of the run — all in a single invocation.
+
+```yaml
+files:
+  $self:
+    src:
+      github:
+        repo: myorg/dotfiles
+        file: avanti.yml
+        ref: $latest
+```
+
+**How it works:**
+
+1. avanti fetches only the `$self` sources first.
+2. The sources are assembled into a single document. With a single source the fetched content is used directly, though it may be normalized/formatted if `yaml:`/`json:` applies (explicit or auto-detected from the file extension). With multiple sources they are concatenated by default, or YAML/JSON-merged if `yaml:`/`json:` is set (or auto-detected from all source file extensions being `.yml`/`.yaml` or `.json`/`.jsonc`).
+3. The result is parsed as the new active config. If it also contains `$self`, avanti re-fetches until the content stabilizes (fixed point).
+4. The stable config drives all remaining file entries. On `avanti pull`, the stable content is written back to the local config file (for local configs) or kept in memory only (for remote `--config` sources). On `avanti diff`, the stable config is used in-memory to compute the diff and is never written.
+
+**Multi-layer config** — list multiple sources under `$self` and use `yaml:` to deep-merge them into one config:
+
+```yaml
+files:
+  $self:
+    src:
+      - github:
+          repo: myorg/platform
+          file: avanti/base.yml
+          ref: $latest
+      - github:
+          repo: myorg/backend-team
+          file: avanti/team.yml
+          ref: main
+      - path: ~/avanti-personal.yml
+        optional: true
+    yaml:
+      conflicts: last_wins
+      arrays: concat
+```
+
+`$self` supports all the same source types, `replace`, `post`, and YAML/JSON merge options as any other file entry. See [Self-managing Config](#self-managing-config) in the Use Cases section for a full worked example.
 
 ### Authentication
 
