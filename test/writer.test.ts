@@ -63,17 +63,11 @@ describe('atomicWrite', () => {
     expect(() => atomicWrite([], [nonExistent])).not.toThrow();
   });
 
-  it('cleans up the temp dir after successful write', () => {
-    const before = fs
-      .readdirSync(os.tmpdir())
-      .filter((f) => f.startsWith('avanti-')).length;
+  it('cleans up the temp file after successful write', () => {
     const dest = path.join(tmpDir, 'clean.txt');
+    const tmpFile = path.join(tmpDir, '.clean.txt.avanti-tmp');
     atomicWrite([{ targetPath: dest, content: 'ok' }]);
-    const after = fs
-      .readdirSync(os.tmpdir())
-      .filter((f) => f.startsWith('avanti-')).length;
-    // No new avanti- temp dirs should have been left behind
-    expect(after).toBeLessThanOrEqual(before);
+    expect(fs.existsSync(tmpFile)).toBe(false);
   });
 
   it('overwrites existing file content', () => {
