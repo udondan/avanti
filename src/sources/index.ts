@@ -398,7 +398,9 @@ async function fetchOneSrc(
     const raw = await _fetchOneSrcRaw(src, workingDir, vars);
     files = raw.files;
     skipped = raw.skipped;
-    cache?.set(cacheKey, { files, skipped });
+    // Don't cache skipped results: if optional changes to required between
+    // stabilization iterations, a cached skipped result would mask the error.
+    if (!skipped) cache?.set(cacheKey, { files });
   }
 
   if (skipped) return { files: new Map(), record: null, skipped: true };

@@ -291,6 +291,10 @@ export function pullCommand(): Command {
                 configPath,
                 currentSelfContent,
               );
+              // The content now comes from $self, not from the file entry that
+              // previously targeted configPath — drop its source records so
+              // history doesn't attribute the wrong sources to this write.
+              sourceRecordsByTarget.delete(configPath);
             }
           }
         }
