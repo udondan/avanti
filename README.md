@@ -1123,7 +1123,7 @@ files:
         ref: $latest
 ```
 
-Every `avanti pull` fetches the remote `avanti.yml`, applies all the files it declares, and writes the merged result back to `~/.avanti.yml`. Run with a remote config to always pull the latest version from the source:
+Every `avanti pull` fetches the remote `avanti.yml`, applies all the files it declares, and writes the merged result back to `~/.avanti.yml`. If the remote `avanti.yml` itself contains a `$self` entry, avanti keeps re-fetching until the content stabilizes — so the remote config can keep pointing at itself and avanti will always pick up the latest version on every pull.
 
 When running with a remote config (`--config github:...`), `$self` is in-memory only — the merged result drives the run but is not persisted anywhere, since there is no local file to write back to.
 
