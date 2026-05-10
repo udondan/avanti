@@ -112,7 +112,43 @@ export type FetchCache = Map<
   { files: Map<string, string>; skipped?: boolean }
 >;
 
+// labelForSrc returns the raw (unresolved) source label used in SourceFetchRecord
+// and matched by applyUpdatedShas against the literal YAML values in the config file.
 function labelForSrc(src: FileSrc, vars: Variables): string {
+  if (typeof src === 'string') return resolveVars(src, vars);
+  if ('github' in src) {
+    const ref = src.github.ref ? `@${src.github.ref}` : '';
+    return `github:${src.github.repo}:${src.github.file}${ref}`;
+  }
+  if ('gitlab' in src) {
+    const ref = src.gitlab.ref ? `@${src.gitlab.ref}` : '';
+    return `gitlab:${src.gitlab.project}:${src.gitlab.file}${ref}`;
+  }
+  if ('bitbucket' in src) {
+    const ref = src.bitbucket.ref ? `@${src.bitbucket.ref}` : '';
+    return `bitbucket:${src.bitbucket.workspace}/${src.bitbucket.repo}:${src.bitbucket.file}${ref}`;
+  }
+  if ('git' in src) {
+    const ref = src.git.ref ? `@${src.git.ref}` : '';
+    return `git:${src.git.repo}:${src.git.file}${ref}`;
+  }
+  if ('exec' in src) return `exec:${src.exec}`;
+  if ('s3' in src) return `s3:${src.s3}`;
+  if ('vault' in src) {
+    const field = src.vault.field ? `#${src.vault.field}` : '';
+    return `vault:${src.vault.path}${field}`;
+  }
+  if ('http' in src) return `http:${src.http}`;
+  if ('path' in src) return `path:${src.path}`;
+  if ('url' in src) return `url:${src.url}`;
+  if ('raw' in src) return 'raw';
+  return JSON.stringify(src);
+}
+
+// cacheKeyForSrc returns a fully-resolved key for FetchCache so that sources
+// using variables are correctly distinguished when vars change between
+// stabilization iterations, and raw: sources are keyed by their content.
+function cacheKeyForSrc(src: FileSrc, vars: Variables): string {
   if (typeof src === 'string') return resolveVars(src, vars);
   if ('github' in src) {
     const ref = src.github.ref ? `@${resolveVars(src.github.ref, vars)}` : '';
@@ -143,7 +179,8 @@ function labelForSrc(src: FileSrc, vars: Variables): string {
   if ('http' in src) return `http:${resolveVars(src.http, vars)}`;
   if ('path' in src) return `path:${resolveVars(src.path, vars)}`;
   if ('url' in src) return `url:${resolveVars(src.url, vars)}`;
-  if ('raw' in src) return 'raw';
+  // raw: key includes the resolved content so distinct raw values don't collide
+  if ('raw' in src) return `raw:${resolveVars(src.raw, vars)}`;
   return JSON.stringify(src);
 }
 
@@ -348,7 +385,7 @@ async function fetchOneSrc(
   record: SourceFetchRecord | null;
   skipped?: boolean;
 }> {
-  const cacheKey = labelForSrc(src, vars);
+  const cacheKey = cacheKeyForSrc(src, vars);
   const cached = cache?.get(cacheKey);
 
   let files: Map<string, string>;

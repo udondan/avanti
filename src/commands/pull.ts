@@ -184,10 +184,8 @@ export function pullCommand(): Command {
           try {
             currentConfig = parseConfigContent(currentSelfContent);
           } catch (err: unknown) {
-            console.warn(
-              `Warning: $self config is invalid, skipping re-evaluation: ${(err as Error).message}`,
-            );
-            break;
+            console.error(`$self config is invalid: ${(err as Error).message}`);
+            process.exit(2);
           }
 
           // Stable when: merged config has no $self, or fetching $self produced

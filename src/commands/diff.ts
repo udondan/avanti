@@ -135,10 +135,10 @@ export function diffCommand(): Command {
             try {
               currentConfig = parseConfigContent(currentSelfContent);
             } catch (err: unknown) {
-              console.warn(
-                `Warning: $self config is invalid, skipping re-evaluation: ${(err as Error).message}`,
+              console.error(
+                `$self config is invalid: ${(err as Error).message}`,
               );
-              break;
+              process.exit(2);
             }
 
             if (
