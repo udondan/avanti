@@ -422,19 +422,27 @@ describe('FetchCache — cross-target deduplication', () => {
     vi.restoreAllMocks();
   });
 
-  it('fetches an identical URL only once when a shared cache is provided', async () => {
+  it('fetches an identical URL only once across different targets when a shared cache is provided', async () => {
     const mockFetch = vi
       .spyOn(globalThis, 'fetch')
-      .mockResolvedValue(new Response('content', { status: 200 }));
+      .mockImplementation(() =>
+        Promise.resolve(new Response('content', { status: 200 })),
+      );
 
     const cache = new Map();
-    const entry = {
-      src: 'https://example.com/shared.txt',
-      target: 'out.txt',
-    };
 
-    await fetchSource(entry, '/tmp', {}, cache);
-    await fetchSource(entry, '/tmp', {}, cache);
+    await fetchSource(
+      { src: 'https://example.com/shared.txt', target: 'a.txt' },
+      '/tmp',
+      {},
+      cache,
+    );
+    await fetchSource(
+      { src: 'https://example.com/shared.txt', target: 'b.txt' },
+      '/tmp',
+      {},
+      cache,
+    );
 
     expect(mockFetch).toHaveBeenCalledTimes(1);
   });
