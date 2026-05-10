@@ -119,7 +119,8 @@ export function diffCommand(): Command {
           process.exit(2);
         }
 
-        const fetchCache: FetchCache = new Map();
+        const fetchCache: FetchCache | undefined =
+          SELF_KEY in config.files ? new Map() : undefined;
         const firstPass = await runDiffLoop(config, workingDir, fetchCache);
         let { allDiffs, hasError } = firstPass;
 

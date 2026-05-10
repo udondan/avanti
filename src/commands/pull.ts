@@ -163,7 +163,8 @@ export function pullCommand(): Command {
       const historyAvailable = history.ensureStorageDir();
       const pullId = historyAvailable ? history.openPullSession() : null;
 
-      const fetchCache: FetchCache = new Map();
+      const fetchCache: FetchCache | undefined =
+        SELF_KEY in config.files ? new Map() : undefined;
       const firstPass = await runFetchLoop(config, workingDir, fetchCache);
       let { writeTargets, allDiffs, sourceRecordsByTarget } = firstPass;
 
