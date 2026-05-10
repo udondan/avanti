@@ -6,7 +6,9 @@ import {
   loadConfig,
   isRemoteConfigSpec,
   normalizeConfigKey,
+  parseConfigContent,
   resolveConfigPath,
+  SELF_KEY,
 } from '../src/config';
 
 function writeTmp(content: string): string {
@@ -1058,5 +1060,35 @@ files:
     const cfg = await loadConfig(f);
     const src = cfg.files['out.txt'].src as { url: string };
     expect(src.url).toBe('$endpoint');
+  });
+});
+
+describe('$self key', () => {
+  it('parses a config with $self key and sets target to $self', () => {
+    const cfg = parseConfigContent(`
+files:
+  ${SELF_KEY}:
+    src:
+      - path: /tmp/a.yml
+      - path: /tmp/b.yml
+    yaml: true
+`);
+    expect(cfg.files[SELF_KEY]).toBeDefined();
+    expect(cfg.files[SELF_KEY].target).toBe(SELF_KEY);
+    expect(Array.isArray(cfg.files[SELF_KEY].src)).toBe(true);
+    expect(cfg.files[SELF_KEY].yaml).toBe(true);
+  });
+
+  it('can coexist with regular file entries', () => {
+    const cfg = parseConfigContent(`
+files:
+  ${SELF_KEY}:
+    src: /tmp/base.yml
+  output.txt:
+    src: /tmp/source.txt
+`);
+    expect(Object.keys(cfg.files)).toHaveLength(2);
+    expect(cfg.files[SELF_KEY]).toBeDefined();
+    expect(cfg.files['output.txt']).toBeDefined();
   });
 });

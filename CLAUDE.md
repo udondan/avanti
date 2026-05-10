@@ -72,9 +72,9 @@ A `src` value is a plain string (auto-detected as HTTP or local path) or an obje
 - `json.ts` — Merges multiple JSON sources; configurable conflict/array/object strategies
 - `yaml.ts` — Merges multiple YAML sources with comment preservation
 
-### Self-config re-evaluation
+### `$self` and config re-evaluation
 
-When `pull` detects that the config file itself is one of the write targets and its content changed, it re-runs the entire fetch loop with the new config before writing anything. This ensures the final state reflects what the updated config declares.
+The `$self` key in `files:` is the only mechanism for config re-evaluation. When present, the first fetch pass fetches only `$self`, merges the sources into a new config, and then runs a stabilization loop: if the merged config also has `$self`, it is re-fetched until the content converges (fixed point). Once stable, a final pass fetches all non-`$self` entries from the stable config. For local config files the stable content is written back to disk; for remote configs (`--config github:...`) it is in-memory only.
 
 ### History storage layout
 
