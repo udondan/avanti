@@ -28,16 +28,15 @@ export function atomicWrite(
       fs.writeFileSync(tmpFile, t.content, 'utf8');
 
       // Resolve the effective mode: explicit config value wins; otherwise
-      // preserve the existing file's rwx permission bits (0o777) so rename(2)
-      // doesn't silently reset them to the umask default. Special bits
-      // (setuid/setgid/sticky) are intentionally excluded. New files get the
+      // preserve the existing file's full permission bits (0o7777) so rename(2)
+      // doesn't silently reset them to the umask default. New files get the
       // OS umask default.
       let effectiveMode: number | undefined;
       if (t.mode) {
         effectiveMode = parseInt(t.mode, 8);
       } else {
         try {
-          effectiveMode = fs.statSync(t.targetPath).mode & 0o777;
+          effectiveMode = fs.statSync(t.targetPath).mode & 0o7777;
         } catch {
           // file doesn't exist yet — leave the temp file's umask permissions
         }
