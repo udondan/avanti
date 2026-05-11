@@ -28,6 +28,10 @@ function isGlabAvailable(): boolean {
   return !spawnSync('glab', ['--version'], { encoding: 'utf8' }).error;
 }
 
+function hostnameArgs(host?: string): string[] {
+  return host ? ['--hostname', host] : [];
+}
+
 function glabRun(args: string[]): {
   stdout: string;
   stderr: string;
@@ -55,7 +59,7 @@ async function resolveRef(
     );
     if (!res.ok) {
       if (shouldFallback(res.status) && isGlabAvailable()) {
-        return resolveRefViaCli(project);
+        return resolveRefViaCli(project, host);
       }
       throw new Error(
         `Failed to resolve $latest for ${project}: HTTP ${res.status}`,
@@ -72,9 +76,10 @@ async function resolveRef(
   return ref;
 }
 
-function resolveRefViaCli(project: string): string {
+function resolveRefViaCli(project: string, host?: string): string {
   const res = glabRun([
     'api',
+    ...hostnameArgs(host),
     `projects/${encodeURIComponent(project)}/repository/tags?order_by=version&sort=desc&per_page=1`,
   ]);
   if (res.status !== 0) {
@@ -100,7 +105,7 @@ async function detectPathType(
   );
   if (res.ok) return 'file';
   if (shouldFallback(res.status) && isGlabAvailable()) {
-    return detectPathTypeViaCli(project, filePath, ref);
+    return detectPathTypeViaCli(project, filePath, ref, host);
   }
   // Assume directory; downstream calls will surface the real error if wrong
   return 'directory';
@@ -110,10 +115,12 @@ function detectPathTypeViaCli(
   project: string,
   filePath: string,
   ref: string,
+  host?: string,
 ): 'file' | 'directory' {
   const encodedPath = encodeURIComponent(filePath);
   const res = glabRun([
     'api',
+    ...hostnameArgs(host),
     `projects/${encodeURIComponent(project)}/repository/files/${encodedPath}?ref=${encodeURIComponent(ref)}`,
   ]);
   return res.status === 0 ? 'file' : 'directory';
@@ -132,7 +139,7 @@ async function fetchFile(
   );
   if (!res.ok) {
     if (shouldFallback(res.status) && isGlabAvailable()) {
-      return fetchFileViaCli(project, filePath, ref);
+      return fetchFileViaCli(project, filePath, ref, host);
     }
     throw new Error(
       `Failed to fetch ${filePath} from ${project}@${ref}: HTTP ${res.status}`,
@@ -145,10 +152,12 @@ function fetchFileViaCli(
   project: string,
   filePath: string,
   ref: string,
+  host?: string,
 ): string {
   const encodedPath = encodeURIComponent(filePath);
   const res = glabRun([
     'api',
+    ...hostnameArgs(host),
     `projects/${encodeURIComponent(project)}/repository/files/${encodedPath}/raw?ref=${encodeURIComponent(ref)}`,
   ]);
   if (res.status !== 0) {
@@ -176,7 +185,7 @@ async function listTree(
     );
     if (!res.ok) {
       if (shouldFallback(res.status) && isGlabAvailable()) {
-        return listTreeViaCli(project, dirPath, ref);
+        return listTreeViaCli(project, dirPath, ref, host);
       }
       throw new Error(
         `Failed to list tree ${dirPath} in ${project}@${ref}: HTTP ${res.status}`,
@@ -195,6 +204,7 @@ function listTreeViaCli(
   project: string,
   dirPath: string,
   ref: string,
+  host?: string,
 ): string[] {
   const allPaths: string[] = [];
   const perPage = 100;
@@ -203,6 +213,7 @@ function listTreeViaCli(
   while (true) {
     const res = glabRun([
       'api',
+      ...hostnameArgs(host),
       `projects/${encodeURIComponent(project)}/repository/tree?path=${encodeURIComponent(dirPath)}&ref=${encodeURIComponent(ref)}&recursive=true&per_page=${perPage}&page=${page}`,
     ]);
     if (res.status !== 0) {
@@ -284,7 +295,7 @@ async function fetchDirectoryViaArchive(
   );
   if (!res.ok) {
     if (shouldFallback(res.status) && isGlabAvailable()) {
-      return fetchDirectoryViaArchiveViaCli(project, dirPath, ref);
+      return fetchDirectoryViaArchiveViaCli(project, dirPath, ref, host);
     }
     return null;
   }
@@ -297,12 +308,14 @@ function fetchDirectoryViaArchiveViaCli(
   project: string,
   dirPath: string,
   ref: string,
+  host?: string,
 ): Map<string, string> | null {
   const encodedProject = encodeURIComponent(project);
   const result = spawnSync(
     'glab',
     [
       'api',
+      ...hostnameArgs(host),
       `projects/${encodedProject}/repository/archive.tar.gz?sha=${encodeURIComponent(ref)}&path=${encodeURIComponent(dirPath)}`,
     ],
     { encoding: 'buffer' },
