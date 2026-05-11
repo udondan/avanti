@@ -48,8 +48,9 @@ function shellQuote(val: string): string {
 
 // Like resolveVars but shell-quotes each substituted value, preventing
 // metacharacters in variable values (especially $env: vars) from being
-// interpreted by the shell. Use this when the resolved string is passed
-// to sh -c (exec sources, post processors).
+// interpreted by the shell. Used by exec sources and post processors.
+// On Unix the resolved script is passed to sh -c; on Windows it is
+// Base64-encoded and passed to PowerShell via -EncodedCommand.
 export function resolveVarsShellSafe(value: string, vars: Variables): string {
   const afterEnv = value.replace(
     /\$env:([A-Za-z_][A-Za-z0-9_]*)/g,

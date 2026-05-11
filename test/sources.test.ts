@@ -9,7 +9,7 @@ import { fetchSource } from '../src/sources';
 
 describe('fetchLocal — ~/  expansion', () => {
   it('expands ~/ to os.homedir()', () => {
-    const slug = 'avanti-definitely-nonexistent-xyz-test';
+    const slug = `avanti-nonexistent-${Date.now()}-${process.pid}`;
     const expectedPath = join(homedir(), slug);
     expect(() => fetchLocal(`~/${slug}`, tmpdir())).toThrow(expectedPath);
   });

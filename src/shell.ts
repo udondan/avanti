@@ -1,4 +1,17 @@
+import * as path from 'path';
+
 export const isWindows = process.platform === 'win32';
+
+// Absolute path to the inbox PowerShell on Windows.
+// Using %SystemRoot% (rather than a bare 'powershell') prevents PATH-based
+// command hijacking when avanti runs inside an untrusted working directory.
+const POWERSHELL_EXE = path.join(
+  process.env['SystemRoot'] ?? 'C:\\Windows',
+  'System32',
+  'WindowsPowerShell',
+  'v1.0',
+  'powershell.exe',
+);
 
 // Returns the shell binary + args needed to run a script string.
 //
@@ -21,7 +34,7 @@ export function getShellArgs(script: string): {
     script;
   const encoded = Buffer.from(wrapped, 'utf16le').toString('base64');
   return {
-    shell: 'powershell',
+    shell: POWERSHELL_EXE,
     args: ['-NoProfile', '-NonInteractive', '-EncodedCommand', encoded],
   };
 }
