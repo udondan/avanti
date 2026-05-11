@@ -322,6 +322,103 @@ files:
     await expect(loadConfig(f)).rejects.toThrow('bitbucket.file');
   });
 
+  it('loads a gitlab src with host', async () => {
+    const f = writeTmp(`
+files:
+  file.txt:
+    src:
+      gitlab:
+        project: group/project
+        file: file.txt
+        host: gitlab.mycompany.com
+`);
+    const cfg = await loadConfig(f);
+    const src = cfg.files['file.txt'].src as {
+      gitlab: { project: string; file: string; host: string };
+    };
+    expect(src.gitlab.host).toBe('gitlab.mycompany.com');
+  });
+
+  it('loads a github src with host', async () => {
+    const f = writeTmp(`
+files:
+  file.txt:
+    src:
+      github:
+        repo: org/repo
+        file: file.txt
+        host: github.mycompany.com
+`);
+    const cfg = await loadConfig(f);
+    const src = cfg.files['file.txt'].src as {
+      github: { repo: string; file: string; host: string };
+    };
+    expect(src.github.host).toBe('github.mycompany.com');
+  });
+
+  it('loads a bitbucket src with host', async () => {
+    const f = writeTmp(`
+files:
+  file.txt:
+    src:
+      bitbucket:
+        workspace: acme
+        repo: shared
+        file: file.txt
+        host: bitbucket.mycompany.com
+`);
+    const cfg = await loadConfig(f);
+    const src = cfg.files['file.txt'].src as {
+      bitbucket: {
+        workspace: string;
+        repo: string;
+        file: string;
+        host: string;
+      };
+    };
+    expect(src.bitbucket.host).toBe('bitbucket.mycompany.com');
+  });
+
+  it('throws if gitlab host is an empty string', async () => {
+    const f = writeTmp(`
+files:
+  file.txt:
+    src:
+      gitlab:
+        project: group/project
+        file: file.txt
+        host: ""
+`);
+    await expect(loadConfig(f)).rejects.toThrow('gitlab.host');
+  });
+
+  it('throws if github host is an empty string', async () => {
+    const f = writeTmp(`
+files:
+  file.txt:
+    src:
+      github:
+        repo: org/repo
+        file: file.txt
+        host: ""
+`);
+    await expect(loadConfig(f)).rejects.toThrow('github.host');
+  });
+
+  it('throws if bitbucket host is an empty string', async () => {
+    const f = writeTmp(`
+files:
+  file.txt:
+    src:
+      bitbucket:
+        workspace: acme
+        repo: shared
+        file: file.txt
+        host: ""
+`);
+    await expect(loadConfig(f)).rejects.toThrow('bitbucket.host');
+  });
+
   it('loads a git src map', async () => {
     const f = writeTmp(`
 files:

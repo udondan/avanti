@@ -7,7 +7,7 @@ export interface GitHubResult {
 }
 
 function getApiBase(override?: string): string {
-  const host = override ?? process.env.GITHUB_HOST;
+  const host = override?.trim() || process.env.GITHUB_HOST?.trim() || '';
   return host ? `https://${host}/api/v3` : 'https://api.github.com';
 }
 

@@ -6,7 +6,11 @@ export interface BitbucketResult {
 }
 
 function getApiBase(override?: string): string {
-  return `https://${override ?? process.env.BITBUCKET_HOST ?? 'api.bitbucket.org'}/2.0`;
+  const host =
+    override?.trim() ||
+    process.env.BITBUCKET_HOST?.trim() ||
+    'api.bitbucket.org';
+  return `https://${host}/2.0`;
 }
 
 function apiHeaders(): Record<string, string> {

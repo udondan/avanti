@@ -400,6 +400,12 @@ function parseSingleSrc(
     if (typeof g['file'] !== 'string' || !g['file']) {
       throw new Error(`${loc}.gitlab.file: required string`);
     }
+    if (
+      g['host'] !== undefined &&
+      (typeof g['host'] !== 'string' || !g['host'])
+    ) {
+      throw new Error(`${loc}.gitlab.host: must be a non-empty string`);
+    }
     return {
       gitlab: {
         project: g['project'],
@@ -430,6 +436,12 @@ function parseSingleSrc(
     if (typeof g['file'] !== 'string' || !g['file']) {
       throw new Error(`${loc}.github.file: required string`);
     }
+    if (
+      g['host'] !== undefined &&
+      (typeof g['host'] !== 'string' || !g['host'])
+    ) {
+      throw new Error(`${loc}.github.host: must be a non-empty string`);
+    }
     return {
       github: {
         repo: g['repo'],
@@ -455,6 +467,12 @@ function parseSingleSrc(
     }
     if (typeof b['file'] !== 'string' || !b['file']) {
       throw new Error(`${loc}.bitbucket.file: required string`);
+    }
+    if (
+      b['host'] !== undefined &&
+      (typeof b['host'] !== 'string' || !b['host'])
+    ) {
+      throw new Error(`${loc}.bitbucket.host: must be a non-empty string`);
     }
     return {
       bitbucket: {

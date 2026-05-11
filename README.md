@@ -865,27 +865,22 @@ If a GitHub or GitLab request fails with a 401, 403, or 404 response and `gh` / 
 
 ### Private Instances
 
-Set the `host` field directly on a source to target a private instance. This is the preferred approach when different sources in the same config point to different hosts:
+Set the `host` field directly on a source to target a private instance.
+This is the preferred approach when different sources in the same config
+point to different hosts:
 
 ```yaml
 src:
   gitlab:
     project: group/repo
     file: path/to/file.txt
-    host: gitlab.mycompany.com
+    host: gitlab.mycompany.com   # private GitLab instance
 
 src:
   github:
     repo: owner/repo
     file: path/to/file.txt
-    host: github.mycompany.com
-
-src:
-  bitbucket:
-    workspace: my-workspace
-    repo: my-repo
-    file: path/to/file.txt
-    host: bitbucket.mycompany.com
+    host: github.mycompany.com   # GitHub Enterprise Server
 ```
 
 Alternatively, set an environment variable to apply a host override globally
@@ -905,8 +900,8 @@ GITLAB_HOST=gitlab.mycompany.com avanti pull
 GITHUB_HOST=github.mycompany.com avanti pull
 ```
 
-**Bitbucket Server / Data Center** — set `BITBUCKET_HOST` to override the
-default `api.bitbucket.org`:
+**Bitbucket** — set `BITBUCKET_HOST` to override the default
+`api.bitbucket.org` (Bitbucket Cloud REST API host):
 
 ```bash
 BITBUCKET_HOST=bitbucket.mycompany.com avanti pull

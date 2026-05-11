@@ -140,15 +140,18 @@ function labelForSrc(src: FileSrc, vars: Variables): string {
   if (typeof src === 'string') return resolveVars(src, vars);
   if ('github' in src) {
     const ref = src.github.ref ? `@${src.github.ref}` : '';
-    return `github:${src.github.repo}:${src.github.file}${ref}`;
+    const host = src.github.host ? `[${src.github.host}]` : '';
+    return `github${host}:${src.github.repo}:${src.github.file}${ref}`;
   }
   if ('gitlab' in src) {
     const ref = src.gitlab.ref ? `@${src.gitlab.ref}` : '';
-    return `gitlab:${src.gitlab.project}:${src.gitlab.file}${ref}`;
+    const host = src.gitlab.host ? `[${src.gitlab.host}]` : '';
+    return `gitlab${host}:${src.gitlab.project}:${src.gitlab.file}${ref}`;
   }
   if ('bitbucket' in src) {
     const ref = src.bitbucket.ref ? `@${src.bitbucket.ref}` : '';
-    return `bitbucket:${src.bitbucket.workspace}/${src.bitbucket.repo}:${src.bitbucket.file}${ref}`;
+    const host = src.bitbucket.host ? `[${src.bitbucket.host}]` : '';
+    return `bitbucket${host}:${src.bitbucket.workspace}/${src.bitbucket.repo}:${src.bitbucket.file}${ref}`;
   }
   if ('git' in src) {
     const ref = src.git.ref ? `@${src.git.ref}` : '';
@@ -174,17 +177,26 @@ function cacheKeyForSrc(src: FileSrc, vars: Variables): string {
   if (typeof src === 'string') return resolveVars(src, vars);
   if ('github' in src) {
     const ref = src.github.ref ? `@${resolveVars(src.github.ref, vars)}` : '';
-    return `github:${resolveVars(src.github.repo, vars)}:${resolveVars(src.github.file, vars)}${ref}`;
+    const host = src.github.host
+      ? `[${resolveVars(src.github.host, vars)}]`
+      : '';
+    return `github${host}:${resolveVars(src.github.repo, vars)}:${resolveVars(src.github.file, vars)}${ref}`;
   }
   if ('gitlab' in src) {
     const ref = src.gitlab.ref ? `@${resolveVars(src.gitlab.ref, vars)}` : '';
-    return `gitlab:${resolveVars(src.gitlab.project, vars)}:${resolveVars(src.gitlab.file, vars)}${ref}`;
+    const host = src.gitlab.host
+      ? `[${resolveVars(src.gitlab.host, vars)}]`
+      : '';
+    return `gitlab${host}:${resolveVars(src.gitlab.project, vars)}:${resolveVars(src.gitlab.file, vars)}${ref}`;
   }
   if ('bitbucket' in src) {
     const ref = src.bitbucket.ref
       ? `@${resolveVars(src.bitbucket.ref, vars)}`
       : '';
-    return `bitbucket:${resolveVars(src.bitbucket.workspace, vars)}/${resolveVars(src.bitbucket.repo, vars)}:${resolveVars(src.bitbucket.file, vars)}${ref}`;
+    const host = src.bitbucket.host
+      ? `[${resolveVars(src.bitbucket.host, vars)}]`
+      : '';
+    return `bitbucket${host}:${resolveVars(src.bitbucket.workspace, vars)}/${resolveVars(src.bitbucket.repo, vars)}:${resolveVars(src.bitbucket.file, vars)}${ref}`;
   }
   if ('git' in src) {
     const ref = src.git.ref ? `@${resolveVars(src.git.ref, vars)}` : '';

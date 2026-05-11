@@ -10,7 +10,7 @@ export interface GitLabResult {
 }
 
 function getHost(override?: string): string {
-  return override ?? process.env.GITLAB_HOST ?? 'gitlab.com';
+  return override?.trim() || process.env.GITLAB_HOST?.trim() || 'gitlab.com';
 }
 
 function apiHeaders(): Record<string, string> {
