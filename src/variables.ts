@@ -11,9 +11,16 @@ export function validateVariables(vars: Variables): void {
   }
 }
 
+// Unicode private-use sentinel for $$ during substitution passes.
+// Cannot appear in normal config values.
+const DOLLAR_PLACEHOLDER = '';
+
 export function resolveVars(value: string, vars: Variables): string {
+  // $$ → placeholder (must come first so subsequent passes ignore it)
+  const escaped = value.replaceAll('$$', DOLLAR_PLACEHOLDER);
+
   // First pass: $env:NAME → process.env value (must come before $name pass)
-  const afterEnv = value.replace(
+  const afterEnv = escaped.replace(
     /\$env:([A-Za-z_][A-Za-z0-9_]*)/g,
     (_, name: string) => {
       const val = process.env[name];
@@ -25,7 +32,7 @@ export function resolveVars(value: string, vars: Variables): string {
   );
 
   // Second pass: $name → variable value (reserved names are passed through unchanged)
-  return afterEnv.replace(
+  const afterVars = afterEnv.replace(
     /\$([A-Za-z_][A-Za-z0-9_]*)/g,
     (match, name: string) => {
       if (RESERVED_VARS.has(name)) return match;
@@ -35,6 +42,8 @@ export function resolveVars(value: string, vars: Variables): string {
       return vars[name];
     },
   );
+
+  return afterVars.replaceAll(DOLLAR_PLACEHOLDER, '$');
 }
 
 // Single-quote escaping for shell injection prevention.
@@ -52,7 +61,10 @@ function shellQuote(val: string): string {
 // On Unix the resolved script is passed to sh -c; on Windows it is
 // Base64-encoded and passed to PowerShell via -EncodedCommand.
 export function resolveVarsShellSafe(value: string, vars: Variables): string {
-  const afterEnv = value.replace(
+  // $$ → placeholder (must come first so subsequent passes ignore it)
+  const escaped = value.replaceAll('$$', DOLLAR_PLACEHOLDER);
+
+  const afterEnv = escaped.replace(
     /\$env:([A-Za-z_][A-Za-z0-9_]*)/g,
     (_, name: string) => {
       const val = process.env[name];
@@ -63,7 +75,7 @@ export function resolveVarsShellSafe(value: string, vars: Variables): string {
     },
   );
 
-  return afterEnv.replace(
+  const afterVars = afterEnv.replace(
     /\$([A-Za-z_][A-Za-z0-9_]*)/g,
     (match, name: string) => {
       if (RESERVED_VARS.has(name)) return match;
@@ -73,4 +85,6 @@ export function resolveVarsShellSafe(value: string, vars: Variables): string {
       return shellQuote(vars[name]);
     },
   );
+
+  return afterVars.replaceAll(DOLLAR_PLACEHOLDER, '$');
 }

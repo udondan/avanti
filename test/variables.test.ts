@@ -57,6 +57,22 @@ describe('resolveVars', () => {
       'no variables here',
     );
   });
+
+  it('treats $$ as a literal $', () => {
+    expect(resolveVars('$$name', { name: 'world' })).toBe('$name');
+  });
+
+  it('treats $$env:NAME as a literal $env:NAME without resolving', () => {
+    process.env['SHOULD_NOT_RESOLVE'] = 'oops';
+    expect(resolveVars('$$env:SHOULD_NOT_RESOLVE', {})).toBe(
+      '$env:SHOULD_NOT_RESOLVE',
+    );
+    delete process.env['SHOULD_NOT_RESOLVE'];
+  });
+
+  it('handles $$$ as literal $ followed by variable substitution', () => {
+    expect(resolveVars('$$$name', { name: 'world' })).toBe('$world');
+  });
 });
 
 describe('resolveVarsShellSafe', () => {
@@ -97,6 +113,18 @@ describe('resolveVarsShellSafe', () => {
     expect(() =>
       resolveVarsShellSafe('$env:DEFINITELY_NOT_SET_XYZ', {}),
     ).toThrow('Undefined environment variable: $env:DEFINITELY_NOT_SET_XYZ');
+  });
+
+  it('treats $$ as a literal $ without substitution', () => {
+    expect(resolveVarsShellSafe('$$true', {})).toBe('$true');
+  });
+
+  it('treats $$env:NAME as literal without resolving or quoting', () => {
+    process.env['SHOULD_NOT_RESOLVE'] = 'oops';
+    expect(resolveVarsShellSafe('$$env:SHOULD_NOT_RESOLVE', {})).toBe(
+      '$env:SHOULD_NOT_RESOLVE',
+    );
+    delete process.env['SHOULD_NOT_RESOLVE'];
   });
 });
 
