@@ -709,7 +709,7 @@ files:
   out.txt:
     src:
       exec: powershell -Command "if ($$true) { Write-Output 'yes' }"
-    post: awk '{ print $$1 }' # $1 is awk syntax, not an avanti variable
+    post: sed 's/$$HOME/redacted/g' # $HOME would be treated as an avanti variable
 ```
 
 `$$` produces a single `$` after substitution. `$$$name` produces `$` followed by the value of `name`.
