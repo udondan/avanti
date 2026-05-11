@@ -404,7 +404,7 @@ describe('HistoryManager.stageFileVersion with SHA records', () => {
     const { fileRef } = h.stageFileVersion(
       pullId,
       targetPath,
-      'new content',
+      Buffer.from('new content', 'utf8'),
       false,
       sources,
     );
@@ -435,7 +435,7 @@ describe('HistoryManager.stageFileVersion with SHA records', () => {
     const { fileRef } = h.stageFileVersion(
       pullId,
       targetPath,
-      'changed',
+      Buffer.from('changed', 'utf8'),
       false,
       sources,
     );
@@ -464,7 +464,7 @@ describe('HistoryManager.stageFileVersion with SHA records', () => {
     const { fileRef } = h.stageFileVersion(
       pullId,
       targetPath,
-      'v1',
+      Buffer.from('v1', 'utf8'),
       false,
       sources,
     );
@@ -489,7 +489,7 @@ describe('HistoryManager.stageFileVersion with SHA records', () => {
     const { fileRef } = h.stageFileVersion(
       pullId,
       targetPath,
-      'content',
+      Buffer.from('content', 'utf8'),
       false,
     );
 

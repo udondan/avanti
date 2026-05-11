@@ -4,19 +4,31 @@ import { createTwoFilesPatch } from 'diff';
 import chalk from 'chalk';
 import { Variables } from './types';
 import { resolveVars } from './variables';
+import { isBinary } from './binary';
 
 export interface FileDiff {
   targetPath: string;
   isNew: boolean;
   hasChanges: boolean;
   patch: string;
+  isBinary?: boolean;
 }
 
 export function computeDeleteDiff(targetPath: string): FileDiff {
   if (!fs.existsSync(targetPath)) {
     return { targetPath, isNew: false, hasChanges: false, patch: '' };
   }
-  const oldContent = fs.readFileSync(targetPath, 'utf8');
+  const oldBuf = fs.readFileSync(targetPath);
+  if (isBinary(oldBuf)) {
+    return {
+      targetPath,
+      isNew: false,
+      hasChanges: true,
+      patch: '',
+      isBinary: true,
+    };
+  }
+  const oldContent = oldBuf.toString('utf8');
   const patch = createTwoFilesPatch(
     targetPath,
     '/dev/null',
@@ -28,17 +40,26 @@ export function computeDeleteDiff(targetPath: string): FileDiff {
   return { targetPath, isNew: false, hasChanges: true, patch };
 }
 
-export function computeDiff(targetPath: string, newContent: string): FileDiff {
+export function computeDiff(targetPath: string, newContent: Buffer): FileDiff {
   const isNew = !fs.existsSync(targetPath);
-  const oldContent = isNew ? '' : fs.readFileSync(targetPath, 'utf8');
+  const oldBuf = isNew ? Buffer.alloc(0) : fs.readFileSync(targetPath);
 
-  const hasChanges = oldContent !== newContent;
+  const binary = isBinary(newContent) || isBinary(oldBuf);
+
+  if (binary) {
+    const hasChanges = isNew || !newContent.equals(oldBuf);
+    return { targetPath, isNew, hasChanges, patch: '', isBinary: true };
+  }
+
+  const oldContent = oldBuf.toString('utf8');
+  const newText = newContent.toString('utf8');
+  const hasChanges = oldContent !== newText;
 
   const patch = createTwoFilesPatch(
     isNew ? '/dev/null' : targetPath,
     targetPath,
     oldContent,
-    newContent,
+    newText,
     isNew ? '' : undefined,
     isNew ? 'new file' : undefined,
   );
@@ -48,6 +69,15 @@ export function computeDiff(targetPath: string, newContent: string): FileDiff {
 
 export function formatDiff(diff: FileDiff): string {
   if (!diff.hasChanges) return '';
+
+  if (diff.isBinary) {
+    const label = diff.isNew ? 'new binary file' : 'binary file changed';
+    return (
+      chalk.bold(`--- ${diff.targetPath}\n+++ ${diff.targetPath}`) +
+      '\n' +
+      chalk.cyan(`@@ ${label} @@`)
+    );
+  }
 
   const lines = diff.patch.split('\n');
   const colored = lines.map((line) => {

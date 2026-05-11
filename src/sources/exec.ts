@@ -1,7 +1,7 @@
 import { spawnSync } from 'child_process';
 import { getShellArgs } from '../shell';
 
-export function fetchExec(command: string): string {
+export function fetchExec(command: string): Buffer {
   const { shell, args } = getShellArgs(command);
   const result = spawnSync(shell, args, { encoding: 'utf8' });
   if (result.error) {
@@ -13,5 +13,5 @@ export function fetchExec(command: string): string {
       `exec exited with code ${result.status}${stderr ? ': ' + stderr : ''}`,
     );
   }
-  return result.stdout;
+  return Buffer.from(result.stdout, 'utf8');
 }

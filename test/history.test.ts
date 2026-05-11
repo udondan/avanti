@@ -25,6 +25,10 @@ function makeManager(
   return new HistoryManager(configFile, workingDir);
 }
 
+function buf(s: string): Buffer {
+  return Buffer.from(s, 'utf8');
+}
+
 describe('HistoryManager.ensureStorageDir', () => {
   it('creates storage dirs and returns true', () => {
     const h = makeManager();
@@ -81,7 +85,7 @@ describe('HistoryManager.stageFileVersion and closePullSession', () => {
     const { version, fileRef } = h.stageFileVersion(
       pullId,
       targetFile,
-      'new content',
+      buf('new content'),
       false,
     );
     expect(version).toBe(1);
@@ -96,8 +100,10 @@ describe('HistoryManager.stageFileVersion and closePullSession', () => {
     expect(meta!.existedBeforeAvanti).toBe(true);
     expect(meta!.currentVersion).toBe(1);
 
-    expect(h.readVersion(targetFile, 0)).toBe('original content');
-    expect(h.readVersion(targetFile, 1)).toBe('new content');
+    expect(h.readVersion(targetFile, 0)?.toString('utf8')).toBe(
+      'original content',
+    );
+    expect(h.readVersion(targetFile, 1)?.toString('utf8')).toBe('new content');
   });
 
   it('marks file as not existing before avanti when isNew=true', () => {
@@ -111,7 +117,7 @@ describe('HistoryManager.stageFileVersion and closePullSession', () => {
     const { fileRef } = h.stageFileVersion(
       pullId,
       targetFile,
-      'created by avanti',
+      buf('created by avanti'),
       true,
     );
     h.closePullSession(pullId, '/project/.avanti.yml', [fileRef]);
@@ -119,7 +125,9 @@ describe('HistoryManager.stageFileVersion and closePullSession', () => {
     const meta = h.getFileMeta(targetFile);
     expect(meta!.existedBeforeAvanti).toBe(false);
     expect(h.readVersion(targetFile, 0)).toBeNull();
-    expect(h.readVersion(targetFile, 1)).toBe('created by avanti');
+    expect(h.readVersion(targetFile, 1)?.toString('utf8')).toBe(
+      'created by avanti',
+    );
   });
 
   it('increments version number on subsequent pulls', () => {
@@ -133,7 +141,7 @@ describe('HistoryManager.stageFileVersion and closePullSession', () => {
     const { fileRef: ref1 } = h.stageFileVersion(
       pull1,
       targetFile,
-      'v1',
+      buf('v1'),
       false,
     );
     h.closePullSession(pull1, '/project/.avanti.yml', [ref1]);
@@ -143,14 +151,14 @@ describe('HistoryManager.stageFileVersion and closePullSession', () => {
     const { fileRef: ref2 } = h.stageFileVersion(
       pull2,
       targetFile,
-      'v2',
+      buf('v2'),
       false,
     );
     h.closePullSession(pull2, '/project/.avanti.yml', [ref2]);
     expect(ref2.version).toBe(2);
 
-    expect(h.readVersion(targetFile, 1)).toBe('v1');
-    expect(h.readVersion(targetFile, 2)).toBe('v2');
+    expect(h.readVersion(targetFile, 1)?.toString('utf8')).toBe('v1');
+    expect(h.readVersion(targetFile, 2)?.toString('utf8')).toBe('v2');
   });
 
   it('does not record entry in pulls.jsonl when closePullSession is not called', () => {
@@ -160,7 +168,7 @@ describe('HistoryManager.stageFileVersion and closePullSession', () => {
     const h = makeManager();
     h.ensureStorageDir();
     const pullId = h.openPullSession();
-    h.stageFileVersion(pullId, targetFile, 'new', false);
+    h.stageFileVersion(pullId, targetFile, buf('new'), false);
     // Deliberately not calling closePullSession (simulates no-op or failed write)
 
     expect(h.listPulls()).toHaveLength(0);
@@ -182,11 +190,21 @@ describe('HistoryManager.listPulls', () => {
     h.ensureStorageDir();
 
     const p1 = h.openPullSession();
-    const { fileRef: r1 } = h.stageFileVersion(p1, targetFile, 'v1', false);
+    const { fileRef: r1 } = h.stageFileVersion(
+      p1,
+      targetFile,
+      buf('v1'),
+      false,
+    );
     h.closePullSession(p1, '/project/.avanti.yml', [r1]);
 
     const p2 = h.openPullSession();
-    const { fileRef: r2 } = h.stageFileVersion(p2, targetFile, 'v2', false);
+    const { fileRef: r2 } = h.stageFileVersion(
+      p2,
+      targetFile,
+      buf('v2'),
+      false,
+    );
     h.closePullSession(p2, '/project/.avanti.yml', [r2]);
 
     const pulls = h.listPulls();
@@ -217,7 +235,12 @@ describe('HistoryManager.getFileHistory', () => {
     const h = makeManager();
     h.ensureStorageDir();
     const pullId = h.openPullSession();
-    const { fileRef } = h.stageFileVersion(pullId, targetFile, 'new', false);
+    const { fileRef } = h.stageFileVersion(
+      pullId,
+      targetFile,
+      buf('new'),
+      false,
+    );
     h.closePullSession(pullId, '/project/.avanti.yml', [fileRef]);
 
     const fh = h.getFileHistory(targetFile);
@@ -249,12 +272,12 @@ describe('HistoryManager.getFilesAtPull', () => {
     h.ensureStorageDir();
 
     const p1 = h.openPullSession();
-    const { fileRef: r1a } = h.stageFileVersion(p1, f1, 'a-v1', false);
+    const { fileRef: r1a } = h.stageFileVersion(p1, f1, buf('a-v1'), false);
     h.closePullSession(p1, '/project/.avanti.yml', [r1a]);
 
     const p2 = h.openPullSession();
-    const { fileRef: r2a } = h.stageFileVersion(p2, f1, 'a-v2', false);
-    const { fileRef: r2b } = h.stageFileVersion(p2, f2, 'b-v1', false);
+    const { fileRef: r2a } = h.stageFileVersion(p2, f1, buf('a-v2'), false);
+    const { fileRef: r2b } = h.stageFileVersion(p2, f2, buf('b-v1'), false);
     h.closePullSession(p2, '/project/.avanti.yml', [r2a, r2b]);
 
     // State after p1: only f1 at v1
@@ -279,18 +302,18 @@ describe('HistoryManager.getFilesAtPull', () => {
 
     // Pull 1: update f1 to 'a-v1'
     const p1 = h.openPullSession();
-    const { fileRef: r1a } = h.stageFileVersion(p1, f1, 'a-v1', false);
+    const { fileRef: r1a } = h.stageFileVersion(p1, f1, buf('a-v1'), false);
     h.closePullSession(p1, '/project/.avanti.yml', [r1a]);
 
     // Pull 2: update f1 to 'a-v2', add new file f2 to 'b-v1'
     const p2 = h.openPullSession();
-    const { fileRef: r2a } = h.stageFileVersion(p2, f1, 'a-v2', false);
-    const { fileRef: r2b } = h.stageFileVersion(p2, f2, 'b-v1', true);
+    const { fileRef: r2a } = h.stageFileVersion(p2, f1, buf('a-v2'), false);
+    const { fileRef: r2b } = h.stageFileVersion(p2, f2, buf('b-v1'), true);
     h.closePullSession(p2, '/project/.avanti.yml', [r2a, r2b]);
 
     // Pull 3: update f1 to 'a-v3'
     const p3 = h.openPullSession();
-    const { fileRef: r3a } = h.stageFileVersion(p3, f1, 'a-v3', false);
+    const { fileRef: r3a } = h.stageFileVersion(p3, f1, buf('a-v3'), false);
     h.closePullSession(p3, '/project/.avanti.yml', [r3a]);
 
     // Query at pull 2: f1 at v2, f2 at v1
@@ -325,11 +348,11 @@ describe('HistoryManager.getLastPullFiles', () => {
     h.ensureStorageDir();
 
     const p1 = h.openPullSession();
-    const { fileRef: r1 } = h.stageFileVersion(p1, f, 'v1', false);
+    const { fileRef: r1 } = h.stageFileVersion(p1, f, buf('v1'), false);
     h.closePullSession(p1, '/project/.avanti.yml', [r1]);
 
     const p2 = h.openPullSession();
-    const { fileRef: r2 } = h.stageFileVersion(p2, f, 'v2', false);
+    const { fileRef: r2 } = h.stageFileVersion(p2, f, buf('v2'), false);
     h.closePullSession(p2, '/project/.avanti.yml', [r2]);
 
     const last = h.getLastPullFiles();
@@ -369,7 +392,7 @@ describe('HistoryManager graceful degradation', () => {
     const h = makeManager();
     h.ensureStorageDir();
     const p = h.openPullSession();
-    const { fileRef } = h.stageFileVersion(p, f, 'y', false);
+    const { fileRef } = h.stageFileVersion(p, f, buf('y'), false);
     h.closePullSession(p, '/project/.avanti.yml', [fileRef]);
     expect(h.hasHistory()).toBe(true);
   });

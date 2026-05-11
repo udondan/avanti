@@ -126,7 +126,7 @@ function parseGitLabSpec(spec: string): {
 
 async function fetchConfigContent(spec: string): Promise<string> {
   if (spec.startsWith('http://') || spec.startsWith('https://')) {
-    return await fetchHttp(spec);
+    return (await fetchHttp(spec)).toString('utf8');
   }
 
   if (spec.startsWith('github:')) {
@@ -137,7 +137,7 @@ async function fetchConfigContent(spec: string): Promise<string> {
         `Remote config must be a single file, got ${result.files.size} files from "${spec}"`,
       );
     }
-    return result.files.values().next().value as string;
+    return (result.files.values().next().value as Buffer).toString('utf8');
   }
 
   if (spec.startsWith('gitlab:')) {
@@ -148,7 +148,7 @@ async function fetchConfigContent(spec: string): Promise<string> {
         `Remote config must be a single file, got ${result.files.size} files from "${spec}"`,
       );
     }
-    return result.files.values().next().value as string;
+    return (result.files.values().next().value as Buffer).toString('utf8');
   }
 
   // Local file

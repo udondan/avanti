@@ -11,6 +11,7 @@ import {
 import { fetchSource, FetchCache } from '../sources';
 import { applyReplace } from '../processors/replace';
 import { applyPost } from '../processors/post';
+import { isBinary } from '../binary';
 import {
   computeDiff,
   computeDeleteDiff,
@@ -60,11 +61,15 @@ async function runDiffLoop(
 
       for (const [relPath, rawContent] of result.files) {
         let content = rawContent;
-        if (entry.replace?.length)
-          content = applyReplace(content, entry.replace, vars);
-        if (entry.post) content = applyPost(content, entry.post, vars);
+        if (!isBinary(content)) {
+          let text = content.toString('utf8');
+          if (entry.replace?.length)
+            text = applyReplace(text, entry.replace, vars);
+          if (entry.post) text = applyPost(text, entry.post, vars);
+          content = Buffer.from(text, 'utf8');
+        }
         if (isSelf) {
-          selfContent = content;
+          selfContent = content.toString('utf8');
           continue;
         }
         const targetPath = resolveTargetPath(entry, relPath, workingDir, vars);
@@ -194,13 +199,11 @@ export function diffCommand(): Command {
               const existingIdx = allDiffs.findIndex(
                 (d) => d.targetPath === configPath,
               );
+              const selfBuf = Buffer.from(currentSelfContent, 'utf8');
               if (existingIdx === -1) {
-                allDiffs.push(computeDiff(configPath, currentSelfContent));
+                allDiffs.push(computeDiff(configPath, selfBuf));
               } else {
-                allDiffs[existingIdx] = computeDiff(
-                  configPath,
-                  currentSelfContent,
-                );
+                allDiffs[existingIdx] = computeDiff(configPath, selfBuf);
               }
             }
           }

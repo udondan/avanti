@@ -2,7 +2,7 @@ import * as path from 'path';
 import { fetchWithRetry } from '../fetch';
 
 export interface BitbucketResult {
-  files: Map<string, string>;
+  files: Map<string, Buffer>;
 }
 
 function getApiBase(override?: string): string {
@@ -71,7 +71,7 @@ async function fetchFileOrDetect(
   filePath: string,
   ref: string,
   host?: string,
-): Promise<string | null> {
+): Promise<Buffer | null> {
   const res = await fetchWithRetry(
     `${getApiBase(host)}/repositories/${workspace}/${repo}/src/${encodeURIComponent(ref)}/${filePath}`,
     { headers: apiHeaders() },
@@ -83,7 +83,7 @@ async function fetchFileOrDetect(
   }
   const ct = res.headers.get('content-type') ?? '';
   if (ct.includes('application/json')) return null;
-  return res.text();
+  return Buffer.from(await res.arrayBuffer());
 }
 
 async function fetchFile(
@@ -92,7 +92,7 @@ async function fetchFile(
   filePath: string,
   ref: string,
   host?: string,
-): Promise<string> {
+): Promise<Buffer> {
   const res = await fetchWithRetry(
     `${getApiBase(host)}/repositories/${workspace}/${repo}/src/${encodeURIComponent(ref)}/${filePath}`,
     { headers: apiHeaders() },
@@ -102,7 +102,7 @@ async function fetchFile(
       `Failed to fetch ${filePath} from ${workspace}/${repo}@${ref}: HTTP ${res.status}`,
     );
   }
-  return res.text();
+  return Buffer.from(await res.arrayBuffer());
 }
 
 async function listDir(
@@ -180,11 +180,10 @@ export async function fetchBitbucket(
   }
   const entries = await Promise.all(
     paths.map(
-      async (p) =>
-        [
-          path.relative(normalizedPath, p),
-          await fetchFile(workspace, repo, p, resolvedRef, host),
-        ] as const,
+      async (p): Promise<[string, Buffer]> => [
+        path.relative(normalizedPath, p),
+        await fetchFile(workspace, repo, p, resolvedRef, host),
+      ],
     ),
   );
   return { files: new Map(entries) };

@@ -182,7 +182,9 @@ export function writeUpdatedShas(
   const raw = fs.readFileSync(configPath, 'utf8');
   const newContent = applyUpdatedShas(raw, updates);
   if (newContent !== null) {
-    atomicWrite([{ targetPath: configPath, content: newContent }]);
+    atomicWrite([
+      { targetPath: configPath, content: Buffer.from(newContent, 'utf8') },
+    ]);
     return true;
   }
   return false;

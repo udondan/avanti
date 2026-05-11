@@ -116,7 +116,7 @@ export class HistoryManager {
   stageFileVersion(
     pullId: string,
     targetPath: string,
-    newContent: string,
+    newContent: Buffer,
     isNew: boolean,
     sources?: SourceShaRecord[],
   ): { version: number; fileRef: PullLogFileRef } {
@@ -134,8 +134,8 @@ export class HistoryManager {
       isFirstSeen = true;
       const existedBeforeAvanti = !isNew && fs.existsSync(targetPath);
       if (existedBeforeAvanti) {
-        const originalContent = fs.readFileSync(targetPath, 'utf8');
-        fs.writeFileSync(path.join(fileDir, 'v0'), originalContent, 'utf8');
+        const originalContent = fs.readFileSync(targetPath);
+        fs.writeFileSync(path.join(fileDir, 'v0'), originalContent);
       }
       meta = {
         absolutePath: targetPath,
@@ -147,7 +147,7 @@ export class HistoryManager {
     }
 
     const nextVersion = meta.currentVersion + 1;
-    fs.writeFileSync(path.join(fileDir, `v${nextVersion}`), newContent, 'utf8');
+    fs.writeFileSync(path.join(fileDir, `v${nextVersion}`), newContent);
 
     if (isFirstSeen) {
       fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2), 'utf8');
@@ -272,14 +272,14 @@ export class HistoryManager {
     }
   }
 
-  readVersion(absolutePath: string, version: number): string | null {
+  readVersion(absolutePath: string, version: number): Buffer | null {
     try {
       const index = this.readIndex();
       const slug = index[absolutePath];
       if (!slug) return null;
       const versionPath = path.join(this.filesDir, slug, `v${version}`);
       if (!fs.existsSync(versionPath)) return null;
-      return fs.readFileSync(versionPath, 'utf8');
+      return fs.readFileSync(versionPath);
     } catch {
       return null;
     }
