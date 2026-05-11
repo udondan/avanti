@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { applyReplace } from '../src/processors/replace';
 import { applyPost } from '../src/processors/post';
+import { isWindows } from '../src/shell';
 
 describe('applyReplace', () => {
   it('replaces plain string', () => {
@@ -37,7 +38,10 @@ describe('applyReplace', () => {
 
 describe('applyPost', () => {
   it('pipes content through shell script', () => {
-    const result = applyPost('hello\n', 'tr a-z A-Z');
+    const script = isWindows
+      ? '[Console]::Out.Write([Console]::In.ReadToEnd().ToUpper())'
+      : 'tr a-z A-Z';
+    const result = applyPost('hello\n', script);
     expect(result).toBe('HELLO\n');
   });
 
@@ -48,11 +52,19 @@ describe('applyPost', () => {
   });
 
   it('resolves variables in the script', () => {
-    const result = applyPost('hello\n', 'tr $from $to', {
-      from: 'a-z',
-      to: 'A-Z',
-    });
-    expect(result).toBe('HELLO\n');
+    if (isWindows) {
+      // Use a PS-compatible command that still exercises avanti variable substitution
+      const result = applyPost('', '[Console]::Out.Write($msg)', {
+        msg: 'hello',
+      });
+      expect(result).toBe('hello');
+    } else {
+      const result = applyPost('hello\n', 'tr $from $to', {
+        from: 'a-z',
+        to: 'A-Z',
+      });
+      expect(result).toBe('HELLO\n');
+    }
   });
 
   it('throws on undefined variable in script', () => {
@@ -62,12 +74,19 @@ describe('applyPost', () => {
   });
 
   it('shell-quotes variable values to prevent metachar injection', () => {
-    // Without quoting, "hello; echo injected" would run two commands.
-    // With quoting it is treated as a literal argument.
-    const result = applyPost('', "printf '%s' $val", {
-      val: 'hello; echo injected',
-    });
-    expect(result).toBe('hello; echo injected');
+    if (isWindows) {
+      // Without quoting, "; Write-Output injected" would run as a second command.
+      const result = applyPost('', '[Console]::Out.Write($val)', {
+        val: 'hello; Write-Output injected',
+      });
+      expect(result).toBe('hello; Write-Output injected');
+    } else {
+      // Without quoting, "hello; echo injected" would run two commands.
+      const result = applyPost('', "printf '%s' $val", {
+        val: 'hello; echo injected',
+      });
+      expect(result).toBe('hello; echo injected');
+    }
   });
 });
 

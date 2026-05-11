@@ -37,8 +37,12 @@ export function resolveVars(value: string, vars: Variables): string {
   );
 }
 
-// POSIX single-quote escaping: wrap in ' and escape embedded ' as '\''
+// Single-quote escaping for shell injection prevention.
+// POSIX sh: escape ' as '\''  — PowerShell: escape ' as ''
 function shellQuote(val: string): string {
+  if (process.platform === 'win32') {
+    return "'" + val.replace(/'/g, "''") + "'";
+  }
   return "'" + val.replace(/'/g, "'\\''") + "'";
 }
 
