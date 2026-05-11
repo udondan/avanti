@@ -419,6 +419,46 @@ files:
     await expect(loadConfig(f)).rejects.toThrow('bitbucket.host');
   });
 
+  it('throws if gitlab host is whitespace-only', async () => {
+    const f = writeTmp(`
+files:
+  file.txt:
+    src:
+      gitlab:
+        project: group/project
+        file: file.txt
+        host: "   "
+`);
+    await expect(loadConfig(f)).rejects.toThrow('gitlab.host');
+  });
+
+  it('throws if github host is whitespace-only', async () => {
+    const f = writeTmp(`
+files:
+  file.txt:
+    src:
+      github:
+        repo: org/repo
+        file: file.txt
+        host: "   "
+`);
+    await expect(loadConfig(f)).rejects.toThrow('github.host');
+  });
+
+  it('throws if bitbucket host is whitespace-only', async () => {
+    const f = writeTmp(`
+files:
+  file.txt:
+    src:
+      bitbucket:
+        workspace: acme
+        repo: shared
+        file: file.txt
+        host: "   "
+`);
+    await expect(loadConfig(f)).rejects.toThrow('bitbucket.host');
+  });
+
   it('loads a git src map', async () => {
     const f = writeTmp(`
 files:

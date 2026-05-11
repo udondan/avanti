@@ -402,7 +402,7 @@ function parseSingleSrc(
     }
     if (
       g['host'] !== undefined &&
-      (typeof g['host'] !== 'string' || !g['host'])
+      (typeof g['host'] !== 'string' || !g['host'].trim())
     ) {
       throw new Error(`${loc}.gitlab.host: must be a non-empty string`);
     }
@@ -438,7 +438,7 @@ function parseSingleSrc(
     }
     if (
       g['host'] !== undefined &&
-      (typeof g['host'] !== 'string' || !g['host'])
+      (typeof g['host'] !== 'string' || !g['host'].trim())
     ) {
       throw new Error(`${loc}.github.host: must be a non-empty string`);
     }
@@ -470,7 +470,7 @@ function parseSingleSrc(
     }
     if (
       b['host'] !== undefined &&
-      (typeof b['host'] !== 'string' || !b['host'])
+      (typeof b['host'] !== 'string' || !b['host'].trim())
     ) {
       throw new Error(`${loc}.bitbucket.host: must be a non-empty string`);
     }
