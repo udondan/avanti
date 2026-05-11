@@ -138,3 +138,38 @@ describe('mergeToml — three sources', () => {
     expect(result.a).toBe(1);
   });
 });
+
+describe('mergeToml — datetime values', () => {
+  it('treats identical datetimes as equal (no conflict)', () => {
+    const a = 'ts = 1987-07-05T17:45:00Z\n';
+    const b = 'ts = 1987-07-05T17:45:00Z\n';
+    expect(() => mergeToml([a, b], { conflicts: 'abort' })).not.toThrow();
+  });
+
+  it('last_wins on different datetimes', () => {
+    const a = 'ts = 1987-07-05T17:45:00Z\n';
+    const b = 'ts = 2000-01-01T00:00:00Z\n';
+    const result = parse(mergeToml([a, b])) as unknown as { ts: Date };
+    expect(result.ts.getFullYear()).toBe(2000);
+  });
+
+  it('abort throws on different datetimes', () => {
+    const a = 'ts = 1987-07-05T17:45:00Z\n';
+    const b = 'ts = 2000-01-01T00:00:00Z\n';
+    expect(() => mergeToml([a, b], { conflicts: 'abort' })).toThrow(
+      'TOML conflict at ts',
+    );
+  });
+
+  it('does not deep-merge Date values as objects', () => {
+    const a = 'ts = 1987-07-05T17:45:00Z\n';
+    const b = 'ts = 2000-01-01T00:00:00Z\n';
+    const result = parse(
+      mergeToml([a, b], { objects: 'merge' }),
+    ) as unknown as {
+      ts: Date;
+    };
+    // last_wins: b's date, not a partial merge of Date fields
+    expect(result.ts.getFullYear()).toBe(2000);
+  });
+});

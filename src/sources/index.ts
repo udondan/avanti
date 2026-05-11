@@ -497,12 +497,14 @@ export async function fetchSource(
         .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
         .map(([, v]) => v);
       const filename = path.basename(entry.target);
-      const merged =
-        dirJsonOpts !== null
-          ? mergeJson(sortedValues, dirJsonOpts)
-          : dirYamlOpts !== null
-            ? mergeYaml(sortedValues, dirYamlOpts)
-            : mergeToml(sortedValues, dirTomlOpts!);
+      let merged: string;
+      if (dirJsonOpts !== null) {
+        merged = mergeJson(sortedValues, dirJsonOpts);
+      } else if (dirYamlOpts !== null) {
+        merged = mergeYaml(sortedValues, dirYamlOpts);
+      } else {
+        merged = mergeToml(sortedValues, dirTomlOpts!);
+      }
       return { files: new Map([[filename, merged]]), sourceRecords };
     }
 

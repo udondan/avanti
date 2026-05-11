@@ -17,11 +17,34 @@ interface ResolvedOptions {
 }
 
 function isPlainObject(v: unknown): v is Record<string, TomlValue> {
-  return v !== null && typeof v === 'object' && !Array.isArray(v);
+  return (
+    v !== null &&
+    typeof v === 'object' &&
+    !Array.isArray(v) &&
+    !(v instanceof Date)
+  );
 }
 
 function valuesEqual(a: TomlValue, b: TomlValue): boolean {
-  return JSON.stringify(a) === JSON.stringify(b);
+  if (a === b) return true;
+  if (typeof a === 'number' && typeof b === 'number') {
+    return isNaN(a) && isNaN(b);
+  }
+  if (a instanceof Date && b instanceof Date) {
+    return a.getTime() === b.getTime();
+  }
+  if (Array.isArray(a) && Array.isArray(b)) {
+    return a.length === b.length && a.every((v, i) => valuesEqual(v, b[i]));
+  }
+  if (isPlainObject(a) && isPlainObject(b)) {
+    const aKeys = Object.keys(a);
+    const bKeys = Object.keys(b);
+    return (
+      aKeys.length === bKeys.length &&
+      aKeys.every((k) => Object.hasOwn(b, k) && valuesEqual(a[k], b[k]))
+    );
+  }
+  return false;
 }
 
 function mergeValues(
@@ -55,7 +78,7 @@ function deepMerge(
   const result: Record<string, TomlValue> = { ...a };
   for (const [key, bVal] of Object.entries(b)) {
     const childPath = basePath ? `${basePath}.${key}` : key;
-    if (key in result) {
+    if (Object.hasOwn(result, key)) {
       result[key] = mergeValues(childPath, result[key], bVal, opts);
     } else {
       result[key] = bVal;
