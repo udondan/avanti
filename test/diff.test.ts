@@ -61,11 +61,16 @@ describe('resolveTargetPath', () => {
   });
 
   it('resolves env vars in target', () => {
+    const prior = process.env['TEST_TEAM'];
     process.env['TEST_TEAM'] = 'frontend';
-    expect(
-      resolveTargetPath({ target: 'dir/$env:TEST_TEAM/file.json' }, '', wdir),
-    ).toBe(path.join(wdir, 'dir', 'frontend', 'file.json'));
-    delete process.env['TEST_TEAM'];
+    try {
+      expect(
+        resolveTargetPath({ target: 'dir/$env:TEST_TEAM/file.json' }, '', wdir),
+      ).toBe(path.join(wdir, 'dir', 'frontend', 'file.json'));
+    } finally {
+      if (prior === undefined) delete process.env['TEST_TEAM'];
+      else process.env['TEST_TEAM'] = prior;
+    }
   });
 
   it('throws on undefined variable in target', () => {

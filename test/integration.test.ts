@@ -819,6 +819,7 @@ files:
     it('resolves environment variables', () => {
       const sourceFile = join(tmpDir, 'source.txt');
       writeFileSync(sourceFile, 'user: PLACEHOLDER');
+      const prior = process.env['AVANTI_TEST_USER'];
       process.env['AVANTI_TEST_USER'] = 'testuser';
 
       const config = writeConfig(
@@ -838,7 +839,8 @@ files:
         const content = readFileSync(join(tmpDir, 'output.txt'), 'utf8');
         expect(content).toContain('user: testuser');
       } finally {
-        delete process.env['AVANTI_TEST_USER'];
+        if (prior === undefined) delete process.env['AVANTI_TEST_USER'];
+        else process.env['AVANTI_TEST_USER'] = prior;
       }
     });
   });
