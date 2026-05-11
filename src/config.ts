@@ -406,6 +406,7 @@ function parseSingleSrc(
         file: g['file'],
         ref: typeof g['ref'] === 'string' ? g['ref'] : undefined,
         sha: parseSha(g['sha'], `${loc}.gitlab`),
+        host: typeof g['host'] === 'string' ? g['host'] : undefined,
       },
     };
   }
@@ -435,6 +436,7 @@ function parseSingleSrc(
         file: g['file'],
         ref: typeof g['ref'] === 'string' ? g['ref'] : undefined,
         sha: parseSha(g['sha'], `${loc}.github`),
+        host: typeof g['host'] === 'string' ? g['host'] : undefined,
       },
     };
   }
@@ -461,6 +463,7 @@ function parseSingleSrc(
         file: b['file'],
         ref: typeof b['ref'] === 'string' ? b['ref'] : undefined,
         sha: parseSha(b['sha'], `${loc}.bitbucket`),
+        host: typeof b['host'] === 'string' ? b['host'] : undefined,
       },
     };
   }

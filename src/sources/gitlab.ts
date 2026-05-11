@@ -9,8 +9,8 @@ export interface GitLabResult {
   files: Map<string, string>;
 }
 
-function getHost(): string {
-  return process.env.GITLAB_HOST ?? 'gitlab.com';
+function getHost(override?: string): string {
+  return override ?? process.env.GITLAB_HOST ?? 'gitlab.com';
 }
 
 function apiHeaders(): Record<string, string> {
@@ -45,12 +45,12 @@ function glabRun(args: string[]): {
 async function resolveRef(
   project: string,
   ref: string | undefined,
+  host?: string,
 ): Promise<string> {
   if (ref === undefined || ref === '') return 'HEAD';
   if (ref === '$latest') {
-    const host = getHost();
     const res = await fetchWithRetry(
-      `https://${host}/api/v4/projects/${encodeURIComponent(project)}/repository/tags?order_by=version&sort=desc&per_page=1`,
+      `https://${getHost(host)}/api/v4/projects/${encodeURIComponent(project)}/repository/tags?order_by=version&sort=desc&per_page=1`,
       { headers: apiHeaders() },
     );
     if (!res.ok) {
@@ -91,11 +91,11 @@ async function detectPathType(
   project: string,
   filePath: string,
   ref: string,
+  host?: string,
 ): Promise<'file' | 'directory'> {
-  const host = getHost();
   const encodedPath = encodeURIComponent(filePath);
   const res = await fetchWithRetry(
-    `https://${host}/api/v4/projects/${encodeURIComponent(project)}/repository/files/${encodedPath}?ref=${encodeURIComponent(ref)}`,
+    `https://${getHost(host)}/api/v4/projects/${encodeURIComponent(project)}/repository/files/${encodedPath}?ref=${encodeURIComponent(ref)}`,
     { headers: apiHeaders() },
   );
   if (res.ok) return 'file';
@@ -123,11 +123,11 @@ async function fetchFile(
   project: string,
   filePath: string,
   ref: string,
+  host?: string,
 ): Promise<string> {
-  const host = getHost();
   const encodedPath = encodeURIComponent(filePath);
   const res = await fetchWithRetry(
-    `https://${host}/api/v4/projects/${encodeURIComponent(project)}/repository/files/${encodedPath}/raw?ref=${encodeURIComponent(ref)}`,
+    `https://${getHost(host)}/api/v4/projects/${encodeURIComponent(project)}/repository/files/${encodedPath}/raw?ref=${encodeURIComponent(ref)}`,
     { headers: apiHeaders() },
   );
   if (!res.ok) {
@@ -163,15 +163,15 @@ async function listTree(
   project: string,
   dirPath: string,
   ref: string,
+  host?: string,
 ): Promise<string[]> {
-  const host = getHost();
   const allPaths: string[] = [];
   const perPage = 100;
   let page = 1;
 
   while (true) {
     const res = await fetchWithRetry(
-      `https://${host}/api/v4/projects/${encodeURIComponent(project)}/repository/tree?path=${encodeURIComponent(dirPath)}&ref=${encodeURIComponent(ref)}&recursive=true&per_page=${perPage}&page=${page}`,
+      `https://${getHost(host)}/api/v4/projects/${encodeURIComponent(project)}/repository/tree?path=${encodeURIComponent(dirPath)}&ref=${encodeURIComponent(ref)}&recursive=true&per_page=${perPage}&page=${page}`,
       { headers: apiHeaders() },
     );
     if (!res.ok) {
@@ -275,11 +275,11 @@ async function fetchDirectoryViaArchive(
   project: string,
   dirPath: string,
   ref: string,
+  host?: string,
 ): Promise<Map<string, string> | null> {
-  const host = getHost();
   const encodedProject = encodeURIComponent(project);
   const res = await fetchWithRetry(
-    `https://${host}/api/v4/projects/${encodedProject}/repository/archive.tar.gz?sha=${encodeURIComponent(ref)}&path=${encodeURIComponent(dirPath)}`,
+    `https://${getHost(host)}/api/v4/projects/${encodedProject}/repository/archive.tar.gz?sha=${encodeURIComponent(ref)}&path=${encodeURIComponent(dirPath)}`,
     { headers: apiHeaders() },
   );
   if (!res.ok) {
@@ -316,16 +316,17 @@ export async function fetchGitLab(
   project: string,
   file: string,
   ref: string | undefined,
+  host?: string,
 ): Promise<GitLabResult> {
-  const resolvedRef = await resolveRef(project, ref);
+  const resolvedRef = await resolveRef(project, ref, host);
   const normalizedPath = file.replace(/\/$/, '');
   const isDirectory =
     file.endsWith('/') ||
-    (await detectPathType(project, normalizedPath, resolvedRef)) ===
+    (await detectPathType(project, normalizedPath, resolvedRef, host)) ===
       'directory';
 
   if (!isDirectory) {
-    const content = await fetchFile(project, normalizedPath, resolvedRef);
+    const content = await fetchFile(project, normalizedPath, resolvedRef, host);
     return { files: new Map([[path.basename(normalizedPath), content]]) };
   }
 
@@ -334,10 +335,11 @@ export async function fetchGitLab(
     project,
     normalizedPath,
     resolvedRef,
+    host,
   );
   if (archived) return { files: archived };
 
-  const paths = await listTree(project, normalizedPath, resolvedRef);
+  const paths = await listTree(project, normalizedPath, resolvedRef, host);
   if (!paths.length) {
     throw new Error(
       `Failed to fetch ${file} from ${project}@${resolvedRef} (not a file or empty directory)`,
@@ -348,7 +350,7 @@ export async function fetchGitLab(
       async (p) =>
         [
           path.relative(normalizedPath, p),
-          await fetchFile(project, p, resolvedRef),
+          await fetchFile(project, p, resolvedRef, host),
         ] as const,
     ),
   );

@@ -404,6 +404,7 @@ src:
     file: path/to/file.txt       # file or directory in repo
     ref: main                    # branch, tag, or $latest (optional)
     sha: abc123...               # optional SHA-256 fingerprint
+    host: gitlab.mycompany.com   # override default gitlab.com (optional)
 
 src:
   github:
@@ -411,6 +412,7 @@ src:
     file: path/to/file.txt       # file or directory in repo
     ref: main                    # branch, tag, or $latest (optional)
     sha: abc123...               # optional SHA-256 fingerprint
+    host: github.mycompany.com   # override default github.com (optional)
 
 src:
   bitbucket:
@@ -419,6 +421,7 @@ src:
     file: path/to/file.txt       # file or directory in repo
     ref: main                    # branch, tag, or $latest (optional)
     sha: abc123...               # optional SHA-256 fingerprint
+    host: bitbucket.mycompany.com  # override default api.bitbucket.org (optional)
 
 src:
   git:
@@ -862,17 +865,55 @@ If a GitHub or GitLab request fails with a 401, 403, or 404 response and `gh` / 
 
 ### Private Instances
 
+Set the `host` field directly on a source to target a private instance. This is the preferred approach when different sources in the same config point to different hosts:
+
+```yaml
+src:
+  gitlab:
+    project: group/repo
+    file: path/to/file.txt
+    host: gitlab.mycompany.com
+
+src:
+  github:
+    repo: owner/repo
+    file: path/to/file.txt
+    host: github.mycompany.com
+
+src:
+  bitbucket:
+    workspace: my-workspace
+    repo: my-repo
+    file: path/to/file.txt
+    host: bitbucket.mycompany.com
+```
+
+Alternatively, set an environment variable to apply a host override globally
+for all sources of that type (useful when every source in the config targets
+the same private instance):
+
 **GitLab** — set `GITLAB_HOST` to override the default `gitlab.com`:
 
 ```bash
 GITLAB_HOST=gitlab.mycompany.com avanti pull
 ```
 
-**GitHub Enterprise Server** — set `GITHUB_HOST` to override the default `github.com` (API requests go to `https://{GITHUB_HOST}/api/v3`):
+**GitHub Enterprise Server** — set `GITHUB_HOST` to override the default
+`github.com` (API requests go to `https://{GITHUB_HOST}/api/v3`):
 
 ```bash
 GITHUB_HOST=github.mycompany.com avanti pull
 ```
+
+**Bitbucket Server / Data Center** — set `BITBUCKET_HOST` to override the
+default `api.bitbucket.org`:
+
+```bash
+BITBUCKET_HOST=bitbucket.mycompany.com avanti pull
+```
+
+A `host` field on a source always takes precedence over the corresponding
+environment variable.
 
 ## Use Cases
 

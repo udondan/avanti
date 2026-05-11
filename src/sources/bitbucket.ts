@@ -5,7 +5,9 @@ export interface BitbucketResult {
   files: Map<string, string>;
 }
 
-const API_BASE = 'https://api.bitbucket.org/2.0';
+function getApiBase(override?: string): string {
+  return `https://${override ?? process.env.BITBUCKET_HOST ?? 'api.bitbucket.org'}/2.0`;
+}
 
 function apiHeaders(): Record<string, string> {
   const headers: Record<string, string> = { 'User-Agent': 'avanti' };
@@ -26,12 +28,13 @@ async function resolveRef(
   workspace: string,
   repo: string,
   ref: string | undefined,
+  host?: string,
 ): Promise<string> {
   if (ref && ref !== '$latest') return ref;
 
   if (ref === '$latest') {
     const tagsRes = await fetchWithRetry(
-      `${API_BASE}/repositories/${workspace}/${repo}/refs/tags?sort=-name&pagelen=1`,
+      `${getApiBase(host)}/repositories/${workspace}/${repo}/refs/tags?sort=-name&pagelen=1`,
       { headers: apiHeaders() },
     );
     if (tagsRes.ok) {
@@ -43,7 +46,7 @@ async function resolveRef(
   }
 
   const repoRes = await fetchWithRetry(
-    `${API_BASE}/repositories/${workspace}/${repo}`,
+    `${getApiBase(host)}/repositories/${workspace}/${repo}`,
     { headers: apiHeaders() },
   );
   if (!repoRes.ok) {
@@ -63,9 +66,10 @@ async function fetchFileOrDetect(
   repo: string,
   filePath: string,
   ref: string,
+  host?: string,
 ): Promise<string | null> {
   const res = await fetchWithRetry(
-    `${API_BASE}/repositories/${workspace}/${repo}/src/${encodeURIComponent(ref)}/${filePath}`,
+    `${getApiBase(host)}/repositories/${workspace}/${repo}/src/${encodeURIComponent(ref)}/${filePath}`,
     { headers: apiHeaders() },
   );
   if (!res.ok) {
@@ -83,9 +87,10 @@ async function fetchFile(
   repo: string,
   filePath: string,
   ref: string,
+  host?: string,
 ): Promise<string> {
   const res = await fetchWithRetry(
-    `${API_BASE}/repositories/${workspace}/${repo}/src/${encodeURIComponent(ref)}/${filePath}`,
+    `${getApiBase(host)}/repositories/${workspace}/${repo}/src/${encodeURIComponent(ref)}/${filePath}`,
     { headers: apiHeaders() },
   );
   if (!res.ok) {
@@ -101,10 +106,11 @@ async function listDir(
   repo: string,
   dirPath: string,
   ref: string,
+  host?: string,
 ): Promise<string[]> {
   const files: string[] = [];
   let url: string | null =
-    `${API_BASE}/repositories/${workspace}/${repo}/src/${encodeURIComponent(ref)}/${dirPath}/?pagelen=100`;
+    `${getApiBase(host)}/repositories/${workspace}/${repo}/src/${encodeURIComponent(ref)}/${dirPath}/?pagelen=100`;
 
   while (url) {
     const res = await fetchWithRetry(url, { headers: apiHeaders() });
@@ -121,7 +127,7 @@ async function listDir(
       if (item.type === 'commit_file') {
         files.push(item.path);
       } else if (item.type === 'commit_directory') {
-        const sub = await listDir(workspace, repo, item.path, ref);
+        const sub = await listDir(workspace, repo, item.path, ref, host);
         files.push(...sub);
       }
     }
@@ -136,8 +142,9 @@ export async function fetchBitbucket(
   repo: string,
   file: string,
   ref: string | undefined,
+  host?: string,
 ): Promise<BitbucketResult> {
-  const resolvedRef = await resolveRef(workspace, repo, ref);
+  const resolvedRef = await resolveRef(workspace, repo, ref, host);
   const normalizedPath = file.replace(/\/$/, '');
 
   if (!file.endsWith('/')) {
@@ -146,6 +153,7 @@ export async function fetchBitbucket(
       repo,
       normalizedPath,
       resolvedRef,
+      host,
     );
     if (content !== null) {
       return {
@@ -154,7 +162,13 @@ export async function fetchBitbucket(
     }
   }
 
-  const paths = await listDir(workspace, repo, normalizedPath, resolvedRef);
+  const paths = await listDir(
+    workspace,
+    repo,
+    normalizedPath,
+    resolvedRef,
+    host,
+  );
   if (!paths.length) {
     throw new Error(
       `Failed to fetch ${file} from ${workspace}/${repo}@${resolvedRef} (not a file or empty directory)`,
@@ -165,7 +179,7 @@ export async function fetchBitbucket(
       async (p) =>
         [
           path.relative(normalizedPath, p),
-          await fetchFile(workspace, repo, p, resolvedRef),
+          await fetchFile(workspace, repo, p, resolvedRef, host),
         ] as const,
     ),
   );

@@ -6,8 +6,8 @@ export interface GitHubResult {
   files: Map<string, string>;
 }
 
-function getApiBase(): string {
-  const host = process.env.GITHUB_HOST;
+function getApiBase(override?: string): string {
+  const host = override ?? process.env.GITHUB_HOST;
   return host ? `https://${host}/api/v3` : 'https://api.github.com';
 }
 
@@ -54,9 +54,10 @@ async function fetchPathInfo(
   repo: string,
   filePath: string,
   ref: string,
+  host?: string,
 ): Promise<PathInfo> {
   const res = await fetchWithRetry(
-    `${getApiBase()}/repos/${repo}/contents/${filePath}?ref=${encodeURIComponent(ref)}`,
+    `${getApiBase(host)}/repos/${repo}/contents/${filePath}?ref=${encodeURIComponent(ref)}`,
     { headers: apiHeaders() },
   );
   if (res.ok) {
@@ -103,8 +104,9 @@ async function fetchFile(
   repo: string,
   filePath: string,
   ref: string,
+  host?: string,
 ): Promise<string> {
-  const info = await fetchPathInfo(repo, filePath, ref);
+  const info = await fetchPathInfo(repo, filePath, ref, host);
   if (info.kind !== 'file') {
     throw new Error(`Expected a file but got a directory: ${filePath}`);
   }
@@ -115,9 +117,10 @@ async function listTree(
   repo: string,
   dirPath: string,
   ref: string,
+  host?: string,
 ): Promise<string[]> {
   const res = await fetchWithRetry(
-    `${getApiBase()}/repos/${repo}/git/trees/${encodeURIComponent(ref)}?recursive=1`,
+    `${getApiBase(host)}/repos/${repo}/git/trees/${encodeURIComponent(ref)}?recursive=1`,
     { headers: apiHeaders() },
   );
   if (!res.ok) {
@@ -169,12 +172,13 @@ function listTreeViaCli(repo: string, dirPath: string, ref: string): string[] {
 async function resolveRef(
   repo: string,
   ref: string | undefined,
+  host?: string,
 ): Promise<string> {
   if (ref !== '$latest') return ref ?? 'HEAD';
 
   // Try latest release first
   const relRes = await fetchWithRetry(
-    `${getApiBase()}/repos/${repo}/releases/latest`,
+    `${getApiBase(host)}/repos/${repo}/releases/latest`,
     {
       headers: apiHeaders(),
     },
@@ -186,7 +190,7 @@ async function resolveRef(
   // No releases (404) — fall back to most recent tag
   if (relRes.status === 404) {
     const tagRes = await fetchWithRetry(
-      `${getApiBase()}/repos/${repo}/tags?per_page=1`,
+      `${getApiBase(host)}/repos/${repo}/tags?per_page=1`,
       { headers: apiHeaders() },
     );
     if (tagRes.ok) {
@@ -234,12 +238,13 @@ export async function fetchGitHub(
   repo: string,
   file: string,
   ref: string | undefined,
+  host?: string,
 ): Promise<GitHubResult> {
-  const resolvedRef = await resolveRef(repo, ref);
+  const resolvedRef = await resolveRef(repo, ref, host);
   const normalizedPath = file.replace(/\/$/, '');
 
   if (!file.endsWith('/')) {
-    const info = await fetchPathInfo(repo, normalizedPath, resolvedRef);
+    const info = await fetchPathInfo(repo, normalizedPath, resolvedRef, host);
     if (info.kind === 'file') {
       return {
         files: new Map([[path.basename(normalizedPath), info.content]]),
@@ -247,7 +252,7 @@ export async function fetchGitHub(
     }
   }
 
-  const paths = await listTree(repo, normalizedPath, resolvedRef);
+  const paths = await listTree(repo, normalizedPath, resolvedRef, host);
   if (!paths.length) {
     throw new Error(
       `Failed to fetch ${file} from ${repo}@${resolvedRef} (not a file or empty directory)`,
@@ -258,7 +263,7 @@ export async function fetchGitHub(
       async (p) =>
         [
           path.relative(normalizedPath, p),
-          await fetchFile(repo, p, resolvedRef),
+          await fetchFile(repo, p, resolvedRef, host),
         ] as const,
     ),
   );

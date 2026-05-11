@@ -11,6 +11,7 @@ export interface GitLabSrc {
     file: string;
     ref?: string;
     sha?: string;
+    host?: string;
   };
 }
 
@@ -20,6 +21,7 @@ export interface GitHubSrc {
     file: string;
     ref?: string;
     sha?: string;
+    host?: string;
   };
 }
 
@@ -39,6 +41,7 @@ export interface BitbucketSrc {
     file: string;
     ref?: string;
     sha?: string;
+    host?: string;
   };
 }
 
