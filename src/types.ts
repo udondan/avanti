@@ -119,6 +119,16 @@ export interface YamlMergeOptions {
   objects?: YamlObjectStrategy;
 }
 
+export type TomlConflictStrategy = 'abort' | 'first_wins' | 'last_wins';
+export type TomlArrayStrategy = 'replace' | 'concat';
+export type TomlObjectStrategy = 'replace' | 'merge';
+
+export interface TomlMergeOptions {
+  conflicts?: TomlConflictStrategy;
+  arrays?: TomlArrayStrategy;
+  objects?: TomlObjectStrategy;
+}
+
 export interface FileEntry {
   src: FileSrc | FileSrc[];
   target: string;
@@ -127,6 +137,7 @@ export interface FileEntry {
   post?: string;
   json?: JsonMergeOptions | boolean;
   yaml?: YamlMergeOptions | boolean;
+  toml?: TomlMergeOptions | boolean;
 }
 
 export interface AvantiConfig {

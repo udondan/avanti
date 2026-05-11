@@ -46,6 +46,7 @@
     "comment-json": "5.0.0",
     "diff": "9.0.0",
     "js-yaml": "4.1.1",
+    "smol-toml": "1.6.1",
     "yaml": "2.8.4"
   },
   "devDependencies": {

@@ -16,6 +16,10 @@ import {
   YamlConflictStrategy,
   YamlMergeOptions,
   YamlObjectStrategy,
+  TomlArrayStrategy,
+  TomlConflictStrategy,
+  TomlMergeOptions,
+  TomlObjectStrategy,
   ReplaceRule,
   Variables,
 } from './types';
@@ -230,6 +234,15 @@ export function parseConfigContent(content: string): AvantiConfig {
         fileEntry.yaml = rawYaml;
       } else {
         fileEntry.yaml = parseYamlMergeOptions(rawYaml, target);
+      }
+    }
+
+    if (e['toml'] !== undefined) {
+      const rawToml = e['toml'];
+      if (rawToml === true || rawToml === false) {
+        fileEntry.toml = rawToml;
+      } else {
+        fileEntry.toml = parseTomlMergeOptions(rawToml, target);
       }
     }
 
@@ -579,6 +592,21 @@ function parseYamlMergeOptions(raw: unknown, target: string): YamlMergeOptions {
     raw,
     target,
     'yaml',
+    ['abort', 'first_wins', 'last_wins'],
+    ['replace', 'concat'],
+    ['replace', 'merge'],
+  );
+}
+
+function parseTomlMergeOptions(raw: unknown, target: string): TomlMergeOptions {
+  return parseMergeOptions<
+    TomlConflictStrategy,
+    TomlArrayStrategy,
+    TomlObjectStrategy
+  >(
+    raw,
+    target,
+    'toml',
     ['abort', 'first_wins', 'last_wins'],
     ['replace', 'concat'],
     ['replace', 'merge'],
