@@ -3,7 +3,10 @@ import { getShellArgs } from '../shell';
 
 export function fetchExec(command: string): Buffer {
   const { shell, args } = getShellArgs(command);
-  const result = spawnSync(shell, args, { encoding: 'buffer' });
+  const result = spawnSync(shell, args, {
+    encoding: 'buffer',
+    maxBuffer: 200 * 1024 * 1024,
+  });
   if (result.error) {
     throw new Error(`exec failed to spawn: ${result.error.message}`);
   }
