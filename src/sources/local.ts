@@ -3,7 +3,7 @@ import * as os from 'os';
 import * as path from 'path';
 
 export interface LocalResult {
-  files: Map<string, string>;
+  files: Map<string, Buffer>;
   missing?: boolean;
 }
 
@@ -25,11 +25,11 @@ export function fetchLocal(
     throw new Error(`Local source not found: ${resolved}`);
   }
   const stat = fs.statSync(resolved);
-  const files = new Map<string, string>();
+  const files = new Map<string, Buffer>();
   if (stat.isDirectory()) {
     readDirRecursive(resolved, resolved, files);
   } else {
-    files.set(path.basename(resolved), fs.readFileSync(resolved, 'utf8'));
+    files.set(path.basename(resolved), fs.readFileSync(resolved));
   }
   return { files };
 }
@@ -37,7 +37,7 @@ export function fetchLocal(
 function readDirRecursive(
   base: string,
   current: string,
-  out: Map<string, string>,
+  out: Map<string, Buffer>,
 ): void {
   for (const entry of fs.readdirSync(current)) {
     const full = path.join(current, entry);
@@ -46,7 +46,7 @@ function readDirRecursive(
     if (stat.isDirectory()) {
       readDirRecursive(base, full, out);
     } else {
-      out.set(rel, fs.readFileSync(full, 'utf8'));
+      out.set(rel, fs.readFileSync(full));
     }
   }
 }

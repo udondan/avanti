@@ -3,7 +3,7 @@ import * as path from 'path';
 
 export interface WriteTarget {
   targetPath: string;
-  content: string;
+  content: Buffer;
   mode?: string;
 }
 
@@ -25,7 +25,7 @@ export function atomicWrite(
         dir,
         '.' + path.basename(t.targetPath) + '.avanti-tmp',
       );
-      fs.writeFileSync(tmpFile, t.content, 'utf8');
+      fs.writeFileSync(tmpFile, t.content);
 
       // Resolve the effective mode: explicit config value wins; otherwise
       // preserve the existing file's full permission bits (0o7777) so rename(2)

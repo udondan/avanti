@@ -11,6 +11,7 @@ import {
 import { fetchSource, FetchCache, SourceFetchRecord } from '../sources';
 import { applyReplace } from '../processors/replace';
 import { applyPost } from '../processors/post';
+import { isBinary } from '../binary';
 import {
   computeDiff,
   computeDeleteDiff,
@@ -83,11 +84,16 @@ async function runFetchLoop(
 
       for (const [relPath, rawContent] of result.files) {
         let content = rawContent;
-        if (entry.replace?.length)
-          content = applyReplace(content, entry.replace, vars);
-        if (entry.post) content = applyPost(content, entry.post, vars);
+        if (!isBinary(content)) {
+          // Processors only operate on text; binary files are passed through unchanged.
+          let text = content.toString('utf8');
+          if (entry.replace?.length)
+            text = applyReplace(text, entry.replace, vars);
+          if (entry.post) text = applyPost(text, entry.post, vars);
+          content = Buffer.from(text, 'utf8');
+        }
         if (isSelf) {
-          selfContent = content;
+          selfContent = content.toString('utf8');
           selfMode = entry.mode;
           if (result.sourceRecords.length > 0)
             selfSourceRecords = result.sourceRecords;
@@ -291,26 +297,24 @@ export function pullCommand(): Command {
           // replace it with the stabilized $self content so the on-disk config
           // always matches what was actually used for this run.
           if (!isRemoteConfigSpec(configPath)) {
+            const selfBuf = Buffer.from(currentSelfContent, 'utf8');
             const existingIdx = writeTargets.findIndex(
               (t) => t.targetPath === configPath,
             );
             if (existingIdx === -1) {
               writeTargets.push({
                 targetPath: configPath,
-                content: currentSelfContent,
+                content: selfBuf,
                 mode: currentSelfMode,
               });
-              allDiffs.push(computeDiff(configPath, currentSelfContent));
+              allDiffs.push(computeDiff(configPath, selfBuf));
             } else {
               writeTargets[existingIdx] = {
                 ...writeTargets[existingIdx],
-                content: currentSelfContent,
+                content: selfBuf,
                 mode: currentSelfMode ?? writeTargets[existingIdx].mode,
               };
-              allDiffs[existingIdx] = computeDiff(
-                configPath,
-                currentSelfContent,
-              );
+              allDiffs[existingIdx] = computeDiff(configPath, selfBuf);
             }
             // Content comes from $self — attribute the config file write to the
             // $self sources so history reflects the actual origin.
@@ -410,19 +414,20 @@ export function pullCommand(): Command {
         );
         if (configTargetIdx !== -1) {
           const patched = applyUpdatedShas(
-            writeTargets[configTargetIdx].content,
+            writeTargets[configTargetIdx].content.toString('utf8'),
             shaUpdates,
           );
           if (patched !== null) {
+            const patchedBuf = Buffer.from(patched, 'utf8');
             writeTargets[configTargetIdx] = {
               ...writeTargets[configTargetIdx],
-              content: patched,
+              content: patchedBuf,
             };
             // Recompute diff so staging and atomicWrite both see SHA-patched content,
             // even when the original content diff was empty.
             allDiffs[configTargetIdx] = computeDiff(
               writeTargets[configTargetIdx].targetPath,
-              patched,
+              patchedBuf,
             );
             configShaPreApplied = true;
           }

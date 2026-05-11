@@ -6,7 +6,7 @@ import { fetchWithRetry } from '../fetch';
 
 export interface GitLabResult {
   /** Map of relative path → content */
-  files: Map<string, string>;
+  files: Map<string, Buffer>;
 }
 
 function getHost(override?: string): string {
@@ -43,6 +43,23 @@ function glabRun(args: string[]): {
   return {
     stdout: result.stdout ?? '',
     stderr: result.stderr ?? '',
+    status: result.status,
+  };
+}
+
+function glabRunBinary(args: string[]): {
+  stdout: Buffer;
+  stderr: string;
+  status: number | null;
+} {
+  const result = spawnSync('glab', args, {
+    encoding: 'buffer',
+    maxBuffer: 200 * 1024 * 1024,
+  });
+  if (result.error) throw new Error(`glab error: ${result.error.message}`);
+  return {
+    stdout: result.stdout ?? Buffer.alloc(0),
+    stderr: result.stderr?.toString('utf8') ?? '',
     status: result.status,
   };
 }
@@ -132,7 +149,7 @@ async function fetchFile(
   filePath: string,
   ref: string,
   host?: string,
-): Promise<string> {
+): Promise<Buffer> {
   const encodedPath = encodeURIComponent(filePath);
   const res = await fetchWithRetry(
     `https://${getHost(host)}/api/v4/projects/${encodeURIComponent(project)}/repository/files/${encodedPath}/raw?ref=${encodeURIComponent(ref)}`,
@@ -146,7 +163,7 @@ async function fetchFile(
       `Failed to fetch ${filePath} from ${project}@${ref}: HTTP ${res.status}`,
     );
   }
-  return res.text();
+  return Buffer.from(await res.arrayBuffer());
 }
 
 function fetchFileViaCli(
@@ -154,9 +171,9 @@ function fetchFileViaCli(
   filePath: string,
   ref: string,
   host?: string,
-): string {
+): Buffer {
   const encodedPath = encodeURIComponent(filePath);
-  const res = glabRun([
+  const res = glabRunBinary([
     'api',
     ...hostnameArgs(host),
     `projects/${encodeURIComponent(project)}/repository/files/${encodedPath}/raw?ref=${encodeURIComponent(ref)}`,
@@ -237,14 +254,14 @@ function listTreeViaCli(
 function collectFiles(
   baseDir: string,
   dir: string,
-  files: Map<string, string>,
+  files: Map<string, Buffer>,
 ): void {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) {
       collectFiles(baseDir, full, files);
     } else if (entry.isFile()) {
-      files.set(path.relative(baseDir, full), fs.readFileSync(full, 'utf8'));
+      files.set(path.relative(baseDir, full), fs.readFileSync(full));
     }
   }
 }
@@ -252,7 +269,7 @@ function collectFiles(
 function extractArchive(
   buf: Buffer,
   dirPath: string,
-): Map<string, string> | null {
+): Map<string, Buffer> | null {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'avanti-gl-'));
   try {
     const archivePath = path.join(tmpDir, 'archive.tar.gz');
@@ -275,7 +292,7 @@ function extractArchive(
     const targetDir = path.join(extractDir, rootEntries[0], dirPath);
     if (!fs.existsSync(targetDir)) return null;
 
-    const files = new Map<string, string>();
+    const files = new Map<string, Buffer>();
     collectFiles(targetDir, targetDir, files);
     return files.size > 0 ? files : null;
   } finally {
@@ -288,7 +305,7 @@ async function fetchDirectoryViaArchive(
   dirPath: string,
   ref: string,
   host?: string,
-): Promise<Map<string, string> | null> {
+): Promise<Map<string, Buffer> | null> {
   const encodedProject = encodeURIComponent(project);
   const res = await fetchWithRetry(
     `https://${getHost(host)}/api/v4/projects/${encodedProject}/repository/archive.tar.gz?sha=${encodeURIComponent(ref)}&path=${encodeURIComponent(dirPath)}`,
@@ -310,7 +327,7 @@ function fetchDirectoryViaArchiveViaCli(
   dirPath: string,
   ref: string,
   host?: string,
-): Map<string, string> | null {
+): Map<string, Buffer> | null {
   const encodedProject = encodeURIComponent(project);
   const result = spawnSync(
     'glab',
@@ -319,7 +336,7 @@ function fetchDirectoryViaArchiveViaCli(
       ...hostnameArgs(host),
       `projects/${encodedProject}/repository/archive.tar.gz?sha=${encodeURIComponent(ref)}&path=${encodeURIComponent(dirPath)}`,
     ],
-    { encoding: 'buffer' },
+    { encoding: 'buffer', maxBuffer: 200 * 1024 * 1024 },
   );
   if (result.error || result.status !== 0 || !result.stdout?.length)
     return null;

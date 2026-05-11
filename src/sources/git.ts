@@ -4,7 +4,7 @@ import * as os from 'os';
 import * as path from 'path';
 
 export interface GitResult {
-  files: Map<string, string>;
+  files: Map<string, Buffer>;
 }
 
 function run(
@@ -28,14 +28,14 @@ function looksLikeCommitHash(ref: string): boolean {
 function collectFiles(
   base: string,
   dir: string,
-  files: Map<string, string>,
+  files: Map<string, Buffer>,
 ): void {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) {
       collectFiles(base, full, files);
     } else if (entry.isFile()) {
-      files.set(path.relative(base, full), fs.readFileSync(full, 'utf8'));
+      files.set(path.relative(base, full), fs.readFileSync(full));
     }
   }
 }
@@ -73,7 +73,7 @@ export function fetchGit(repo: string, file: string, ref?: string): GitResult {
       throw new Error(`Path not found in repository: ${file}`);
     }
 
-    const files = new Map<string, string>();
+    const files = new Map<string, Buffer>();
     const stat = fs.statSync(fullPath);
     if (stat.isDirectory() || file.endsWith('/')) {
       collectFiles(fullPath, fullPath, files);
@@ -81,10 +81,7 @@ export function fetchGit(repo: string, file: string, ref?: string): GitResult {
         throw new Error(`Empty directory: ${file}`);
       }
     } else {
-      files.set(
-        path.basename(normalizedFile),
-        fs.readFileSync(fullPath, 'utf8'),
-      );
+      files.set(path.basename(normalizedFile), fs.readFileSync(fullPath));
     }
     return { files };
   } finally {

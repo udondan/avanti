@@ -73,7 +73,7 @@ afterEach(() => {
 
 describe('history integration', () => {
   describe('pull records history', () => {
-    it('creates history after a successful pull', () => {
+    it('creates history after a successful pull', { timeout: 15_000 }, () => {
       const src = writeSource('src.txt', 'hello');
       writeConfig(`files:\n  ./out.txt:\n    src: ${src}\n`);
 

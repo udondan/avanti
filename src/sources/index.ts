@@ -21,6 +21,7 @@ import { fetchVault } from './vault';
 import { mergeJson, formatJson } from '../processors/json';
 import { mergeYaml, formatYaml } from '../processors/yaml';
 import { mergeToml, formatToml } from '../processors/toml';
+import { isBinary } from '../binary';
 
 const JSON_EXTENSIONS = new Set(['.json', '.jsonc']);
 const YAML_EXTENSIONS = new Set(['.yaml', '.yml']);
@@ -125,11 +126,11 @@ export interface SourceFetchRecord {
 }
 
 export interface FetchResult {
-  files: Map<string, string>;
+  files: Map<string, Buffer>;
   sourceRecords: SourceFetchRecord[];
 }
 
-export type FetchCache = Map<string, { files: Map<string, string> }>;
+export type FetchCache = Map<string, { files: Map<string, Buffer> }>;
 
 // labelForSrc returns the source label used in SourceFetchRecord. Structured
 // sources (github:, gitlab:, etc.) keep variable references unresolved so the
@@ -244,7 +245,7 @@ function shaSupported(src: FileSrc): boolean {
 
 function buildRecord(
   src: FileSrc,
-  files: Map<string, string>,
+  files: Map<string, Buffer>,
   vars: Variables,
 ): SourceFetchRecord | null {
   if (!shaSupported(src)) return null;
@@ -258,7 +259,7 @@ function buildRecord(
   };
 }
 
-function computeFilesSha(files: Map<string, string>): string {
+function computeFilesSha(files: Map<string, Buffer>): string {
   // Always include filename in the hash so a rename/path change affects the SHA
   // consistently, whether the source resolves to one file or many.
   const hash = crypto.createHash('sha256');
@@ -268,7 +269,7 @@ function computeFilesSha(files: Map<string, string>): string {
   for (const [k, v] of sorted) {
     hash.update(k.replace(/\\/g, '/'), 'utf8');
     hash.update('\0', 'utf8');
-    hash.update(v, 'utf8');
+    hash.update(v);
     hash.update('\0', 'utf8');
   }
   return hash.digest('hex');
@@ -278,7 +279,7 @@ async function _fetchOneSrcRaw(
   src: FileSrc,
   workingDir: string,
   vars: Variables,
-): Promise<{ files: Map<string, string>; skipped?: boolean }> {
+): Promise<{ files: Map<string, Buffer>; skipped?: boolean }> {
   if (typeof src === 'string') {
     const resolved = resolveVars(src, vars);
     if (resolved.startsWith('http://') || resolved.startsWith('https://')) {
@@ -290,7 +291,11 @@ async function _fetchOneSrcRaw(
   }
 
   if ('raw' in src) {
-    return { files: new Map([['output', resolveVars(src.raw, vars)]]) };
+    return {
+      files: new Map([
+        ['output', Buffer.from(resolveVars(src.raw, vars), 'utf8')],
+      ]),
+    };
   }
 
   if ('path' in src) {
@@ -312,7 +317,7 @@ async function _fetchOneSrcRaw(
     return { files: new Map([[filename, content]]) };
   }
 
-  let files: Map<string, string>;
+  let files: Map<string, Buffer>;
 
   if ('http' in src) {
     const resolvedUrl = resolveVars(src.http, vars);
@@ -391,14 +396,14 @@ async function fetchOneSrc(
   vars: Variables,
   cache?: FetchCache,
 ): Promise<{
-  files: Map<string, string>;
+  files: Map<string, Buffer>;
   record: SourceFetchRecord | null;
   skipped?: boolean;
 }> {
   const cacheKey = cacheKeyForSrc(src, vars);
   const cached = cache?.get(cacheKey);
 
-  let files: Map<string, string>;
+  let files: Map<string, Buffer>;
   let skipped: boolean | undefined;
 
   if (cached !== undefined) {
@@ -416,6 +421,20 @@ async function fetchOneSrc(
   // Recompute record from the current source spec so expectedSha/matched
   // always reflect the caller's config iteration, not the first fetch.
   return { files, record: buildRecord(src, files, vars) };
+}
+
+// Asserts that all buffers in the map are text (not binary). Throws with a
+// helpful message if any are binary, since merging/concatenating binary files
+// is not supported.
+function assertTextFiles(files: Map<string, Buffer>, context: string): void {
+  for (const [name, buf] of files) {
+    if (isBinary(buf)) {
+      throw new Error(
+        `Binary file "${name}" cannot be used in a multi-source merge (${context}). ` +
+          `Use a single src entry for binary files.`,
+      );
+    }
+  }
 }
 
 export async function fetchSource(
@@ -439,7 +458,12 @@ export async function fetchSource(
           cache,
         );
         if (skipped) continue;
-        parts.push(Array.from(files.values()).join('\n'));
+        assertTextFiles(files, `source ${i}`);
+        parts.push(
+          Array.from(files.values())
+            .map((b) => b.toString('utf8'))
+            .join('\n'),
+        );
         if (record !== null) sourceRecords.push(record);
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
@@ -464,7 +488,10 @@ export async function fetchSource(
     } else {
       content = parts.join('\n');
     }
-    return { files: new Map([[filename, content]]), sourceRecords };
+    return {
+      files: new Map([[filename, Buffer.from(content, 'utf8')]]),
+      sourceRecords,
+    };
   }
 
   // Single src — delegate dispatch to fetchOneSrc, then apply post-processing
@@ -517,9 +544,10 @@ export async function fetchSource(
     }
 
     if (dirJsonOpts !== null || dirYamlOpts !== null || dirTomlOpts !== null) {
+      assertTextFiles(singleResult.files, 'directory merge');
       const sortedValues = Array.from(singleResult.files.entries())
         .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
-        .map(([, v]) => v);
+        .map(([, v]) => v.toString('utf8'));
       const filename = path.basename(entry.target);
       let merged: string;
       if (dirJsonOpts !== null) {
@@ -529,7 +557,10 @@ export async function fetchSource(
       } else {
         merged = mergeToml(sortedValues, dirTomlOpts!);
       }
-      return { files: new Map([[filename, merged]]), sourceRecords };
+      return {
+        files: new Map([[filename, Buffer.from(merged, 'utf8')]]),
+        sourceRecords,
+      };
     }
 
     return { ...singleResult, sourceRecords };
@@ -550,14 +581,26 @@ export async function fetchSource(
   )
     return { ...singleResult, sourceRecords };
 
-  const formatted = new Map<string, string>();
+  const formatted = new Map<string, Buffer>();
   for (const [k, v] of singleResult.files) {
+    if (isBinary(v)) {
+      const fmtName =
+        singleJsonOpts !== null
+          ? 'json'
+          : singleYamlOpts !== null
+            ? 'yaml'
+            : 'toml';
+      throw new Error(
+        `Binary file "${k}" cannot be formatted as ${fmtName}. Remove the format option or use a text source.`,
+      );
+    }
+    const text = v.toString('utf8');
     if (singleJsonOpts !== null) {
-      formatted.set(k, formatJson(v));
+      formatted.set(k, Buffer.from(formatJson(text), 'utf8'));
     } else if (singleYamlOpts !== null) {
-      formatted.set(k, formatYaml(v));
+      formatted.set(k, Buffer.from(formatYaml(text), 'utf8'));
     } else {
-      formatted.set(k, formatToml(v));
+      formatted.set(k, Buffer.from(formatToml(text), 'utf8'));
     }
   }
   return { files: formatted, sourceRecords };

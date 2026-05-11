@@ -3,7 +3,7 @@ import * as path from 'path';
 import { fetchWithRetry } from '../fetch';
 
 export interface GitHubResult {
-  files: Map<string, string>;
+  files: Map<string, Buffer>;
 }
 
 function getApiBase(override?: string): string {
@@ -44,10 +44,10 @@ function ghRun(args: string[]): {
   };
 }
 
-type PathInfo = { kind: 'file'; content: string } | { kind: 'directory' };
+type PathInfo = { kind: 'file'; content: Buffer } | { kind: 'directory' };
 
-function decodeBase64Content(b64: string): string {
-  return Buffer.from(b64.replace(/\n/g, ''), 'base64').toString('utf8');
+function decodeBase64Content(b64: string): Buffer {
+  return Buffer.from(b64.replace(/\n/g, ''), 'base64');
 }
 
 function hostnameArgs(host?: string): string[] {
@@ -112,7 +112,7 @@ async function fetchFile(
   filePath: string,
   ref: string,
   host?: string,
-): Promise<string> {
+): Promise<Buffer> {
   const info = await fetchPathInfo(repo, filePath, ref, host);
   if (info.kind !== 'file') {
     throw new Error(`Expected a file but got a directory: ${filePath}`);
@@ -275,11 +275,10 @@ export async function fetchGitHub(
   }
   const entries = await Promise.all(
     paths.map(
-      async (p) =>
-        [
-          path.relative(normalizedPath, p),
-          await fetchFile(repo, p, resolvedRef, host),
-        ] as const,
+      async (p): Promise<[string, Buffer]> => [
+        path.relative(normalizedPath, p),
+        await fetchFile(repo, p, resolvedRef, host),
+      ],
     ),
   );
   return { files: new Map(entries) };

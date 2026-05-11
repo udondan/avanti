@@ -3,7 +3,7 @@ import * as path from 'path';
 import { fetchWithRetry } from '../fetch';
 
 export interface VaultResult {
-  files: Map<string, string>;
+  files: Map<string, Buffer>;
 }
 
 function isVaultAvailable(): boolean {
@@ -28,6 +28,10 @@ function secretFilename(secretPath: string, field?: string): string {
   return field ?? (path.basename(secretPath) || 'secret');
 }
 
+function buf(s: string): Buffer {
+  return Buffer.from(s, 'utf8');
+}
+
 function fetchVaultViaCli(secretPath: string, field?: string): VaultResult {
   const filename = secretFilename(secretPath, field);
 
@@ -36,7 +40,7 @@ function fetchVaultViaCli(secretPath: string, field?: string): VaultResult {
     if (res.status !== 0) {
       throw new Error(`Failed to read ${secretPath}: ${res.stderr.trim()}`);
     }
-    return { files: new Map([[filename, res.stdout]]) };
+    return { files: new Map([[filename, buf(res.stdout)]]) };
   }
 
   const res = vaultRun(['kv', 'get', '-format=json', secretPath]);
@@ -47,7 +51,7 @@ function fetchVaultViaCli(secretPath: string, field?: string): VaultResult {
   const kvv2 = (parsed?.data as Record<string, unknown>)?.data;
   const data = kvv2 ?? parsed?.data;
   if (!data) throw new Error(`No data found at ${secretPath}`);
-  return { files: new Map([[filename, JSON.stringify(data, null, 2)]]) };
+  return { files: new Map([[filename, buf(JSON.stringify(data, null, 2))]]) };
 }
 
 async function fetchVaultViaApi(
@@ -82,10 +86,10 @@ async function fetchVaultViaApi(
       if (field) {
         if (!(field in data))
           throw new Error(`Field "${field}" not found at ${secretPath}`);
-        return { files: new Map([[filename, String(data[field])]]) };
+        return { files: new Map([[filename, buf(String(data[field]))]]) };
       }
       return {
-        files: new Map([[filename, JSON.stringify(data, null, 2)]]),
+        files: new Map([[filename, buf(JSON.stringify(data, null, 2))]]),
       };
     }
   }
@@ -101,9 +105,9 @@ async function fetchVaultViaApi(
   if (field) {
     if (!(field in data))
       throw new Error(`Field "${field}" not found at ${secretPath}`);
-    return { files: new Map([[filename, String(data[field])]]) };
+    return { files: new Map([[filename, buf(String(data[field]))]]) };
   }
-  return { files: new Map([[filename, JSON.stringify(data, null, 2)]]) };
+  return { files: new Map([[filename, buf(JSON.stringify(data, null, 2))]]) };
 }
 
 export async function fetchVault(

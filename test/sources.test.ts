@@ -30,7 +30,7 @@ describe('fetchLocal — optional flag', () => {
     const file = join(tmpDir, 'hello.txt');
     writeFileSync(file, 'hello');
     const result = fetchLocal(file, tmpDir);
-    expect(result.files.get('hello.txt')).toBe('hello');
+    expect(result.files.get('hello.txt')?.toString('utf8')).toBe('hello');
   });
 
   it('throws for a missing file when optional is false', () => {
@@ -121,7 +121,7 @@ describe('fetchSource — local directory → single file target', () => {
 
       expect(result.files.size).toBe(1);
       expect(result.files.has('docker-compose.yaml')).toBe(true);
-      const content = result.files.get('docker-compose.yaml')!;
+      const content = result.files.get('docker-compose.yaml')!.toString('utf8');
       const { parseDocument } = await import('yaml');
       const parsed = parseDocument(content).toJSON() as unknown;
       expect(parsed).toMatchObject({
@@ -144,7 +144,7 @@ describe('fetchSource — local directory → single file target', () => {
       expect(result.files.size).toBe(1);
       const { parseDocument } = await import('yaml');
       const parsed = parseDocument(
-        result.files.get('out.yml')!,
+        result.files.get('out.yml')!.toString('utf8'),
       ).toJSON() as unknown;
       expect(parsed).toEqual({ x: 1, y: 2 });
     });
@@ -162,7 +162,9 @@ describe('fetchSource — local directory → single file target', () => {
       );
 
       const { parseDocument } = await import('yaml');
-      const parsed = parseDocument(result.files.get('out.yml')!).toJSON() as {
+      const parsed = parseDocument(
+        result.files.get('out.yml')!.toString('utf8'),
+      ).toJSON() as {
         key: string;
       };
       // z-override.yml comes after a-base.yml → last_wins default
@@ -183,7 +185,7 @@ describe('fetchSource — local directory → single file target', () => {
       expect(result.files.size).toBe(1);
       const { parseDocument } = await import('yaml');
       const parsed = parseDocument(
-        result.files.get('out.yaml')!,
+        result.files.get('out.yaml')!.toString('utf8'),
       ).toJSON() as unknown;
       expect(parsed).toMatchObject({ from: 'a', extra: 1 });
     });
@@ -217,7 +219,9 @@ describe('fetchSource — local directory → single file target', () => {
       );
 
       expect(result.files.size).toBe(1);
-      const parsed = JSON.parse(result.files.get('merged.json')!) as unknown;
+      const parsed = JSON.parse(
+        result.files.get('merged.json')!.toString('utf8'),
+      ) as unknown;
       expect(parsed).toMatchObject({ a: 1, b: 2 });
     });
 
@@ -233,7 +237,9 @@ describe('fetchSource — local directory → single file target', () => {
       );
 
       expect(result.files.size).toBe(1);
-      const parsed = JSON.parse(result.files.get('merged.json')!) as unknown;
+      const parsed = JSON.parse(
+        result.files.get('merged.json')!.toString('utf8'),
+      ) as unknown;
       expect(parsed).toMatchObject({ x: 1, y: 2 });
     });
   });
@@ -290,7 +296,7 @@ describe('fetchSource — path source type', () => {
       { src: { path: file }, target: 'data.txt' },
       tmpDir,
     );
-    expect(result.files.get('data.txt')).toBe('content');
+    expect(result.files.get('data.txt')?.toString('utf8')).toBe('content');
   });
 
   it('throws for a missing path src without optional', async () => {
@@ -328,7 +334,7 @@ describe('fetchSource — path source type', () => {
       },
       tmpDir,
     );
-    expect(result.files.get('out.txt')).toBe('first\nfirst');
+    expect(result.files.get('out.txt')?.toString('utf8')).toBe('first\nfirst');
   });
 });
 
@@ -385,7 +391,7 @@ describe('fetchSource — url source type', () => {
       },
       tmpdir(),
     );
-    expect(result.files.get('out.txt')).toBe('second');
+    expect(result.files.get('out.txt')?.toString('utf8')).toBe('second');
   });
 
   it('returns empty files map when all array sources are skipped', async () => {

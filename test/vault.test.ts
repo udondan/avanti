@@ -64,7 +64,7 @@ describe('fetchVault — CLI path', () => {
 
     const result = await fetchVault('secret/myapp/db', 'password');
 
-    expect(result.files.get('password')).toBe('mysecret');
+    expect(result.files.get('password')?.toString('utf8')).toBe('mysecret');
 
     // Verify the args used
     const callArgs = mockSpawnSync.mock.calls[1]?.[1] as string[];
@@ -89,7 +89,10 @@ describe('fetchVault — CLI path', () => {
     const filename = 'db'; // basename of 'secret/myapp/db'
     const content = result.files.get(filename);
     expect(content).toBeDefined();
-    const parsed = JSON.parse(content!) as Record<string, string>;
+    const parsed = JSON.parse(content!.toString('utf8')) as Record<
+      string,
+      string
+    >;
     expect(parsed).toEqual({ username: 'admin', password: 'hunter2' });
   });
 
@@ -107,7 +110,10 @@ describe('fetchVault — CLI path', () => {
     const filename = 'token';
     const content = result.files.get(filename);
     expect(content).toBeDefined();
-    const parsed = JSON.parse(content!) as Record<string, string>;
+    const parsed = JSON.parse(content!.toString('utf8')) as Record<
+      string,
+      string
+    >;
     expect(parsed).toEqual({ apikey: 'xyz123' });
   });
 
@@ -161,7 +167,9 @@ describe('fetchVault — HTTP API path', () => {
       expect.any(Object),
     );
     const content = result.files.get('db');
-    expect(JSON.parse(content!)).toEqual({ username: 'admin' });
+    expect(JSON.parse(content!.toString('utf8'))).toEqual({
+      username: 'admin',
+    });
   });
 
   it('falls back to KV v1 when v2 returns non-ok', async () => {
@@ -178,7 +186,7 @@ describe('fetchVault — HTTP API path', () => {
 
     expect(mockFetch).toHaveBeenCalledTimes(2);
     const content = result.files.get('token');
-    expect(JSON.parse(content!)).toEqual({ apikey: 'v1key' });
+    expect(JSON.parse(content!.toString('utf8'))).toEqual({ apikey: 'v1key' });
   });
 
   it('extracts specific field from KV v2 response via HTTP', async () => {
@@ -192,7 +200,7 @@ describe('fetchVault — HTTP API path', () => {
     );
 
     const result = await fetchVault('secret/myapp/db', 'password');
-    expect(result.files.get('password')).toBe('s3cr3t');
+    expect(result.files.get('password')?.toString('utf8')).toBe('s3cr3t');
   });
 
   it('throws when field not found in v2 response', async () => {
