@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.14.0](https://github.com/udondan/avanti/compare/v0.13.0...v0.14.0) (2026-05-11)
+
+
+### ⚠ BREAKING CHANGES
+
+* **config:** old list format is no longer supported.
+
+### Features
+
+* **config:** add $self key for composable remote configs ([#101](https://github.com/udondan/avanti/issues/101)) ([beef834](https://github.com/udondan/avanti/commit/beef834544a2b53017fbcd49d7a696bf68169722))
+* **config:** change files format from list to map ([#93](https://github.com/udondan/avanti/issues/93)) ([157bafc](https://github.com/udondan/avanti/commit/157bafce525d5ae7ed14a86681a4e9abf6caf382))
+* **sources:** add path/url source types with optional flag ([#100](https://github.com/udondan/avanti/issues/100)) ([625d89a](https://github.com/udondan/avanti/commit/625d89a81dbbdf650408f06375f30610b6290bae))
+
+
+### Bug Fixes
+
+* **cache:** always create fetch cache regardless of $self usage ([#105](https://github.com/udondan/avanti/issues/105)) ([0d7d2e9](https://github.com/udondan/avanti/commit/0d7d2e9efb21ccbde574087c017be21bf2396d2f))
+* **deps:** update dependency chalk to v5.6.2 ([#119](https://github.com/udondan/avanti/issues/119)) ([67487db](https://github.com/udondan/avanti/commit/67487db866cf3ca2d5d54b169d6a2234613022b7))
+* **deps:** update dependency commander to v14 ([#124](https://github.com/udondan/avanti/issues/124)) ([cf36de7](https://github.com/udondan/avanti/commit/cf36de779c73e7264e3b1798307e74eb6c8470c7))
+* **deps:** update dependency diff to v9 ([#125](https://github.com/udondan/avanti/issues/125)) ([9259afd](https://github.com/udondan/avanti/commit/9259afd27b8ba0e10aa6abda3ad47df4fbab0667))
+* **renovate:** enable auto mode and update deprecated fileMatch ([#107](https://github.com/udondan/avanti/issues/107)) ([664cd99](https://github.com/udondan/avanti/commit/664cd99d830b23877773ef6923f8e7c13c650058))
+* **renovate:** limit to 1 concurrent PR to prevent rebase conflicts ([#113](https://github.com/udondan/avanti/issues/113)) ([7d29cec](https://github.com/udondan/avanti/commit/7d29cec84c4c324dae70244d89b009049ed13413))
+* **renovate:** rebase PRs when behind base branch ([#127](https://github.com/udondan/avanti/issues/127)) ([719aa96](https://github.com/udondan/avanti/commit/719aa96d2ca1847551f95971a610ecfaf12a846a))
+* **tests:** eliminate temp-dir count race in writer.test.ts ([#104](https://github.com/udondan/avanti/issues/104)) ([e2058c7](https://github.com/udondan/avanti/commit/e2058c7657f712af7030c28b8c52386835be3448)), closes [#89](https://github.com/udondan/avanti/issues/89)
+* **tests:** resolve TS errors and add tsc to pre-commit hook ([#103](https://github.com/udondan/avanti/issues/103)) ([d3517d2](https://github.com/udondan/avanti/commit/d3517d2ff8203ef7db25b8d6ba96f2e13e069dbd))
+
 ## [0.13.0](https://github.com/udondan/avanti/compare/v0.12.1...v0.13.0) (2026-05-09)
 
 
