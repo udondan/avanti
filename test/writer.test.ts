@@ -1,4 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+
+const isWindows = process.platform === 'win32';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -38,7 +40,7 @@ describe('atomicWrite', () => {
     expect(fs.readFileSync(dest2, 'utf8')).toBe('content two');
   });
 
-  it('applies mode (file permissions) when specified', () => {
+  it.skipIf(isWindows)('applies mode (file permissions) when specified', () => {
     const dest = path.join(tmpDir, 'script.sh');
     atomicWrite([
       { targetPath: dest, content: '#!/bin/sh\necho hi', mode: '0755' },
@@ -77,11 +79,14 @@ describe('atomicWrite', () => {
     expect(fs.readFileSync(dest, 'utf8')).toBe('new content');
   });
 
-  it('preserves existing file permission bits when no mode is specified', () => {
-    const dest = path.join(tmpDir, 'secret.txt');
-    fs.writeFileSync(dest, 'original', 'utf8');
-    fs.chmodSync(dest, 0o600);
-    atomicWrite([{ targetPath: dest, content: 'updated' }]);
-    expect(fs.statSync(dest).mode & 0o777).toBe(0o600);
-  });
+  it.skipIf(isWindows)(
+    'preserves existing file permission bits when no mode is specified',
+    () => {
+      const dest = path.join(tmpDir, 'secret.txt');
+      fs.writeFileSync(dest, 'original', 'utf8');
+      fs.chmodSync(dest, 0o600);
+      atomicWrite([{ targetPath: dest, content: 'updated' }]);
+      expect(fs.statSync(dest).mode & 0o777).toBe(0o600);
+    },
+  );
 });

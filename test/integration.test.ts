@@ -809,6 +809,7 @@ files:
     it('resolves environment variables', () => {
       const sourceFile = join(tmpDir, 'source.txt');
       writeFileSync(sourceFile, 'user: PLACEHOLDER');
+      process.env['AVANTI_TEST_USER'] = 'testuser';
 
       const config = writeConfig(
         tmpDir,
@@ -817,14 +818,18 @@ files:
     src: ${sourceFile}
     replace:
       - from: PLACEHOLDER
-        to: $env:USER
+        to: $env:AVANTI_TEST_USER
 `,
       );
 
-      const { exitCode } = runAvanti(config, tmpDir);
-      expect(exitCode).toBe(0);
-      const content = readFileSync(join(tmpDir, 'output.txt'), 'utf8');
-      expect(content).toContain(`user: ${process.env['USER']}`);
+      try {
+        const { exitCode } = runAvanti(config, tmpDir);
+        expect(exitCode).toBe(0);
+        const content = readFileSync(join(tmpDir, 'output.txt'), 'utf8');
+        expect(content).toContain('user: testuser');
+      } finally {
+        delete process.env['AVANTI_TEST_USER'];
+      }
     });
   });
 
