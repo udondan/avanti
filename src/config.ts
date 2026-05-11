@@ -400,12 +400,19 @@ function parseSingleSrc(
     if (typeof g['file'] !== 'string' || !g['file']) {
       throw new Error(`${loc}.gitlab.file: required string`);
     }
+    if (
+      g['host'] !== undefined &&
+      (typeof g['host'] !== 'string' || !g['host'].trim())
+    ) {
+      throw new Error(`${loc}.gitlab.host: must be a non-empty string`);
+    }
     return {
       gitlab: {
         project: g['project'],
         file: g['file'],
         ref: typeof g['ref'] === 'string' ? g['ref'] : undefined,
         sha: parseSha(g['sha'], `${loc}.gitlab`),
+        host: typeof g['host'] === 'string' ? g['host'] : undefined,
       },
     };
   }
@@ -429,12 +436,19 @@ function parseSingleSrc(
     if (typeof g['file'] !== 'string' || !g['file']) {
       throw new Error(`${loc}.github.file: required string`);
     }
+    if (
+      g['host'] !== undefined &&
+      (typeof g['host'] !== 'string' || !g['host'].trim())
+    ) {
+      throw new Error(`${loc}.github.host: must be a non-empty string`);
+    }
     return {
       github: {
         repo: g['repo'],
         file: g['file'],
         ref: typeof g['ref'] === 'string' ? g['ref'] : undefined,
         sha: parseSha(g['sha'], `${loc}.github`),
+        host: typeof g['host'] === 'string' ? g['host'] : undefined,
       },
     };
   }
@@ -454,6 +468,12 @@ function parseSingleSrc(
     if (typeof b['file'] !== 'string' || !b['file']) {
       throw new Error(`${loc}.bitbucket.file: required string`);
     }
+    if (
+      b['host'] !== undefined &&
+      (typeof b['host'] !== 'string' || !b['host'].trim())
+    ) {
+      throw new Error(`${loc}.bitbucket.host: must be a non-empty string`);
+    }
     return {
       bitbucket: {
         workspace: b['workspace'],
@@ -461,6 +481,7 @@ function parseSingleSrc(
         file: b['file'],
         ref: typeof b['ref'] === 'string' ? b['ref'] : undefined,
         sha: parseSha(b['sha'], `${loc}.bitbucket`),
+        host: typeof b['host'] === 'string' ? b['host'] : undefined,
       },
     };
   }

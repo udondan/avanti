@@ -59,8 +59,10 @@ export function applyUpdatedShas(
           const repo = gh.get('repo') as string | null;
           const file = gh.get('file') as string | null;
           const ref = gh.get('ref') as string | null;
+          const host = gh.get('host') as string | null;
           if (repo && file) {
-            label = `github:${repo}:${file}${ref ? `@${ref}` : ''}`;
+            const hostPart = host ? `[${host}]` : '';
+            label = `github${hostPart}:${repo}:${file}${ref ? `@${ref}` : ''}`;
             shaPath = [...srcBase, 'github', 'sha'];
           }
         }
@@ -70,8 +72,10 @@ export function applyUpdatedShas(
           const project = gl.get('project') as string | null;
           const file = gl.get('file') as string | null;
           const ref = gl.get('ref') as string | null;
+          const host = gl.get('host') as string | null;
           if (project && file) {
-            label = `gitlab:${project}:${file}${ref ? `@${ref}` : ''}`;
+            const hostPart = host ? `[${host}]` : '';
+            label = `gitlab${hostPart}:${project}:${file}${ref ? `@${ref}` : ''}`;
             shaPath = [...srcBase, 'gitlab', 'sha'];
           }
         }
@@ -84,8 +88,10 @@ export function applyUpdatedShas(
           const repo = bb.get('repo') as string | null;
           const file = bb.get('file') as string | null;
           const ref = bb.get('ref') as string | null;
+          const host = bb.get('host') as string | null;
           if (ws && repo && file) {
-            label = `bitbucket:${ws}/${repo}:${file}${ref ? `@${ref}` : ''}`;
+            const hostPart = host ? `[${host}]` : '';
+            label = `bitbucket${hostPart}:${ws}/${repo}:${file}${ref ? `@${ref}` : ''}`;
             shaPath = [...srcBase, 'bitbucket', 'sha'];
           }
         }
