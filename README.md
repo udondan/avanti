@@ -4,7 +4,7 @@ A stateful package manager for arbitrary text files. Declare what you need and
 where to get it; avanti fetches, diffs, and writes with full version history,
 atomic rollbacks, and diff-before-apply safety.
 
-![Avanti!](https://raw.githubusercontent.com/udondan/avanti/main/avanti.png 'Avanti!')
+![Avanti!](https://raw.githubusercontent.com/udondan/avanti/assets/avanti.png 'Avanti!')
 
 ## Table of Contents
 
