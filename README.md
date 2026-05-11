@@ -660,6 +660,74 @@ files:
     src: ./config.yaml
 ```
 
+### TOML Merging
+
+When all sources in a list have a `.toml` extension, TOML merging is enabled
+automatically — no extra config needed:
+
+```yaml
+files:
+  merged.toml:
+    src:
+      - ./defaults.toml
+      - ./overrides.toml
+```
+
+To merge sources that don't have a TOML extension (e.g. `exec:`, `raw:`, or a URL without `.toml`), set `toml: true`:
+
+```yaml
+files:
+  merged.toml:
+    src:
+      - exec: cat defaults.toml
+      - ./overrides.toml
+    toml: true
+```
+
+To opt out of auto-detection and force plain concatenation, set `toml: false`.
+
+**Fine-grained options** — pass an object to control merge behavior:
+
+```yaml
+files:
+  merged.toml:
+    src:
+      - ./defaults.toml
+      - github:
+          repo: org/configs
+          file: overrides.toml
+    toml:
+      conflicts: last_wins # abort | first_wins | last_wins (default)
+      arrays: replace # replace (default) | concat
+      objects: merge # merge (default) | replace
+```
+
+The options behave identically to JSON and YAML merging:
+
+- `conflicts` — what to do when the same key holds a scalar (or an array/object when their strategy is `replace`):
+  - `last_wins` _(default)_ — the last source's value wins
+  - `first_wins` — the first source's value is kept
+  - `abort` — throw an error (identical values are not considered a conflict)
+- `arrays` — how to combine arrays at the same key:
+  - `replace` _(default)_ — the later source's array replaces the earlier one
+  - `concat` — arrays are concatenated (no deduplication)
+- `objects` — how to combine objects (tables) at the same key:
+  - `merge` _(default)_ — deep merge, applying the same rules recursively to nested keys
+  - `replace` — the later source's table replaces the earlier one entirely
+
+> **Note:** TOML comments are **not preserved** in the merged or formatted
+> output. TOML parsers do not support comment round-tripping.
+
+**Pretty-printing a single file** — `toml` works on single-source entries too.
+Auto-detection applies here as well, so a single `.toml` source is normalized
+automatically:
+
+```yaml
+files:
+  config.toml:
+    src: ./config.toml
+```
+
 ### Variables
 
 Define reusable values at the top level under `variables:`:

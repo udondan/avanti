@@ -5,6 +5,7 @@ import {
   FileSrc,
   JsonMergeOptions,
   YamlMergeOptions,
+  TomlMergeOptions,
   Variables,
 } from '../types';
 import { resolveVars, resolveVarsShellSafe } from '../variables';
@@ -19,9 +20,11 @@ import { fetchS3 } from './s3';
 import { fetchVault } from './vault';
 import { mergeJson, formatJson } from '../processors/json';
 import { mergeYaml, formatYaml } from '../processors/yaml';
+import { mergeToml, formatToml } from '../processors/toml';
 
 const JSON_EXTENSIONS = new Set(['.json', '.jsonc']);
 const YAML_EXTENSIONS = new Set(['.yaml', '.yml']);
+const TOML_EXTENSIONS = new Set(['.toml']);
 
 function srcFilename(src: FileSrc): string | null {
   if (typeof src === 'string') {
@@ -69,6 +72,12 @@ function hasYamlExtension(src: FileSrc): boolean {
   return YAML_EXTENSIONS.has(path.extname(name).toLowerCase());
 }
 
+function hasTomlExtension(src: FileSrc): boolean {
+  const name = srcFilename(src);
+  if (!name) return false;
+  return TOML_EXTENSIONS.has(path.extname(name).toLowerCase());
+}
+
 function resolveJsonOptions(
   entry: FileEntry,
   srcs: FileSrc[],
@@ -92,6 +101,19 @@ function resolveYamlOptions(
   if (yaml !== undefined && typeof yaml === 'object') return yaml;
   // Auto-detect: all sources have a YAML file extension
   if (srcs.length > 0 && srcs.every(hasYamlExtension)) return {};
+  return null;
+}
+
+function resolveTomlOptions(
+  entry: FileEntry,
+  srcs: FileSrc[],
+): TomlMergeOptions | null {
+  const { toml } = entry;
+  if (toml === false) return null;
+  if (toml === true) return {};
+  if (toml !== undefined && typeof toml === 'object') return toml;
+  // Auto-detect: all sources have a TOML file extension
+  if (srcs.length > 0 && srcs.every(hasTomlExtension)) return {};
   return null;
 }
 
@@ -404,11 +426,17 @@ export async function fetchSource(
     const filename = path.basename(entry.target);
     const jsonOpts = resolveJsonOptions(entry, src);
     const yamlOpts = jsonOpts === null ? resolveYamlOptions(entry, src) : null;
+    const tomlOpts =
+      jsonOpts === null && yamlOpts === null
+        ? resolveTomlOptions(entry, src)
+        : null;
     let content: string;
     if (jsonOpts !== null) {
       content = mergeJson(parts, jsonOpts);
     } else if (yamlOpts !== null) {
       content = mergeYaml(parts, yamlOpts);
+    } else if (tomlOpts !== null) {
+      content = mergeToml(parts, tomlOpts);
     } else {
       content = parts.join('\n');
     }
@@ -439,8 +467,12 @@ export async function fetchSource(
     let dirJsonOpts = resolveJsonOptions(entry, [src]);
     let dirYamlOpts =
       dirJsonOpts === null ? resolveYamlOptions(entry, [src]) : null;
+    let dirTomlOpts =
+      dirJsonOpts === null && dirYamlOpts === null
+        ? resolveTomlOptions(entry, [src])
+        : null;
 
-    if (dirJsonOpts === null && dirYamlOpts === null) {
+    if (dirJsonOpts === null && dirYamlOpts === null && dirTomlOpts === null) {
       const keys = Array.from(singleResult.files.keys());
       if (
         entry.json !== false &&
@@ -452,10 +484,15 @@ export async function fetchSource(
         keys.every((k) => YAML_EXTENSIONS.has(path.extname(k).toLowerCase()))
       ) {
         dirYamlOpts = {};
+      } else if (
+        entry.toml !== false &&
+        keys.every((k) => TOML_EXTENSIONS.has(path.extname(k).toLowerCase()))
+      ) {
+        dirTomlOpts = {};
       }
     }
 
-    if (dirJsonOpts !== null || dirYamlOpts !== null) {
+    if (dirJsonOpts !== null || dirYamlOpts !== null || dirTomlOpts !== null) {
       const sortedValues = Array.from(singleResult.files.entries())
         .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
         .map(([, v]) => v);
@@ -463,7 +500,9 @@ export async function fetchSource(
       const merged =
         dirJsonOpts !== null
           ? mergeJson(sortedValues, dirJsonOpts)
-          : mergeYaml(sortedValues, dirYamlOpts!);
+          : dirYamlOpts !== null
+            ? mergeYaml(sortedValues, dirYamlOpts)
+            : mergeToml(sortedValues, dirTomlOpts!);
       return { files: new Map([[filename, merged]]), sourceRecords };
     }
 
@@ -473,16 +512,26 @@ export async function fetchSource(
   const singleJsonOpts = resolveJsonOptions(entry, [src]);
   const singleYamlOpts =
     singleJsonOpts === null ? resolveYamlOptions(entry, [src]) : null;
+  const singleTomlOpts =
+    singleJsonOpts === null && singleYamlOpts === null
+      ? resolveTomlOptions(entry, [src])
+      : null;
 
-  if (singleJsonOpts === null && singleYamlOpts === null)
+  if (
+    singleJsonOpts === null &&
+    singleYamlOpts === null &&
+    singleTomlOpts === null
+  )
     return { ...singleResult, sourceRecords };
 
   const formatted = new Map<string, string>();
   for (const [k, v] of singleResult.files) {
     if (singleJsonOpts !== null) {
       formatted.set(k, formatJson(v));
-    } else {
+    } else if (singleYamlOpts !== null) {
       formatted.set(k, formatYaml(v));
+    } else {
+      formatted.set(k, formatToml(v));
     }
   }
   return { files: formatted, sourceRecords };
