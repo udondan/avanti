@@ -11,39 +11,30 @@ export function validateVariables(vars: Variables): void {
   }
 }
 
-// Unicode private-use sentinel for $$ during substitution passes.
-// Cannot appear in normal config values.
-const DOLLAR_PLACEHOLDER = '';
+// Single-pass regex: $$ → literal $, then $env:NAME, then $name.
+// Ordering within the alternation matters: $$ must come first so it is
+// consumed before the $name branch can match the second $.
+const TOKEN = /\$\$|\$env:([A-Za-z_][A-Za-z0-9_]*)|\$([A-Za-z_][A-Za-z0-9_]*)/g;
 
 export function resolveVars(value: string, vars: Variables): string {
-  // $$ → placeholder (must come first so subsequent passes ignore it)
-  const escaped = value.replaceAll('$$', DOLLAR_PLACEHOLDER);
-
-  // First pass: $env:NAME → process.env value (must come before $name pass)
-  const afterEnv = escaped.replace(
-    /\$env:([A-Za-z_][A-Za-z0-9_]*)/g,
-    (_, name: string) => {
-      const val = process.env[name];
-      if (val === undefined) {
-        throw new Error(`Undefined environment variable: $env:${name}`);
+  return value.replace(
+    TOKEN,
+    (match, envName: string | undefined, varName: string | undefined) => {
+      if (match === '$$') return '$';
+      if (envName !== undefined) {
+        const val = process.env[envName];
+        if (val === undefined) {
+          throw new Error(`Undefined environment variable: $env:${envName}`);
+        }
+        return val;
       }
-      return val;
+      if (RESERVED_VARS.has(varName!)) return match;
+      if (!(varName! in vars)) {
+        throw new Error(`Undefined variable: $${varName}`);
+      }
+      return vars[varName!];
     },
   );
-
-  // Second pass: $name → variable value (reserved names are passed through unchanged)
-  const afterVars = afterEnv.replace(
-    /\$([A-Za-z_][A-Za-z0-9_]*)/g,
-    (match, name: string) => {
-      if (RESERVED_VARS.has(name)) return match;
-      if (!(name in vars)) {
-        throw new Error(`Undefined variable: $${name}`);
-      }
-      return vars[name];
-    },
-  );
-
-  return afterVars.replaceAll(DOLLAR_PLACEHOLDER, '$');
 }
 
 // Single-quote escaping for shell injection prevention.
@@ -61,30 +52,22 @@ function shellQuote(val: string): string {
 // On Unix the resolved script is passed to sh -c; on Windows it is
 // Base64-encoded and passed to PowerShell via -EncodedCommand.
 export function resolveVarsShellSafe(value: string, vars: Variables): string {
-  // $$ → placeholder (must come first so subsequent passes ignore it)
-  const escaped = value.replaceAll('$$', DOLLAR_PLACEHOLDER);
-
-  const afterEnv = escaped.replace(
-    /\$env:([A-Za-z_][A-Za-z0-9_]*)/g,
-    (_, name: string) => {
-      const val = process.env[name];
-      if (val === undefined) {
-        throw new Error(`Undefined environment variable: $env:${name}`);
+  return value.replace(
+    TOKEN,
+    (match, envName: string | undefined, varName: string | undefined) => {
+      if (match === '$$') return '$';
+      if (envName !== undefined) {
+        const val = process.env[envName];
+        if (val === undefined) {
+          throw new Error(`Undefined environment variable: $env:${envName}`);
+        }
+        return shellQuote(val);
       }
-      return shellQuote(val);
+      if (RESERVED_VARS.has(varName!)) return match;
+      if (!(varName! in vars)) {
+        throw new Error(`Undefined variable: $${varName}`);
+      }
+      return shellQuote(vars[varName!]);
     },
   );
-
-  const afterVars = afterEnv.replace(
-    /\$([A-Za-z_][A-Za-z0-9_]*)/g,
-    (match, name: string) => {
-      if (RESERVED_VARS.has(name)) return match;
-      if (!(name in vars)) {
-        throw new Error(`Undefined variable: $${name}`);
-      }
-      return shellQuote(vars[name]);
-    },
-  );
-
-  return afterVars.replaceAll(DOLLAR_PLACEHOLDER, '$');
 }

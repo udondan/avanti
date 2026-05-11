@@ -5,8 +5,13 @@ export const isWindows = process.platform === 'win32';
 // Absolute path to the inbox PowerShell on Windows.
 // Using %SystemRoot% (rather than a bare 'powershell') prevents PATH-based
 // command hijacking when avanti runs inside an untrusted working directory.
+// We validate that SystemRoot is non-empty and absolute before trusting it;
+// an empty or relative value would reintroduce the hijack risk.
+const _sysRoot = process.env['SystemRoot'];
+const _winRoot =
+  _sysRoot && path.isAbsolute(_sysRoot) ? _sysRoot : 'C:\\Windows';
 const POWERSHELL_EXE = path.join(
-  process.env['SystemRoot'] ?? 'C:\\Windows',
+  _winRoot,
   'System32',
   'WindowsPowerShell',
   'v1.0',

@@ -63,11 +63,16 @@ describe('resolveVars', () => {
   });
 
   it('treats $$env:NAME as a literal $env:NAME without resolving', () => {
+    const prior = process.env['SHOULD_NOT_RESOLVE'];
     process.env['SHOULD_NOT_RESOLVE'] = 'oops';
-    expect(resolveVars('$$env:SHOULD_NOT_RESOLVE', {})).toBe(
-      '$env:SHOULD_NOT_RESOLVE',
-    );
-    delete process.env['SHOULD_NOT_RESOLVE'];
+    try {
+      expect(resolveVars('$$env:SHOULD_NOT_RESOLVE', {})).toBe(
+        '$env:SHOULD_NOT_RESOLVE',
+      );
+    } finally {
+      if (prior === undefined) delete process.env['SHOULD_NOT_RESOLVE'];
+      else process.env['SHOULD_NOT_RESOLVE'] = prior;
+    }
   });
 
   it('handles $$$ as literal $ followed by variable substitution', () => {
@@ -120,11 +125,16 @@ describe('resolveVarsShellSafe', () => {
   });
 
   it('treats $$env:NAME as literal without resolving or quoting', () => {
+    const prior = process.env['SHOULD_NOT_RESOLVE'];
     process.env['SHOULD_NOT_RESOLVE'] = 'oops';
-    expect(resolveVarsShellSafe('$$env:SHOULD_NOT_RESOLVE', {})).toBe(
-      '$env:SHOULD_NOT_RESOLVE',
-    );
-    delete process.env['SHOULD_NOT_RESOLVE'];
+    try {
+      expect(resolveVarsShellSafe('$$env:SHOULD_NOT_RESOLVE', {})).toBe(
+        '$env:SHOULD_NOT_RESOLVE',
+      );
+    } finally {
+      if (prior === undefined) delete process.env['SHOULD_NOT_RESOLVE'];
+      else process.env['SHOULD_NOT_RESOLVE'] = prior;
+    }
   });
 });
 
