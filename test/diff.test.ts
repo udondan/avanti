@@ -1,24 +1,29 @@
+import * as os from 'os';
+import * as path from 'path';
 import { describe, it, expect } from 'vitest';
 import { resolveTargetPath } from '../src/diff';
 
-describe('resolveTargetPath', () => {
-  const wdir = '/project';
+// Platform-agnostic working directory and root for tests.
+// os.tmpdir() is a valid absolute path on every OS.
+const wdir = path.join(os.tmpdir(), 'avanti-test-project');
+const root = path.parse(wdir).root;
 
+describe('resolveTargetPath', () => {
   it('resolves relative target relative to workingDir', () => {
     expect(resolveTargetPath({ target: 'out.txt' }, 'ignored', wdir)).toBe(
-      '/project/out.txt',
+      path.join(wdir, 'out.txt'),
     );
   });
 
   it('resolves relative directory target with relPath', () => {
     expect(resolveTargetPath({ target: 'scripts/' }, 'foo/bar.sh', wdir)).toBe(
-      '/project/scripts/foo/bar.sh',
+      path.join(wdir, 'scripts', 'foo', 'bar.sh'),
     );
   });
 
   it('resolves with no target using relPath', () => {
     expect(resolveTargetPath({}, 'renovate.json', wdir)).toBe(
-      '/project/renovate.json',
+      path.join(wdir, 'renovate.json'),
     );
   });
 
@@ -28,21 +33,22 @@ describe('resolveTargetPath', () => {
     ).toThrow('escapes working directory');
   });
 
-  it('throws on absolute target when workingDir is not /', () => {
-    expect(() =>
-      resolveTargetPath({ target: '/etc/passwd' }, '', wdir),
-    ).toThrow('Absolute target path');
-  });
-
-  it('allows absolute target when workingDir is /', () => {
-    expect(resolveTargetPath({ target: '/etc/hosts' }, '', '/')).toBe(
-      '/etc/hosts',
+  it('throws on absolute target when workingDir is not root', () => {
+    const absTarget = path.join(root, 'etc', 'passwd');
+    expect(() => resolveTargetPath({ target: absTarget }, '', wdir)).toThrow(
+      'Absolute target path',
     );
   });
 
-  it('allows absolute directory target when workingDir is /', () => {
-    expect(resolveTargetPath({ target: '/etc/conf/' }, 'my.conf', '/')).toBe(
-      '/etc/conf/my.conf',
+  it('allows absolute target when workingDir is root', () => {
+    const absTarget = path.join(root, 'etc', 'hosts');
+    expect(resolveTargetPath({ target: absTarget }, '', root)).toBe(absTarget);
+  });
+
+  it('allows absolute directory target when workingDir is root', () => {
+    const absDir = path.join(root, 'etc', 'conf') + path.sep;
+    expect(resolveTargetPath({ target: absDir }, 'my.conf', root)).toBe(
+      path.join(root, 'etc', 'conf', 'my.conf'),
     );
   });
 
@@ -51,14 +57,14 @@ describe('resolveTargetPath', () => {
       resolveTargetPath({ target: 'dir/$team/file.json' }, '', wdir, {
         team: 'backend',
       }),
-    ).toBe('/project/dir/backend/file.json');
+    ).toBe(path.join(wdir, 'dir', 'backend', 'file.json'));
   });
 
   it('resolves env vars in target', () => {
     process.env['TEST_TEAM'] = 'frontend';
     expect(
       resolveTargetPath({ target: 'dir/$env:TEST_TEAM/file.json' }, '', wdir),
-    ).toBe('/project/dir/frontend/file.json');
+    ).toBe(path.join(wdir, 'dir', 'frontend', 'file.json'));
     delete process.env['TEST_TEAM'];
   });
 

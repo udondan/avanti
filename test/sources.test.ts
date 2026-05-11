@@ -1,5 +1,5 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs';
-import { tmpdir } from 'os';
+import { homedir, tmpdir } from 'os';
 import { join } from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fetchLocal } from '../src/sources/local';
@@ -8,16 +8,15 @@ import { _testable } from '../src/fetch';
 import { fetchSource } from '../src/sources';
 
 describe('fetchLocal — ~/  expansion', () => {
-  it('throws when HOME is unset and src starts with ~/', () => {
-    const orig = process.env['HOME'];
-    delete process.env['HOME'];
-    try {
-      expect(() => fetchLocal('~/foo/bar', '/tmp')).toThrow(
-        /HOME environment variable is not set/,
-      );
-    } finally {
-      if (orig !== undefined) process.env['HOME'] = orig;
-    }
+  it('expands ~/ to os.homedir() and throws when path does not exist', () => {
+    const nonexistent = join(
+      homedir(),
+      'avanti-definitely-nonexistent-xyz-test',
+    );
+    expect(() =>
+      fetchLocal('~/avanti-definitely-nonexistent-xyz-test', tmpdir()),
+    ).toThrow(/Local source not found/);
+    void nonexistent;
   });
 });
 
@@ -356,7 +355,7 @@ describe('fetchSource — url source type', () => {
         src: { url: 'https://example.com/missing.txt', optional: true },
         target: 'out.txt',
       },
-      '/tmp',
+      tmpdir(),
     );
     expect(result.files.size).toBe(0);
     expect(result.sourceRecords).toHaveLength(0);
@@ -372,7 +371,7 @@ describe('fetchSource — url source type', () => {
           src: { url: 'https://example.com/error.txt', optional: true },
           target: 'out.txt',
         },
-        '/tmp',
+        tmpdir(),
       ),
     ).rejects.toThrow('HTTP 500');
   });
@@ -389,7 +388,7 @@ describe('fetchSource — url source type', () => {
         ],
         target: 'out.txt',
       },
-      '/tmp',
+      tmpdir(),
     );
     expect(result.files.get('out.txt')).toBe('second');
   });
@@ -406,7 +405,7 @@ describe('fetchSource — url source type', () => {
         ],
         target: 'out.txt',
       },
-      '/tmp',
+      tmpdir(),
     );
     expect(result.files.size).toBe(0);
     expect(result.sourceRecords).toHaveLength(0);
@@ -433,13 +432,13 @@ describe('FetchCache — cross-target deduplication', () => {
 
     await fetchSource(
       { src: 'https://example.com/shared.txt', target: 'a.txt' },
-      '/tmp',
+      tmpdir(),
       {},
       cache,
     );
     await fetchSource(
       { src: 'https://example.com/shared.txt', target: 'b.txt' },
-      '/tmp',
+      tmpdir(),
       {},
       cache,
     );

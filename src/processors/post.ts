@@ -2,16 +2,19 @@ import { spawnSync } from 'child_process';
 import { Variables } from '../types';
 import { resolveVarsShellSafe } from '../variables';
 
+const isWindows = process.platform === 'win32';
+
 export function applyPost(
   content: string,
   script: string,
   vars: Variables = {},
 ): string {
   const resolvedScript = resolveVarsShellSafe(script, vars);
-  const result = spawnSync('sh', ['-c', resolvedScript], {
-    input: content,
-    encoding: 'utf8',
-  });
+  const result = spawnSync(
+    isWindows ? 'cmd.exe' : 'sh',
+    [isWindows ? '/c' : '-c', resolvedScript],
+    { input: content, encoding: 'utf8' },
+  );
   if (result.status !== null && result.status !== 0) {
     const stderr = result.stderr?.trim() ?? '';
     throw new Error(

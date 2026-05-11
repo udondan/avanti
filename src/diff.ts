@@ -83,9 +83,9 @@ export function resolveTargetPath(
 
   if (target) {
     if (path.isAbsolute(target)) {
-      if (workingDir !== '/') {
+      if (workingDir !== path.parse(workingDir).root) {
         throw new Error(
-          `Absolute target path "${target}" is not allowed when working directory is not "/". Use a relative path or run with -w /.`,
+          `Absolute target path "${target}" is not allowed unless the working directory is the filesystem root. Use a relative path or run with -w ${path.parse(workingDir).root}.`,
         );
       }
       if (target.endsWith('/') || target.endsWith(path.sep)) {
