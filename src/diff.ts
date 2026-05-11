@@ -9,6 +9,7 @@ import { isBinary } from './binary';
 export interface FileDiff {
   targetPath: string;
   isNew: boolean;
+  isDelete?: boolean;
   hasChanges: boolean;
   patch: string;
   isBinary?: boolean;
@@ -23,6 +24,7 @@ export function computeDeleteDiff(targetPath: string): FileDiff {
     return {
       targetPath,
       isNew: false,
+      isDelete: true,
       hasChanges: true,
       patch: '',
       isBinary: true,
@@ -71,9 +73,15 @@ export function formatDiff(diff: FileDiff): string {
   if (!diff.hasChanges) return '';
 
   if (diff.isBinary) {
-    const label = diff.isNew ? 'new binary file' : 'binary file changed';
+    const label = diff.isNew
+      ? 'new binary file'
+      : diff.isDelete
+        ? 'binary file deleted'
+        : 'binary file changed';
+    const oldPath = diff.isNew ? '/dev/null' : diff.targetPath;
+    const newPath = diff.isDelete ? '/dev/null' : diff.targetPath;
     return (
-      chalk.bold(`--- ${diff.targetPath}\n+++ ${diff.targetPath}`) +
+      chalk.bold(`--- ${oldPath}\n+++ ${newPath}`) +
       '\n' +
       chalk.cyan(`@@ ${label} @@`)
     );

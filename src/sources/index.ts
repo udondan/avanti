@@ -583,6 +583,17 @@ export async function fetchSource(
 
   const formatted = new Map<string, Buffer>();
   for (const [k, v] of singleResult.files) {
+    if (isBinary(v)) {
+      const fmtName =
+        singleJsonOpts !== null
+          ? 'json'
+          : singleYamlOpts !== null
+            ? 'yaml'
+            : 'toml';
+      throw new Error(
+        `Binary file "${k}" cannot be formatted as ${fmtName}. Remove the format option or use a text source.`,
+      );
+    }
     const text = v.toString('utf8');
     if (singleJsonOpts !== null) {
       formatted.set(k, Buffer.from(formatJson(text), 'utf8'));
