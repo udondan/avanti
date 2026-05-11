@@ -4,6 +4,7 @@ import {
   resolveVarsShellSafe,
   validateVariables,
 } from '../src/variables';
+import { isWindows } from '../src/shell';
 
 describe('resolveVars', () => {
   it('resolves a named variable', () => {
@@ -66,8 +67,10 @@ describe('resolveVarsShellSafe', () => {
   });
 
   it('escapes single quotes in value', () => {
+    // POSIX: ' → '\''   PowerShell: ' → ''
+    const expected = isWindows ? "echo 'it''s fine'" : "echo 'it'\\''s fine'";
     expect(resolveVarsShellSafe('echo $msg', { msg: "it's fine" })).toBe(
-      "echo 'it'\\''s fine'",
+      expected,
     );
   });
 

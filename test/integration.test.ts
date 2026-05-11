@@ -463,7 +463,7 @@ describe('Integration', () => {
         `files:
   ./output.txt:
     src:
-      exec: ${execCmd}
+      exec: "${execCmd}"
 `,
       );
 
