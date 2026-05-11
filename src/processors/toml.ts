@@ -78,11 +78,16 @@ function deepMerge(
   const result: Record<string, TomlValue> = { ...a };
   for (const [key, bVal] of Object.entries(b)) {
     const childPath = basePath ? `${basePath}.${key}` : key;
-    if (Object.hasOwn(result, key)) {
-      result[key] = mergeValues(childPath, result[key], bVal, opts);
-    } else {
-      result[key] = bVal;
-    }
+    const newVal = Object.hasOwn(result, key)
+      ? mergeValues(childPath, result[key], bVal, opts)
+      : bVal;
+    // Use defineProperty to avoid prototype mutation for keys like __proto__
+    Object.defineProperty(result, key, {
+      value: newVal,
+      writable: true,
+      enumerable: true,
+      configurable: true,
+    });
   }
   return result;
 }
