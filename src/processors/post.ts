@@ -1,6 +1,7 @@
 import { spawnSync } from 'child_process';
 import { Variables } from '../types';
 import { resolveVarsShellSafe } from '../variables';
+import { getShellArgs } from '../shell';
 
 export function applyPost(
   content: string,
@@ -8,7 +9,8 @@ export function applyPost(
   vars: Variables = {},
 ): string {
   const resolvedScript = resolveVarsShellSafe(script, vars);
-  const result = spawnSync('sh', ['-c', resolvedScript], {
+  const { shell, args } = getShellArgs(resolvedScript);
+  const result = spawnSync(shell, args, {
     input: content,
     encoding: 'utf8',
   });

@@ -12,6 +12,7 @@ import { tmpdir } from 'os';
 import { join, resolve } from 'path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { parseDocument } from 'yaml';
+import { isWindows } from '../src/shell';
 
 const CLI = resolve(__dirname, '../src/cli.ts');
 const PROJECT_ROOT = resolve(__dirname, '..');
@@ -454,12 +455,15 @@ describe('Integration', () => {
 
   describe('exec source', () => {
     it('runs a shell command and captures its output', () => {
+      const execCmd = isWindows
+        ? "[Console]::Out.Write('hello from exec')"
+        : "printf 'hello from exec'";
       const config = writeConfig(
         tmpDir,
         `files:
   ./output.txt:
     src:
-      exec: printf 'hello from exec'
+      exec: "${execCmd}"
 `,
       );
 
@@ -565,12 +569,15 @@ describe('Integration', () => {
       const sourceFile = join(tmpDir, 'source.txt');
       writeFileSync(sourceFile, 'hello world');
 
+      const postCmd = isWindows
+        ? '[Console]::Out.Write([Console]::In.ReadToEnd().ToUpper())'
+        : 'tr a-z A-Z';
       const config = writeConfig(
         tmpDir,
         `files:
   ./output.txt:
     src: ${sourceFile}
-    post: "tr a-z A-Z"
+    post: "${postCmd}"
 `,
       );
 
@@ -585,6 +592,9 @@ describe('Integration', () => {
       const sourceFile = join(tmpDir, 'source.txt');
       writeFileSync(sourceFile, 'foo bar');
 
+      const postCmd = isWindows
+        ? '[Console]::Out.Write([Console]::In.ReadToEnd().ToUpper())'
+        : 'tr a-z A-Z';
       const config = writeConfig(
         tmpDir,
         `files:
@@ -593,7 +603,7 @@ describe('Integration', () => {
     replace:
       - from: foo
         to: hello
-    post: "tr a-z A-Z"
+    post: "${postCmd}"
 `,
       );
 
@@ -809,6 +819,8 @@ files:
     it('resolves environment variables', () => {
       const sourceFile = join(tmpDir, 'source.txt');
       writeFileSync(sourceFile, 'user: PLACEHOLDER');
+      const prior = process.env['AVANTI_TEST_USER'];
+      process.env['AVANTI_TEST_USER'] = 'testuser';
 
       const config = writeConfig(
         tmpDir,
@@ -817,14 +829,19 @@ files:
     src: ${sourceFile}
     replace:
       - from: PLACEHOLDER
-        to: $env:USER
+        to: $env:AVANTI_TEST_USER
 `,
       );
 
-      const { exitCode } = runAvanti(config, tmpDir);
-      expect(exitCode).toBe(0);
-      const content = readFileSync(join(tmpDir, 'output.txt'), 'utf8');
-      expect(content).toContain(`user: ${process.env['USER']}`);
+      try {
+        const { exitCode } = runAvanti(config, tmpDir);
+        expect(exitCode).toBe(0);
+        const content = readFileSync(join(tmpDir, 'output.txt'), 'utf8');
+        expect(content).toContain('user: testuser');
+      } finally {
+        if (prior === undefined) delete process.env['AVANTI_TEST_USER'];
+        else process.env['AVANTI_TEST_USER'] = prior;
+      }
     });
   });
 

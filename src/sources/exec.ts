@@ -1,7 +1,9 @@
 import { spawnSync } from 'child_process';
+import { getShellArgs } from '../shell';
 
 export function fetchExec(command: string): string {
-  const result = spawnSync('sh', ['-c', command], { encoding: 'utf8' });
+  const { shell, args } = getShellArgs(command);
+  const result = spawnSync(shell, args, { encoding: 'utf8' });
   if (result.error) {
     throw new Error(`exec failed to spawn: ${result.error.message}`);
   }

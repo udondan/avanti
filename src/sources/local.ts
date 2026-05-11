@@ -1,4 +1,5 @@
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 
 export interface LocalResult {
@@ -13,13 +14,7 @@ export function fetchLocal(
 ): LocalResult {
   let resolved: string;
   if (src.startsWith('~/')) {
-    const home = process.env['HOME'];
-    if (!home) {
-      throw new Error(
-        `Cannot expand '~/' in source '${src}': HOME environment variable is not set`,
-      );
-    }
-    resolved = path.join(home, src.slice(2));
+    resolved = path.join(os.homedir(), src.slice(2));
   } else if (path.isAbsolute(src)) {
     resolved = src;
   } else {

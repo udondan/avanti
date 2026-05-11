@@ -27,9 +27,13 @@ jobs:
               - .github/workflows/test.yml
 
   test:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     needs: [changes]
     if: always() && (needs.changes.result == 'skipped' || (needs.changes.result == 'success' && needs.changes.outputs.src == 'true'))
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-2022]
     steps:
       - uses: actions/checkout@v6
 
@@ -44,16 +48,23 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
+      # Build, lint, and format checks only run on Linux.
+      # The build script uses chmod which is not available on Windows,
+      # and code-quality gates only need to run once.
       - name: Build
+        if: runner.os != 'Windows'
         run: bun run build
 
       - name: Type check
+        if: runner.os != 'Windows'
         run: bun run typecheck
 
       - name: Lint
+        if: runner.os != 'Windows'
         run: bun run lint
 
       - name: Format check
+        if: runner.os != 'Windows'
         run: bun run format:check
 
       - name: Test

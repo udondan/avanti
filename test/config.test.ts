@@ -696,14 +696,15 @@ describe('resolveConfigPath', () => {
   });
 
   it('returns the explicit path resolved to absolute for a local path', () => {
-    const result = resolveConfigPath('/absolute/path/config.yml');
-    expect(result).toBe('/absolute/path/config.yml');
+    const absPath = path.join(os.tmpdir(), 'path', 'config.yml');
+    const result = resolveConfigPath(absPath);
+    expect(result).toBe(absPath);
   });
 
   it('resolves a relative explicit path to an absolute path', () => {
     const result = resolveConfigPath('relative/config.yml');
     expect(path.isAbsolute(result)).toBe(true);
-    expect(result).toMatch(/relative\/config\.yml$/);
+    expect(result.endsWith(path.join('relative', 'config.yml'))).toBe(true);
   });
 
   it('returns a github: spec unchanged', () => {
