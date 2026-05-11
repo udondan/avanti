@@ -1,13 +1,7 @@
 import { spawnSync } from 'child_process';
 
-const isWindows = process.platform === 'win32';
-
 export function fetchExec(command: string): string {
-  const result = spawnSync(
-    isWindows ? 'cmd.exe' : 'sh',
-    [isWindows ? '/c' : '-c', command],
-    { encoding: 'utf8' },
-  );
+  const result = spawnSync('sh', ['-c', command], { encoding: 'utf8' });
   if (result.error) {
     throw new Error(`exec failed to spawn: ${result.error.message}`);
   }

@@ -8,15 +8,10 @@ import { _testable } from '../src/fetch';
 import { fetchSource } from '../src/sources';
 
 describe('fetchLocal — ~/  expansion', () => {
-  it('expands ~/ to os.homedir() and throws when path does not exist', () => {
-    const nonexistent = join(
-      homedir(),
-      'avanti-definitely-nonexistent-xyz-test',
-    );
-    expect(() =>
-      fetchLocal('~/avanti-definitely-nonexistent-xyz-test', tmpdir()),
-    ).toThrow(/Local source not found/);
-    void nonexistent;
+  it('expands ~/ to os.homedir()', () => {
+    const slug = 'avanti-definitely-nonexistent-xyz-test';
+    const expectedPath = join(homedir(), slug);
+    expect(() => fetchLocal(`~/${slug}`, tmpdir())).toThrow(expectedPath);
   });
 });
 
