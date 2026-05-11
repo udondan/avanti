@@ -708,7 +708,8 @@ files:
 files:
   out.txt:
     src:
-      exec: powershell -Command "if ($$true) { Write-Output 'yes' }"
+      # On Windows exec: runs in PowerShell — $true is a PS built-in, needs $$
+      exec: "if ($$true) { Write-Output 'yes' }"
     post: sed 's/$$HOME/redacted/g' # $HOME would be treated as an avanti variable
 ```
 

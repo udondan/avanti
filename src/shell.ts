@@ -25,6 +25,11 @@ const POWERSHELL_EXE = path.join(
 // command (-EncodedCommand) so command-line quoting is bypassed entirely.
 // We also set UTF-8 I/O up front so non-ASCII content round-trips correctly.
 //
+// The user script is wrapped in a scriptblock (& { ... }) so that param()
+// declarations at the start of the script are legal. Note: script-file-level
+// directives (#requires, using namespace/module) are not supported in inline
+// scripts regardless of wrapping and must live in a .ps1 file.
+//
 // On Unix/macOS: plain sh -c.
 export function getShellArgs(script: string): {
   shell: string;
@@ -36,7 +41,9 @@ export function getShellArgs(script: string): {
   const wrapped =
     '[Console]::InputEncoding=[Text.Encoding]::UTF8;' +
     '[Console]::OutputEncoding=[Text.Encoding]::UTF8;' +
-    script;
+    '& {' +
+    script +
+    '}';
   const encoded = Buffer.from(wrapped, 'utf16le').toString('base64');
   return {
     shell: POWERSHELL_EXE,
