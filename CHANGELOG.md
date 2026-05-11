@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.16.0](https://github.com/udondan/avanti/compare/v0.15.0...v0.16.0) (2026-05-11)
+
+
+### Features
+
+* add binary file support ([#136](https://github.com/udondan/avanti/issues/136)) ([25af9b6](https://github.com/udondan/avanti/commit/25af9b657d877131fcecc11a54f8cc02275d5f6c))
+* add host parameter to gitlab, github, and bitbucket sources ([#135](https://github.com/udondan/avanti/issues/135)) ([fa5d4ac](https://github.com/udondan/avanti/commit/fa5d4ac406b82c7530dda003daa19c40f8ead04e))
+* add TOML deep merge support ([#133](https://github.com/udondan/avanti/issues/133)) ([8b08d5b](https://github.com/udondan/avanti/commit/8b08d5bbaa4892f5f0715e3b82f34b8d6d97aa85))
+
 ## [0.15.0](https://github.com/udondan/avanti/compare/v0.14.0...v0.15.0) (2026-05-11)
 
 
