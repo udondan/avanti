@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.15.0](https://github.com/udondan/avanti/compare/v0.14.0...v0.15.0) (2026-05-11)
+
+
+### Features
+
+* add Windows compatibility ([#131](https://github.com/udondan/avanti/issues/131)) ([70f44fb](https://github.com/udondan/avanti/commit/70f44fb50ab344320c794ede35e5be9ca3ac616a))
+
 ## [0.14.0](https://github.com/udondan/avanti/compare/v0.13.0...v0.14.0) (2026-05-11)
 
 

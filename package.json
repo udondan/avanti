@@ -1,6 +1,6 @@
 {
   "name": "@udondan/avanti",
-  "version": "0.14.0",
+  "version": "0.15.0",
   "description": "Assemble local files from any source via a declarative YAML spec",
   "bin": {
     "avanti": "dist/cli.js"
