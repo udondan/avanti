@@ -52,7 +52,10 @@ function glabRunBinary(args: string[]): {
   stderr: string;
   status: number | null;
 } {
-  const result = spawnSync('glab', args, { encoding: 'buffer' });
+  const result = spawnSync('glab', args, {
+    encoding: 'buffer',
+    maxBuffer: 200 * 1024 * 1024,
+  });
   if (result.error) throw new Error(`glab error: ${result.error.message}`);
   return {
     stdout: result.stdout ?? Buffer.alloc(0),
@@ -333,7 +336,7 @@ function fetchDirectoryViaArchiveViaCli(
       ...hostnameArgs(host),
       `projects/${encodedProject}/repository/archive.tar.gz?sha=${encodeURIComponent(ref)}&path=${encodeURIComponent(dirPath)}`,
     ],
-    { encoding: 'buffer' },
+    { encoding: 'buffer', maxBuffer: 200 * 1024 * 1024 },
   );
   if (result.error || result.status !== 0 || !result.stdout?.length)
     return null;
