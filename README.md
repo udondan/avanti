@@ -412,7 +412,7 @@ src:
     file: path/to/file.txt       # file or directory in repo
     ref: main                    # branch, tag, or $latest (optional)
     sha: abc123...               # optional SHA-256 fingerprint
-    host: github.mycompany.com   # override default github.com (optional)
+    host: github.mycompany.com   # GitHub Enterprise Server hostname (optional)
 
 src:
   bitbucket:

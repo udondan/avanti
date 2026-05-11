@@ -29,7 +29,8 @@ function isGlabAvailable(): boolean {
 }
 
 function hostnameArgs(host?: string): string[] {
-  return host ? ['--hostname', host] : [];
+  const resolved = host?.trim() || process.env.GITLAB_HOST?.trim() || '';
+  return resolved ? ['--hostname', resolved] : [];
 }
 
 function glabRun(args: string[]): {

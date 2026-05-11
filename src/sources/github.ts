@@ -50,6 +50,11 @@ function decodeBase64Content(b64: string): string {
   return Buffer.from(b64.replace(/\n/g, ''), 'base64').toString('utf8');
 }
 
+function hostnameArgs(host?: string): string[] {
+  const resolved = host?.trim() || process.env.GITHUB_HOST?.trim() || '';
+  return resolved ? ['--hostname', resolved] : [];
+}
+
 async function fetchPathInfo(
   repo: string,
   filePath: string,
@@ -69,7 +74,7 @@ async function fetchPathInfo(
     };
   }
   if (shouldFallback(res.status) && isGhAvailable()) {
-    return fetchPathInfoViaCli(repo, filePath, ref);
+    return fetchPathInfoViaCli(repo, filePath, ref, host);
   }
   throw new Error(
     `Failed to fetch ${filePath} from ${repo}@${ref}: HTTP ${res.status}`,
@@ -80,9 +85,11 @@ function fetchPathInfoViaCli(
   repo: string,
   filePath: string,
   ref: string,
+  host?: string,
 ): PathInfo {
   const res = ghRun([
     'api',
+    ...hostnameArgs(host),
     `repos/${repo}/contents/${filePath}?ref=${encodeURIComponent(ref)}`,
     '--jq',
     'if type == "array" then "directory" else .content end',
@@ -125,7 +132,7 @@ async function listTree(
   );
   if (!res.ok) {
     if (shouldFallback(res.status) && isGhAvailable()) {
-      return listTreeViaCli(repo, dirPath, ref);
+      return listTreeViaCli(repo, dirPath, ref, host);
     }
     throw new Error(
       `Failed to list tree ${dirPath} in ${repo}@${ref}: HTTP ${res.status}`,
@@ -146,9 +153,15 @@ async function listTree(
     .map((item) => item.path);
 }
 
-function listTreeViaCli(repo: string, dirPath: string, ref: string): string[] {
+function listTreeViaCli(
+  repo: string,
+  dirPath: string,
+  ref: string,
+  host?: string,
+): string[] {
   const res = ghRun([
     'api',
+    ...hostnameArgs(host),
     `repos/${repo}/git/trees/${encodeURIComponent(ref)}?recursive=1`,
     '--arg',
     'dirPath',
@@ -199,23 +212,24 @@ async function resolveRef(
       throw new Error(`No releases or tags found for ${repo}`);
     }
     if (shouldFallback(tagRes.status) && isGhAvailable()) {
-      return resolveRefViaCli(repo);
+      return resolveRefViaCli(repo, host);
     }
     throw new Error(
       `Failed to resolve $latest for ${repo}: HTTP ${tagRes.status}`,
     );
   }
   if (shouldFallback(relRes.status) && isGhAvailable()) {
-    return resolveRefViaCli(repo);
+    return resolveRefViaCli(repo, host);
   }
   throw new Error(
     `Failed to resolve $latest for ${repo}: HTTP ${relRes.status}`,
   );
 }
 
-function resolveRefViaCli(repo: string): string {
+function resolveRefViaCli(repo: string, host?: string): string {
   const res = ghRun([
     'api',
+    ...hostnameArgs(host),
     `repos/${repo}/releases/latest`,
     '--jq',
     '.tag_name',
@@ -224,6 +238,7 @@ function resolveRefViaCli(repo: string): string {
   // Fall back to most recent tag
   const tagRes = ghRun([
     'api',
+    ...hostnameArgs(host),
     `repos/${repo}/tags?per_page=1`,
     '--jq',
     '.[0].name',
