@@ -27,7 +27,7 @@ import { validateVariables } from './variables';
 import { fetchHttp } from './sources/http';
 import { fetchGitHub } from './sources/github';
 import { fetchGitLab } from './sources/gitlab';
-import { fetchGit, isGitSshUrl, parseGitSshSpec } from './sources/git';
+import { fetchGit, isGitRemoteUrl, parseGitRemoteSpec } from './sources/git';
 
 export const SELF_KEY = '$self';
 
@@ -42,7 +42,7 @@ export function isRemoteConfigSpec(s: string): boolean {
   return (
     s.startsWith('http://') ||
     s.startsWith('https://') ||
-    isGitSshUrl(s) ||
+    isGitRemoteUrl(s) ||
     s.startsWith('github:') ||
     s.startsWith('gitlab:')
   );
@@ -53,13 +53,12 @@ export function normalizeConfigKey(spec: string): string {
     const atIdx = spec.lastIndexOf('@');
     if (atIdx !== -1) return spec.slice(0, atIdx);
   }
-  if (isGitSshUrl(spec)) {
-    const schemeEnd = spec.indexOf('://') + 3;
-    const separatorIdx = spec.indexOf('//', schemeEnd);
-    if (separatorIdx !== -1) {
-      const filePart = spec.slice(separatorIdx + 2);
-      const atIdx = filePart.lastIndexOf('@');
-      if (atIdx !== -1) return spec.slice(0, separatorIdx + 2 + atIdx);
+  if (isGitRemoteUrl(spec)) {
+    try {
+      const { repo, file, ref } = parseGitRemoteSpec(spec);
+      if (ref !== undefined) return `${repo}//${file}`;
+    } catch {
+      // invalid spec — fall through and return as-is
     }
   }
   return spec;
@@ -162,8 +161,8 @@ async function fetchConfigContent(spec: string): Promise<string> {
     return (result.files.values().next().value as Buffer).toString('utf8');
   }
 
-  if (isGitSshUrl(spec)) {
-    const { repo, file, ref } = parseGitSshSpec(spec);
+  if (isGitRemoteUrl(spec)) {
+    const { repo, file, ref } = parseGitRemoteSpec(spec);
     const result = fetchGit(repo, file, ref);
     if (result.files.size !== 1) {
       throw new Error(
@@ -360,7 +359,7 @@ function parseSingleSrc(
       !obj['url'].includes('$') &&
       !obj['url'].startsWith('http://') &&
       !obj['url'].startsWith('https://') &&
-      !isGitSshUrl(obj['url'])
+      !isGitRemoteUrl(obj['url'])
     ) {
       throw new Error(
         `${loc}.url: must start with http://, https://, git+ssh://, git://, or ssh://, got "${obj['url']}"`,

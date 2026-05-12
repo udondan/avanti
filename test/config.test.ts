@@ -10,7 +10,7 @@ import {
   resolveConfigPath,
   SELF_KEY,
 } from '../src/config';
-import { parseGitSshSpec } from '../src/sources/git';
+import { parseGitRemoteSpec } from '../src/sources/git';
 
 function writeTmp(content: string): string {
   const f = path.join(os.tmpdir(), `avanti-test-${Date.now()}.yml`);
@@ -62,10 +62,12 @@ describe('normalizeConfigKey', () => {
   });
 });
 
-describe('parseGitSshSpec', () => {
+describe('parseGitRemoteSpec', () => {
   it('parses a full spec with ref', () => {
     expect(
-      parseGitSshSpec('git+ssh://git@host/org/repo.git//path/to/file.yml@main'),
+      parseGitRemoteSpec(
+        'git+ssh://git@host/org/repo.git//path/to/file.yml@main',
+      ),
     ).toEqual({
       repo: 'git+ssh://git@host/org/repo.git',
       file: 'path/to/file.yml',
@@ -75,7 +77,7 @@ describe('parseGitSshSpec', () => {
 
   it('parses a spec without ref', () => {
     expect(
-      parseGitSshSpec('git+ssh://git@host/org/repo.git//avanti.yml'),
+      parseGitRemoteSpec('git+ssh://git@host/org/repo.git//avanti.yml'),
     ).toEqual({
       repo: 'git+ssh://git@host/org/repo.git',
       file: 'avanti.yml',
@@ -84,7 +86,9 @@ describe('parseGitSshSpec', () => {
   });
 
   it('parses a git:// spec', () => {
-    expect(parseGitSshSpec('git://host/repo.git//config.yml@v1.2.3')).toEqual({
+    expect(
+      parseGitRemoteSpec('git://host/repo.git//config.yml@v1.2.3'),
+    ).toEqual({
       repo: 'git://host/repo.git',
       file: 'config.yml',
       ref: 'v1.2.3',
@@ -92,14 +96,20 @@ describe('parseGitSshSpec', () => {
   });
 
   it('throws when // separator is missing', () => {
-    expect(() => parseGitSshSpec('git+ssh://git@host/org/repo.git')).toThrow(
+    expect(() => parseGitRemoteSpec('git+ssh://git@host/org/repo.git')).toThrow(
+      'Invalid git URL spec',
+    );
+  });
+
+  it('throws when repo part is empty (// immediately after scheme)', () => {
+    expect(() => parseGitRemoteSpec('git+ssh:////file.yml')).toThrow(
       'Invalid git URL spec',
     );
   });
 
   it('throws when file path after // is empty', () => {
     expect(() =>
-      parseGitSshSpec('git+ssh://git@host/org/repo.git//@main'),
+      parseGitRemoteSpec('git+ssh://git@host/org/repo.git//@main'),
     ).toThrow('File path is required');
   });
 });

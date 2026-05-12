@@ -40,7 +40,7 @@ function collectFiles(
   }
 }
 
-export function isGitSshUrl(s: string): boolean {
+export function isGitRemoteUrl(s: string): boolean {
   return (
     s.startsWith('git+ssh://') ||
     s.startsWith('git://') ||
@@ -48,14 +48,14 @@ export function isGitSshUrl(s: string): boolean {
   );
 }
 
-export function parseGitSshSpec(spec: string): {
+export function parseGitRemoteSpec(spec: string): {
   repo: string;
   file: string;
   ref: string | undefined;
 } {
   const schemeEnd = spec.indexOf('://') + 3;
   const separatorIdx = spec.indexOf('//', schemeEnd);
-  if (separatorIdx === -1) {
+  if (separatorIdx === -1 || separatorIdx <= schemeEnd) {
     throw new Error(
       `Invalid git URL spec "${spec}". Expected: git+ssh://git@host/org/repo.git//path/to/file.yml[@ref]`,
     );
@@ -74,7 +74,12 @@ export function parseGitSshSpec(spec: string): {
 }
 
 export function fetchGit(repo: string, file: string, ref?: string): GitResult {
-  if (path.isAbsolute(file) || path.normalize(file).startsWith('..')) {
+  const normalized = path.normalize(file);
+  if (
+    path.isAbsolute(file) ||
+    normalized === '..' ||
+    normalized.startsWith('..' + path.sep)
+  ) {
     throw new Error(`Unsafe file path escapes repository root: ${file}`);
   }
 

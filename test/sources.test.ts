@@ -1,6 +1,6 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { homedir, tmpdir } from 'os';
-import { join } from 'path';
+import { join, normalize, sep, isAbsolute } from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fetchLocal } from '../src/sources/local';
 import { fetchHttp } from '../src/sources/http';
@@ -557,5 +557,15 @@ describe('fetchGit — path confinement', () => {
     expect(() =>
       gitModule.fetchGit('https://example.com/repo.git', '../../etc/passwd'),
     ).toThrow('Unsafe file path');
+  });
+
+  it('does not reject a filename that starts with .. but is not a traversal', () => {
+    // path.normalize('..foo.yml') === '..foo.yml' — not '..' nor starts with '../'
+    // so it must NOT trigger the unsafe-path guard
+    const file = '..foo.yml';
+    const n = normalize(file);
+    expect(n === '..').toBe(false);
+    expect(n.startsWith('..' + sep)).toBe(false);
+    expect(isAbsolute(n)).toBe(false);
   });
 });
