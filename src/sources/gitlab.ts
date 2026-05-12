@@ -70,22 +70,11 @@ function glabRunBinary(args: string[]): {
 }
 
 function glabApi(endpoint: string, host?: string): ReturnType<typeof glabRun> {
-  const hostnameFlag = hostnameArgs(host);
-  const args = ['api', ...hostnameFlag, endpoint];
+  const args = ['api', ...hostnameArgs(host), endpoint];
   verbose(`gitlab: glab fallback: glab ${args.join(' ')}`);
   const res = glabRun(args);
-  if (res.status === 0) {
-    verbose(`  -> glab ok`);
-    return res;
-  }
-  verbose(`  -> glab failed (exit ${res.status})`);
-  if (hostnameFlag.length > 0) {
-    verbose(`gitlab: retrying glab without --hostname`);
-    const fallback = glabRun(['api', endpoint]);
-    if (fallback.status === 0) verbose(`  -> glab ok`);
-    else verbose(`  -> glab failed (exit ${fallback.status})`);
-    return fallback;
-  }
+  if (res.status === 0) verbose(`  -> glab ok`);
+  else verbose(`  -> glab failed (exit ${res.status})`);
   return res;
 }
 
@@ -93,23 +82,11 @@ function glabApiBinary(
   endpoint: string,
   host?: string,
 ): ReturnType<typeof glabRunBinary> {
-  const hostnameFlag = hostnameArgs(host);
-  const args = ['api', ...hostnameFlag, endpoint];
+  const args = ['api', ...hostnameArgs(host), endpoint];
   verbose(`gitlab: glab fallback: glab ${args.join(' ')}`);
   const res = glabRunBinary(args);
-  if (res.status === 0) {
-    verbose(`  -> glab ok (${res.stdout.length} bytes)`);
-    return res;
-  }
-  verbose(`  -> glab failed (exit ${res.status})`);
-  if (hostnameFlag.length > 0) {
-    verbose(`gitlab: retrying glab without --hostname`);
-    const fallback = glabRunBinary(['api', endpoint]);
-    if (fallback.status === 0)
-      verbose(`  -> glab ok (${fallback.stdout.length} bytes)`);
-    else verbose(`  -> glab failed (exit ${fallback.status})`);
-    return fallback;
-  }
+  if (res.status === 0) verbose(`  -> glab ok (${res.stdout.length} bytes)`);
+  else verbose(`  -> glab failed (exit ${res.status})`);
   return res;
 }
 
@@ -203,7 +180,13 @@ function detectPathTypeViaCli(
 ): 'file' | 'directory' {
   const endpoint = `projects/${encodeURIComponent(project)}/repository/files/${encodeURIComponent(filePath)}?ref=${encodeURIComponent(ref)}`;
   const res = glabApi(endpoint, host);
-  return res.status === 0 ? 'file' : 'directory';
+  if (res.status === 0) return 'file';
+  if (host) {
+    throw new Error(
+      `gitlab: glab failed for ${project}: ${(res.stderr || res.stdout).trim()}`,
+    );
+  }
+  return 'directory';
 }
 
 async function fetchFile(
