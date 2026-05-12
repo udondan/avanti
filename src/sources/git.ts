@@ -101,10 +101,8 @@ export function fetchGit(repo: string, file: string, ref?: string): GitResult {
     if (!ref || !looksLikeCommitHash(ref)) {
       const args = ['clone', '--depth', '1'];
       if (ref) args.push('--branch', ref);
+      verbose(`git ${args.join(' ')} ${redactGitUrl(repo)} <tmpdir>`);
       args.push(repo, repoDir);
-      verbose(
-        `git ${args.slice(0, -1).join(' ')} ${redactGitUrl(repo)} <tmpdir>`,
-      );
       const res = run('git', args);
       if (res.status !== 0) {
         throw new Error(`git clone failed: ${res.stderr.trim()}`);

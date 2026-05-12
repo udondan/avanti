@@ -31,6 +31,9 @@ function retryDelayMs(attempt: number, headers: Headers): number {
 function redactUrl(raw: string): string {
   try {
     const u = new URL(raw);
+    // Strip basic-auth credentials from the URL authority
+    u.username = '';
+    u.password = '';
     const SENSITIVE = new Set([
       'token',
       'access_token',
@@ -45,7 +48,8 @@ function redactUrl(raw: string): string {
     }
     return u.toString();
   } catch {
-    return raw;
+    // Best-effort redaction for strings that aren't valid URLs
+    return raw.replace(/(\/\/)[^@]*@/, '$1***@');
   }
 }
 
