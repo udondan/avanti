@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.19.0](https://github.com/udondan/avanti/compare/v0.18.0...v0.19.0) (2026-05-12)
+
+
+### Features
+
+* add --via flag to control transport for remote --config fetches ([#146](https://github.com/udondan/avanti/issues/146)) ([b2d5d94](https://github.com/udondan/avanti/commit/b2d5d9438cb85b5ea250429a959643a1c2410258))
+
 ## [0.18.0](https://github.com/udondan/avanti/compare/v0.17.1...v0.18.0) (2026-05-12)
 
 
