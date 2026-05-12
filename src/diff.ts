@@ -1,4 +1,5 @@
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 import { createTwoFilesPatch } from 'diff';
 import chalk from 'chalk';
@@ -120,6 +121,20 @@ export function resolveTargetPath(
   const target = entry.target ? resolveVars(entry.target, vars) : undefined;
 
   if (target) {
+    if (target.startsWith('~/')) {
+      const home = os.homedir();
+      const expanded = path.resolve(home, target.slice(2));
+      const homePrefix = home.endsWith(path.sep) ? home : home + path.sep;
+      if (expanded !== home && !expanded.startsWith(homePrefix)) {
+        throw new Error(
+          `Target path "${expanded}" escapes home directory "${home}".`,
+        );
+      }
+      if (target.endsWith('/') || target.endsWith(path.sep)) {
+        return path.resolve(expanded, relPath);
+      }
+      return expanded;
+    }
     if (path.isAbsolute(target)) {
       const fsRoot = path.parse(workingDir).root;
       if (workingDir !== fsRoot) {

@@ -78,4 +78,22 @@ describe('resolveTargetPath', () => {
       resolveTargetPath({ target: 'dir/$missing/file.json' }, '', wdir),
     ).toThrow('Undefined variable: $missing');
   });
+
+  it('expands ~/ target to home directory', () => {
+    expect(
+      resolveTargetPath({ target: '~/.opencode/AGENTS.md' }, 'ignored', wdir),
+    ).toBe(path.join(os.homedir(), '.opencode', 'AGENTS.md'));
+  });
+
+  it('expands ~/ directory target with relPath', () => {
+    expect(
+      resolveTargetPath({ target: '~/.config/avanti/' }, 'foo.yml', wdir),
+    ).toBe(path.join(os.homedir(), '.config', 'avanti', 'foo.yml'));
+  });
+
+  it('throws when ~/ target escapes home directory via ..', () => {
+    expect(() =>
+      resolveTargetPath({ target: '~/../../etc/hosts' }, '', wdir),
+    ).toThrow('escapes home directory');
+  });
 });
