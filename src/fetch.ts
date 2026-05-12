@@ -82,7 +82,19 @@ export async function fetchWithRetry(
     verbose(`${method} ${redactUrl(url)}`);
   }
   for (let attempt = 0; ; attempt++) {
-    const res = await fetch(url, options);
+    let res: Response;
+    try {
+      res = await fetch(url, options);
+    } catch (e) {
+      if (isVerbose()) {
+        const err = e instanceof Error ? e : new Error(String(e));
+        const cause =
+          'cause' in err && err.cause instanceof Error ? err.cause : null;
+        const causeMsg = cause ? `: ${cause.message}` : '';
+        verbose(`  -> network error: ${err.message}${causeMsg}`);
+      }
+      throw e;
+    }
     if (isVerbose()) verbose(`  -> HTTP ${res.status}`);
     const shouldRetry =
       res.status === 429 || (res.status >= 500 && res.status <= 599);
