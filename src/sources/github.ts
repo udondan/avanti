@@ -1,6 +1,7 @@
 import { spawnSync } from 'child_process';
 import * as path from 'path';
 import { fetchWithRetry } from '../fetch';
+import { verbose } from '../logger';
 
 export interface GitHubResult {
   files: Map<string, Buffer>;
@@ -61,6 +62,7 @@ async function fetchPathInfo(
   ref: string,
   host?: string,
 ): Promise<PathInfo> {
+  verbose(`github: fetching ${repo}:${filePath}@${ref}`);
   const res = await fetchWithRetry(
     `${getApiBase(host)}/repos/${repo}/contents/${filePath}?ref=${encodeURIComponent(ref)}`,
     { headers: apiHeaders() },
@@ -87,13 +89,15 @@ function fetchPathInfoViaCli(
   ref: string,
   host?: string,
 ): PathInfo {
-  const res = ghRun([
+  const args = [
     'api',
     ...hostnameArgs(host),
     `repos/${repo}/contents/${filePath}?ref=${encodeURIComponent(ref)}`,
     '--jq',
     'if type == "array" then "directory" else .content end',
-  ]);
+  ];
+  verbose(`github: gh fallback: gh ${args.join(' ')}`);
+  const res = ghRun(args);
   if (res.status !== 0) {
     throw new Error(
       `Failed to fetch ${filePath} from ${repo}@${ref}: ${res.stderr}`,
@@ -126,6 +130,7 @@ async function listTree(
   ref: string,
   host?: string,
 ): Promise<string[]> {
+  verbose(`github: listing tree ${repo}:${dirPath}@${ref}`);
   const res = await fetchWithRetry(
     `${getApiBase(host)}/repos/${repo}/git/trees/${encodeURIComponent(ref)}?recursive=1`,
     { headers: apiHeaders() },
@@ -159,7 +164,7 @@ function listTreeViaCli(
   ref: string,
   host?: string,
 ): string[] {
-  const res = ghRun([
+  const args = [
     'api',
     ...hostnameArgs(host),
     `repos/${repo}/git/trees/${encodeURIComponent(ref)}?recursive=1`,
@@ -168,7 +173,9 @@ function listTreeViaCli(
     dirPath,
     '--jq',
     'if .truncated then error("truncated") else .tree[] | select(.type == "blob") | select(.path | startswith($dirPath + "/")) | .path end',
-  ]);
+  ];
+  verbose(`github: gh fallback: gh ${args.join(' ')}`);
+  const res = ghRun(args);
   if (res.status !== 0) {
     if (res.stderr.includes('truncated')) {
       throw new Error(
@@ -189,6 +196,7 @@ async function resolveRef(
 ): Promise<string> {
   if (ref !== '$latest') return ref ?? 'HEAD';
 
+  verbose(`github: resolving $latest for ${repo}`);
   // Try latest release first
   const relRes = await fetchWithRetry(
     `${getApiBase(host)}/repos/${repo}/releases/latest`,
@@ -227,22 +235,26 @@ async function resolveRef(
 }
 
 function resolveRefViaCli(repo: string, host?: string): string {
-  const res = ghRun([
+  const relArgs = [
     'api',
     ...hostnameArgs(host),
     `repos/${repo}/releases/latest`,
     '--jq',
     '.tag_name',
-  ]);
+  ];
+  verbose(`github: gh fallback: gh ${relArgs.join(' ')}`);
+  const res = ghRun(relArgs);
   if (res.status === 0 && res.stdout.trim()) return res.stdout.trim();
   // Fall back to most recent tag
-  const tagRes = ghRun([
+  const tagArgs = [
     'api',
     ...hostnameArgs(host),
     `repos/${repo}/tags?per_page=1`,
     '--jq',
     '.[0].name',
-  ]);
+  ];
+  verbose(`github: gh fallback: gh ${tagArgs.join(' ')}`);
+  const tagRes = ghRun(tagArgs);
   if (tagRes.status !== 0 || !tagRes.stdout.trim()) {
     throw new Error(`No releases or tags found for ${repo}`);
   }

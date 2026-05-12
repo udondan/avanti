@@ -7,6 +7,7 @@ import { lockCommand } from './commands/lock';
 import { revertCommand } from './commands/revert';
 import { resetCommand } from './commands/reset';
 import { version } from '../package.json';
+import { setVerbose } from './logger';
 
 const program = new Command();
 
@@ -20,7 +21,12 @@ program
   .option(
     '-w, --working-dir <path>',
     'working directory for resolving relative paths (default: current directory)',
-  );
+  )
+  .option('-v, --verbose', 'print verbose debug output to stderr');
+
+program.hook('preAction', () => {
+  if (program.opts<{ verbose?: boolean }>().verbose) setVerbose(true);
+});
 
 program.addCommand(diffCommand());
 program.addCommand(pullCommand());

@@ -1,6 +1,7 @@
 import { spawnSync } from 'child_process';
 import * as path from 'path';
 import { fetchWithRetry } from '../fetch';
+import { verbose } from '../logger';
 
 export interface VaultResult {
   files: Map<string, Buffer>;
@@ -36,6 +37,7 @@ function fetchVaultViaCli(secretPath: string, field?: string): VaultResult {
   const filename = secretFilename(secretPath, field);
 
   if (field) {
+    verbose(`vault kv get -field=${field} ${secretPath}`);
     const res = vaultRun(['kv', 'get', `-field=${field}`, secretPath]);
     if (res.status !== 0) {
       throw new Error(`Failed to read ${secretPath}: ${res.stderr.trim()}`);
@@ -43,6 +45,7 @@ function fetchVaultViaCli(secretPath: string, field?: string): VaultResult {
     return { files: new Map([[filename, buf(res.stdout)]]) };
   }
 
+  verbose(`vault kv get -format=json ${secretPath}`);
   const res = vaultRun(['kv', 'get', '-format=json', secretPath]);
   if (res.status !== 0) {
     throw new Error(`Failed to read ${secretPath}: ${res.stderr.trim()}`);
@@ -72,6 +75,7 @@ async function fetchVaultViaApi(
   const mount = parts[0];
   const subpath = parts.slice(1).join('/');
 
+  verbose(`vault HTTP API: ${secretPath}${field ? `#${field}` : ''}`);
   // Try KV v2 path first
   const v2Res = await fetchWithRetry(`${addr}/v1/${mount}/data/${subpath}`, {
     headers,
@@ -115,12 +119,14 @@ export async function fetchVault(
   field?: string,
 ): Promise<VaultResult> {
   if (isVaultAvailable()) {
+    verbose('vault: using CLI');
     return fetchVaultViaCli(secretPath, field);
   }
 
   const addr = process.env.VAULT_ADDR;
   const token = process.env.VAULT_TOKEN;
   if (addr && token) {
+    verbose('vault: using HTTP API');
     return fetchVaultViaApi(addr, token, secretPath, field);
   }
 

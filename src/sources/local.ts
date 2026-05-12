@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { verbose } from '../logger';
 
 export interface LocalResult {
   files: Map<string, Buffer>;
@@ -20,6 +21,7 @@ export function fetchLocal(
   } else {
     resolved = path.resolve(workingDir, src);
   }
+  verbose(`local: reading ${resolved}`);
   if (!fs.existsSync(resolved)) {
     if (optional) return { files: new Map(), missing: true };
     throw new Error(`Local source not found: ${resolved}`);

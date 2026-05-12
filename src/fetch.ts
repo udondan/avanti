@@ -1,3 +1,5 @@
+import { verbose } from './logger';
+
 const MAX_RETRIES = 5;
 const BASE_DELAY_MS = 1_000;
 const MAX_DELAY_MS = 60_000;
@@ -26,15 +28,40 @@ function retryDelayMs(attempt: number, headers: Headers): number {
   return Math.min(BASE_DELAY_MS * 2 ** attempt, MAX_DELAY_MS);
 }
 
+function redactUrl(raw: string): string {
+  try {
+    const u = new URL(raw);
+    const SENSITIVE = new Set([
+      'token',
+      'access_token',
+      'api_key',
+      'key',
+      'secret',
+      'password',
+      'auth',
+    ]);
+    for (const k of u.searchParams.keys()) {
+      if (SENSITIVE.has(k.toLowerCase())) u.searchParams.set(k, '***');
+    }
+    return u.toString();
+  } catch {
+    return raw;
+  }
+}
+
 export async function fetchWithRetry(
   url: string,
   options: RequestInit = {},
 ): Promise<Response> {
+  verbose(`GET ${redactUrl(url)}`);
   for (let attempt = 0; ; attempt++) {
     const res = await fetch(url, options);
+    verbose(`  -> HTTP ${res.status}`);
     const shouldRetry =
       res.status === 429 || (res.status >= 500 && res.status <= 599);
     if (!shouldRetry || attempt >= MAX_RETRIES) return res;
-    await _testable.sleep(retryDelayMs(attempt, res.headers));
+    const delay = retryDelayMs(attempt, res.headers);
+    verbose(`  -> retrying in ${delay}ms (status ${res.status})`);
+    await _testable.sleep(delay);
   }
 }
