@@ -22,6 +22,7 @@ import {
   TomlObjectStrategy,
   ReplaceRule,
   Variables,
+  Via,
 } from './types';
 import { validateVariables } from './variables';
 import { fetchHttp } from './sources/http';
@@ -314,6 +315,40 @@ function parseSha(value: unknown, loc: string): string | undefined {
   return normalized;
 }
 
+function parseVia(value: unknown, loc: string): Via | Via[] | undefined {
+  if (value === undefined || value === null) return undefined;
+  const valid: Via[] = ['api', 'cli'];
+  if (typeof value === 'string') {
+    if (!valid.includes(value as Via)) {
+      throw new Error(`${loc}.via: must be "api" or "cli", got "${value}"`);
+    }
+    return value as Via;
+  }
+  if (Array.isArray(value)) {
+    if (value.length === 0) {
+      throw new Error(`${loc}.via: array must not be empty`);
+    }
+    if (value.length > valid.length) {
+      throw new Error(
+        `${loc}.via: array must not have more than ${valid.length} entries`,
+      );
+    }
+    const seen = new Set<Via>();
+    const result = value.map((v, i) => {
+      if (!valid.includes(v as Via)) {
+        throw new Error(`${loc}.via[${i}]: must be "api" or "cli", got "${v}"`);
+      }
+      if (seen.has(v as Via)) {
+        throw new Error(`${loc}.via[${i}]: duplicate value "${v}"`);
+      }
+      seen.add(v as Via);
+      return v as Via;
+    });
+    return result;
+  }
+  throw new Error(`${loc}.via: must be a string or array`);
+}
+
 function parseSingleSrc(
   raw: unknown,
   target: string,
@@ -442,6 +477,7 @@ function parseSingleSrc(
         ref: typeof g['ref'] === 'string' ? g['ref'] : undefined,
         sha: parseSha(g['sha'], `${loc}.gitlab`),
         host: typeof g['host'] === 'string' ? g['host'] : undefined,
+        via: parseVia(g['via'], `${loc}.gitlab`),
       },
     };
   }
@@ -478,6 +514,7 @@ function parseSingleSrc(
         ref: typeof g['ref'] === 'string' ? g['ref'] : undefined,
         sha: parseSha(g['sha'], `${loc}.github`),
         host: typeof g['host'] === 'string' ? g['host'] : undefined,
+        via: parseVia(g['via'], `${loc}.github`),
       },
     };
   }

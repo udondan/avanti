@@ -2,6 +2,16 @@ import { spawnSync } from 'child_process';
 import * as path from 'path';
 import { fetchWithRetry } from '../fetch';
 import { verbose } from '../logger';
+import type { Via } from '../types';
+
+function normalizeVia(via?: Via | Via[]): Via[] {
+  if (!via) return ['api', 'cli'];
+  if (Array.isArray(via)) {
+    if (via.length === 0) throw new Error('via: array must not be empty');
+    return [...via];
+  }
+  return [via];
+}
 
 export interface GitHubResult {
   files: Map<string, Buffer>;
@@ -69,8 +79,19 @@ async function fetchPathInfo(
   filePath: string,
   ref: string,
   host?: string,
+  transports: Via[] = ['api', 'cli'],
 ): Promise<PathInfo> {
   verbose(`github: fetching ${repo}:${filePath}@${ref}`);
+
+  if (transports[0] === 'cli') {
+    try {
+      return fetchPathInfoViaCli(repo, filePath, ref, host);
+    } catch (e) {
+      if (!transports.includes('api')) throw e;
+    }
+  }
+
+  const withCliFallback = transports[0] === 'api' && transports.includes('cli');
   let res: Response;
   try {
     res = await fetchWithRetry(
@@ -78,7 +99,7 @@ async function fetchPathInfo(
       { headers: apiHeaders() },
     );
   } catch (e) {
-    if (isNetworkError(e) && isGhAvailable()) {
+    if (isNetworkError(e) && withCliFallback && isGhAvailable()) {
       verbose(`github: HTTP fetch failed, falling back to gh`);
       return fetchPathInfoViaCli(repo, filePath, ref, host);
     }
@@ -92,7 +113,7 @@ async function fetchPathInfo(
       content: decodeBase64Content((data as { content: string }).content),
     };
   }
-  if (shouldFallback(res.status) && isGhAvailable()) {
+  if (shouldFallback(res.status) && withCliFallback && isGhAvailable()) {
     return fetchPathInfoViaCli(repo, filePath, ref, host);
   }
   throw new Error(
@@ -133,8 +154,9 @@ async function fetchFile(
   filePath: string,
   ref: string,
   host?: string,
+  transports: Via[] = ['api', 'cli'],
 ): Promise<Buffer> {
-  const info = await fetchPathInfo(repo, filePath, ref, host);
+  const info = await fetchPathInfo(repo, filePath, ref, host, transports);
   if (info.kind !== 'file') {
     throw new Error(`Expected a file but got a directory: ${filePath}`);
   }
@@ -146,8 +168,19 @@ async function listTree(
   dirPath: string,
   ref: string,
   host?: string,
+  transports: Via[] = ['api', 'cli'],
 ): Promise<string[]> {
   verbose(`github: listing tree ${repo}:${dirPath}@${ref}`);
+
+  if (transports[0] === 'cli') {
+    try {
+      return listTreeViaCli(repo, dirPath, ref, host);
+    } catch (e) {
+      if (!transports.includes('api')) throw e;
+    }
+  }
+
+  const withCliFallback = transports[0] === 'api' && transports.includes('cli');
   let res: Response;
   try {
     res = await fetchWithRetry(
@@ -155,14 +188,14 @@ async function listTree(
       { headers: apiHeaders() },
     );
   } catch (e) {
-    if (isNetworkError(e) && isGhAvailable()) {
+    if (isNetworkError(e) && withCliFallback && isGhAvailable()) {
       verbose(`github: HTTP fetch failed, falling back to gh`);
       return listTreeViaCli(repo, dirPath, ref, host);
     }
     throw e;
   }
   if (!res.ok) {
-    if (shouldFallback(res.status) && isGhAvailable()) {
+    if (shouldFallback(res.status) && withCliFallback && isGhAvailable()) {
       return listTreeViaCli(repo, dirPath, ref, host);
     }
     throw new Error(
@@ -219,10 +252,21 @@ async function resolveRef(
   repo: string,
   ref: string | undefined,
   host?: string,
+  transports: Via[] = ['api', 'cli'],
 ): Promise<string> {
   if (ref !== '$latest') return ref ?? 'HEAD';
 
   verbose(`github: resolving $latest for ${repo}`);
+
+  if (transports[0] === 'cli') {
+    try {
+      return resolveRefViaCli(repo, host);
+    } catch (e) {
+      if (!transports.includes('api')) throw e;
+    }
+  }
+
+  const withCliFallback = transports[0] === 'api' && transports.includes('cli');
   // Try latest release first
   let relRes: Response;
   try {
@@ -231,7 +275,7 @@ async function resolveRef(
       { headers: apiHeaders() },
     );
   } catch (e) {
-    if (isNetworkError(e) && isGhAvailable()) {
+    if (isNetworkError(e) && withCliFallback && isGhAvailable()) {
       verbose(`github: HTTP fetch failed, falling back to gh`);
       return resolveRefViaCli(repo, host);
     }
@@ -250,7 +294,7 @@ async function resolveRef(
         { headers: apiHeaders() },
       );
     } catch (e) {
-      if (isNetworkError(e) && isGhAvailable()) {
+      if (isNetworkError(e) && withCliFallback && isGhAvailable()) {
         verbose(`github: HTTP fetch failed, falling back to gh`);
         return resolveRefViaCli(repo, host);
       }
@@ -261,14 +305,14 @@ async function resolveRef(
       if (tags.length) return tags[0].name;
       throw new Error(`No releases or tags found for ${repo}`);
     }
-    if (shouldFallback(tagRes.status) && isGhAvailable()) {
+    if (shouldFallback(tagRes.status) && withCliFallback && isGhAvailable()) {
       return resolveRefViaCli(repo, host);
     }
     throw new Error(
       `Failed to resolve $latest for ${repo}: HTTP ${tagRes.status}`,
     );
   }
-  if (shouldFallback(relRes.status) && isGhAvailable()) {
+  if (shouldFallback(relRes.status) && withCliFallback && isGhAvailable()) {
     return resolveRefViaCli(repo, host);
   }
   throw new Error(
@@ -308,12 +352,20 @@ export async function fetchGitHub(
   file: string,
   ref: string | undefined,
   host?: string,
+  via?: Via | Via[],
 ): Promise<GitHubResult> {
-  const resolvedRef = await resolveRef(repo, ref, host);
+  const transports = normalizeVia(via);
+  const resolvedRef = await resolveRef(repo, ref, host, transports);
   const normalizedPath = file.replace(/\/$/, '');
 
   if (!file.endsWith('/')) {
-    const info = await fetchPathInfo(repo, normalizedPath, resolvedRef, host);
+    const info = await fetchPathInfo(
+      repo,
+      normalizedPath,
+      resolvedRef,
+      host,
+      transports,
+    );
     if (info.kind === 'file') {
       return {
         files: new Map([[path.basename(normalizedPath), info.content]]),
@@ -321,7 +373,13 @@ export async function fetchGitHub(
     }
   }
 
-  const paths = await listTree(repo, normalizedPath, resolvedRef, host);
+  const paths = await listTree(
+    repo,
+    normalizedPath,
+    resolvedRef,
+    host,
+    transports,
+  );
   if (!paths.length) {
     throw new Error(
       `Failed to fetch ${file} from ${repo}@${resolvedRef} (not a file or empty directory)`,
@@ -331,7 +389,7 @@ export async function fetchGitHub(
     paths.map(
       async (p): Promise<[string, Buffer]> => [
         path.relative(normalizedPath, p),
-        await fetchFile(repo, p, resolvedRef, host),
+        await fetchFile(repo, p, resolvedRef, host, transports),
       ],
     ),
   );

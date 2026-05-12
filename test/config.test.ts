@@ -1354,3 +1354,103 @@ files:
     expect(cfg.files['output.txt']).toBeDefined();
   });
 });
+
+describe('parseVia validation in config parsing', () => {
+  it('accepts via: cli as a string on gitlab', () => {
+    const cfg = parseConfigContent(`
+files:
+  out.txt:
+    src:
+      gitlab:
+        project: group/proj
+        file: file.txt
+        via: cli
+`);
+    const src = cfg.files['out.txt'].src as { gitlab: { via?: unknown } };
+    expect(src.gitlab.via).toBe('cli');
+  });
+
+  it('accepts via: [cli, api] as an array on github', () => {
+    const cfg = parseConfigContent(`
+files:
+  out.txt:
+    src:
+      github:
+        repo: owner/repo
+        file: file.txt
+        via: [cli, api]
+`);
+    const src = cfg.files['out.txt'].src as { github: { via?: unknown } };
+    expect(src.github.via).toEqual(['cli', 'api']);
+  });
+
+  it('throws on an invalid via string', () => {
+    expect(() =>
+      parseConfigContent(`
+files:
+  out.txt:
+    src:
+      gitlab:
+        project: group/proj
+        file: file.txt
+        via: ftp
+`),
+    ).toThrow('via: must be "api" or "cli"');
+  });
+
+  it('throws on an empty via array', () => {
+    expect(() =>
+      parseConfigContent(`
+files:
+  out.txt:
+    src:
+      github:
+        repo: owner/repo
+        file: file.txt
+        via: []
+`),
+    ).toThrow('via: array must not be empty');
+  });
+
+  it('throws on an invalid value inside via array', () => {
+    expect(() =>
+      parseConfigContent(`
+files:
+  out.txt:
+    src:
+      gitlab:
+        project: group/proj
+        file: file.txt
+        via: [cli, ftp]
+`),
+    ).toThrow('via[1]: must be "api" or "cli"');
+  });
+
+  it('throws on a via array with duplicate values', () => {
+    expect(() =>
+      parseConfigContent(`
+files:
+  out.txt:
+    src:
+      gitlab:
+        project: group/proj
+        file: file.txt
+        via: [api, api]
+`),
+    ).toThrow('via[1]: duplicate value "api"');
+  });
+
+  it('throws on a via array longer than 2', () => {
+    expect(() =>
+      parseConfigContent(`
+files:
+  out.txt:
+    src:
+      github:
+        repo: owner/repo
+        file: file.txt
+        via: [api, cli, api]
+`),
+    ).toThrow('via: array must not have more than 2 entries');
+  });
+});

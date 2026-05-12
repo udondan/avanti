@@ -60,6 +60,68 @@ afterEach(() => {
   delete process.env.GITHUB_HOST;
 });
 
+describe('fetchGitHub — via option', () => {
+  it('via: cli skips API and calls gh directly', async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockRejectedValue(new Error('unexpected API call'));
+
+    // fetchPathInfo → fetchPathInfoViaCli: gh → base64 content
+    mockSpawnSync.mockReturnValueOnce(
+      makeSpawnResult({ stdout: b64('cli content'), status: 0 }),
+    );
+
+    const result = await fetchGitHub(
+      'owner/repo',
+      'file.txt',
+      'main',
+      undefined,
+      'cli',
+    );
+    expect(result.files.get('file.txt')?.toString('utf8')).toBe('cli content');
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('via: api throws on network error without falling back to gh', async () => {
+    vi.spyOn(globalThis, 'fetch').mockRejectedValue(
+      new TypeError('fetch failed'),
+    );
+
+    await expect(
+      fetchGitHub('owner/repo', 'file.txt', 'main', undefined, 'api'),
+    ).rejects.toThrow('fetch failed');
+
+    expect(mockSpawnSync).not.toHaveBeenCalled();
+  });
+
+  it('via: [cli, api] tries gh first, falls back to API on CLI error', async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ type: 'file', content: b64('api content') }),
+          { status: 200 },
+        ),
+      );
+
+    // fetchPathInfo → fetchPathInfoViaCli: gh fails
+    // falls back to API: returns file content
+    mockSpawnSync.mockReturnValueOnce(
+      makeSpawnResult({ stdout: '', stderr: 'gh error', status: 1 }),
+    );
+
+    const result = await fetchGitHub(
+      'owner/repo',
+      'file.txt',
+      'main',
+      undefined,
+      ['cli', 'api'],
+    );
+    expect(result.files.get('file.txt')?.toString('utf8')).toBe('api content');
+    expect(fetchSpy).toHaveBeenCalled();
+  });
+});
+
 describe('fetchGitHub — network-error fallback to gh', () => {
   it('falls back to gh when fetch throws a network error', async () => {
     vi.spyOn(globalThis, 'fetch').mockRejectedValue(
