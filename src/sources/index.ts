@@ -15,7 +15,7 @@ import { fetchExec } from './exec';
 import { fetchGitLab } from './gitlab';
 import { fetchGitHub } from './github';
 import { fetchBitbucket } from './bitbucket';
-import { fetchGit } from './git';
+import { fetchGit, isGitSshUrl, parseGitSshSpec } from './git';
 import { fetchS3 } from './s3';
 import { fetchVault } from './vault';
 import { mergeJson, formatJson } from '../processors/json';
@@ -287,6 +287,10 @@ async function _fetchOneSrcRaw(
       const filename = inferFilenameFromUrl(resolved) ?? 'download';
       return { files: new Map([[filename, content]]) };
     }
+    if (isGitSshUrl(resolved)) {
+      const { repo, file, ref } = parseGitSshSpec(resolved);
+      return { files: fetchGit(repo, file, ref).files };
+    }
     return { files: fetchLocal(resolved, workingDir).files };
   }
 
@@ -309,6 +313,10 @@ async function _fetchOneSrcRaw(
 
   if ('url' in src) {
     const resolved = resolveVars(src.url, vars);
+    if (isGitSshUrl(resolved)) {
+      const { repo, file, ref } = parseGitSshSpec(resolved);
+      return { files: fetchGit(repo, file, ref).files };
+    }
     const content = await fetchHttp(resolved, src.optional ?? false);
     if (content === null) {
       return { files: new Map(), skipped: true };

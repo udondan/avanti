@@ -10,6 +10,7 @@ import {
   resolveConfigPath,
   SELF_KEY,
 } from '../src/config';
+import { parseGitSshSpec } from '../src/sources/git';
 
 function writeTmp(content: string): string {
   const f = path.join(os.tmpdir(), `avanti-test-${Date.now()}.yml`);
@@ -47,6 +48,60 @@ describe('normalizeConfigKey', () => {
       '/absolute/path/config.yml',
     );
   });
+
+  it('strips @ref from git+ssh:// specs without affecting @host', () => {
+    expect(
+      normalizeConfigKey('git+ssh://git@host/org/repo.git//avanti.yml@main'),
+    ).toBe('git+ssh://git@host/org/repo.git//avanti.yml');
+  });
+
+  it('leaves git+ssh:// specs without a ref unchanged', () => {
+    expect(
+      normalizeConfigKey('git+ssh://git@host/org/repo.git//avanti.yml'),
+    ).toBe('git+ssh://git@host/org/repo.git//avanti.yml');
+  });
+});
+
+describe('parseGitSshSpec', () => {
+  it('parses a full spec with ref', () => {
+    expect(
+      parseGitSshSpec('git+ssh://git@host/org/repo.git//path/to/file.yml@main'),
+    ).toEqual({
+      repo: 'git+ssh://git@host/org/repo.git',
+      file: 'path/to/file.yml',
+      ref: 'main',
+    });
+  });
+
+  it('parses a spec without ref', () => {
+    expect(
+      parseGitSshSpec('git+ssh://git@host/org/repo.git//avanti.yml'),
+    ).toEqual({
+      repo: 'git+ssh://git@host/org/repo.git',
+      file: 'avanti.yml',
+      ref: undefined,
+    });
+  });
+
+  it('parses a git:// spec', () => {
+    expect(parseGitSshSpec('git://host/repo.git//config.yml@v1.2.3')).toEqual({
+      repo: 'git://host/repo.git',
+      file: 'config.yml',
+      ref: 'v1.2.3',
+    });
+  });
+
+  it('throws when // separator is missing', () => {
+    expect(() => parseGitSshSpec('git+ssh://git@host/org/repo.git')).toThrow(
+      'Invalid git URL spec',
+    );
+  });
+
+  it('throws when file path after // is empty', () => {
+    expect(() =>
+      parseGitSshSpec('git+ssh://git@host/org/repo.git//@main'),
+    ).toThrow('File path is required');
+  });
 });
 
 describe('isRemoteConfigSpec', () => {
@@ -64,6 +119,22 @@ describe('isRemoteConfigSpec', () => {
 
   it('detects gitlab: specs', () => {
     expect(isRemoteConfigSpec('gitlab:group/project:config.yml')).toBe(true);
+  });
+
+  it('detects git+ssh:// URLs', () => {
+    expect(
+      isRemoteConfigSpec('git+ssh://git@host/org/repo.git//avanti.yml'),
+    ).toBe(true);
+  });
+
+  it('detects git:// URLs', () => {
+    expect(isRemoteConfigSpec('git://host/repo.git//avanti.yml')).toBe(true);
+  });
+
+  it('detects ssh:// URLs', () => {
+    expect(isRemoteConfigSpec('ssh://git@host/repo.git//avanti.yml')).toBe(
+      true,
+    );
   });
 
   it('returns false for local paths', () => {
@@ -864,6 +935,11 @@ describe('resolveConfigPath', () => {
     expect(resolveConfigPath(spec)).toBe(spec);
   });
 
+  it('returns a git+ssh:// spec unchanged', () => {
+    const spec = 'git+ssh://git@host/org/repo.git//avanti.yml@main';
+    expect(resolveConfigPath(spec)).toBe(spec);
+  });
+
   it('auto-detects .avanti.yml in cwd when present', () => {
     fs.writeFileSync(path.join(tmpDir, '.avanti.yml'), 'files: {}', 'utf8');
     process.chdir(tmpDir);
@@ -1151,16 +1227,38 @@ files:
     expect(src.sha).toBe('b'.repeat(64));
   });
 
-  it('throws when url does not start with http:// or https:// (literal)', async () => {
+  it('throws when url uses an unsupported scheme (literal)', async () => {
     const f = writeTmp(`
 files:
   out.txt:
     src:
       url: ftp://example.com/file.txt
 `);
-    await expect(loadConfig(f)).rejects.toThrow(
-      'must start with http:// or https://',
-    );
+    await expect(loadConfig(f)).rejects.toThrow('must start with http://');
+  });
+
+  it('accepts a git+ssh:// url src', async () => {
+    const f = writeTmp(`
+files:
+  out.txt:
+    src:
+      url: git+ssh://git@host/org/repo.git//file.txt@main
+`);
+    const cfg = await loadConfig(f);
+    const src = cfg.files['out.txt'].src as { url: string };
+    expect(src.url).toBe('git+ssh://git@host/org/repo.git//file.txt@main');
+  });
+
+  it('accepts a git:// url src', async () => {
+    const f = writeTmp(`
+files:
+  out.txt:
+    src:
+      url: git://host/repo.git//file.txt
+`);
+    const cfg = await loadConfig(f);
+    const src = cfg.files['out.txt'].src as { url: string };
+    expect(src.url).toBe('git://host/repo.git//file.txt');
   });
 
   it('throws when url value is empty', async () => {

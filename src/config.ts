@@ -27,6 +27,7 @@ import { validateVariables } from './variables';
 import { fetchHttp } from './sources/http';
 import { fetchGitHub } from './sources/github';
 import { fetchGitLab } from './sources/gitlab';
+import { fetchGit, isGitSshUrl, parseGitSshSpec } from './sources/git';
 
 export const SELF_KEY = '$self';
 
@@ -41,6 +42,7 @@ export function isRemoteConfigSpec(s: string): boolean {
   return (
     s.startsWith('http://') ||
     s.startsWith('https://') ||
+    isGitSshUrl(s) ||
     s.startsWith('github:') ||
     s.startsWith('gitlab:')
   );
@@ -50,6 +52,15 @@ export function normalizeConfigKey(spec: string): string {
   if (spec.startsWith('github:') || spec.startsWith('gitlab:')) {
     const atIdx = spec.lastIndexOf('@');
     if (atIdx !== -1) return spec.slice(0, atIdx);
+  }
+  if (isGitSshUrl(spec)) {
+    const schemeEnd = spec.indexOf('://') + 3;
+    const separatorIdx = spec.indexOf('//', schemeEnd);
+    if (separatorIdx !== -1) {
+      const filePart = spec.slice(separatorIdx + 2);
+      const atIdx = filePart.lastIndexOf('@');
+      if (atIdx !== -1) return spec.slice(0, separatorIdx + 2 + atIdx);
+    }
   }
   return spec;
 }
@@ -143,6 +154,17 @@ async function fetchConfigContent(spec: string): Promise<string> {
   if (spec.startsWith('gitlab:')) {
     const { project, file, ref } = parseGitLabSpec(spec);
     const result = await fetchGitLab(project, file, ref);
+    if (result.files.size !== 1) {
+      throw new Error(
+        `Remote config must be a single file, got ${result.files.size} files from "${spec}"`,
+      );
+    }
+    return (result.files.values().next().value as Buffer).toString('utf8');
+  }
+
+  if (isGitSshUrl(spec)) {
+    const { repo, file, ref } = parseGitSshSpec(spec);
+    const result = fetchGit(repo, file, ref);
     if (result.files.size !== 1) {
       throw new Error(
         `Remote config must be a single file, got ${result.files.size} files from "${spec}"`,
@@ -332,17 +354,16 @@ function parseSingleSrc(
 
   if ('url' in obj) {
     if (typeof obj['url'] !== 'string' || !obj['url']) {
-      throw new Error(
-        `${loc}.url: must be a non-empty string (http/https URL)`,
-      );
+      throw new Error(`${loc}.url: must be a non-empty string`);
     }
     if (
       !obj['url'].includes('$') &&
       !obj['url'].startsWith('http://') &&
-      !obj['url'].startsWith('https://')
+      !obj['url'].startsWith('https://') &&
+      !isGitSshUrl(obj['url'])
     ) {
       throw new Error(
-        `${loc}.url: must start with http:// or https://, got "${obj['url']}"`,
+        `${loc}.url: must start with http://, https://, git+ssh://, git://, or ssh://, got "${obj['url']}"`,
       );
     }
     const result: UrlSrc = { url: obj['url'] };

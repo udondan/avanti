@@ -40,6 +40,39 @@ function collectFiles(
   }
 }
 
+export function isGitSshUrl(s: string): boolean {
+  return (
+    s.startsWith('git+ssh://') ||
+    s.startsWith('git://') ||
+    s.startsWith('ssh://')
+  );
+}
+
+export function parseGitSshSpec(spec: string): {
+  repo: string;
+  file: string;
+  ref: string | undefined;
+} {
+  const schemeEnd = spec.indexOf('://') + 3;
+  const separatorIdx = spec.indexOf('//', schemeEnd);
+  if (separatorIdx === -1) {
+    throw new Error(
+      `Invalid git URL spec "${spec}". Expected: git+ssh://git@host/org/repo.git//path/to/file.yml[@ref]`,
+    );
+  }
+  const repo = spec.slice(0, separatorIdx);
+  const rest = spec.slice(separatorIdx + 2);
+  const atIdx = rest.lastIndexOf('@');
+  const file = atIdx === -1 ? rest : rest.slice(0, atIdx);
+  const ref = atIdx === -1 ? undefined : rest.slice(atIdx + 1);
+  if (!file) {
+    throw new Error(
+      `Invalid git URL spec "${spec}". File path is required after //`,
+    );
+  }
+  return { repo, file, ref };
+}
+
 export function fetchGit(repo: string, file: string, ref?: string): GitResult {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'avanti-git-'));
   try {
