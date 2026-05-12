@@ -400,7 +400,12 @@ function fetchDirectoryViaArchiveViaCli(
   host?: string,
 ): Map<string, Buffer> | null {
   const endpoint = `projects/${encodeURIComponent(project)}/repository/archive.tar.gz?sha=${encodeURIComponent(ref)}&path=${encodeURIComponent(dirPath)}`;
-  const res = glabApiBinary(endpoint, host);
+  let res: ReturnType<typeof glabRunBinary>;
+  try {
+    res = glabApiBinary(endpoint, host);
+  } catch {
+    return null;
+  }
   if (res.status !== 0 || !res.stdout.length) return null;
   return extractArchive(res.stdout, dirPath);
 }
