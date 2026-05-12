@@ -57,6 +57,48 @@ afterEach(() => {
   delete process.env.GITLAB_HOST;
 });
 
+describe('fetchGitLab — glab --hostname retry', () => {
+  it('retries glab without --hostname when explicit hostname fails', async () => {
+    vi.spyOn(globalThis, 'fetch').mockRejectedValue(
+      new TypeError('fetch failed'),
+    );
+
+    // detectPathType catch: isGlabAvailable → glab --version
+    // detectPathTypeViaCli: glabApi --hostname my-host → fails → retry without → 'file'
+    // fetchFile catch: isGlabAvailable → glab --version
+    // fetchFileViaCli: glabApiBinary --hostname my-host → fails → retry without → content
+    mockSpawnSync
+      .mockReturnValueOnce(makeGlabAvailable())
+      .mockReturnValueOnce(
+        makeSpawnResult({
+          stdout: '',
+          stderr: 'ERROR Unauthenticated',
+          status: 1,
+        }),
+      )
+      .mockReturnValueOnce(makeSpawnResult({ stdout: '{}', status: 0 }))
+      .mockReturnValueOnce(makeGlabAvailable())
+      .mockReturnValueOnce(
+        makeSpawnResult({
+          stdout: Buffer.from(''),
+          stderr: 'ERROR Unauthenticated',
+          status: 1,
+        }),
+      )
+      .mockReturnValueOnce(
+        makeSpawnResult({ stdout: Buffer.from('file content'), status: 0 }),
+      );
+
+    const result = await fetchGitLab(
+      'group/project',
+      'file.txt',
+      'main',
+      'my-host.example.com',
+    );
+    expect(result.files.get('file.txt')?.toString('utf8')).toBe('file content');
+  });
+});
+
 describe('fetchGitLab — network-error fallback to glab', () => {
   it('falls back to glab when fetch throws a network error', async () => {
     vi.spyOn(globalThis, 'fetch').mockRejectedValue(

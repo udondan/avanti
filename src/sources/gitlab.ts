@@ -69,6 +69,50 @@ function glabRunBinary(args: string[]): {
   };
 }
 
+function glabApi(endpoint: string, host?: string): ReturnType<typeof glabRun> {
+  const hostnameFlag = hostnameArgs(host);
+  const args = ['api', ...hostnameFlag, endpoint];
+  verbose(`gitlab: glab fallback: glab ${args.join(' ')}`);
+  const res = glabRun(args);
+  if (res.status === 0) {
+    verbose(`  -> glab ok`);
+    return res;
+  }
+  verbose(`  -> glab failed (exit ${res.status})`);
+  if (hostnameFlag.length > 0) {
+    verbose(`gitlab: retrying glab without --hostname`);
+    const fallback = glabRun(['api', endpoint]);
+    if (fallback.status === 0) verbose(`  -> glab ok`);
+    else verbose(`  -> glab failed (exit ${fallback.status})`);
+    return fallback;
+  }
+  return res;
+}
+
+function glabApiBinary(
+  endpoint: string,
+  host?: string,
+): ReturnType<typeof glabRunBinary> {
+  const hostnameFlag = hostnameArgs(host);
+  const args = ['api', ...hostnameFlag, endpoint];
+  verbose(`gitlab: glab fallback: glab ${args.join(' ')}`);
+  const res = glabRunBinary(args);
+  if (res.status === 0) {
+    verbose(`  -> glab ok (${res.stdout.length} bytes)`);
+    return res;
+  }
+  verbose(`  -> glab failed (exit ${res.status})`);
+  if (hostnameFlag.length > 0) {
+    verbose(`gitlab: retrying glab without --hostname`);
+    const fallback = glabRunBinary(['api', endpoint]);
+    if (fallback.status === 0)
+      verbose(`  -> glab ok (${fallback.stdout.length} bytes)`);
+    else verbose(`  -> glab failed (exit ${fallback.status})`);
+    return fallback;
+  }
+  return res;
+}
+
 async function resolveRef(
   project: string,
   ref: string | undefined,
@@ -110,13 +154,8 @@ async function resolveRef(
 }
 
 function resolveRefViaCli(project: string, host?: string): string {
-  const args = [
-    'api',
-    ...hostnameArgs(host),
-    `projects/${encodeURIComponent(project)}/repository/tags?order_by=version&sort=desc&per_page=1`,
-  ];
-  verbose(`gitlab: glab fallback: glab ${args.join(' ')}`);
-  const res = glabRun(args);
+  const endpoint = `projects/${encodeURIComponent(project)}/repository/tags?order_by=version&sort=desc&per_page=1`;
+  const res = glabApi(endpoint, host);
   if (res.status !== 0) {
     throw new Error(`Failed to resolve $latest for ${project}: ${res.stderr}`);
   }
@@ -162,14 +201,8 @@ function detectPathTypeViaCli(
   ref: string,
   host?: string,
 ): 'file' | 'directory' {
-  const encodedPath = encodeURIComponent(filePath);
-  const args = [
-    'api',
-    ...hostnameArgs(host),
-    `projects/${encodeURIComponent(project)}/repository/files/${encodedPath}?ref=${encodeURIComponent(ref)}`,
-  ];
-  verbose(`gitlab: glab fallback: glab ${args.join(' ')}`);
-  const res = glabRun(args);
+  const endpoint = `projects/${encodeURIComponent(project)}/repository/files/${encodeURIComponent(filePath)}?ref=${encodeURIComponent(ref)}`;
+  const res = glabApi(endpoint, host);
   return res.status === 0 ? 'file' : 'directory';
 }
 
@@ -211,14 +244,8 @@ function fetchFileViaCli(
   ref: string,
   host?: string,
 ): Buffer {
-  const encodedPath = encodeURIComponent(filePath);
-  const args = [
-    'api',
-    ...hostnameArgs(host),
-    `projects/${encodeURIComponent(project)}/repository/files/${encodedPath}/raw?ref=${encodeURIComponent(ref)}`,
-  ];
-  verbose(`gitlab: glab fallback: glab ${args.join(' ')}`);
-  const res = glabRunBinary(args);
+  const endpoint = `projects/${encodeURIComponent(project)}/repository/files/${encodeURIComponent(filePath)}/raw?ref=${encodeURIComponent(ref)}`;
+  const res = glabApiBinary(endpoint, host);
   if (res.status !== 0) {
     throw new Error(
       `Failed to fetch ${filePath} from ${project}@${ref}: ${res.stderr}`,
@@ -280,13 +307,8 @@ function listTreeViaCli(
   let page = 1;
 
   while (true) {
-    const args = [
-      'api',
-      ...hostnameArgs(host),
-      `projects/${encodeURIComponent(project)}/repository/tree?path=${encodeURIComponent(dirPath)}&ref=${encodeURIComponent(ref)}&recursive=true&per_page=${perPage}&page=${page}`,
-    ];
-    verbose(`gitlab: glab fallback: glab ${args.join(' ')}`);
-    const res = glabRun(args);
+    const endpoint = `projects/${encodeURIComponent(project)}/repository/tree?path=${encodeURIComponent(dirPath)}&ref=${encodeURIComponent(ref)}&recursive=true&per_page=${perPage}&page=${page}`;
+    const res = glabApi(endpoint, host);
     if (res.status !== 0) {
       throw new Error(
         `Failed to list tree ${dirPath} in ${project}@${ref}: ${res.stderr}`,
@@ -394,20 +416,10 @@ function fetchDirectoryViaArchiveViaCli(
   ref: string,
   host?: string,
 ): Map<string, Buffer> | null {
-  const encodedProject = encodeURIComponent(project);
-  const cliArgs = [
-    'api',
-    ...hostnameArgs(host),
-    `projects/${encodedProject}/repository/archive.tar.gz?sha=${encodeURIComponent(ref)}&path=${encodeURIComponent(dirPath)}`,
-  ];
-  verbose(`gitlab: glab fallback: glab ${cliArgs.join(' ')}`);
-  const result = spawnSync('glab', cliArgs, {
-    encoding: 'buffer',
-    maxBuffer: 200 * 1024 * 1024,
-  });
-  if (result.error || result.status !== 0 || !result.stdout?.length)
-    return null;
-  return extractArchive(result.stdout, dirPath);
+  const endpoint = `projects/${encodeURIComponent(project)}/repository/archive.tar.gz?sha=${encodeURIComponent(ref)}&path=${encodeURIComponent(dirPath)}`;
+  const res = glabApiBinary(endpoint, host);
+  if (res.status !== 0 || !res.stdout.length) return null;
+  return extractArchive(res.stdout, dirPath);
 }
 
 export async function fetchGitLab(
