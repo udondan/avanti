@@ -2,6 +2,7 @@ import { spawnSync } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { verbose } from '../logger';
 
 export interface GitResult {
   files: Map<string, Buffer>;
@@ -39,6 +40,16 @@ function collectFiles(
       files.set(path.relative(base, full), fs.readFileSync(full));
     }
   }
+}
+
+function redactGitUrl(url: string): string {
+  return (
+    url
+      // URL-style: scheme://user:pass@host/...
+      .replace(/(\/\/)[^@]*@/, '$1***@')
+      // SCP-style with password: user:pass@host:path (only when userinfo contains ':')
+      .replace(/^[^/:@\s]+:[^/:@\s]+@/, '***@')
+  );
 }
 
 export function isGitRemoteUrl(s: string): boolean {
@@ -96,16 +107,19 @@ export function fetchGit(repo: string, file: string, ref?: string): GitResult {
     if (!ref || !looksLikeCommitHash(ref)) {
       const args = ['clone', '--depth', '1'];
       if (ref) args.push('--branch', ref);
+      verbose(`git ${args.join(' ')} ${redactGitUrl(repo)} <tmpdir>`);
       args.push(repo, repoDir);
       const res = run('git', args);
       if (res.status !== 0) {
         throw new Error(`git clone failed: ${res.stderr.trim()}`);
       }
     } else {
+      verbose(`git clone ${redactGitUrl(repo)} <tmpdir>`);
       const cloneRes = run('git', ['clone', repo, repoDir]);
       if (cloneRes.status !== 0) {
         throw new Error(`git clone failed: ${cloneRes.stderr.trim()}`);
       }
+      verbose(`git checkout ${ref}`);
       const checkoutRes = run('git', ['checkout', ref], { cwd: repoDir });
       if (checkoutRes.status !== 0) {
         throw new Error(

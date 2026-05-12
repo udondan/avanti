@@ -1,7 +1,9 @@
 import { spawnSync } from 'child_process';
 import { getShellArgs } from '../shell';
+import { verbose } from '../logger';
 
 export function fetchExec(command: string): Buffer {
+  verbose(`exec: ${command}`);
   const { shell, args } = getShellArgs(command);
   const result = spawnSync(shell, args, {
     encoding: 'buffer',

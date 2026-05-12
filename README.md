@@ -129,6 +129,7 @@ avanti [options] [command]
 Options:
   -c, --config <path|url>          path or remote spec for config file (default: auto-detected)
   -w, --working-dir <path>         working directory for resolving paths (default: current directory)
+  -v, --verbose                    print verbose debug output to stderr
 
 Commands:
   diff [pullId]                    Show diff between remote sources and local files, or vs a past pull
@@ -270,6 +271,25 @@ Apply? [y/N]
 ```
 
 Use `--yes` to skip the prompt. The history log is preserved — you can still run `avanti log` after a reset.
+
+### `--verbose` / `-v`
+
+Pass `--verbose` (or `-v`) to any command to print internal debug details to stderr. Verbose output does not appear on stdout, so piping diff output is unaffected.
+
+```sh
+avanti diff --verbose
+avanti pull -v
+```
+
+Each line is prefixed with `[verbose]` and includes:
+
+- The source being fetched (e.g. `github:org/repo:file@main`)
+- Every HTTP request URL and response status code
+- Retry delays and reasons
+- CLI tool invocations (`gh`, `glab`, `aws`, `vault`, `git`)
+- Cache hits
+
+**Credential safety:** tokens are read from environment variables and sent as HTTP headers, which are never logged. Git URLs with embedded credentials are redacted. `exec:` source commands are logged verbatim — if your config embeds secrets in an exec command (e.g. `exec: curl -H "Token: $env:MY_SECRET"`), those secrets will appear in verbose output after variable substitution.
 
 ## Working Directory
 

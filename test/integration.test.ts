@@ -1,4 +1,4 @@
-import { execSync } from 'child_process';
+import { execSync, spawnSync } from 'child_process';
 import {
   existsSync,
   mkdirSync,
@@ -1325,6 +1325,90 @@ files:
 
       // No file literally named $self is created
       expect(existsSync(join(tmpDir, '$self'))).toBe(false);
+    });
+  });
+
+  describe('--verbose flag', () => {
+    function runAvantiVerbose(
+      configPath: string,
+      workingDir: string,
+    ): RunResult {
+      const result = spawnSync(
+        'bunx',
+        [
+          'tsx',
+          CLI,
+          '--verbose',
+          '--config',
+          configPath,
+          '--working-dir',
+          workingDir,
+          'diff',
+        ],
+        { encoding: 'utf8', cwd: PROJECT_ROOT, env: { ...process.env } },
+      );
+      return {
+        stdout: result.stdout ?? '',
+        stderr: result.stderr ?? '',
+        exitCode: result.status ?? 2,
+      };
+    }
+
+    it('prints [verbose] lines to stderr and not to stdout', () => {
+      const sourceFile = join(tmpDir, 'source.txt');
+      writeFileSync(sourceFile, 'verbose test content');
+
+      const config = writeConfig(
+        tmpDir,
+        `files:
+  ./output.txt:
+    src: ${sourceFile}
+`,
+      );
+
+      const { stdout, stderr } = runAvantiVerbose(config, tmpDir);
+
+      expect(stderr).toContain('[verbose]');
+      expect(stdout).not.toContain('[verbose]');
+    });
+
+    it('-v short form produces the same verbose output', () => {
+      const sourceFile = join(tmpDir, 'source.txt');
+      writeFileSync(sourceFile, 'verbose test content');
+
+      const config = writeConfig(
+        tmpDir,
+        `files:
+  ./output.txt:
+    src: ${sourceFile}
+`,
+      );
+
+      const result = spawnSync(
+        'bunx',
+        ['tsx', CLI, '-v', '--config', config, '--working-dir', tmpDir, 'diff'],
+        { encoding: 'utf8', cwd: PROJECT_ROOT, env: { ...process.env } },
+      );
+
+      expect(result.stderr).toContain('[verbose]');
+    });
+
+    it('includes source path in verbose output for local sources', () => {
+      const sourceFile = join(tmpDir, 'source.txt');
+      writeFileSync(sourceFile, 'hello');
+
+      const config = writeConfig(
+        tmpDir,
+        `files:
+  ./output.txt:
+    src: ${sourceFile}
+`,
+      );
+
+      const { stderr } = runAvantiVerbose(config, tmpDir);
+
+      expect(stderr).toContain('fetching source:');
+      expect(stderr).toContain('local: reading');
     });
   });
 });

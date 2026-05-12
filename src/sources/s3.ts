@@ -2,6 +2,8 @@ import { spawnSync } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { isVerbose, verbose } from '../logger';
+import { redactUrl } from '../fetch';
 
 export interface S3Result {
   files: Map<string, Buffer>;
@@ -50,6 +52,7 @@ export function fetchS3(uri: string): S3Result {
       }
       // Download to a temp file to support binary content
       const tmpFile = path.join(tmpDir, filename);
+      if (isVerbose()) verbose(`aws s3 cp ${redactUrl(uri)} <tmpfile>`);
       const res = awsRun(['s3', 'cp', uri, tmpFile]);
       if (res.status !== 0) {
         throw new Error(`Failed to fetch ${uri}: ${res.stderr.trim()}`);
@@ -57,6 +60,7 @@ export function fetchS3(uri: string): S3Result {
       return { files: new Map([[filename, fs.readFileSync(tmpFile)]]) };
     }
 
+    if (isVerbose()) verbose(`aws s3 sync ${redactUrl(uri)} <tmpdir>`);
     const res = awsRun(['s3', 'sync', uri, tmpDir]);
     if (res.status !== 0) {
       throw new Error(`Failed to sync ${uri}: ${res.stderr.trim()}`);

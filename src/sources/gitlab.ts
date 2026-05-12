@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { fetchWithRetry } from '../fetch';
+import { verbose } from '../logger';
 
 export interface GitLabResult {
   /** Map of relative path → content */
@@ -71,6 +72,7 @@ async function resolveRef(
 ): Promise<string> {
   if (ref === undefined || ref === '') return 'HEAD';
   if (ref === '$latest') {
+    verbose(`gitlab: resolving $latest for ${project}`);
     const res = await fetchWithRetry(
       `https://${getHost(host)}/api/v4/projects/${encodeURIComponent(project)}/repository/tags?order_by=version&sort=desc&per_page=1`,
       { headers: apiHeaders() },
@@ -95,11 +97,13 @@ async function resolveRef(
 }
 
 function resolveRefViaCli(project: string, host?: string): string {
-  const res = glabRun([
+  const args = [
     'api',
     ...hostnameArgs(host),
     `projects/${encodeURIComponent(project)}/repository/tags?order_by=version&sort=desc&per_page=1`,
-  ]);
+  ];
+  verbose(`gitlab: glab fallback: glab ${args.join(' ')}`);
+  const res = glabRun(args);
   if (res.status !== 0) {
     throw new Error(`Failed to resolve $latest for ${project}: ${res.stderr}`);
   }
@@ -116,6 +120,7 @@ async function detectPathType(
   ref: string,
   host?: string,
 ): Promise<'file' | 'directory'> {
+  verbose(`gitlab: detecting path type for ${project}:${filePath}@${ref}`);
   const encodedPath = encodeURIComponent(filePath);
   const res = await fetchWithRetry(
     `https://${getHost(host)}/api/v4/projects/${encodeURIComponent(project)}/repository/files/${encodedPath}?ref=${encodeURIComponent(ref)}`,
@@ -136,11 +141,13 @@ function detectPathTypeViaCli(
   host?: string,
 ): 'file' | 'directory' {
   const encodedPath = encodeURIComponent(filePath);
-  const res = glabRun([
+  const args = [
     'api',
     ...hostnameArgs(host),
     `projects/${encodeURIComponent(project)}/repository/files/${encodedPath}?ref=${encodeURIComponent(ref)}`,
-  ]);
+  ];
+  verbose(`gitlab: glab fallback: glab ${args.join(' ')}`);
+  const res = glabRun(args);
   return res.status === 0 ? 'file' : 'directory';
 }
 
@@ -150,6 +157,7 @@ async function fetchFile(
   ref: string,
   host?: string,
 ): Promise<Buffer> {
+  verbose(`gitlab: fetching ${project}:${filePath}@${ref}`);
   const encodedPath = encodeURIComponent(filePath);
   const res = await fetchWithRetry(
     `https://${getHost(host)}/api/v4/projects/${encodeURIComponent(project)}/repository/files/${encodedPath}/raw?ref=${encodeURIComponent(ref)}`,
@@ -173,11 +181,13 @@ function fetchFileViaCli(
   host?: string,
 ): Buffer {
   const encodedPath = encodeURIComponent(filePath);
-  const res = glabRunBinary([
+  const args = [
     'api',
     ...hostnameArgs(host),
     `projects/${encodeURIComponent(project)}/repository/files/${encodedPath}/raw?ref=${encodeURIComponent(ref)}`,
-  ]);
+  ];
+  verbose(`gitlab: glab fallback: glab ${args.join(' ')}`);
+  const res = glabRunBinary(args);
   if (res.status !== 0) {
     throw new Error(
       `Failed to fetch ${filePath} from ${project}@${ref}: ${res.stderr}`,
@@ -192,6 +202,7 @@ async function listTree(
   ref: string,
   host?: string,
 ): Promise<string[]> {
+  verbose(`gitlab: listing tree ${project}:${dirPath}@${ref}`);
   const allPaths: string[] = [];
   const perPage = 100;
   let page = 1;
@@ -229,11 +240,13 @@ function listTreeViaCli(
   let page = 1;
 
   while (true) {
-    const res = glabRun([
+    const args = [
       'api',
       ...hostnameArgs(host),
       `projects/${encodeURIComponent(project)}/repository/tree?path=${encodeURIComponent(dirPath)}&ref=${encodeURIComponent(ref)}&recursive=true&per_page=${perPage}&page=${page}`,
-    ]);
+    ];
+    verbose(`gitlab: glab fallback: glab ${args.join(' ')}`);
+    const res = glabRun(args);
     if (res.status !== 0) {
       throw new Error(
         `Failed to list tree ${dirPath} in ${project}@${ref}: ${res.stderr}`,
@@ -306,6 +319,9 @@ async function fetchDirectoryViaArchive(
   ref: string,
   host?: string,
 ): Promise<Map<string, Buffer> | null> {
+  verbose(
+    `gitlab: fetching directory via archive: ${project}:${dirPath}@${ref}`,
+  );
   const encodedProject = encodeURIComponent(project);
   const res = await fetchWithRetry(
     `https://${getHost(host)}/api/v4/projects/${encodedProject}/repository/archive.tar.gz?sha=${encodeURIComponent(ref)}&path=${encodeURIComponent(dirPath)}`,
@@ -329,15 +345,16 @@ function fetchDirectoryViaArchiveViaCli(
   host?: string,
 ): Map<string, Buffer> | null {
   const encodedProject = encodeURIComponent(project);
-  const result = spawnSync(
-    'glab',
-    [
-      'api',
-      ...hostnameArgs(host),
-      `projects/${encodedProject}/repository/archive.tar.gz?sha=${encodeURIComponent(ref)}&path=${encodeURIComponent(dirPath)}`,
-    ],
-    { encoding: 'buffer', maxBuffer: 200 * 1024 * 1024 },
-  );
+  const cliArgs = [
+    'api',
+    ...hostnameArgs(host),
+    `projects/${encodedProject}/repository/archive.tar.gz?sha=${encodeURIComponent(ref)}&path=${encodeURIComponent(dirPath)}`,
+  ];
+  verbose(`gitlab: glab fallback: glab ${cliArgs.join(' ')}`);
+  const result = spawnSync('glab', cliArgs, {
+    encoding: 'buffer',
+    maxBuffer: 200 * 1024 * 1024,
+  });
   if (result.error || result.status !== 0 || !result.stdout?.length)
     return null;
   return extractArchive(result.stdout, dirPath);

@@ -1,5 +1,6 @@
 import * as path from 'path';
 import { fetchWithRetry } from '../fetch';
+import { verbose } from '../logger';
 
 export interface BitbucketResult {
   files: Map<string, Buffer>;
@@ -72,6 +73,7 @@ async function fetchFileOrDetect(
   ref: string,
   host?: string,
 ): Promise<Buffer | null> {
+  verbose(`bitbucket: fetching ${workspace}/${repo}:${filePath}@${ref}`);
   const res = await fetchWithRetry(
     `${getApiBase(host)}/repositories/${workspace}/${repo}/src/${encodeURIComponent(ref)}/${filePath}`,
     { headers: apiHeaders() },
@@ -112,6 +114,9 @@ async function listDir(
   ref: string,
   host?: string,
 ): Promise<string[]> {
+  verbose(
+    `bitbucket: listing directory ${workspace}/${repo}:${dirPath}@${ref}`,
+  );
   const files: string[] = [];
   let url: string | null =
     `${getApiBase(host)}/repositories/${workspace}/${repo}/src/${encodeURIComponent(ref)}/${dirPath}/?pagelen=100`;
