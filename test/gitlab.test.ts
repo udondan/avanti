@@ -79,6 +79,29 @@ describe('fetchGitLab — glab explicit hostname failure', () => {
       'gitlab: glab failed for group/project: ERROR Unauthenticated',
     );
   });
+
+  it('throws when glab fails and GITLAB_HOST env var is set', async () => {
+    process.env.GITLAB_HOST = 'env-host.example.com';
+    vi.spyOn(globalThis, 'fetch').mockRejectedValue(
+      new TypeError('fetch failed'),
+    );
+
+    // detectPathType catch: isGlabAvailable → glab --version
+    // detectPathTypeViaCli: glabApi --hostname env-host → fails → throws (host resolved from env)
+    mockSpawnSync.mockReturnValueOnce(makeGlabAvailable()).mockReturnValueOnce(
+      makeSpawnResult({
+        stdout: '',
+        stderr: 'ERROR Unauthenticated',
+        status: 1,
+      }),
+    );
+
+    await expect(
+      fetchGitLab('group/project', 'file.txt', 'main'),
+    ).rejects.toThrow(
+      'gitlab: glab failed for group/project: ERROR Unauthenticated',
+    );
+  });
 });
 
 describe('fetchGitLab — network-error fallback to glab', () => {

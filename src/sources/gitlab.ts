@@ -181,7 +181,7 @@ function detectPathTypeViaCli(
   const endpoint = `projects/${encodeURIComponent(project)}/repository/files/${encodeURIComponent(filePath)}?ref=${encodeURIComponent(ref)}`;
   const res = glabApi(endpoint, host);
   if (res.status === 0) return 'file';
-  if (host) {
+  if (host?.trim() || process.env.GITLAB_HOST?.trim()) {
     throw new Error(
       `gitlab: glab failed for ${project}: ${(res.stderr || res.stdout).trim()}`,
     );
