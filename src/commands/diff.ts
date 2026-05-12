@@ -5,6 +5,7 @@ import {
   loadConfig,
   normalizeConfigKey,
   parseConfigContent,
+  parseVia,
   resolveConfigPath,
   SELF_KEY,
 } from '../config';
@@ -106,6 +107,10 @@ export function diffCommand(): Command {
         const workingDir = rawWorkingDir
           ? path.resolve(rawWorkingDir)
           : process.cwd();
+        const via = parseVia(
+          cmd.parent?.opts().via as string | undefined,
+          '--via',
+        );
 
         if (pullId !== undefined) {
           diffAgainstHistory(
@@ -118,7 +123,7 @@ export function diffCommand(): Command {
 
         let config;
         try {
-          config = await loadConfig(configPath);
+          config = await loadConfig(configPath, via);
         } catch (err: unknown) {
           console.error((err as Error).message);
           process.exit(2);

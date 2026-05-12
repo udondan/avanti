@@ -135,14 +135,17 @@ function parseGitLabSpec(spec: string): {
   return { project, file, ref };
 }
 
-async function fetchConfigContent(spec: string): Promise<string> {
+async function fetchConfigContent(
+  spec: string,
+  via?: Via | Via[],
+): Promise<string> {
   if (spec.startsWith('http://') || spec.startsWith('https://')) {
     return (await fetchHttp(spec)).toString('utf8');
   }
 
   if (spec.startsWith('github:')) {
     const { repo, file, ref } = parseGitHubSpec(spec);
-    const result = await fetchGitHub(repo, file, ref);
+    const result = await fetchGitHub(repo, file, ref, undefined, via);
     if (result.files.size !== 1) {
       throw new Error(
         `Remote config must be a single file, got ${result.files.size} files from "${spec}"`,
@@ -153,7 +156,7 @@ async function fetchConfigContent(spec: string): Promise<string> {
 
   if (spec.startsWith('gitlab:')) {
     const { project, file, ref } = parseGitLabSpec(spec);
-    const result = await fetchGitLab(project, file, ref);
+    const result = await fetchGitLab(project, file, ref, undefined, via);
     if (result.files.size !== 1) {
       throw new Error(
         `Remote config must be a single file, got ${result.files.size} files from "${spec}"`,
@@ -274,9 +277,12 @@ export function parseConfigContent(content: string): AvantiConfig {
   return { variables, files };
 }
 
-export async function loadConfig(configPath: string): Promise<AvantiConfig> {
+export async function loadConfig(
+  configPath: string,
+  via?: Via | Via[],
+): Promise<AvantiConfig> {
   try {
-    const content = await fetchConfigContent(configPath);
+    const content = await fetchConfigContent(configPath, via);
     return parseConfigContent(content);
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -315,7 +321,7 @@ function parseSha(value: unknown, loc: string): string | undefined {
   return normalized;
 }
 
-function parseVia(value: unknown, loc: string): Via | Via[] | undefined {
+export function parseVia(value: unknown, loc: string): Via | Via[] | undefined {
   if (value === undefined || value === null) return undefined;
   const valid: Via[] = ['api', 'cli'];
   if (typeof value === 'string') {

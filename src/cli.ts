@@ -22,6 +22,10 @@ program
     '-w, --working-dir <path>',
     'working directory for resolving relative paths (default: current directory)',
   )
+  .option(
+    '--via <transport>',
+    'transport for fetching a remote --config: "api" or "cli"',
+  )
   .option('-v, --verbose', 'print verbose debug output to stderr');
 
 program.hook('preAction', () => {
