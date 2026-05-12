@@ -1,4 +1,4 @@
-import { execSync } from 'child_process';
+import { execSync, spawnSync } from 'child_process';
 import {
   existsSync,
   mkdirSync,
@@ -1333,25 +1333,25 @@ files:
       configPath: string,
       workingDir: string,
     ): RunResult {
-      try {
-        const stdout = execSync(
-          `bunx tsx "${CLI}" --verbose --config "${configPath}" --working-dir "${workingDir}" diff`,
-          {
-            encoding: 'utf8',
-            cwd: PROJECT_ROOT,
-            env: { ...process.env },
-            stdio: ['pipe', 'pipe', 'pipe'],
-          },
-        );
-        return { stdout, stderr: '', exitCode: 0 };
-      } catch (e: unknown) {
-        const err = e as { stdout?: string; stderr?: string; status?: number };
-        return {
-          stdout: err.stdout ?? '',
-          stderr: err.stderr ?? '',
-          exitCode: err.status ?? 1,
-        };
-      }
+      const result = spawnSync(
+        'bunx',
+        [
+          'tsx',
+          CLI,
+          '--verbose',
+          '--config',
+          configPath,
+          '--working-dir',
+          workingDir,
+          'diff',
+        ],
+        { encoding: 'utf8', cwd: PROJECT_ROOT, env: { ...process.env } },
+      );
+      return {
+        stdout: result.stdout ?? '',
+        stderr: result.stderr ?? '',
+        exitCode: result.status ?? 2,
+      };
     }
 
     it('prints [verbose] lines to stderr and not to stdout', () => {
@@ -1384,23 +1384,13 @@ files:
 `,
       );
 
-      let stderr = '';
-      try {
-        execSync(
-          `bunx tsx "${CLI}" -v --config "${config}" --working-dir "${tmpDir}" diff`,
-          {
-            encoding: 'utf8',
-            cwd: PROJECT_ROOT,
-            env: { ...process.env },
-            stdio: ['pipe', 'pipe', 'pipe'],
-          },
-        );
-      } catch (e: unknown) {
-        const err = e as { stderr?: string };
-        stderr = err.stderr ?? '';
-      }
+      const result = spawnSync(
+        'bunx',
+        ['tsx', CLI, '-v', '--config', config, '--working-dir', tmpDir, 'diff'],
+        { encoding: 'utf8', cwd: PROJECT_ROOT, env: { ...process.env } },
+      );
 
-      expect(stderr).toContain('[verbose]');
+      expect(result.stderr).toContain('[verbose]');
     });
 
     it('includes source path in verbose output for local sources', () => {

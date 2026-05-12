@@ -1,4 +1,4 @@
-import { verbose } from './logger';
+import { verbose, isVerbose } from './logger';
 
 const MAX_RETRIES = 5;
 const BASE_DELAY_MS = 1_000;
@@ -28,7 +28,7 @@ function retryDelayMs(attempt: number, headers: Headers): number {
   return Math.min(BASE_DELAY_MS * 2 ** attempt, MAX_DELAY_MS);
 }
 
-function redactUrl(raw: string): string {
+export function redactUrl(raw: string): string {
   try {
     const u = new URL(raw);
     // Strip basic-auth credentials from the URL authority
@@ -57,7 +57,10 @@ export async function fetchWithRetry(
   url: string,
   options: RequestInit = {},
 ): Promise<Response> {
-  verbose(`GET ${redactUrl(url)}`);
+  if (isVerbose()) {
+    const method = (options.method ?? 'GET').toUpperCase();
+    verbose(`${method} ${redactUrl(url)}`);
+  }
   for (let attempt = 0; ; attempt++) {
     const res = await fetch(url, options);
     verbose(`  -> HTTP ${res.status}`);

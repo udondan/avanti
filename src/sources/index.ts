@@ -1,6 +1,7 @@
 import * as crypto from 'crypto';
 import * as path from 'path';
 import { verbose } from '../logger';
+import { redactUrl } from '../fetch';
 import {
   FileEntry,
   FileSrc,
@@ -295,7 +296,7 @@ async function _fetchOneSrcRaw(
   workingDir: string,
   vars: Variables,
 ): Promise<{ files: Map<string, Buffer>; skipped?: boolean }> {
-  verbose(`fetching source: ${labelForSrc(src, vars)}`);
+  verbose(`fetching source: ${redactUrl(labelForSrc(src, vars))}`);
   if (typeof src === 'string') {
     const resolved = resolveVars(src, vars);
     if (resolved.startsWith('http://') || resolved.startsWith('https://')) {
@@ -436,7 +437,7 @@ async function fetchOneSrc(
   let skipped: boolean | undefined;
 
   if (cached !== undefined) {
-    verbose(`cache hit: ${labelForSrc(src, vars)}`);
+    verbose(`cache hit: ${redactUrl(labelForSrc(src, vars))}`);
     files = cached.files;
   } else {
     const raw = await _fetchOneSrcRaw(src, workingDir, vars);
