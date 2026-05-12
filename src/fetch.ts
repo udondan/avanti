@@ -28,14 +28,11 @@ function retryDelayMs(attempt: number, headers: Headers): number {
   return Math.min(BASE_DELAY_MS * 2 ** attempt, MAX_DELAY_MS);
 }
 
-export function redactUrl(raw: string): string {
-  let result = raw;
-  try {
-    const u = new URL(raw);
-    // Strip basic-auth credentials from the URL authority
-    u.username = '';
-    u.password = '';
-    const SENSITIVE = new Set([
+function isSensitiveParam(k: string): boolean {
+  const lower = k.toLowerCase();
+  // Generic names
+  if (
+    [
       'token',
       'access_token',
       'api_key',
@@ -43,9 +40,27 @@ export function redactUrl(raw: string): string {
       'secret',
       'password',
       'auth',
-    ]);
+      'sig',
+      'signature',
+    ].includes(lower)
+  )
+    return true;
+  // AWS pre-signed URL params (X-Amz-Signature, X-Amz-Credential, X-Amz-Security-Token, …)
+  if (lower.startsWith('x-amz-')) return true;
+  // GCP pre-signed URL params (X-Goog-Signature, X-Goog-Credential, …)
+  if (lower.startsWith('x-goog-')) return true;
+  return false;
+}
+
+export function redactUrl(raw: string): string {
+  let result = raw;
+  try {
+    const u = new URL(raw);
+    // Strip basic-auth credentials from the URL authority
+    u.username = '';
+    u.password = '';
     for (const k of u.searchParams.keys()) {
-      if (SENSITIVE.has(k.toLowerCase())) u.searchParams.set(k, '***');
+      if (isSensitiveParam(k)) u.searchParams.set(k, '***');
     }
     result = u.toString();
   } catch {
@@ -53,7 +68,9 @@ export function redactUrl(raw: string): string {
   }
   // Strip any remaining //user:pass@ (handles opaque-path URLs where the nested
   // scheme's userinfo is invisible to the outer URL parser, e.g. git:git+ssh://user:pass@host)
-  return result.replace(/(\/\/)[^@]*@/, '$1***@');
+  result = result.replace(/(\/\/)[^@]*@/, '$1***@');
+  // Strip scp-style user:pass@ patterns (userinfo contains ':') not already caught above
+  return result.replace(/(?<!\/\/)([^/:@\s]+:[^/:@\s]+)@/g, '***@');
 }
 
 export async function fetchWithRetry(
