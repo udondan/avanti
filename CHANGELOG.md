@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.17.1](https://github.com/udondan/avanti/compare/v0.17.0...v0.17.1) (2026-05-12)
+
+
+### Bug Fixes
+
+* **gitlab:** fall back to glab CLI on network-level fetch errors ([#140](https://github.com/udondan/avanti/issues/140)) ([a09fd35](https://github.com/udondan/avanti/commit/a09fd35170a47a367465a9b7b0658be99c485894))
+* **verbose:** include network error reason in verbose output ([#142](https://github.com/udondan/avanti/issues/142)) ([da70f4e](https://github.com/udondan/avanti/commit/da70f4ea6cd6c2e12129ff6b13542120deb79f7c))
+
 ## [0.17.0](https://github.com/udondan/avanti/compare/v0.16.0...v0.17.0) (2026-05-12)
 
 
