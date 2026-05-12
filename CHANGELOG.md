@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.19.1](https://github.com/udondan/avanti/compare/v0.19.0...v0.19.1) (2026-05-12)
+
+
+### Bug Fixes
+
+* expand ~/ in target paths to home directory ([#148](https://github.com/udondan/avanti/issues/148)) ([0558967](https://github.com/udondan/avanti/commit/055896748bf7ecf634ced09e61203af6d116224d))
+
 ## [0.19.0](https://github.com/udondan/avanti/compare/v0.18.0...v0.19.0) (2026-05-12)
 
 
