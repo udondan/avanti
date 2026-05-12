@@ -54,6 +54,11 @@ export function parseGitRemoteSpec(spec: string): {
   file: string;
   ref: string | undefined;
 } {
+  if (!isGitRemoteUrl(spec)) {
+    throw new Error(
+      `Invalid git URL spec "${spec}". Supported schemes: git+ssh://, git://, ssh://`,
+    );
+  }
   const schemeEnd = spec.indexOf('://') + 3;
   const separatorIdx = spec.indexOf('//', schemeEnd);
   if (separatorIdx === -1 || separatorIdx <= schemeEnd) {

@@ -95,6 +95,12 @@ describe('parseGitRemoteSpec', () => {
     });
   });
 
+  it('throws on non-scheme input (no :// present)', () => {
+    expect(() => parseGitRemoteSpec('git@host/repo.git//file.yml')).toThrow(
+      'Invalid git URL spec',
+    );
+  });
+
   it('throws when // separator is missing', () => {
     expect(() => parseGitRemoteSpec('git+ssh://git@host/org/repo.git')).toThrow(
       'Invalid git URL spec',
@@ -1269,6 +1275,16 @@ files:
     const cfg = await loadConfig(f);
     const src = cfg.files['out.txt'].src as { url: string };
     expect(src.url).toBe('git://host/repo.git//file.txt');
+  });
+
+  it('throws when git remote url is missing // file separator', async () => {
+    const f = writeTmp(`
+files:
+  out.txt:
+    src:
+      url: git+ssh://git@host/org/repo.git
+`);
+    await expect(loadConfig(f)).rejects.toThrow('Invalid git URL spec');
   });
 
   it('throws when url value is empty', async () => {

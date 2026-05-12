@@ -365,6 +365,15 @@ function parseSingleSrc(
         `${loc}.url: must start with http://, https://, git+ssh://, git://, or ssh://, got "${obj['url']}"`,
       );
     }
+    if (!obj['url'].includes('$') && isGitRemoteUrl(obj['url'])) {
+      try {
+        parseGitRemoteSpec(obj['url']);
+      } catch (err) {
+        throw new Error(`${loc}.url: ${(err as Error).message}`, {
+          cause: err,
+        });
+      }
+    }
     const result: UrlSrc = { url: obj['url'] };
     if (obj['optional'] !== undefined) {
       if (typeof obj['optional'] !== 'boolean') {
