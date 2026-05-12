@@ -430,6 +430,14 @@ src:
     ref: main                              # branch, tag, or commit hash (optional)
     sha: abc123...                         # optional SHA-256 fingerprint
 
+# git+ssh:// (and git://, ssh://) also work as plain strings or url: values using
+# double-slash to separate the repo URL from the file path inside the repo:
+src: git+ssh://git@ssh.git.private.de/org/repo.git//path/to/file.txt
+src: git+ssh://git@ssh.git.private.de/org/repo.git//path/to/file.txt@main
+
+src:
+  url: git+ssh://git@ssh.git.private.de/org/repo.git//path/to/file.txt@main
+
 src:
   s3: s3://my-bucket/path/to/file.txt      # S3 URI; end with / for a prefix sync
   sha: abc123...                           # optional SHA-256 fingerprint
@@ -1272,9 +1280,22 @@ avanti pull -c gitlab:myorg/infra/dotfiles:avanti.yml@main
 
 # Or a plain HTTPS URL
 avanti pull -c https://configs.example.com/bootstrap.yml
+
+# From a private git repo over SSH (double-slash separates repo from file path)
+avanti pull -c git+ssh://git@ssh.git.private.de/org/repo.git//avanti.yml
+avanti pull -c git+ssh://git@ssh.git.private.de/org/repo.git//avanti.yml@main
 ```
 
-The config format is `github:owner/repo:path/to/file.yml[@ref]` and `gitlab:group/project:path/to/file.yml[@ref]`. The same token auth and `gh`/`glab` CLI fallback that applies to sources also applies here, so private repos work without any extra setup.
+The `github:` and `gitlab:` config formats use the `gh`/`glab` CLI (with their
+token auth and fallback) to fetch the file — no extra setup needed for repos
+those tools can already access.
+
+For any other git remote, use
+`git+ssh://git@host/org/repo.git//path/to/file.yml[@ref]` (or `git://` /
+`ssh://`). The `//` separator splits the repo URL from the file path inside the
+repo; `@ref` pins to a branch, tag, or commit. This form runs `git clone`
+directly, so authentication uses your SSH agent, `~/.ssh/config`, or any
+credential helper configured for that host.
 
 This scales to any number of machines or containers. Update the central repo once; every client picks up the change on its next pull. No config drift, no manual distribution.
 

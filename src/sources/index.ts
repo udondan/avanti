@@ -15,7 +15,7 @@ import { fetchExec } from './exec';
 import { fetchGitLab } from './gitlab';
 import { fetchGitHub } from './github';
 import { fetchBitbucket } from './bitbucket';
-import { fetchGit } from './git';
+import { fetchGit, isGitRemoteUrl, parseGitRemoteSpec } from './git';
 import { fetchS3 } from './s3';
 import { fetchVault } from './vault';
 import { mergeJson, formatJson } from '../processors/json';
@@ -36,6 +36,13 @@ function srcFilename(src: FileSrc): string | null {
         return src;
       }
     }
+    if (isGitRemoteUrl(src)) {
+      try {
+        return parseGitRemoteSpec(src).file;
+      } catch {
+        return src;
+      }
+    }
     return src;
   }
   if ('gitlab' in src) return src.gitlab.file;
@@ -52,6 +59,13 @@ function srcFilename(src: FileSrc): string | null {
   }
   if ('path' in src) return src.path;
   if ('url' in src) {
+    if (isGitRemoteUrl(src.url)) {
+      try {
+        return parseGitRemoteSpec(src.url).file;
+      } catch {
+        return src.url;
+      }
+    }
     try {
       return new URL(src.url).pathname;
     } catch {
@@ -287,6 +301,10 @@ async function _fetchOneSrcRaw(
       const filename = inferFilenameFromUrl(resolved) ?? 'download';
       return { files: new Map([[filename, content]]) };
     }
+    if (isGitRemoteUrl(resolved)) {
+      const { repo, file, ref } = parseGitRemoteSpec(resolved);
+      return { files: fetchGit(repo, file, ref).files };
+    }
     return { files: fetchLocal(resolved, workingDir).files };
   }
 
@@ -309,6 +327,15 @@ async function _fetchOneSrcRaw(
 
   if ('url' in src) {
     const resolved = resolveVars(src.url, vars);
+    if (isGitRemoteUrl(resolved)) {
+      const { repo, file, ref } = parseGitRemoteSpec(resolved);
+      try {
+        return { files: fetchGit(repo, file, ref).files };
+      } catch (err) {
+        if (src.optional) return { files: new Map(), skipped: true };
+        throw err;
+      }
+    }
     const content = await fetchHttp(resolved, src.optional ?? false);
     if (content === null) {
       return { files: new Map(), skipped: true };
@@ -605,3 +632,5 @@ export async function fetchSource(
   }
   return { files: formatted, sourceRecords };
 }
+
+export const _testable = { srcFilename };

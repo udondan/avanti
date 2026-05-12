@@ -31,6 +31,7 @@ function collectFiles(
   files: Map<string, Buffer>,
 ): void {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    if (entry.isSymbolicLink()) continue;
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) {
       collectFiles(base, full, files);
@@ -40,7 +41,54 @@ function collectFiles(
   }
 }
 
+export function isGitRemoteUrl(s: string): boolean {
+  return (
+    s.startsWith('git+ssh://') ||
+    s.startsWith('git://') ||
+    s.startsWith('ssh://')
+  );
+}
+
+export function parseGitRemoteSpec(spec: string): {
+  repo: string;
+  file: string;
+  ref: string | undefined;
+} {
+  if (!isGitRemoteUrl(spec)) {
+    throw new Error(
+      `Invalid git URL spec "${spec}". Supported schemes: git+ssh://, git://, ssh://`,
+    );
+  }
+  const schemeEnd = spec.indexOf('://') + 3;
+  const separatorIdx = spec.indexOf('//', schemeEnd);
+  if (separatorIdx === -1 || separatorIdx <= schemeEnd) {
+    throw new Error(
+      `Invalid git URL spec "${spec}". Expected format: <remote-url>//<file-path>[@ref], e.g. git+ssh://git@host/org/repo.git//path/to/file.yml@main (supported schemes: git+ssh://, git://, ssh://)`,
+    );
+  }
+  const repo = spec.slice(0, separatorIdx);
+  const rest = spec.slice(separatorIdx + 2);
+  const atIdx = rest.lastIndexOf('@');
+  const file = atIdx === -1 ? rest : rest.slice(0, atIdx);
+  const ref = atIdx === -1 ? undefined : rest.slice(atIdx + 1);
+  if (!file) {
+    throw new Error(
+      `Invalid git URL spec "${spec}". File path is required after //`,
+    );
+  }
+  return { repo, file, ref };
+}
+
 export function fetchGit(repo: string, file: string, ref?: string): GitResult {
+  const normalized = path.normalize(file);
+  if (
+    path.isAbsolute(file) ||
+    normalized === '..' ||
+    normalized.startsWith('..' + path.sep)
+  ) {
+    throw new Error(`Unsafe file path escapes repository root: ${file}`);
+  }
+
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'avanti-git-'));
   try {
     const repoDir = path.join(tmpDir, 'repo');
@@ -71,6 +119,17 @@ export function fetchGit(repo: string, file: string, ref?: string): GitResult {
 
     if (!fs.existsSync(fullPath)) {
       throw new Error(`Path not found in repository: ${file}`);
+    }
+
+    const realRepoDir = fs.realpathSync(repoDir);
+    const realFullPath = fs.realpathSync(fullPath);
+    if (
+      realFullPath !== realRepoDir &&
+      !realFullPath.startsWith(realRepoDir + path.sep)
+    ) {
+      throw new Error(
+        `Unsafe file path escapes repository root via symlink: ${file}`,
+      );
     }
 
     const files = new Map<string, Buffer>();
