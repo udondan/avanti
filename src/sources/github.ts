@@ -60,6 +60,10 @@ function hostnameArgs(host?: string): string[] {
   return resolved ? ['--hostname', resolved] : [];
 }
 
+function encodeFilePath(filePath: string): string {
+  return filePath.split('/').map(encodeURIComponent).join('/');
+}
+
 async function fetchPathInfo(
   repo: string,
   filePath: string,
@@ -70,7 +74,7 @@ async function fetchPathInfo(
   let res: Response;
   try {
     res = await fetchWithRetry(
-      `${getApiBase(host)}/repos/${repo}/contents/${filePath}?ref=${encodeURIComponent(ref)}`,
+      `${getApiBase(host)}/repos/${repo}/contents/${encodeFilePath(filePath)}?ref=${encodeURIComponent(ref)}`,
       { headers: apiHeaders() },
     );
   } catch (e) {
@@ -105,7 +109,7 @@ function fetchPathInfoViaCli(
   const args = [
     'api',
     ...hostnameArgs(host),
-    `repos/${repo}/contents/${filePath}?ref=${encodeURIComponent(ref)}`,
+    `repos/${repo}/contents/${encodeFilePath(filePath)}?ref=${encodeURIComponent(ref)}`,
     '--jq',
     'if type == "array" then "directory" else .content end',
   ];
