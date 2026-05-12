@@ -90,4 +90,10 @@ describe('resolveTargetPath', () => {
       resolveTargetPath({ target: '~/.config/avanti/' }, 'foo.yml', wdir),
     ).toBe(path.join(os.homedir(), '.config', 'avanti', 'foo.yml'));
   });
+
+  it('throws when ~/ target escapes home directory via ..', () => {
+    expect(() =>
+      resolveTargetPath({ target: '~/../../etc/hosts' }, '', wdir),
+    ).toThrow('escapes home directory');
+  });
 });

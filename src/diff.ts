@@ -122,8 +122,15 @@ export function resolveTargetPath(
 
   if (target) {
     if (target.startsWith('~/')) {
-      const expanded = path.join(os.homedir(), target.slice(2));
-      if (expanded.endsWith('/') || expanded.endsWith(path.sep)) {
+      const home = os.homedir();
+      const expanded = path.resolve(home, target.slice(2));
+      const homePrefix = home.endsWith(path.sep) ? home : home + path.sep;
+      if (expanded !== home && !expanded.startsWith(homePrefix)) {
+        throw new Error(
+          `Target path "${expanded}" escapes home directory "${home}".`,
+        );
+      }
+      if (target.endsWith('/') || target.endsWith(path.sep)) {
         return path.resolve(expanded, relPath);
       }
       return expanded;
