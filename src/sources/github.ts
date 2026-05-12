@@ -63,10 +63,19 @@ async function fetchPathInfo(
   host?: string,
 ): Promise<PathInfo> {
   verbose(`github: fetching ${repo}:${filePath}@${ref}`);
-  const res = await fetchWithRetry(
-    `${getApiBase(host)}/repos/${repo}/contents/${filePath}?ref=${encodeURIComponent(ref)}`,
-    { headers: apiHeaders() },
-  );
+  let res: Response;
+  try {
+    res = await fetchWithRetry(
+      `${getApiBase(host)}/repos/${repo}/contents/${filePath}?ref=${encodeURIComponent(ref)}`,
+      { headers: apiHeaders() },
+    );
+  } catch (e) {
+    if (isGhAvailable()) {
+      verbose(`github: HTTP fetch failed, falling back to gh`);
+      return fetchPathInfoViaCli(repo, filePath, ref, host);
+    }
+    throw e;
+  }
   if (res.ok) {
     const data = await res.json();
     if (Array.isArray(data)) return { kind: 'directory' };
@@ -131,10 +140,19 @@ async function listTree(
   host?: string,
 ): Promise<string[]> {
   verbose(`github: listing tree ${repo}:${dirPath}@${ref}`);
-  const res = await fetchWithRetry(
-    `${getApiBase(host)}/repos/${repo}/git/trees/${encodeURIComponent(ref)}?recursive=1`,
-    { headers: apiHeaders() },
-  );
+  let res: Response;
+  try {
+    res = await fetchWithRetry(
+      `${getApiBase(host)}/repos/${repo}/git/trees/${encodeURIComponent(ref)}?recursive=1`,
+      { headers: apiHeaders() },
+    );
+  } catch (e) {
+    if (isGhAvailable()) {
+      verbose(`github: HTTP fetch failed, falling back to gh`);
+      return listTreeViaCli(repo, dirPath, ref, host);
+    }
+    throw e;
+  }
   if (!res.ok) {
     if (shouldFallback(res.status) && isGhAvailable()) {
       return listTreeViaCli(repo, dirPath, ref, host);
@@ -198,22 +216,38 @@ async function resolveRef(
 
   verbose(`github: resolving $latest for ${repo}`);
   // Try latest release first
-  const relRes = await fetchWithRetry(
-    `${getApiBase(host)}/repos/${repo}/releases/latest`,
-    {
-      headers: apiHeaders(),
-    },
-  );
+  let relRes: Response;
+  try {
+    relRes = await fetchWithRetry(
+      `${getApiBase(host)}/repos/${repo}/releases/latest`,
+      { headers: apiHeaders() },
+    );
+  } catch (e) {
+    if (isGhAvailable()) {
+      verbose(`github: HTTP fetch failed, falling back to gh`);
+      return resolveRefViaCli(repo, host);
+    }
+    throw e;
+  }
   if (relRes.ok) {
     const rel = (await relRes.json()) as { tag_name: string };
     return rel.tag_name;
   }
   // No releases (404) — fall back to most recent tag
   if (relRes.status === 404) {
-    const tagRes = await fetchWithRetry(
-      `${getApiBase(host)}/repos/${repo}/tags?per_page=1`,
-      { headers: apiHeaders() },
-    );
+    let tagRes: Response;
+    try {
+      tagRes = await fetchWithRetry(
+        `${getApiBase(host)}/repos/${repo}/tags?per_page=1`,
+        { headers: apiHeaders() },
+      );
+    } catch (e) {
+      if (isGhAvailable()) {
+        verbose(`github: HTTP fetch failed, falling back to gh`);
+        return resolveRefViaCli(repo, host);
+      }
+      throw e;
+    }
     if (tagRes.ok) {
       const tags = (await tagRes.json()) as Array<{ name: string }>;
       if (tags.length) return tags[0].name;
