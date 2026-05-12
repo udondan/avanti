@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { Command } from 'commander';
+import { Command, Option } from 'commander';
 import { diffCommand } from './commands/diff';
 import { pullCommand } from './commands/pull';
 import { logCommand } from './commands/log';
@@ -22,9 +22,11 @@ program
     '-w, --working-dir <path>',
     'working directory for resolving relative paths (default: current directory)',
   )
-  .option(
-    '--via <transport>',
-    'transport for fetching a remote --config: "api" or "cli"',
+  .addOption(
+    new Option(
+      '--via <transport>',
+      'transport for fetching a remote --config',
+    ).choices(['api', 'cli']),
   )
   .option('-v, --verbose', 'print verbose debug output to stderr');
 
