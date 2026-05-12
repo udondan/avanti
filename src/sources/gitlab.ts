@@ -73,10 +73,19 @@ async function resolveRef(
   if (ref === undefined || ref === '') return 'HEAD';
   if (ref === '$latest') {
     verbose(`gitlab: resolving $latest for ${project}`);
-    const res = await fetchWithRetry(
-      `https://${getHost(host)}/api/v4/projects/${encodeURIComponent(project)}/repository/tags?order_by=version&sort=desc&per_page=1`,
-      { headers: apiHeaders() },
-    );
+    let res: Response;
+    try {
+      res = await fetchWithRetry(
+        `https://${getHost(host)}/api/v4/projects/${encodeURIComponent(project)}/repository/tags?order_by=version&sort=desc&per_page=1`,
+        { headers: apiHeaders() },
+      );
+    } catch (e) {
+      if (isGlabAvailable()) {
+        verbose(`gitlab: HTTP fetch failed, falling back to glab`);
+        return resolveRefViaCli(project, host);
+      }
+      throw e;
+    }
     if (!res.ok) {
       if (shouldFallback(res.status) && isGlabAvailable()) {
         return resolveRefViaCli(project, host);
@@ -122,10 +131,19 @@ async function detectPathType(
 ): Promise<'file' | 'directory'> {
   verbose(`gitlab: detecting path type for ${project}:${filePath}@${ref}`);
   const encodedPath = encodeURIComponent(filePath);
-  const res = await fetchWithRetry(
-    `https://${getHost(host)}/api/v4/projects/${encodeURIComponent(project)}/repository/files/${encodedPath}?ref=${encodeURIComponent(ref)}`,
-    { headers: apiHeaders() },
-  );
+  let res: Response;
+  try {
+    res = await fetchWithRetry(
+      `https://${getHost(host)}/api/v4/projects/${encodeURIComponent(project)}/repository/files/${encodedPath}?ref=${encodeURIComponent(ref)}`,
+      { headers: apiHeaders() },
+    );
+  } catch (e) {
+    if (isGlabAvailable()) {
+      verbose(`gitlab: HTTP fetch failed, falling back to glab`);
+      return detectPathTypeViaCli(project, filePath, ref, host);
+    }
+    throw e;
+  }
   if (res.ok) return 'file';
   if (shouldFallback(res.status) && isGlabAvailable()) {
     return detectPathTypeViaCli(project, filePath, ref, host);
@@ -159,10 +177,19 @@ async function fetchFile(
 ): Promise<Buffer> {
   verbose(`gitlab: fetching ${project}:${filePath}@${ref}`);
   const encodedPath = encodeURIComponent(filePath);
-  const res = await fetchWithRetry(
-    `https://${getHost(host)}/api/v4/projects/${encodeURIComponent(project)}/repository/files/${encodedPath}/raw?ref=${encodeURIComponent(ref)}`,
-    { headers: apiHeaders() },
-  );
+  let res: Response;
+  try {
+    res = await fetchWithRetry(
+      `https://${getHost(host)}/api/v4/projects/${encodeURIComponent(project)}/repository/files/${encodedPath}/raw?ref=${encodeURIComponent(ref)}`,
+      { headers: apiHeaders() },
+    );
+  } catch (e) {
+    if (isGlabAvailable()) {
+      verbose(`gitlab: HTTP fetch failed, falling back to glab`);
+      return fetchFileViaCli(project, filePath, ref, host);
+    }
+    throw e;
+  }
   if (!res.ok) {
     if (shouldFallback(res.status) && isGlabAvailable()) {
       return fetchFileViaCli(project, filePath, ref, host);
@@ -208,10 +235,19 @@ async function listTree(
   let page = 1;
 
   while (true) {
-    const res = await fetchWithRetry(
-      `https://${getHost(host)}/api/v4/projects/${encodeURIComponent(project)}/repository/tree?path=${encodeURIComponent(dirPath)}&ref=${encodeURIComponent(ref)}&recursive=true&per_page=${perPage}&page=${page}`,
-      { headers: apiHeaders() },
-    );
+    let res: Response;
+    try {
+      res = await fetchWithRetry(
+        `https://${getHost(host)}/api/v4/projects/${encodeURIComponent(project)}/repository/tree?path=${encodeURIComponent(dirPath)}&ref=${encodeURIComponent(ref)}&recursive=true&per_page=${perPage}&page=${page}`,
+        { headers: apiHeaders() },
+      );
+    } catch (e) {
+      if (isGlabAvailable()) {
+        verbose(`gitlab: HTTP fetch failed, falling back to glab`);
+        return listTreeViaCli(project, dirPath, ref, host);
+      }
+      throw e;
+    }
     if (!res.ok) {
       if (shouldFallback(res.status) && isGlabAvailable()) {
         return listTreeViaCli(project, dirPath, ref, host);
@@ -323,10 +359,19 @@ async function fetchDirectoryViaArchive(
     `gitlab: fetching directory via archive: ${project}:${dirPath}@${ref}`,
   );
   const encodedProject = encodeURIComponent(project);
-  const res = await fetchWithRetry(
-    `https://${getHost(host)}/api/v4/projects/${encodedProject}/repository/archive.tar.gz?sha=${encodeURIComponent(ref)}&path=${encodeURIComponent(dirPath)}`,
-    { headers: apiHeaders() },
-  );
+  let res: Response;
+  try {
+    res = await fetchWithRetry(
+      `https://${getHost(host)}/api/v4/projects/${encodedProject}/repository/archive.tar.gz?sha=${encodeURIComponent(ref)}&path=${encodeURIComponent(dirPath)}`,
+      { headers: apiHeaders() },
+    );
+  } catch {
+    if (isGlabAvailable()) {
+      verbose(`gitlab: HTTP fetch failed, falling back to glab`);
+      return fetchDirectoryViaArchiveViaCli(project, dirPath, ref, host);
+    }
+    return null;
+  }
   if (!res.ok) {
     if (shouldFallback(res.status) && isGlabAvailable()) {
       return fetchDirectoryViaArchiveViaCli(project, dirPath, ref, host);
