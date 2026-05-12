@@ -63,12 +63,13 @@ export async function fetchWithRetry(
   }
   for (let attempt = 0; ; attempt++) {
     const res = await fetch(url, options);
-    verbose(`  -> HTTP ${res.status}`);
+    if (isVerbose()) verbose(`  -> HTTP ${res.status}`);
     const shouldRetry =
       res.status === 429 || (res.status >= 500 && res.status <= 599);
     if (!shouldRetry || attempt >= MAX_RETRIES) return res;
     const delay = retryDelayMs(attempt, res.headers);
-    verbose(`  -> retrying in ${delay}ms (status ${res.status})`);
+    if (isVerbose())
+      verbose(`  -> retrying in ${delay}ms (status ${res.status})`);
     await _testable.sleep(delay);
   }
 }
