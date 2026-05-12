@@ -102,6 +102,53 @@ describe('fetchGitLab — glab explicit hostname failure', () => {
       'gitlab: glab failed for group/project: ERROR Unauthenticated',
     );
   });
+
+  it('treats path as directory when glab returns 404 even with hostname configured', async () => {
+    vi.spyOn(globalThis, 'fetch').mockRejectedValue(
+      new TypeError('fetch failed'),
+    );
+
+    // detectPathType catch: isGlabAvailable → glab --version
+    // detectPathTypeViaCli: glabApi --hostname my-host → 404 → directory (not an auth error)
+    // fetchDirectoryViaArchive catch: isGlabAvailable → glab --version
+    // fetchDirectoryViaArchiveViaCli: glabApiBinary → fails → null
+    // listTree catch: isGlabAvailable → glab --version
+    // listTreeViaCli: glabApi → returns file list
+    // fetchFile catch: isGlabAvailable → glab --version
+    // fetchFileViaCli: glabApiBinary → content
+    mockSpawnSync
+      .mockReturnValueOnce(makeGlabAvailable())
+      .mockReturnValueOnce(
+        makeSpawnResult({
+          stdout: '',
+          stderr: 'GET /api/v4/... 404 Not Found',
+          status: 1,
+        }),
+      )
+      .mockReturnValueOnce(makeGlabAvailable())
+      .mockReturnValueOnce(
+        makeSpawnResult({ stdout: Buffer.alloc(0), status: 1 }),
+      )
+      .mockReturnValueOnce(makeGlabAvailable())
+      .mockReturnValueOnce(
+        makeSpawnResult({
+          stdout: JSON.stringify([{ type: 'blob', path: 'dir/file.txt' }]),
+          status: 0,
+        }),
+      )
+      .mockReturnValueOnce(makeGlabAvailable())
+      .mockReturnValueOnce(
+        makeSpawnResult({ stdout: Buffer.from('dir content'), status: 0 }),
+      );
+
+    const result = await fetchGitLab(
+      'group/project',
+      'dir',
+      'main',
+      'my-host.example.com',
+    );
+    expect(result.files.get('file.txt')?.toString('utf8')).toBe('dir content');
+  });
 });
 
 describe('fetchGitLab — network-error fallback to glab', () => {

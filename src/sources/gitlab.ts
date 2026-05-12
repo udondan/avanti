@@ -182,9 +182,12 @@ function detectPathTypeViaCli(
   const res = glabApi(endpoint, host);
   if (res.status === 0) return 'file';
   if (host?.trim() || process.env.GITLAB_HOST?.trim()) {
-    throw new Error(
-      `gitlab: glab failed for ${project}: ${(res.stderr || res.stdout).trim()}`,
-    );
+    const combined = res.stderr + res.stdout;
+    if (!combined.includes('404')) {
+      throw new Error(
+        `gitlab: glab failed for ${project}: ${(res.stderr || res.stdout).trim()}`,
+      );
+    }
   }
   return 'directory';
 }
