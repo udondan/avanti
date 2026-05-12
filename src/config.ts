@@ -328,10 +328,20 @@ function parseVia(value: unknown, loc: string): Via | Via[] | undefined {
     if (value.length === 0) {
       throw new Error(`${loc}.via: array must not be empty`);
     }
+    if (value.length > valid.length) {
+      throw new Error(
+        `${loc}.via: array must not have more than ${valid.length} entries`,
+      );
+    }
+    const seen = new Set<Via>();
     const result = value.map((v, i) => {
       if (!valid.includes(v as Via)) {
         throw new Error(`${loc}.via[${i}]: must be "api" or "cli", got "${v}"`);
       }
+      if (seen.has(v as Via)) {
+        throw new Error(`${loc}.via[${i}]: duplicate value "${v}"`);
+      }
+      seen.add(v as Via);
       return v as Via;
     });
     return result;

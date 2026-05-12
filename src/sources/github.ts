@@ -6,7 +6,11 @@ import type { Via } from '../types';
 
 function normalizeVia(via?: Via | Via[]): Via[] {
   if (!via) return ['api', 'cli'];
-  return Array.isArray(via) ? via : [via];
+  if (Array.isArray(via)) {
+    if (via.length === 0) throw new Error('via: array must not be empty');
+    return via;
+  }
+  return [via];
 }
 
 export interface GitHubResult {

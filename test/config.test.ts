@@ -1425,4 +1425,32 @@ files:
 `),
     ).toThrow('via[1]: must be "api" or "cli"');
   });
+
+  it('throws on a via array with duplicate values', () => {
+    expect(() =>
+      parseConfigContent(`
+files:
+  out.txt:
+    src:
+      gitlab:
+        project: group/proj
+        file: file.txt
+        via: [api, api]
+`),
+    ).toThrow('via[1]: duplicate value "api"');
+  });
+
+  it('throws on a via array longer than 2', () => {
+    expect(() =>
+      parseConfigContent(`
+files:
+  out.txt:
+    src:
+      github:
+        repo: owner/repo
+        file: file.txt
+        via: [api, cli, api]
+`),
+    ).toThrow('via: array must not have more than 2 entries');
+  });
 });
