@@ -198,9 +198,10 @@ function cacheKeyForSrc(src: FileSrc, vars: Variables): string {
       ? resolveVars(src.github.host, vars).trim()
       : '';
     const host = resolvedHost ? `[${resolvedHost}]` : '';
-    const via = src.github.via
-      ? `(${Array.isArray(src.github.via) ? src.github.via.join(',') : src.github.via})`
-      : '';
+    const viaStr = Array.isArray(src.github.via)
+      ? src.github.via.join(',')
+      : (src.github.via ?? 'api,cli');
+    const via = viaStr === 'api,cli' ? '' : `(${viaStr})`;
     return `github${host}:${resolveVars(src.github.repo, vars)}:${resolveVars(src.github.file, vars)}${ref}${via}`;
   }
   if ('gitlab' in src) {
@@ -209,9 +210,10 @@ function cacheKeyForSrc(src: FileSrc, vars: Variables): string {
       ? resolveVars(src.gitlab.host, vars).trim()
       : '';
     const host = resolvedHost ? `[${resolvedHost}]` : '';
-    const via = src.gitlab.via
-      ? `(${Array.isArray(src.gitlab.via) ? src.gitlab.via.join(',') : src.gitlab.via})`
-      : '';
+    const viaStr = Array.isArray(src.gitlab.via)
+      ? src.gitlab.via.join(',')
+      : (src.gitlab.via ?? 'api,cli');
+    const via = viaStr === 'api,cli' ? '' : `(${viaStr})`;
     return `gitlab${host}:${resolveVars(src.gitlab.project, vars)}:${resolveVars(src.gitlab.file, vars)}${ref}${via}`;
   }
   if ('bitbucket' in src) {
