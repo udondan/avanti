@@ -36,6 +36,13 @@ function srcFilename(src: FileSrc): string | null {
         return src;
       }
     }
+    if (isGitRemoteUrl(src)) {
+      try {
+        return parseGitRemoteSpec(src).file;
+      } catch {
+        return src;
+      }
+    }
     return src;
   }
   if ('gitlab' in src) return src.gitlab.file;
@@ -52,6 +59,13 @@ function srcFilename(src: FileSrc): string | null {
   }
   if ('path' in src) return src.path;
   if ('url' in src) {
+    if (isGitRemoteUrl(src.url)) {
+      try {
+        return parseGitRemoteSpec(src.url).file;
+      } catch {
+        return src.url;
+      }
+    }
     try {
       return new URL(src.url).pathname;
     } catch {
@@ -618,3 +632,5 @@ export async function fetchSource(
   }
   return { files: formatted, sourceRecords };
 }
+
+export const _testable = { srcFilename };

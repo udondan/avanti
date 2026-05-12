@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fetchLocal } from '../src/sources/local';
 import { fetchHttp } from '../src/sources/http';
 import { _testable } from '../src/fetch';
-import { fetchSource } from '../src/sources';
+import { fetchSource, _testable as sourcesTestable } from '../src/sources';
 import * as gitModule from '../src/sources/git';
 
 describe('fetchLocal — ~/  expansion', () => {
@@ -543,6 +543,34 @@ describe('fetchSource — git+ssh:// url: source routing', () => {
         tmpdir(),
       ),
     ).rejects.toThrow('git clone failed: auth error');
+  });
+});
+
+describe('srcFilename — git remote URL extension detection', () => {
+  const { srcFilename } = sourcesTestable;
+
+  it('returns the file path (not the full URL) for a git+ssh:// plain string with @ref', () => {
+    expect(
+      srcFilename('git+ssh://git@host/org/repo.git//config.yml@main'),
+    ).toBe('config.yml');
+  });
+
+  it('returns the file path for a git+ssh:// plain string without @ref', () => {
+    expect(srcFilename('git+ssh://git@host/org/repo.git//config.yml')).toBe(
+      'config.yml',
+    );
+  });
+
+  it('returns the file path for a git:// plain string with @ref', () => {
+    expect(srcFilename('git://host/repo.git//config.yml@v1.2.3')).toBe(
+      'config.yml',
+    );
+  });
+
+  it('returns the file path for a url: git remote source with @ref', () => {
+    expect(
+      srcFilename({ url: 'git+ssh://git@host/org/repo.git//config.yml@main' }),
+    ).toBe('config.yml');
   });
 });
 
