@@ -31,6 +31,7 @@ function collectFiles(
   files: Map<string, Buffer>,
 ): void {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    if (entry.isSymbolicLink()) continue;
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) {
       collectFiles(base, full, files);
@@ -57,7 +58,7 @@ export function parseGitRemoteSpec(spec: string): {
   const separatorIdx = spec.indexOf('//', schemeEnd);
   if (separatorIdx === -1 || separatorIdx <= schemeEnd) {
     throw new Error(
-      `Invalid git URL spec "${spec}". Expected: git+ssh://git@host/org/repo.git//path/to/file.yml[@ref]`,
+      `Invalid git URL spec "${spec}". Expected format: <remote-url>//<file-path>[@ref], e.g. git+ssh://git@host/org/repo.git//path/to/file.yml@main (supported schemes: git+ssh://, git://, ssh://)`,
     );
   }
   const repo = spec.slice(0, separatorIdx);
@@ -113,6 +114,17 @@ export function fetchGit(repo: string, file: string, ref?: string): GitResult {
 
     if (!fs.existsSync(fullPath)) {
       throw new Error(`Path not found in repository: ${file}`);
+    }
+
+    const realRepoDir = fs.realpathSync(repoDir);
+    const realFullPath = fs.realpathSync(fullPath);
+    if (
+      realFullPath !== realRepoDir &&
+      !realFullPath.startsWith(realRepoDir + path.sep)
+    ) {
+      throw new Error(
+        `Unsafe file path escapes repository root via symlink: ${file}`,
+      );
     }
 
     const files = new Map<string, Buffer>();
