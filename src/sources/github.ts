@@ -27,6 +27,10 @@ function shouldFallback(status: number): boolean {
   return status === 401 || status === 403 || status === 404;
 }
 
+function isNetworkError(e: unknown): boolean {
+  return e instanceof TypeError && e.message === 'fetch failed';
+}
+
 function isGhAvailable(): boolean {
   return !spawnSync('gh', ['--version'], { encoding: 'utf8' }).error;
 }
@@ -70,7 +74,7 @@ async function fetchPathInfo(
       { headers: apiHeaders() },
     );
   } catch (e) {
-    if (isGhAvailable()) {
+    if (isNetworkError(e) && isGhAvailable()) {
       verbose(`github: HTTP fetch failed, falling back to gh`);
       return fetchPathInfoViaCli(repo, filePath, ref, host);
     }
@@ -147,7 +151,7 @@ async function listTree(
       { headers: apiHeaders() },
     );
   } catch (e) {
-    if (isGhAvailable()) {
+    if (isNetworkError(e) && isGhAvailable()) {
       verbose(`github: HTTP fetch failed, falling back to gh`);
       return listTreeViaCli(repo, dirPath, ref, host);
     }
@@ -223,7 +227,7 @@ async function resolveRef(
       { headers: apiHeaders() },
     );
   } catch (e) {
-    if (isGhAvailable()) {
+    if (isNetworkError(e) && isGhAvailable()) {
       verbose(`github: HTTP fetch failed, falling back to gh`);
       return resolveRefViaCli(repo, host);
     }
@@ -242,7 +246,7 @@ async function resolveRef(
         { headers: apiHeaders() },
       );
     } catch (e) {
-      if (isGhAvailable()) {
+      if (isNetworkError(e) && isGhAvailable()) {
         verbose(`github: HTTP fetch failed, falling back to gh`);
         return resolveRefViaCli(repo, host);
       }

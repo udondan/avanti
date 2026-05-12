@@ -25,6 +25,10 @@ function shouldFallback(status: number): boolean {
   return status === 401 || status === 403 || status === 404;
 }
 
+function isNetworkError(e: unknown): boolean {
+  return e instanceof TypeError && e.message === 'fetch failed';
+}
+
 function isGlabAvailable(): boolean {
   return !spawnSync('glab', ['--version'], { encoding: 'utf8' }).error;
 }
@@ -80,7 +84,7 @@ async function resolveRef(
         { headers: apiHeaders() },
       );
     } catch (e) {
-      if (isGlabAvailable()) {
+      if (isNetworkError(e) && isGlabAvailable()) {
         verbose(`gitlab: HTTP fetch failed, falling back to glab`);
         return resolveRefViaCli(project, host);
       }
@@ -138,7 +142,7 @@ async function detectPathType(
       { headers: apiHeaders() },
     );
   } catch (e) {
-    if (isGlabAvailable()) {
+    if (isNetworkError(e) && isGlabAvailable()) {
       verbose(`gitlab: HTTP fetch failed, falling back to glab`);
       return detectPathTypeViaCli(project, filePath, ref, host);
     }
@@ -184,7 +188,7 @@ async function fetchFile(
       { headers: apiHeaders() },
     );
   } catch (e) {
-    if (isGlabAvailable()) {
+    if (isNetworkError(e) && isGlabAvailable()) {
       verbose(`gitlab: HTTP fetch failed, falling back to glab`);
       return fetchFileViaCli(project, filePath, ref, host);
     }
@@ -242,7 +246,7 @@ async function listTree(
         { headers: apiHeaders() },
       );
     } catch (e) {
-      if (isGlabAvailable()) {
+      if (isNetworkError(e) && isGlabAvailable()) {
         verbose(`gitlab: HTTP fetch failed, falling back to glab`);
         return listTreeViaCli(project, dirPath, ref, host);
       }
@@ -365,12 +369,13 @@ async function fetchDirectoryViaArchive(
       `https://${getHost(host)}/api/v4/projects/${encodedProject}/repository/archive.tar.gz?sha=${encodeURIComponent(ref)}&path=${encodeURIComponent(dirPath)}`,
       { headers: apiHeaders() },
     );
-  } catch {
-    if (isGlabAvailable()) {
+  } catch (e) {
+    if (isNetworkError(e) && isGlabAvailable()) {
       verbose(`gitlab: HTTP fetch failed, falling back to glab`);
       return fetchDirectoryViaArchiveViaCli(project, dirPath, ref, host);
     }
-    return null;
+    if (isNetworkError(e)) return null;
+    throw e;
   }
   if (!res.ok) {
     if (shouldFallback(res.status) && isGlabAvailable()) {
