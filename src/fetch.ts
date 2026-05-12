@@ -29,6 +29,7 @@ function retryDelayMs(attempt: number, headers: Headers): number {
 }
 
 export function redactUrl(raw: string): string {
+  let result = raw;
   try {
     const u = new URL(raw);
     // Strip basic-auth credentials from the URL authority
@@ -46,11 +47,13 @@ export function redactUrl(raw: string): string {
     for (const k of u.searchParams.keys()) {
       if (SENSITIVE.has(k.toLowerCase())) u.searchParams.set(k, '***');
     }
-    return u.toString();
+    result = u.toString();
   } catch {
-    // Best-effort redaction for strings that aren't valid URLs
-    return raw.replace(/(\/\/)[^@]*@/, '$1***@');
+    // URL parsing failed; result stays as raw
   }
+  // Strip any remaining //user:pass@ (handles opaque-path URLs where the nested
+  // scheme's userinfo is invisible to the outer URL parser, e.g. git:git+ssh://user:pass@host)
+  return result.replace(/(\/\/)[^@]*@/, '$1***@');
 }
 
 export async function fetchWithRetry(

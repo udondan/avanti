@@ -43,7 +43,13 @@ function collectFiles(
 }
 
 function redactGitUrl(url: string): string {
-  return url.replace(/(\/\/)[^@]*@/, '$1***@');
+  return (
+    url
+      // URL-style: scheme://user:pass@host/...
+      .replace(/(\/\/)[^@]*@/, '$1***@')
+      // SCP-style with password: user:pass@host:path (only when userinfo contains ':')
+      .replace(/^[^/:@\s]+:[^/:@\s]+@/, '***@')
+  );
 }
 
 export function isGitRemoteUrl(s: string): boolean {
