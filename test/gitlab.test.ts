@@ -43,8 +43,8 @@ function makeGlabUnavailable() {
 }
 
 beforeEach(() => {
+  vi.resetAllMocks();
   vi.spyOn(_testable, 'sleep').mockResolvedValue(undefined);
-  vi.clearAllMocks();
   delete process.env.GITLAB_TOKEN;
   delete process.env.GITLAB_PRIVATE_TOKEN;
   delete process.env.GITLAB_HOST;

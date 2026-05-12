@@ -48,8 +48,8 @@ function b64(s: string): string {
 }
 
 beforeEach(() => {
+  vi.resetAllMocks();
   vi.spyOn(_testable, 'sleep').mockResolvedValue(undefined);
-  vi.clearAllMocks();
   delete process.env.GITHUB_TOKEN;
   delete process.env.GITHUB_HOST;
 });
