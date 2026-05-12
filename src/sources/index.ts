@@ -315,7 +315,12 @@ async function _fetchOneSrcRaw(
     const resolved = resolveVars(src.url, vars);
     if (isGitSshUrl(resolved)) {
       const { repo, file, ref } = parseGitSshSpec(resolved);
-      return { files: fetchGit(repo, file, ref).files };
+      try {
+        return { files: fetchGit(repo, file, ref).files };
+      } catch (err) {
+        if (src.optional) return { files: new Map(), skipped: true };
+        throw err;
+      }
     }
     const content = await fetchHttp(resolved, src.optional ?? false);
     if (content === null) {

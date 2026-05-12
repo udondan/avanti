@@ -6,6 +6,7 @@ import { fetchLocal } from '../src/sources/local';
 import { fetchHttp } from '../src/sources/http';
 import { _testable } from '../src/fetch';
 import { fetchSource } from '../src/sources';
+import * as gitModule from '../src/sources/git';
 
 describe('fetchLocal — ~/  expansion', () => {
   it('expands ~/ to os.homedir()', () => {
@@ -445,5 +446,116 @@ describe('FetchCache — cross-target deduplication', () => {
     );
 
     expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('fetchSource — git+ssh:// plain string routing', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('routes a git+ssh:// plain string to fetchGit with correct args', async () => {
+    const spy = vi.spyOn(gitModule, 'fetchGit').mockReturnValue({
+      files: new Map([['file.txt', Buffer.from('hello')]]),
+    });
+    const result = await fetchSource(
+      {
+        src: 'git+ssh://git@host/org/repo.git//path/to/file.txt@main',
+        target: 'out.txt',
+      },
+      tmpdir(),
+    );
+    expect(spy).toHaveBeenCalledWith(
+      'git+ssh://git@host/org/repo.git',
+      'path/to/file.txt',
+      'main',
+    );
+    expect(result.files.get('file.txt')?.toString('utf8')).toBe('hello');
+  });
+
+  it('routes a git:// plain string to fetchGit', async () => {
+    const spy = vi
+      .spyOn(gitModule, 'fetchGit')
+      .mockReturnValue({ files: new Map([['config.yml', Buffer.from('')]]) });
+    await fetchSource(
+      { src: 'git://host/repo.git//config.yml', target: 'out.txt' },
+      tmpdir(),
+    );
+    expect(spy).toHaveBeenCalledWith(
+      'git://host/repo.git',
+      'config.yml',
+      undefined,
+    );
+  });
+});
+
+describe('fetchSource — git+ssh:// url: source routing', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('routes a git+ssh:// url: source to fetchGit', async () => {
+    const spy = vi.spyOn(gitModule, 'fetchGit').mockReturnValue({
+      files: new Map([['file.txt', Buffer.from('hello')]]),
+    });
+    const result = await fetchSource(
+      {
+        src: { url: 'git+ssh://git@host/org/repo.git//path/to/file.txt@v1.0' },
+        target: 'out.txt',
+      },
+      tmpdir(),
+    );
+    expect(spy).toHaveBeenCalledWith(
+      'git+ssh://git@host/org/repo.git',
+      'path/to/file.txt',
+      'v1.0',
+    );
+    expect(result.files.get('file.txt')?.toString('utf8')).toBe('hello');
+  });
+
+  it('returns skipped when optional url: git source throws', async () => {
+    vi.spyOn(gitModule, 'fetchGit').mockImplementation(() => {
+      throw new Error('git clone failed');
+    });
+    const result = await fetchSource(
+      {
+        src: {
+          url: 'git+ssh://git@host/org/repo.git//missing.txt',
+          optional: true,
+        },
+        target: 'out.txt',
+      },
+      tmpdir(),
+    );
+    expect(result.files.size).toBe(0);
+  });
+
+  it('throws when non-optional url: git source fails', async () => {
+    vi.spyOn(gitModule, 'fetchGit').mockImplementation(() => {
+      throw new Error('git clone failed: auth error');
+    });
+    await expect(
+      fetchSource(
+        {
+          src: { url: 'git+ssh://git@host/org/repo.git//file.txt' },
+          target: 'out.txt',
+        },
+        tmpdir(),
+      ),
+    ).rejects.toThrow('git clone failed: auth error');
+  });
+});
+
+describe('fetchGit — path confinement', () => {
+  it('throws on an absolute file path', () => {
+    expect(() =>
+      gitModule.fetchGit('https://example.com/repo.git', '/etc/passwd'),
+    ).toThrow('Unsafe file path');
+  });
+
+  it('throws on a path traversal using ..', () => {
+    expect(() =>
+      gitModule.fetchGit('https://example.com/repo.git', '../../etc/passwd'),
+    ).toThrow('Unsafe file path');
   });
 });

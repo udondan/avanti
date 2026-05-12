@@ -74,6 +74,10 @@ export function parseGitSshSpec(spec: string): {
 }
 
 export function fetchGit(repo: string, file: string, ref?: string): GitResult {
+  if (path.isAbsolute(file) || path.normalize(file).startsWith('..')) {
+    throw new Error(`Unsafe file path escapes repository root: ${file}`);
+  }
+
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'avanti-git-'));
   try {
     const repoDir = path.join(tmpDir, 'repo');
