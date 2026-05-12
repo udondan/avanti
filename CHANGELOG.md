@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.18.0](https://github.com/udondan/avanti/compare/v0.17.1...v0.18.0) (2026-05-12)
+
+
+### Features
+
+* add via option to gitlab/github sources to control transport ([#145](https://github.com/udondan/avanti/issues/145)) ([56283fc](https://github.com/udondan/avanti/commit/56283fc1bd8ee56b489e776e915062aeaccac334))
+
+
+### Bug Fixes
+
+* **gitlab:** surface glab errors when hostname is configured and log glab results ([#143](https://github.com/udondan/avanti/issues/143)) ([e078f75](https://github.com/udondan/avanti/commit/e078f7587ea543ec62bd0ff20dc6f2a8b7913a09))
+
 ## [0.17.1](https://github.com/udondan/avanti/compare/v0.17.0...v0.17.1) (2026-05-12)
 
 
