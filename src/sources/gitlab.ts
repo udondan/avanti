@@ -114,7 +114,8 @@ async function resolveRef(
       }
     }
 
-    const withCliFallback = transports.includes('cli');
+    const withCliFallback =
+      transports[0] === 'api' && transports.includes('cli');
     let res: Response;
     try {
       res = await fetchWithRetry(
@@ -177,7 +178,7 @@ async function detectPathType(
     }
   }
 
-  const withCliFallback = transports.includes('cli');
+  const withCliFallback = transports[0] === 'api' && transports.includes('cli');
   const encodedPath = encodeURIComponent(filePath);
   let res: Response;
   try {
@@ -237,7 +238,7 @@ async function fetchFile(
     }
   }
 
-  const withCliFallback = transports.includes('cli');
+  const withCliFallback = transports[0] === 'api' && transports.includes('cli');
   const encodedPath = encodeURIComponent(filePath);
   let res: Response;
   try {
@@ -296,7 +297,7 @@ async function listTree(
     }
   }
 
-  const withCliFallback = transports.includes('cli');
+  const withCliFallback = transports[0] === 'api' && transports.includes('cli');
   const allPaths: string[] = [];
   const perPage = 100;
   let page = 1;
@@ -427,7 +428,7 @@ async function fetchDirectoryViaArchive(
     if (result !== null || !transports.includes('api')) return result;
   }
 
-  const withCliFallback = transports.includes('cli');
+  const withCliFallback = transports[0] === 'api' && transports.includes('cli');
   const encodedProject = encodeURIComponent(project);
   let res: Response;
   try {

@@ -87,7 +87,7 @@ async function fetchPathInfo(
     }
   }
 
-  const withCliFallback = transports.includes('cli');
+  const withCliFallback = transports[0] === 'api' && transports.includes('cli');
   let res: Response;
   try {
     res = await fetchWithRetry(
@@ -176,7 +176,7 @@ async function listTree(
     }
   }
 
-  const withCliFallback = transports.includes('cli');
+  const withCliFallback = transports[0] === 'api' && transports.includes('cli');
   let res: Response;
   try {
     res = await fetchWithRetry(
@@ -262,7 +262,7 @@ async function resolveRef(
     }
   }
 
-  const withCliFallback = transports.includes('cli');
+  const withCliFallback = transports[0] === 'api' && transports.includes('cli');
   // Try latest release first
   let relRes: Response;
   try {
