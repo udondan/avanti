@@ -425,6 +425,7 @@ src:
     ref: main                    # branch, tag, or $latest (optional)
     sha: abc123...               # optional SHA-256 fingerprint
     host: gitlab.mycompany.com   # override default gitlab.com (optional)
+    via: cli                     # api, cli, or list (default: [api, cli])
 
 src:
   github:
@@ -433,6 +434,7 @@ src:
     ref: main                    # branch, tag, or $latest (optional)
     sha: abc123...               # optional SHA-256 fingerprint
     host: github.mycompany.com   # GitHub Enterprise Server hostname (optional)
+    via: cli                     # api, cli, or list (default: [api, cli])
 
 src:
   bitbucket:

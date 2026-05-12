@@ -369,6 +369,7 @@ async function _fetchOneSrcRaw(
       src.gitlab.host !== undefined
         ? resolveVars(src.gitlab.host, vars)
         : undefined,
+      src.gitlab.via,
     );
     files = result.files;
   } else if ('github' in src) {
@@ -381,6 +382,7 @@ async function _fetchOneSrcRaw(
       src.github.host !== undefined
         ? resolveVars(src.github.host, vars)
         : undefined,
+      src.github.via,
     );
     files = result.files;
   } else if ('bitbucket' in src) {

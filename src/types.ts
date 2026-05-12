@@ -1,5 +1,7 @@
 export type Variables = Record<string, string>;
 
+export type Via = 'api' | 'cli';
+
 export interface ReplaceRule {
   from: string;
   to: string;
@@ -12,6 +14,7 @@ export interface GitLabSrc {
     ref?: string;
     sha?: string;
     host?: string;
+    via?: Via | Via[];
   };
 }
 
@@ -22,6 +25,7 @@ export interface GitHubSrc {
     ref?: string;
     sha?: string;
     host?: string;
+    via?: Via | Via[];
   };
 }
 

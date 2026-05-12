@@ -4,6 +4,12 @@ import * as os from 'os';
 import * as path from 'path';
 import { fetchWithRetry } from '../fetch';
 import { verbose } from '../logger';
+import type { Via } from '../types';
+
+function normalizeVia(via?: Via | Via[]): Via[] {
+  if (!via) return ['api', 'cli'];
+  return Array.isArray(via) ? via : [via];
+}
 
 export interface GitLabResult {
   /** Map of relative path → content */
@@ -94,10 +100,21 @@ async function resolveRef(
   project: string,
   ref: string | undefined,
   host?: string,
+  transports: Via[] = ['api', 'cli'],
 ): Promise<string> {
   if (ref === undefined || ref === '') return 'HEAD';
   if (ref === '$latest') {
     verbose(`gitlab: resolving $latest for ${project}`);
+
+    if (transports[0] === 'cli') {
+      try {
+        return resolveRefViaCli(project, host);
+      } catch (e) {
+        if (!transports.includes('api')) throw e;
+      }
+    }
+
+    const withCliFallback = transports.includes('cli');
     let res: Response;
     try {
       res = await fetchWithRetry(
@@ -105,14 +122,14 @@ async function resolveRef(
         { headers: apiHeaders() },
       );
     } catch (e) {
-      if (isNetworkError(e) && isGlabAvailable()) {
+      if (isNetworkError(e) && withCliFallback && isGlabAvailable()) {
         verbose(`gitlab: HTTP fetch failed, falling back to glab`);
         return resolveRefViaCli(project, host);
       }
       throw e;
     }
     if (!res.ok) {
-      if (shouldFallback(res.status) && isGlabAvailable()) {
+      if (shouldFallback(res.status) && withCliFallback && isGlabAvailable()) {
         return resolveRefViaCli(project, host);
       }
       throw new Error(
@@ -148,8 +165,19 @@ async function detectPathType(
   filePath: string,
   ref: string,
   host?: string,
+  transports: Via[] = ['api', 'cli'],
 ): Promise<'file' | 'directory'> {
   verbose(`gitlab: detecting path type for ${project}:${filePath}@${ref}`);
+
+  if (transports[0] === 'cli') {
+    try {
+      return detectPathTypeViaCli(project, filePath, ref, host);
+    } catch (e) {
+      if (!transports.includes('api')) throw e;
+    }
+  }
+
+  const withCliFallback = transports.includes('cli');
   const encodedPath = encodeURIComponent(filePath);
   let res: Response;
   try {
@@ -158,14 +186,14 @@ async function detectPathType(
       { headers: apiHeaders() },
     );
   } catch (e) {
-    if (isNetworkError(e) && isGlabAvailable()) {
+    if (isNetworkError(e) && withCliFallback && isGlabAvailable()) {
       verbose(`gitlab: HTTP fetch failed, falling back to glab`);
       return detectPathTypeViaCli(project, filePath, ref, host);
     }
     throw e;
   }
   if (res.ok) return 'file';
-  if (shouldFallback(res.status) && isGlabAvailable()) {
+  if (shouldFallback(res.status) && withCliFallback && isGlabAvailable()) {
     return detectPathTypeViaCli(project, filePath, ref, host);
   }
   // Assume directory; downstream calls will surface the real error if wrong
@@ -197,8 +225,19 @@ async function fetchFile(
   filePath: string,
   ref: string,
   host?: string,
+  transports: Via[] = ['api', 'cli'],
 ): Promise<Buffer> {
   verbose(`gitlab: fetching ${project}:${filePath}@${ref}`);
+
+  if (transports[0] === 'cli') {
+    try {
+      return fetchFileViaCli(project, filePath, ref, host);
+    } catch (e) {
+      if (!transports.includes('api')) throw e;
+    }
+  }
+
+  const withCliFallback = transports.includes('cli');
   const encodedPath = encodeURIComponent(filePath);
   let res: Response;
   try {
@@ -207,14 +246,14 @@ async function fetchFile(
       { headers: apiHeaders() },
     );
   } catch (e) {
-    if (isNetworkError(e) && isGlabAvailable()) {
+    if (isNetworkError(e) && withCliFallback && isGlabAvailable()) {
       verbose(`gitlab: HTTP fetch failed, falling back to glab`);
       return fetchFileViaCli(project, filePath, ref, host);
     }
     throw e;
   }
   if (!res.ok) {
-    if (shouldFallback(res.status) && isGlabAvailable()) {
+    if (shouldFallback(res.status) && withCliFallback && isGlabAvailable()) {
       return fetchFileViaCli(project, filePath, ref, host);
     }
     throw new Error(
@@ -245,8 +284,19 @@ async function listTree(
   dirPath: string,
   ref: string,
   host?: string,
+  transports: Via[] = ['api', 'cli'],
 ): Promise<string[]> {
   verbose(`gitlab: listing tree ${project}:${dirPath}@${ref}`);
+
+  if (transports[0] === 'cli') {
+    try {
+      return listTreeViaCli(project, dirPath, ref, host);
+    } catch (e) {
+      if (!transports.includes('api')) throw e;
+    }
+  }
+
+  const withCliFallback = transports.includes('cli');
   const allPaths: string[] = [];
   const perPage = 100;
   let page = 1;
@@ -259,14 +309,14 @@ async function listTree(
         { headers: apiHeaders() },
       );
     } catch (e) {
-      if (isNetworkError(e) && isGlabAvailable()) {
+      if (isNetworkError(e) && withCliFallback && isGlabAvailable()) {
         verbose(`gitlab: HTTP fetch failed, falling back to glab`);
         return listTreeViaCli(project, dirPath, ref, host);
       }
       throw e;
     }
     if (!res.ok) {
-      if (shouldFallback(res.status) && isGlabAvailable()) {
+      if (shouldFallback(res.status) && withCliFallback && isGlabAvailable()) {
         return listTreeViaCli(project, dirPath, ref, host);
       }
       throw new Error(
@@ -366,10 +416,18 @@ async function fetchDirectoryViaArchive(
   dirPath: string,
   ref: string,
   host?: string,
+  transports: Via[] = ['api', 'cli'],
 ): Promise<Map<string, Buffer> | null> {
   verbose(
     `gitlab: fetching directory via archive: ${project}:${dirPath}@${ref}`,
   );
+
+  if (transports[0] === 'cli') {
+    const result = fetchDirectoryViaArchiveViaCli(project, dirPath, ref, host);
+    if (result !== null || !transports.includes('api')) return result;
+  }
+
+  const withCliFallback = transports.includes('cli');
   const encodedProject = encodeURIComponent(project);
   let res: Response;
   try {
@@ -378,7 +436,7 @@ async function fetchDirectoryViaArchive(
       { headers: apiHeaders() },
     );
   } catch (e) {
-    if (isNetworkError(e) && isGlabAvailable()) {
+    if (isNetworkError(e) && withCliFallback && isGlabAvailable()) {
       verbose(`gitlab: HTTP fetch failed, falling back to glab`);
       return fetchDirectoryViaArchiveViaCli(project, dirPath, ref, host);
     }
@@ -386,7 +444,7 @@ async function fetchDirectoryViaArchive(
     throw e;
   }
   if (!res.ok) {
-    if (shouldFallback(res.status) && isGlabAvailable()) {
+    if (shouldFallback(res.status) && withCliFallback && isGlabAvailable()) {
       return fetchDirectoryViaArchiveViaCli(project, dirPath, ref, host);
     }
     return null;
@@ -418,16 +476,29 @@ export async function fetchGitLab(
   file: string,
   ref: string | undefined,
   host?: string,
+  via?: Via | Via[],
 ): Promise<GitLabResult> {
-  const resolvedRef = await resolveRef(project, ref, host);
+  const transports = normalizeVia(via);
+  const resolvedRef = await resolveRef(project, ref, host, transports);
   const normalizedPath = file.replace(/\/$/, '');
   const isDirectory =
     file.endsWith('/') ||
-    (await detectPathType(project, normalizedPath, resolvedRef, host)) ===
-      'directory';
+    (await detectPathType(
+      project,
+      normalizedPath,
+      resolvedRef,
+      host,
+      transports,
+    )) === 'directory';
 
   if (!isDirectory) {
-    const content = await fetchFile(project, normalizedPath, resolvedRef, host);
+    const content = await fetchFile(
+      project,
+      normalizedPath,
+      resolvedRef,
+      host,
+      transports,
+    );
     return { files: new Map([[path.basename(normalizedPath), content]]) };
   }
 
@@ -437,10 +508,17 @@ export async function fetchGitLab(
     normalizedPath,
     resolvedRef,
     host,
+    transports,
   );
   if (archived) return { files: archived };
 
-  const paths = await listTree(project, normalizedPath, resolvedRef, host);
+  const paths = await listTree(
+    project,
+    normalizedPath,
+    resolvedRef,
+    host,
+    transports,
+  );
   if (!paths.length) {
     throw new Error(
       `Failed to fetch ${file} from ${project}@${resolvedRef} (not a file or empty directory)`,
@@ -451,7 +529,7 @@ export async function fetchGitLab(
       async (p) =>
         [
           path.relative(normalizedPath, p),
-          await fetchFile(project, p, resolvedRef, host),
+          await fetchFile(project, p, resolvedRef, host, transports),
         ] as const,
     ),
   );

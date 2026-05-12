@@ -151,6 +151,78 @@ describe('fetchGitLab — glab explicit hostname failure', () => {
   });
 });
 
+describe('fetchGitLab — via option', () => {
+  it('via: cli skips API and calls glab directly', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+
+    // detectPathType → detectPathTypeViaCli: glab → file
+    // fetchFile → fetchFileViaCli: glab → content
+    mockSpawnSync
+      .mockReturnValueOnce(makeSpawnResult({ stdout: '{}', status: 0 }))
+      .mockReturnValueOnce(
+        makeSpawnResult({ stdout: Buffer.from('cli content'), status: 0 }),
+      );
+
+    const result = await fetchGitLab(
+      'group/project',
+      'file.txt',
+      'main',
+      undefined,
+      'cli',
+    );
+    expect(result.files.get('file.txt')?.toString('utf8')).toBe('cli content');
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('via: api throws on network error without falling back to glab', async () => {
+    vi.spyOn(globalThis, 'fetch').mockRejectedValue(
+      new TypeError('fetch failed'),
+    );
+
+    await expect(
+      fetchGitLab('group/project', 'file.txt', 'main', undefined, 'api'),
+    ).rejects.toThrow('fetch failed');
+
+    expect(mockSpawnSync).not.toHaveBeenCalled();
+  });
+
+  it('via: [cli, api] tries glab first, falls back to API when CLI throws', async () => {
+    // With a host set, detectPathTypeViaCli and fetchFileViaCli throw on non-404 glab errors
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      // detectPathType API: file exists → 200
+      .mockResolvedValueOnce(new Response('', { status: 200 }))
+      // fetchFile API: returns content
+      .mockResolvedValueOnce(
+        new Response(Buffer.from('api content'), { status: 200 }),
+      );
+
+    // detectPathTypeViaCli → glab returns non-404 error → throws (host is set)
+    // fetchFileViaCli → glab returns error → throws
+    mockSpawnSync
+      .mockReturnValueOnce(
+        makeSpawnResult({ stdout: '', stderr: 'glab error', status: 1 }),
+      )
+      .mockReturnValueOnce(
+        makeSpawnResult({
+          stdout: Buffer.alloc(0),
+          stderr: 'glab error',
+          status: 1,
+        }),
+      );
+
+    const result = await fetchGitLab(
+      'group/project',
+      'file.txt',
+      'main',
+      'my-host.example.com',
+      ['cli', 'api'],
+    );
+    expect(result.files.get('file.txt')?.toString('utf8')).toBe('api content');
+    expect(fetchSpy).toHaveBeenCalled();
+  });
+});
+
 describe('fetchGitLab — network-error fallback to glab', () => {
   it('falls back to glab when fetch throws a network error', async () => {
     vi.spyOn(globalThis, 'fetch').mockRejectedValue(
