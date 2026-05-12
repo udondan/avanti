@@ -153,7 +153,9 @@ describe('fetchGitLab — glab explicit hostname failure', () => {
 
 describe('fetchGitLab — via option', () => {
   it('via: cli skips API and calls glab directly', async () => {
-    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockRejectedValue(new Error('unexpected API call'));
 
     // detectPathType → detectPathTypeViaCli: glab → file
     // fetchFile → fetchFileViaCli: glab → content

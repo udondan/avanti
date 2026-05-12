@@ -198,7 +198,10 @@ function cacheKeyForSrc(src: FileSrc, vars: Variables): string {
       ? resolveVars(src.github.host, vars).trim()
       : '';
     const host = resolvedHost ? `[${resolvedHost}]` : '';
-    return `github${host}:${resolveVars(src.github.repo, vars)}:${resolveVars(src.github.file, vars)}${ref}`;
+    const via = src.github.via
+      ? `(${Array.isArray(src.github.via) ? src.github.via.join(',') : src.github.via})`
+      : '';
+    return `github${host}:${resolveVars(src.github.repo, vars)}:${resolveVars(src.github.file, vars)}${ref}${via}`;
   }
   if ('gitlab' in src) {
     const ref = src.gitlab.ref ? `@${resolveVars(src.gitlab.ref, vars)}` : '';
@@ -206,7 +209,10 @@ function cacheKeyForSrc(src: FileSrc, vars: Variables): string {
       ? resolveVars(src.gitlab.host, vars).trim()
       : '';
     const host = resolvedHost ? `[${resolvedHost}]` : '';
-    return `gitlab${host}:${resolveVars(src.gitlab.project, vars)}:${resolveVars(src.gitlab.file, vars)}${ref}`;
+    const via = src.gitlab.via
+      ? `(${Array.isArray(src.gitlab.via) ? src.gitlab.via.join(',') : src.gitlab.via})`
+      : '';
+    return `gitlab${host}:${resolveVars(src.gitlab.project, vars)}:${resolveVars(src.gitlab.file, vars)}${ref}${via}`;
   }
   if ('bitbucket' in src) {
     const ref = src.bitbucket.ref

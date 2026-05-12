@@ -62,7 +62,9 @@ afterEach(() => {
 
 describe('fetchGitHub — via option', () => {
   it('via: cli skips API and calls gh directly', async () => {
-    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockRejectedValue(new Error('unexpected API call'));
 
     // fetchPathInfo → fetchPathInfoViaCli: gh → base64 content
     mockSpawnSync.mockReturnValueOnce(

@@ -8,7 +8,7 @@ function normalizeVia(via?: Via | Via[]): Via[] {
   if (!via) return ['api', 'cli'];
   if (Array.isArray(via)) {
     if (via.length === 0) throw new Error('via: array must not be empty');
-    return via;
+    return [...via];
   }
   return [via];
 }
