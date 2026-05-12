@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.17.0](https://github.com/udondan/avanti/compare/v0.16.0...v0.17.0) (2026-05-12)
+
+
+### Features
+
+* add --verbose flag for debugging remote requests ([#139](https://github.com/udondan/avanti/issues/139)) ([73f1634](https://github.com/udondan/avanti/commit/73f16345f4ec982ed44948f9de12c31d98329427))
+* add git+ssh:// URL support for sources and config loading ([#137](https://github.com/udondan/avanti/issues/137)) ([4843323](https://github.com/udondan/avanti/commit/4843323a74f9acad09b8f47119a4a129bc82f32e))
+
 ## [0.16.0](https://github.com/udondan/avanti/compare/v0.15.0...v0.16.0) (2026-05-11)
 
 
