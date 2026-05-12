@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { MockInstance } from 'vitest';
 import { fetchWithRetry, _testable } from '../src/fetch';
+import { setVerbose } from '../src/logger';
 
 function makeResponse(
   status: number,
@@ -154,5 +155,67 @@ describe('fetchWithRetry', () => {
     await fetchWithRetry('https://example.com/file', opts);
 
     expect(mockFetch).toHaveBeenCalledWith('https://example.com/file', opts);
+  });
+
+  describe('network error verbose logging', () => {
+    let stderrSpy: MockInstance;
+
+    beforeEach(() => {
+      stderrSpy = vi
+        .spyOn(process.stderr, 'write')
+        .mockImplementation(() => true);
+    });
+
+    afterEach(() => {
+      setVerbose(false);
+    });
+
+    it('logs error with cause when verbose is enabled', async () => {
+      setVerbose(true);
+      vi.spyOn(global, 'fetch').mockRejectedValue(
+        new TypeError('fetch failed', {
+          cause: new Error('connect ECONNREFUSED 10.0.0.1:443'),
+        }),
+      );
+
+      await expect(fetchWithRetry('https://example.com/file')).rejects.toThrow(
+        'fetch failed',
+      );
+
+      const output = stderrSpy.mock.calls.map((c) => String(c[0])).join('');
+      expect(output).toContain(
+        '-> network error: fetch failed: connect ECONNREFUSED 10.0.0.1:443',
+      );
+    });
+
+    it('logs error without cause when verbose is enabled', async () => {
+      setVerbose(true);
+      vi.spyOn(global, 'fetch').mockRejectedValue(
+        new TypeError('fetch failed'),
+      );
+
+      await expect(fetchWithRetry('https://example.com/file')).rejects.toThrow(
+        'fetch failed',
+      );
+
+      const output = stderrSpy.mock.calls.map((c) => String(c[0])).join('');
+      expect(output).toContain('[verbose]   -> network error: fetch failed\n');
+      expect(output).not.toContain('-> network error: fetch failed:');
+    });
+
+    it('does not log network error when verbose is disabled', async () => {
+      vi.spyOn(global, 'fetch').mockRejectedValue(
+        new TypeError('fetch failed', {
+          cause: new Error('connect ECONNREFUSED 10.0.0.1:443'),
+        }),
+      );
+
+      await expect(fetchWithRetry('https://example.com/file')).rejects.toThrow(
+        'fetch failed',
+      );
+
+      const output = stderrSpy.mock.calls.map((c) => String(c[0])).join('');
+      expect(output).not.toContain('network error');
+    });
   });
 });
