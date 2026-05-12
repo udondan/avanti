@@ -887,7 +887,16 @@ Public repositories on github.com and gitlab.com work without any configuration.
 | S3        | Standard AWS env vars (`AWS_ACCESS_KEY_ID`, `AWS_PROFILE`, etc.) | Delegates entirely to the `aws` CLI        |
 | Vault     | `VAULT_TOKEN` + `VAULT_ADDR` (and optionally `VAULT_NAMESPACE`)  | Used when the `vault` CLI is not installed |
 
-If a GitHub or GitLab request fails with a 401, 403, or 404 response and `gh` / `glab` is installed and authenticated, the tool falls back to the CLI automatically. This means existing CLI setups continue to work for private repos without any extra configuration.
+If a GitHub or GitLab request fails with a 401, 403, or 404 response, or with a network-level connectivity error, and `gh` / `glab` is installed and authenticated, the tool falls back to the CLI automatically. This means existing CLI setups continue to work for private repos without any extra configuration.
+
+Use the `via` field on a source to control which transport is tried and in what order:
+
+- `via: cli` — CLI only; the HTTP API is never called. Eliminates timeout waits on machines where the API is unreachable.
+- `via: api` — HTTP API only; no CLI fallback even on network errors.
+- `via: [cli, api]` — CLI first; falls back to the HTTP API if the CLI fails for any reason.
+- `via: [api, cli]` — equivalent to the default; HTTP API first, falls back to the CLI on connectivity failures and auth/access errors (401/403/404).
+
+HTTP server errors (5xx) do not trigger CLI fallback regardless of the `via` order, because the CLI hits the same API endpoint and encounters the same error. By the time a 5xx surfaces here, `fetchWithRetry` has already retried it with exponential backoff.
 
 **Vault** uses the `vault` CLI when it is installed (picks up `VAULT_TOKEN`, `~/.vault-token`, and any other auth methods configured in the CLI). If the CLI is not available, it falls back to the HTTP API using `VAULT_ADDR` and `VAULT_TOKEN`.
 
