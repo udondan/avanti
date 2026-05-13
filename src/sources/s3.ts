@@ -19,49 +19,60 @@ function parseS3Uri(uri: string): { bucket: string; key: string } {
 
 export async function fetchS3(uri: string): Promise<S3Result> {
   const client = new S3Client({});
-  const { bucket, key } = parseS3Uri(uri);
-  const isDir = uri.endsWith('/');
+  try {
+    const { bucket, key } = parseS3Uri(uri);
+    const isDir = uri.endsWith('/');
 
-  if (!isDir) {
-    if (isVerbose()) verbose(`s3 GetObject ${redactUrl(uri)}`);
-    const response = await client.send(
-      new GetObjectCommand({ Bucket: bucket, Key: key }),
-    );
-    if (!response.Body) throw new Error(`No body returned for ${uri}`);
-    const bytes = await response.Body.transformToByteArray();
-    const buf = Buffer.from(bytes);
-    const filename = path.basename(key) || 'download';
-    return { files: new Map([[filename, buf]]) };
-  }
-
-  if (isVerbose()) verbose(`s3 ListObjectsV2 ${redactUrl(uri)}`);
-  const files = new Map<string, Buffer>();
-  let continuationToken: string | undefined;
-
-  do {
-    const response = await client.send(
-      new ListObjectsV2Command({
-        Bucket: bucket,
-        Prefix: key,
-        ContinuationToken: continuationToken,
-      }),
-    );
-
-    for (const obj of response.Contents ?? []) {
-      if (!obj.Key || obj.Key.endsWith('/')) continue;
-      if (isVerbose()) verbose(`s3 GetObject s3://${bucket}/${obj.Key}`);
-      const get = await client.send(
-        new GetObjectCommand({ Bucket: bucket, Key: obj.Key }),
+    if (!isDir) {
+      if (isVerbose()) verbose(`s3 GetObject ${redactUrl(uri)}`);
+      const response = await client.send(
+        new GetObjectCommand({ Bucket: bucket, Key: key }),
       );
-      if (!get.Body) continue;
-      const bytes = await get.Body.transformToByteArray();
+      if (!response.Body) throw new Error(`No body returned for ${uri}`);
+      const bytes = await response.Body.transformToByteArray();
       const buf = Buffer.from(bytes);
-      const relKey = obj.Key.slice(key.length);
-      files.set(relKey, buf);
+      const filename = path.basename(key) || 'download';
+      return { files: new Map([[filename, buf]]) };
     }
 
-    continuationToken = response.NextContinuationToken;
-  } while (continuationToken);
+    if (isVerbose()) verbose(`s3 ListObjectsV2 ${redactUrl(uri)}`);
+    const files = new Map<string, Buffer>();
+    let continuationToken: string | undefined;
 
-  return { files };
+    do {
+      const response = await client.send(
+        new ListObjectsV2Command({
+          Bucket: bucket,
+          Prefix: key,
+          ContinuationToken: continuationToken,
+        }),
+      );
+
+      const objects = (response.Contents ?? []).filter(
+        (obj) => obj.Key && !obj.Key.endsWith('/'),
+      );
+
+      await Promise.all(
+        objects.map(async (obj) => {
+          const objKey = obj.Key!;
+          if (isVerbose())
+            verbose(`s3 GetObject ${redactUrl(`s3://${bucket}/${objKey}`)}`);
+          const get = await client.send(
+            new GetObjectCommand({ Bucket: bucket, Key: objKey }),
+          );
+          if (!get.Body)
+            throw new Error(`No body returned for s3://${bucket}/${objKey}`);
+          const bytes = await get.Body.transformToByteArray();
+          const relKey = objKey.slice(key.length);
+          files.set(relKey, Buffer.from(bytes));
+        }),
+      );
+
+      continuationToken = response.NextContinuationToken;
+    } while (continuationToken);
+
+    return { files };
+  } finally {
+    client.destroy();
+  }
 }
