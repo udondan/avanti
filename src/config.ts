@@ -436,6 +436,9 @@ function parseCondition(raw: unknown, loc: string): Condition {
   }
   const cond: Condition = {};
   if (obj['os'] !== undefined) {
+    if (Array.isArray(obj['os']) && obj['os'].length === 0) {
+      throw new Error(`${loc}.os: must not be an empty array`);
+    }
     const platforms = Array.isArray(obj['os']) ? obj['os'] : [obj['os']];
     for (const p of platforms) {
       if (!VALID_OS_PLATFORMS.includes(p as OsPlatform)) {
