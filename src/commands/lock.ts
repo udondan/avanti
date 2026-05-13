@@ -1,9 +1,11 @@
 import { Command } from 'commander';
 import * as path from 'path';
 import { isRemoteConfigSpec, loadConfig, resolveConfigPath } from '../config';
+import { evaluateConditions } from '../condition';
 import { fetchSource } from '../sources';
 import { writeUpdatedShas } from '../config-writeback';
 import { resolveVariableSpec } from '../variables-remote';
+import { resolveVars } from '../variables';
 
 export function lockCommand(): Command {
   return new Command('lock')
@@ -46,6 +48,12 @@ export function lockCommand(): Command {
       let remoteSourceCount = 0;
 
       for (const entry of Object.values(config.files)) {
+        const resolvedTarget = path.resolve(
+          workingDir,
+          resolveVars(entry.target, vars),
+        );
+        if (!evaluateConditions(entry['if'], entry.ifAny, resolvedTarget, vars))
+          continue;
         try {
           const result = await fetchSource(entry, workingDir, vars);
           remoteSourceCount += result.sourceRecords.length;
