@@ -77,18 +77,18 @@ async function runFetchLoop(
   for (const [key, entry] of Object.entries(config.files)) {
     const isSelf = key === SELF_KEY;
     if (hasSelf && !isSelf) continue;
-    if (
-      !isSelf &&
-      !evaluateConditions(
-        entry['if'],
-        entry.ifAny,
-        () => resolveTargetPath(entry, '', workingDir, vars),
-        workingDir,
-        vars,
-      )
-    )
-      continue;
     try {
+      if (
+        !isSelf &&
+        !evaluateConditions(
+          entry['if'],
+          entry.ifAny,
+          () => resolveTargetPath(entry, '', workingDir, vars),
+          workingDir,
+          vars,
+        )
+      )
+        continue;
       const result = await fetchSource(entry, workingDir, vars, cache);
 
       for (const rec of result.sourceRecords) {

@@ -48,17 +48,17 @@ export function lockCommand(): Command {
       let remoteSourceCount = 0;
 
       for (const entry of Object.values(config.files)) {
-        if (
-          !evaluateConditions(
-            entry['if'],
-            entry.ifAny,
-            () => resolveTargetPath(entry, '', workingDir, vars),
-            workingDir,
-            vars,
-          )
-        )
-          continue;
         try {
+          if (
+            !evaluateConditions(
+              entry['if'],
+              entry.ifAny,
+              () => resolveTargetPath(entry, '', workingDir, vars),
+              workingDir,
+              vars,
+            )
+          )
+            continue;
           const result = await fetchSource(entry, workingDir, vars);
           remoteSourceCount += result.sourceRecords.length;
           for (const rec of result.sourceRecords) {
