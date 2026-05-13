@@ -91,7 +91,9 @@ export function resetCommand(): Command {
           `Restored ${writeTargets.length} file(s), deleted ${deletions.length} file(s).`,
         );
       } catch (err: unknown) {
-        console.error(`Reset failed: ${(err as Error).message}`);
+        console.error(
+          `Reset failed: ${err instanceof Error ? err.message : String(err)}`,
+        );
         process.exit(2);
       }
     });

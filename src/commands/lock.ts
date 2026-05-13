@@ -30,7 +30,7 @@ export function lockCommand(): Command {
       try {
         config = await loadConfig(configPath);
       } catch (err: unknown) {
-        console.error((err as Error).message);
+        console.error(err instanceof Error ? err.message : String(err));
         process.exit(2);
       }
 
@@ -52,7 +52,7 @@ export function lockCommand(): Command {
           }
         } catch (err: unknown) {
           console.error(
-            `Error processing ${JSON.stringify(entry.src)}: ${(err as Error).message}`,
+            `Error processing ${JSON.stringify(entry.src)}: ${err instanceof Error ? err.message : String(err)}`,
           );
           hasError = true;
         }

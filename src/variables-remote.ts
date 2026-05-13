@@ -14,9 +14,8 @@ export async function resolveVariableSpec(
       try {
         resolved[name] = resolveVars(value, resolved);
       } catch (err) {
-        throw new Error(`variables.${name}: ${(err as Error).message}`, {
-          cause: err,
-        });
+        const msg = err instanceof Error ? err.message : String(err);
+        throw new Error(`variables.${name}: ${msg}`, { cause: err });
       }
     } else {
       const synthetic: FileEntry = {
@@ -30,10 +29,10 @@ export async function resolveVariableSpec(
       try {
         result = await fetchSource(synthetic, workingDir, resolved, cache);
       } catch (err) {
-        throw new Error(
-          `variables.${name}: failed to fetch source: ${(err as Error).message}`,
-          { cause: err },
-        );
+        const msg = err instanceof Error ? err.message : String(err);
+        throw new Error(`variables.${name}: failed to fetch source: ${msg}`, {
+          cause: err,
+        });
       }
       if (result.files.size === 0) {
         throw new Error(`variables.${name}: source resolved to no content`);

@@ -461,9 +461,12 @@ function parseSingleSrc(raw: unknown, loc: string): FileSrc {
       try {
         parseGitRemoteSpec(obj['url']);
       } catch (err) {
-        throw new Error(`${loc}.url: ${(err as Error).message}`, {
-          cause: err,
-        });
+        throw new Error(
+          `${loc}.url: ${err instanceof Error ? err.message : String(err)}`,
+          {
+            cause: err,
+          },
+        );
       }
     }
     const result: UrlSrc = { url: obj['url'] };
