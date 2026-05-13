@@ -92,7 +92,7 @@ avanti revert  # roll back instantly if something breaks
 
 - Fetch files from **HTTP/HTTPS**, **local paths**, **GitLab** (via `glab`), **GitHub** (via `gh`), **Bitbucket**, **any git remote**, **S3**, **AWS Secrets Manager**, **SSM Parameter Store**, **HashiCorp Vault**, **shell commands**, or **inline raw content**
 - **Multi-source entries** — combine multiple sources into a single file by providing `src` as a list
-- **JSON merging** — deep-merge multiple JSON/JSONC sources with configurable conflict, array, and object strategies
+- **JSON merging** — deep-merge multiple JSON/JSONC sources with configurable conflict, array, and object strategies; format output with configurable indentation, trailing commas, key sorting, minification, and comment stripping
 - **YAML merging** — deep-merge multiple YAML/YML sources with the same strategies, with full comment preservation
 - **TOML merging** — deep-merge multiple TOML sources with configurable conflict, array, and table strategies
 - **Variables** — define reusable values in a `variables:` block and reference them anywhere with `$name`; variables can be plain strings, `$env:NAME` environment variable references, or fetched from any remote/local source (the same source types as `files:`)
