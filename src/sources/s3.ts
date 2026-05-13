@@ -43,6 +43,7 @@ export async function fetchS3(uri: string): Promise<S3Result> {
     if (isVerbose()) verbose(`s3 ListObjectsV2 ${redactUrl(uri)}`);
     const files = new Map<string, Buffer>();
     let continuationToken: string | undefined;
+    let isTruncated = false;
 
     do {
       const response = await client.send(
@@ -73,8 +74,9 @@ export async function fetchS3(uri: string): Promise<S3Result> {
         }),
       );
 
+      isTruncated = response.IsTruncated ?? false;
       continuationToken = response.NextContinuationToken;
-    } while (continuationToken);
+    } while (isTruncated);
 
     return { files };
   } finally {

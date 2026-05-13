@@ -108,11 +108,13 @@ describe('fetchS3 — directory prefix', () => {
     mockSend
       .mockResolvedValueOnce({
         Contents: [{ Key: 'prefix/page1.txt' }],
+        IsTruncated: true,
         NextContinuationToken: 'token-abc',
       })
       .mockResolvedValueOnce({ Body: fakeBody('page1') })
       .mockResolvedValueOnce({
         Contents: [{ Key: 'prefix/page2.txt' }],
+        IsTruncated: false,
         NextContinuationToken: undefined,
       })
       .mockResolvedValueOnce({ Body: fakeBody('page2') });
