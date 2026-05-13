@@ -1,74 +1,88 @@
-import { spawnSync } from 'child_process';
-import * as fs from 'fs';
-import * as os from 'os';
+import {
+  GetObjectCommand,
+  ListObjectsV2Command,
+  S3Client,
+} from '@aws-sdk/client-s3';
 import * as path from 'path';
-import { isVerbose, verbose } from '../logger';
+import { verbose, isVerbose } from '../logger';
 import { redactUrl } from '../fetch';
 
 export interface S3Result {
   files: Map<string, Buffer>;
 }
 
-function awsRun(args: string[]): {
-  stdout: string;
-  stderr: string;
-  status: number | null;
-} {
-  const result = spawnSync('aws', args, { encoding: 'utf8' });
-  if (result.error) throw new Error(`aws CLI error: ${result.error.message}`);
-  return {
-    stdout: result.stdout ?? '',
-    stderr: result.stderr ?? '',
-    status: result.status,
-  };
+function parseS3Uri(
+  uri: string,
+  isDir: boolean,
+): { bucket: string; key: string } {
+  const match = uri.match(/^s3:\/\/([^/]+)\/?(.*)$/);
+  if (!match) throw new Error(`Invalid S3 URI: ${uri}`);
+  const key = match[2];
+  if (!isDir && !key) throw new Error(`S3 object key is required: ${uri}`);
+  return { bucket: match[1], key };
 }
 
-function collectFiles(
-  base: string,
-  dir: string,
-  files: Map<string, Buffer>,
-): void {
-  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-    const full = path.join(dir, entry.name);
-    if (entry.isDirectory()) {
-      collectFiles(base, full, files);
-    } else if (entry.isFile()) {
-      files.set(path.relative(base, full), fs.readFileSync(full));
-    }
-  }
-}
-
-export function fetchS3(uri: string): S3Result {
-  const isDir = uri.endsWith('/');
-
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'avanti-s3-'));
+export async function fetchS3(uri: string): Promise<S3Result> {
+  const client = new S3Client({});
   try {
+    const isDir = uri.endsWith('/');
+    const { bucket, key } = parseS3Uri(uri, isDir);
+
     if (!isDir) {
-      let filename: string;
-      try {
-        filename = path.basename(new URL(uri).pathname) || 'download';
-      } catch {
-        filename = path.basename(uri) || 'download';
-      }
-      // Download to a temp file to support binary content
-      const tmpFile = path.join(tmpDir, filename);
-      if (isVerbose()) verbose(`aws s3 cp ${redactUrl(uri)} <tmpfile>`);
-      const res = awsRun(['s3', 'cp', uri, tmpFile]);
-      if (res.status !== 0) {
-        throw new Error(`Failed to fetch ${uri}: ${res.stderr.trim()}`);
-      }
-      return { files: new Map([[filename, fs.readFileSync(tmpFile)]]) };
+      if (isVerbose()) verbose(`s3 GetObject ${redactUrl(uri)}`);
+      const response = await client.send(
+        new GetObjectCommand({ Bucket: bucket, Key: key }),
+      );
+      if (!response.Body) throw new Error(`No body returned for ${uri}`);
+      const bytes = await response.Body.transformToByteArray();
+      const buf = Buffer.from(bytes);
+      const filename = path.basename(key) || 'download';
+      return { files: new Map([[filename, buf]]) };
     }
 
-    if (isVerbose()) verbose(`aws s3 sync ${redactUrl(uri)} <tmpdir>`);
-    const res = awsRun(['s3', 'sync', uri, tmpDir]);
-    if (res.status !== 0) {
-      throw new Error(`Failed to sync ${uri}: ${res.stderr.trim()}`);
-    }
+    if (isVerbose()) verbose(`s3 ListObjectsV2 ${redactUrl(uri)}`);
     const files = new Map<string, Buffer>();
-    collectFiles(tmpDir, tmpDir, files);
+    let continuationToken: string | undefined;
+    let isTruncated = false;
+
+    do {
+      const response = await client.send(
+        new ListObjectsV2Command({
+          Bucket: bucket,
+          Prefix: key,
+          ContinuationToken: continuationToken,
+        }),
+      );
+
+      const objects = (response.Contents ?? []).filter(
+        (obj) => obj.Key && !obj.Key.endsWith('/'),
+      );
+
+      const BATCH = 50;
+      for (let i = 0; i < objects.length; i += BATCH) {
+        await Promise.all(
+          objects.slice(i, i + BATCH).map(async (obj) => {
+            const objKey = obj.Key!;
+            if (isVerbose())
+              verbose(`s3 GetObject ${redactUrl(`s3://${bucket}/${objKey}`)}`);
+            const get = await client.send(
+              new GetObjectCommand({ Bucket: bucket, Key: objKey }),
+            );
+            if (!get.Body)
+              throw new Error(`No body returned for s3://${bucket}/${objKey}`);
+            const bytes = await get.Body.transformToByteArray();
+            const relKey = objKey.slice(key.length).replace(/^\/+/, '');
+            files.set(relKey, Buffer.from(bytes));
+          }),
+        );
+      }
+
+      isTruncated = response.IsTruncated ?? false;
+      continuationToken = response.NextContinuationToken;
+    } while (isTruncated);
+
     return { files };
   } finally {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    client.destroy();
   }
 }

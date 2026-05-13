@@ -414,7 +414,7 @@ async function _fetchOneSrcRaw(
     );
     files = result.files;
   } else if ('s3' in src) {
-    const result = fetchS3(resolveVars(src.s3, vars));
+    const result = await fetchS3(resolveVars(src.s3, vars));
     files = result.files;
   } else if ('vault' in src) {
     const result = await fetchVault(
