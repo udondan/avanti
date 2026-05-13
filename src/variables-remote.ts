@@ -1,6 +1,6 @@
 import { FileEntry, Variables, VariableSpec } from './types';
 import { resolveVars } from './variables';
-import { fetchSource, FetchCache } from './sources';
+import { fetchSource, FetchCache, FetchResult } from './sources';
 import { isBinary } from './binary';
 
 export async function resolveVariableSpec(
@@ -8,7 +8,7 @@ export async function resolveVariableSpec(
   workingDir: string,
   cache?: FetchCache,
 ): Promise<Variables> {
-  const resolved: Variables = {};
+  const resolved: Variables = Object.create(null) as Variables;
   for (const [name, value] of Object.entries(spec)) {
     if (typeof value === 'string') {
       try {
@@ -26,7 +26,7 @@ export async function resolveVariableSpec(
         yaml: value.yaml,
         toml: value.toml,
       };
-      let result;
+      let result: FetchResult;
       try {
         result = await fetchSource(synthetic, workingDir, resolved, cache);
       } catch (err) {

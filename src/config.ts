@@ -292,12 +292,13 @@ export async function loadConfig(
 }
 
 function parseVariables(raw: unknown): VariableSpec {
-  if (raw === undefined || raw === null) return {};
+  if (raw === undefined || raw === null)
+    return Object.create(null) as VariableSpec;
   if (typeof raw !== 'object' || Array.isArray(raw)) {
     throw new Error('"variables" must be a map');
   }
   const obj = raw as Record<string, unknown>;
-  const spec: VariableSpec = {};
+  const spec: VariableSpec = Object.create(null) as VariableSpec;
   for (const [key, val] of Object.entries(obj)) {
     if (typeof val === 'string') {
       spec[key] = val;
