@@ -49,11 +49,19 @@ async function runFetchLoop(
   workingDir: string,
   cache?: FetchCache,
 ): Promise<FetchLoopResult> {
-  const vars = await resolveVariableSpec(
-    config.variables ?? {},
-    workingDir,
-    cache,
-  );
+  let vars;
+  try {
+    vars = await resolveVariableSpec(config.variables ?? {}, workingDir, cache);
+  } catch (err: unknown) {
+    console.error(err instanceof Error ? err.message : String(err));
+    return {
+      writeTargets: [],
+      allDiffs: [],
+      hasError: true,
+      shaErrors: [],
+      sourceRecordsByTarget: new Map(),
+    };
+  }
   const writeTargets: WriteTarget[] = [];
   const allDiffs: FileDiff[] = [];
   const shaErrors: ShaError[] = [];

@@ -34,10 +34,13 @@ export function lockCommand(): Command {
         process.exit(2);
       }
 
-      const vars = await resolveVariableSpec(
-        config.variables ?? {},
-        workingDir,
-      );
+      let vars;
+      try {
+        vars = await resolveVariableSpec(config.variables ?? {}, workingDir);
+      } catch (err: unknown) {
+        console.error(err instanceof Error ? err.message : String(err));
+        process.exit(2);
+      }
       const toPin = new Map<string, string>(); // label → sha
       let hasError = false;
       let remoteSourceCount = 0;

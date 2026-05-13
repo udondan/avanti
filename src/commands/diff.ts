@@ -35,11 +35,13 @@ async function runDiffLoop(
   workingDir: string,
   cache?: FetchCache,
 ): Promise<DiffLoopResult> {
-  const vars = await resolveVariableSpec(
-    config.variables ?? {},
-    workingDir,
-    cache,
-  );
+  let vars;
+  try {
+    vars = await resolveVariableSpec(config.variables ?? {}, workingDir, cache);
+  } catch (err: unknown) {
+    console.error(err instanceof Error ? err.message : String(err));
+    return { allDiffs: [], hasError: true };
+  }
   const allDiffs: FileDiff[] = [];
   let hasError = false;
   let selfContent: string | undefined;
