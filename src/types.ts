@@ -2,6 +2,16 @@ export type Variables = Record<string, string>;
 
 export type Via = 'api' | 'cli';
 
+export type OsPlatform = 'linux' | 'mac' | 'windows';
+
+export interface Condition {
+  os?: OsPlatform | OsPlatform[];
+  exists?: string;
+  exec?: string;
+  target_exists?: boolean;
+  not?: boolean;
+}
+
 export interface ReplaceRule {
   from: string;
   to: string;
@@ -16,6 +26,8 @@ export interface GitLabSrc {
     host?: string;
     via?: Via | Via[];
   };
+  if?: Condition | Condition[];
+  ifAny?: Condition[];
 }
 
 export interface GitHubSrc {
@@ -27,15 +39,21 @@ export interface GitHubSrc {
     host?: string;
     via?: Via | Via[];
   };
+  if?: Condition | Condition[];
+  ifAny?: Condition[];
 }
 
 export interface ExecSrc {
   exec: string;
   sha?: string;
+  if?: Condition | Condition[];
+  ifAny?: Condition[];
 }
 
 export interface RawSrc {
   raw: string;
+  if?: Condition | Condition[];
+  ifAny?: Condition[];
 }
 
 export interface BitbucketSrc {
@@ -47,6 +65,8 @@ export interface BitbucketSrc {
     sha?: string;
     host?: string;
   };
+  if?: Condition | Condition[];
+  ifAny?: Condition[];
 }
 
 export interface GitSrc {
@@ -56,11 +76,15 @@ export interface GitSrc {
     ref?: string;
     sha?: string;
   };
+  if?: Condition | Condition[];
+  ifAny?: Condition[];
 }
 
 export interface AwsS3Src {
   aws_s3: string;
   sha?: string;
+  if?: Condition | Condition[];
+  ifAny?: Condition[];
 }
 
 export interface AwsSecretsManagerSrc {
@@ -70,6 +94,8 @@ export interface AwsSecretsManagerSrc {
     region?: string;
     sha?: string;
   };
+  if?: Condition | Condition[];
+  ifAny?: Condition[];
 }
 
 export interface AwsSsmSrc {
@@ -78,6 +104,8 @@ export interface AwsSsmSrc {
     region?: string;
     sha?: string;
   };
+  if?: Condition | Condition[];
+  ifAny?: Condition[];
 }
 
 export interface VaultSrc {
@@ -86,12 +114,16 @@ export interface VaultSrc {
     field?: string;
     sha?: string;
   };
+  if?: Condition | Condition[];
+  ifAny?: Condition[];
 }
 
 /** An explicit http/https URL with optional SHA pinning */
 export interface HttpSrc {
   http: string;
   sha?: string;
+  if?: Condition | Condition[];
+  ifAny?: Condition[];
 }
 
 /** An explicit local filesystem path; optional: true silently skips if the path does not exist */
@@ -99,6 +131,8 @@ export interface LocalSrc {
   path: string;
   optional?: boolean;
   sha?: string;
+  if?: Condition | Condition[];
+  ifAny?: Condition[];
 }
 
 /** An explicit http/https URL; optional: true silently skips on 404 */
@@ -106,6 +140,8 @@ export interface UrlSrc {
   url: string;
   optional?: boolean;
   sha?: string;
+  if?: Condition | Condition[];
+  ifAny?: Condition[];
 }
 
 /** src can be a plain string (http/https URL or local path) or a typed source map */
@@ -163,6 +199,8 @@ export interface TomlMergeOptions {
 export interface FileEntry {
   src: FileSrc | FileSrc[];
   target: string;
+  if?: Condition | Condition[];
+  ifAny?: Condition[];
   mode?: string;
   replace?: ReplaceRule[];
   post?: string;

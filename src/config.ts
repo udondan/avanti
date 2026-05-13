@@ -3,10 +3,14 @@ import * as path from 'path';
 import * as yaml from 'js-yaml';
 import {
   AvantiConfig,
+  AwsS3Src,
+  Condition,
+  ExecSrc,
   FileEntry,
   FileSrc,
   HttpSrc,
   LocalSrc,
+  OsPlatform,
   UrlSrc,
   JsonArrayStrategy,
   JsonConflictStrategy,
@@ -233,6 +237,10 @@ export function parseConfigContent(content: string): AvantiConfig {
 
     const fileEntry: FileEntry = { src, target };
 
+    const fileConds = parseConditionField(e, `files["${target}"]`);
+    if (fileConds['if'] !== undefined) fileEntry['if'] = fileConds['if'];
+    if (fileConds.ifAny !== undefined) fileEntry.ifAny = fileConds.ifAny;
+
     if (typeof e['mode'] === 'string') fileEntry.mode = e['mode'];
     if (typeof e['post'] === 'string') fileEntry.post = e['post'];
 
@@ -413,6 +421,85 @@ export function parseVia(value: unknown, loc: string): Via | Via[] | undefined {
   throw new Error(`${loc}.via: must be a string or array`);
 }
 
+const VALID_OS_PLATFORMS: OsPlatform[] = ['linux', 'mac', 'windows'];
+
+function parseCondition(raw: unknown, loc: string): Condition {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new Error(`${loc}: must be an object`);
+  }
+  const obj = raw as Record<string, unknown>;
+  const known = new Set(['os', 'exists', 'exec', 'target_exists', 'not']);
+  for (const key of Object.keys(obj)) {
+    if (!known.has(key)) {
+      throw new Error(`${loc}: unknown key "${key}"`);
+    }
+  }
+  const cond: Condition = {};
+  if (obj['os'] !== undefined) {
+    const platforms = Array.isArray(obj['os']) ? obj['os'] : [obj['os']];
+    for (const p of platforms) {
+      if (!VALID_OS_PLATFORMS.includes(p as OsPlatform)) {
+        throw new Error(
+          `${loc}.os: must be one of ${VALID_OS_PLATFORMS.join(', ')}, got "${p}"`,
+        );
+      }
+    }
+    cond.os = Array.isArray(obj['os'])
+      ? (obj['os'] as OsPlatform[])
+      : (obj['os'] as OsPlatform);
+  }
+  if (obj['exists'] !== undefined) {
+    if (typeof obj['exists'] !== 'string' || !obj['exists']) {
+      throw new Error(`${loc}.exists: must be a non-empty string`);
+    }
+    cond.exists = obj['exists'];
+  }
+  if (obj['exec'] !== undefined) {
+    if (typeof obj['exec'] !== 'string' || !obj['exec']) {
+      throw new Error(`${loc}.exec: must be a non-empty string`);
+    }
+    cond.exec = obj['exec'];
+  }
+  if (obj['target_exists'] !== undefined) {
+    if (typeof obj['target_exists'] !== 'boolean') {
+      throw new Error(`${loc}.target_exists: must be a boolean`);
+    }
+    cond.target_exists = obj['target_exists'];
+  }
+  if (obj['not'] !== undefined) {
+    if (typeof obj['not'] !== 'boolean') {
+      throw new Error(`${loc}.not: must be a boolean`);
+    }
+    cond.not = obj['not'];
+  }
+  return cond;
+}
+
+function parseConditionField(
+  obj: Record<string, unknown>,
+  loc: string,
+): { if?: Condition | Condition[]; ifAny?: Condition[] } {
+  const result: { if?: Condition | Condition[]; ifAny?: Condition[] } = {};
+  if (obj['if'] !== undefined) {
+    if (Array.isArray(obj['if'])) {
+      result['if'] = (obj['if'] as unknown[]).map((c, i) =>
+        parseCondition(c, `${loc}.if[${i}]`),
+      );
+    } else {
+      result['if'] = parseCondition(obj['if'], `${loc}.if`);
+    }
+  }
+  if (obj['ifAny'] !== undefined) {
+    if (!Array.isArray(obj['ifAny'])) {
+      throw new Error(`${loc}.ifAny: must be an array`);
+    }
+    result.ifAny = (obj['ifAny'] as unknown[]).map((c, i) =>
+      parseCondition(c, `${loc}.ifAny[${i}]`),
+    );
+  }
+  return result;
+}
+
 function parseSingleSrc(raw: unknown, loc: string): FileSrc {
   // Plain string → http/https URL or local path
   if (typeof raw === 'string') {
@@ -440,6 +527,9 @@ function parseSingleSrc(raw: unknown, loc: string): FileSrc {
     }
     const pathSha = parseSha(obj['sha'], loc);
     if (pathSha !== undefined) result.sha = pathSha;
+    const pathConds = parseConditionField(obj, loc);
+    if (pathConds['if'] !== undefined) result['if'] = pathConds['if'];
+    if (pathConds.ifAny !== undefined) result.ifAny = pathConds.ifAny;
     return result;
   }
 
@@ -478,6 +568,9 @@ function parseSingleSrc(raw: unknown, loc: string): FileSrc {
     }
     const urlSha = parseSha(obj['sha'], loc);
     if (urlSha !== undefined) result.sha = urlSha;
+    const urlConds = parseConditionField(obj, loc);
+    if (urlConds['if'] !== undefined) result['if'] = urlConds['if'];
+    if (urlConds.ifAny !== undefined) result.ifAny = urlConds.ifAny;
     return result;
   }
 
@@ -499,6 +592,9 @@ function parseSingleSrc(raw: unknown, loc: string): FileSrc {
     const result: HttpSrc = { http: obj['http'] };
     const httpSha = parseSha(obj['sha'], loc);
     if (httpSha !== undefined) result.sha = httpSha;
+    const httpConds = parseConditionField(obj, loc);
+    if (httpConds['if'] !== undefined) result['if'] = httpConds['if'];
+    if (httpConds.ifAny !== undefined) result.ifAny = httpConds.ifAny;
     return result;
   }
 
@@ -506,9 +602,12 @@ function parseSingleSrc(raw: unknown, loc: string): FileSrc {
     if (typeof obj['exec'] !== 'string' || !obj['exec']) {
       throw new Error(`${loc}.exec: must be a non-empty string`);
     }
-    const result = { exec: obj['exec'] } as { exec: string; sha?: string };
+    const result = { exec: obj['exec'] } as ExecSrc;
     const execSha = parseSha(obj['sha'], loc);
     if (execSha !== undefined) result.sha = execSha;
+    const execConds = parseConditionField(obj, loc);
+    if (execConds['if'] !== undefined) result['if'] = execConds['if'];
+    if (execConds.ifAny !== undefined) result.ifAny = execConds.ifAny;
     return result;
   }
 
@@ -530,6 +629,7 @@ function parseSingleSrc(raw: unknown, loc: string): FileSrc {
     ) {
       throw new Error(`${loc}.gitlab.host: must be a non-empty string`);
     }
+    const gitlabConds = parseConditionField(obj, loc);
     return {
       gitlab: {
         project: g['project'],
@@ -539,6 +639,7 @@ function parseSingleSrc(raw: unknown, loc: string): FileSrc {
         host: typeof g['host'] === 'string' ? g['host'] : undefined,
         via: parseVia(g['via'], `${loc}.gitlab`),
       },
+      ...gitlabConds,
     };
   }
 
@@ -546,7 +647,8 @@ function parseSingleSrc(raw: unknown, loc: string): FileSrc {
     if (typeof obj['raw'] !== 'string') {
       throw new Error(`${loc}.raw: must be a string`);
     }
-    return { raw: obj['raw'] };
+    const rawConds = parseConditionField(obj, loc);
+    return { raw: obj['raw'], ...rawConds };
   }
 
   if ('github' in obj) {
@@ -567,6 +669,7 @@ function parseSingleSrc(raw: unknown, loc: string): FileSrc {
     ) {
       throw new Error(`${loc}.github.host: must be a non-empty string`);
     }
+    const githubConds = parseConditionField(obj, loc);
     return {
       github: {
         repo: g['repo'],
@@ -576,6 +679,7 @@ function parseSingleSrc(raw: unknown, loc: string): FileSrc {
         host: typeof g['host'] === 'string' ? g['host'] : undefined,
         via: parseVia(g['via'], `${loc}.github`),
       },
+      ...githubConds,
     };
   }
 
@@ -600,6 +704,7 @@ function parseSingleSrc(raw: unknown, loc: string): FileSrc {
     ) {
       throw new Error(`${loc}.bitbucket.host: must be a non-empty string`);
     }
+    const bitbucketConds = parseConditionField(obj, loc);
     return {
       bitbucket: {
         workspace: b['workspace'],
@@ -609,6 +714,7 @@ function parseSingleSrc(raw: unknown, loc: string): FileSrc {
         sha: parseSha(b['sha'], `${loc}.bitbucket`),
         host: typeof b['host'] === 'string' ? b['host'] : undefined,
       },
+      ...bitbucketConds,
     };
   }
 
@@ -624,6 +730,7 @@ function parseSingleSrc(raw: unknown, loc: string): FileSrc {
     if (typeof gt['file'] !== 'string' || !gt['file']) {
       throw new Error(`${loc}.git.file: required string`);
     }
+    const gitConds = parseConditionField(obj, loc);
     return {
       git: {
         repo: gt['repo'],
@@ -631,6 +738,7 @@ function parseSingleSrc(raw: unknown, loc: string): FileSrc {
         ref: typeof gt['ref'] === 'string' ? gt['ref'] : undefined,
         sha: parseSha(gt['sha'], `${loc}.git`),
       },
+      ...gitConds,
     };
   }
 
@@ -638,12 +746,12 @@ function parseSingleSrc(raw: unknown, loc: string): FileSrc {
     if (typeof obj['aws_s3'] !== 'string' || !obj['aws_s3']) {
       throw new Error(`${loc}.aws_s3: must be a non-empty string (s3:// URI)`);
     }
-    const result = { aws_s3: obj['aws_s3'] } as {
-      aws_s3: string;
-      sha?: string;
-    };
+    const result = { aws_s3: obj['aws_s3'] } as AwsS3Src;
     const s3Sha = parseSha(obj['sha'], loc);
     if (s3Sha !== undefined) result.sha = s3Sha;
+    const s3Conds = parseConditionField(obj, loc);
+    if (s3Conds['if'] !== undefined) result['if'] = s3Conds['if'];
+    if (s3Conds.ifAny !== undefined) result.ifAny = s3Conds.ifAny;
     return result;
   }
 
@@ -656,12 +764,14 @@ function parseSingleSrc(raw: unknown, loc: string): FileSrc {
     if (typeof vt['path'] !== 'string' || !vt['path']) {
       throw new Error(`${loc}.vault.path: required string`);
     }
+    const vaultConds = parseConditionField(obj, loc);
     return {
       vault: {
         path: vt['path'],
         field: typeof vt['field'] === 'string' ? vt['field'] : undefined,
         sha: parseSha(vt['sha'], `${loc}.vault`),
       },
+      ...vaultConds,
     };
   }
 
@@ -674,6 +784,7 @@ function parseSingleSrc(raw: unknown, loc: string): FileSrc {
     if (typeof smt['name'] !== 'string' || !smt['name']) {
       throw new Error(`${loc}.aws_secrets_manager.name: required string`);
     }
+    const smConds = parseConditionField(obj, loc);
     return {
       aws_secrets_manager: {
         name: smt['name'],
@@ -685,6 +796,7 @@ function parseSingleSrc(raw: unknown, loc: string): FileSrc {
             : undefined,
         sha: parseSha(smt['sha'], `${loc}.aws_secrets_manager`),
       },
+      ...smConds,
     };
   }
 
@@ -701,6 +813,7 @@ function parseSingleSrc(raw: unknown, loc: string): FileSrc {
         `${loc}.aws_systems_manager_parameter.name: required string`,
       );
     }
+    const ssmConds = parseConditionField(obj, loc);
     return {
       aws_systems_manager_parameter: {
         name: ssmt['name'],
@@ -710,6 +823,7 @@ function parseSingleSrc(raw: unknown, loc: string): FileSrc {
             : undefined,
         sha: parseSha(ssmt['sha'], `${loc}.aws_systems_manager_parameter`),
       },
+      ...ssmConds,
     };
   }
 

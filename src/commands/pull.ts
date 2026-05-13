@@ -9,6 +9,7 @@ import {
   resolveConfigPath,
   SELF_KEY,
 } from '../config';
+import { evaluateConditions } from '../condition';
 import { fetchSource, FetchCache, SourceFetchRecord } from '../sources';
 import { applyReplace } from '../processors/replace';
 import { applyPost } from '../processors/post';
@@ -26,6 +27,7 @@ import { HistoryManager, PullLogFileRef, SourceShaRecord } from '../history';
 import { confirm } from '../prompt';
 import { applyUpdatedShas, writeUpdatedShas } from '../config-writeback';
 import { resolveVariableSpec } from '../variables-remote';
+import { resolveVars } from '../variables';
 
 interface ShaError {
   sourceLabel: string;
@@ -76,6 +78,16 @@ async function runFetchLoop(
   for (const [key, entry] of Object.entries(config.files)) {
     const isSelf = key === SELF_KEY;
     if (hasSelf && !isSelf) continue;
+    if (
+      !isSelf &&
+      !evaluateConditions(
+        entry['if'],
+        entry.ifAny,
+        path.resolve(workingDir, resolveVars(entry.target, vars)),
+        vars,
+      )
+    )
+      continue;
     try {
       const result = await fetchSource(entry, workingDir, vars, cache);
 

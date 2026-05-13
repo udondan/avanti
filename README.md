@@ -28,6 +28,7 @@ atomic rollbacks, and diff-before-apply safety.
   - [Directory Sources](#directory-sources)
   - [JSON Merging](#json-merging)
   - [YAML Merging](#yaml-merging)
+  - [Conditions](#conditions)
   - [Variables](#variables)
   - [$self — Self-managing Config](#self--self-managing-config)
   - [Authentication](#authentication)
@@ -380,6 +381,8 @@ End the target path with `/` to write a directory source as a mirror; omit the t
 | Field     | Required | Description                                                                                                                                                                                                                             |
 | --------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `src`     | Yes      | Source (see below). May be a single source or a **list** of sources to concatenate.                                                                                                                                                     |
+| `if`      | No       | Condition object (or list of objects). All must pass for the entry to be processed. See [Conditions](#conditions).                                                                                                                      |
+| `ifAny`   | No       | List of condition objects. At least one must pass. See [Conditions](#conditions).                                                                                                                                                       |
 | `mode`    | No       | File permission mode, e.g. `"0755"`                                                                                                                                                                                                     |
 | `replace` | No       | List of `{from, to}` replacement rules. `from` may be a plain string or `/pattern/flags` regex.                                                                                                                                         |
 | `post`    | No       | Shell script. Content is piped via stdin; stdout is used as the result. Runs after `replace`.                                                                                                                                           |
@@ -786,6 +789,88 @@ automatically:
 files:
   config.toml:
     src: ./config.toml
+```
+
+### Conditions
+
+Use `if` and `ifAny` on a file entry or on an individual source to control when it is processed.
+
+**`if`** — a condition object (or list of objects) where **all** checks must pass (AND).
+
+**`ifAny`** — a list of condition objects where **at least one** must pass (OR).
+
+When both are present, both must pass. Each condition object may also include `not: true` to invert its result.
+
+#### Condition fields
+
+| Field           | Type           | Description                                                                  |
+| --------------- | -------------- | ---------------------------------------------------------------------------- |
+| `os`            | string or list | Platform must match. Values: `linux`, `mac`, `windows`. List = any matches.  |
+| `exists`        | string         | Path (file or directory) must exist. Variables are resolved.                 |
+| `exec`          | string         | Shell command must exit with code `0`.                                       |
+| `target_exists` | boolean        | `true` — skip entry if the target file does not already exist (update-only). |
+| `not`           | boolean        | `true` — invert the result of all checks in this condition object.           |
+
+#### Examples
+
+```yaml
+files:
+  # Only on Linux
+  /etc/app.conf:
+    if:
+      os: linux
+    src: ...
+
+  # Skip on Windows
+  ~/.config/app.conf:
+    if:
+      os: windows
+      not: true
+    src: ...
+
+  # Only if Docker is installed
+  ~/.docker/config.json:
+    if:
+      exec: which docker
+    src: ...
+
+  # Only update — never create
+  ~/.ssh/config:
+    if:
+      target_exists: true
+    src: ...
+
+  # OR: write if on mac OR if app is installed
+  app.conf:
+    ifAny:
+      - os: mac
+      - exec: which app
+    src: ...
+
+  # Combined AND + OR
+  combined.conf:
+    if:
+      os: windows
+      not: true
+    ifAny:
+      - exists: /opt/app
+      - exec: which app
+    src: ...
+```
+
+Conditions also apply at the **source level** within a multi-source entry (plain string sources excluded — use `path:` or `url:` wrapper form):
+
+```yaml
+files:
+  platform.conf:
+    src:
+      - raw: "# linux config\n"
+        if:
+          os: linux
+      - raw: "# mac config\n"
+        if:
+          os: mac
+      - path: /common/base.conf
 ```
 
 ### Variables
