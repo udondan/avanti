@@ -58,9 +58,26 @@ export interface GitSrc {
   };
 }
 
-export interface S3Src {
-  s3: string;
+export interface AwsS3Src {
+  aws_s3: string;
   sha?: string;
+}
+
+export interface AwsSecretsManagerSrc {
+  aws_secrets_manager: {
+    name: string;
+    key?: string;
+    region?: string;
+    sha?: string;
+  };
+}
+
+export interface AwsSsmSrc {
+  aws_systems_manager_parameter: {
+    name: string;
+    region?: string;
+    sha?: string;
+  };
 }
 
 export interface VaultSrc {
@@ -100,7 +117,9 @@ export type FileSrc =
   | GitSrc
   | ExecSrc
   | RawSrc
-  | S3Src
+  | AwsS3Src
+  | AwsSecretsManagerSrc
+  | AwsSsmSrc
   | VaultSrc
   | HttpSrc
   | LocalSrc

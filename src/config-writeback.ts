@@ -112,10 +112,10 @@ export function applyUpdatedShas(
           label = `exec:${cmd}`;
           shaPath = [...srcBase, 'sha'];
         }
-      } else if (n.get('s3') !== undefined) {
-        const s3 = n.get('s3') as string | null;
+      } else if (n.get('aws_s3') !== undefined) {
+        const s3 = n.get('aws_s3') as string | null;
         if (s3) {
-          label = `s3:${s3}`;
+          label = `aws_s3:${s3}`;
           shaPath = [...srcBase, 'sha'];
         }
       } else if (n.get('vault')) {

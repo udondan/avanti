@@ -604,27 +604,27 @@ files:
     await expect(loadConfig(f)).rejects.toThrow('git.file');
   });
 
-  it('loads an s3 src', async () => {
+  it('loads an aws_s3 src', async () => {
     const f = writeTmp(`
 files:
   config.yml:
     src:
-      s3: s3://my-bucket/path/to/config.yml
+      aws_s3: s3://my-bucket/path/to/config.yml
 `);
     const cfg = await loadConfig(f);
-    const src = cfg.files['config.yml'].src as { s3: string };
-    expect(src.s3).toBe('s3://my-bucket/path/to/config.yml');
+    const src = cfg.files['config.yml'].src as { aws_s3: string };
+    expect(src.aws_s3).toBe('s3://my-bucket/path/to/config.yml');
   });
 
-  it('throws if s3 src is not a string', async () => {
+  it('throws if aws_s3 src is not a string', async () => {
     const f = writeTmp(`
 files:
   config.yml:
     src:
-      s3:
+      aws_s3:
         bucket: my-bucket
 `);
-    await expect(loadConfig(f)).rejects.toThrow('s3:');
+    await expect(loadConfig(f)).rejects.toThrow('aws_s3:');
   });
 
   it('loads a vault src map', async () => {

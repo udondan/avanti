@@ -19,6 +19,8 @@ import { fetchGitHub } from './github';
 import { fetchBitbucket } from './bitbucket';
 import { fetchGit, isGitRemoteUrl, parseGitRemoteSpec } from './git';
 import { fetchS3 } from './s3';
+import { fetchSecretsManager } from './secrets-manager';
+import { fetchSsm } from './ssm';
 import { fetchVault } from './vault';
 import { mergeJson, formatJson } from '../processors/json';
 import { mergeYaml, formatYaml } from '../processors/yaml';
@@ -51,7 +53,7 @@ function srcFilename(src: FileSrc): string | null {
   if ('github' in src) return src.github.file;
   if ('bitbucket' in src) return src.bitbucket.file;
   if ('git' in src) return src.git.file;
-  if ('s3' in src) return src.s3;
+  if ('aws_s3' in src) return src.aws_s3;
   if ('http' in src) {
     try {
       return new URL(src.http).pathname;
@@ -175,7 +177,15 @@ function labelForSrc(src: FileSrc, vars: Variables): string {
     return `git:${src.git.repo}:${src.git.file}${ref}`;
   }
   if ('exec' in src) return `exec:${src.exec}`;
-  if ('s3' in src) return `s3:${src.s3}`;
+  if ('aws_s3' in src) return `aws_s3:${src.aws_s3}`;
+  if ('aws_secrets_manager' in src) {
+    const k = src.aws_secrets_manager.key
+      ? `#${src.aws_secrets_manager.key}`
+      : '';
+    return `aws_secrets_manager:${src.aws_secrets_manager.name}${k}`;
+  }
+  if ('aws_systems_manager_parameter' in src)
+    return `aws_systems_manager_parameter:${src.aws_systems_manager_parameter.name}`;
   if ('vault' in src) {
     const field = src.vault.field ? `#${src.vault.field}` : '';
     return `vault:${src.vault.path}${field}`;
@@ -231,7 +241,15 @@ function cacheKeyForSrc(src: FileSrc, vars: Variables): string {
     return `git:${resolveVars(src.git.repo, vars)}:${resolveVars(src.git.file, vars)}${ref}`;
   }
   if ('exec' in src) return `exec:${resolveVars(src.exec, vars)}`;
-  if ('s3' in src) return `s3:${resolveVars(src.s3, vars)}`;
+  if ('aws_s3' in src) return `aws_s3:${resolveVars(src.aws_s3, vars)}`;
+  if ('aws_secrets_manager' in src) {
+    const k = src.aws_secrets_manager.key
+      ? `#${resolveVars(src.aws_secrets_manager.key, vars)}`
+      : '';
+    return `aws_secrets_manager:${resolveVars(src.aws_secrets_manager.name, vars)}${k}`;
+  }
+  if ('aws_systems_manager_parameter' in src)
+    return `aws_systems_manager_parameter:${resolveVars(src.aws_systems_manager_parameter.name, vars)}`;
   if ('vault' in src) {
     const field = src.vault.field
       ? `#${resolveVars(src.vault.field, vars)}`
@@ -253,7 +271,10 @@ function expectedShaForSrc(src: FileSrc): string | undefined {
   if ('bitbucket' in src) return src.bitbucket.sha;
   if ('git' in src) return src.git.sha;
   if ('exec' in src) return src.sha;
-  if ('s3' in src) return src.sha;
+  if ('aws_s3' in src) return src.sha;
+  if ('aws_secrets_manager' in src) return src.aws_secrets_manager.sha;
+  if ('aws_systems_manager_parameter' in src)
+    return src.aws_systems_manager_parameter.sha;
   if ('vault' in src) return src.vault.sha;
   if ('http' in src) return src.sha;
   if ('path' in src) return src.sha;
@@ -413,8 +434,27 @@ async function _fetchOneSrcRaw(
       src.git.ref !== undefined ? resolveVars(src.git.ref, vars) : undefined,
     );
     files = result.files;
-  } else if ('s3' in src) {
-    const result = await fetchS3(resolveVars(src.s3, vars));
+  } else if ('aws_s3' in src) {
+    const result = await fetchS3(resolveVars(src.aws_s3, vars));
+    files = result.files;
+  } else if ('aws_secrets_manager' in src) {
+    const result = await fetchSecretsManager(
+      resolveVars(src.aws_secrets_manager.name, vars),
+      src.aws_secrets_manager.key !== undefined
+        ? resolveVars(src.aws_secrets_manager.key, vars)
+        : undefined,
+      src.aws_secrets_manager.region !== undefined
+        ? resolveVars(src.aws_secrets_manager.region, vars)
+        : undefined,
+    );
+    files = result.files;
+  } else if ('aws_systems_manager_parameter' in src) {
+    const result = await fetchSsm(
+      resolveVars(src.aws_systems_manager_parameter.name, vars),
+      src.aws_systems_manager_parameter.region !== undefined
+        ? resolveVars(src.aws_systems_manager_parameter.region, vars)
+        : undefined,
+    );
     files = result.files;
   } else if ('vault' in src) {
     const result = await fetchVault(

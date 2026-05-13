@@ -370,7 +370,7 @@ function parseSingleSrc(
 
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
     throw new Error(
-      `${loc}: must be a string or a map with one of: exec, gitlab, github, bitbucket, git, s3, vault, http, raw`,
+      `${loc}: must be a string or a map with one of: exec, gitlab, github, bitbucket, git, aws_s3, vault, http, raw, aws_secrets_manager, aws_systems_manager_parameter`,
     );
   }
 
@@ -580,11 +580,14 @@ function parseSingleSrc(
     };
   }
 
-  if ('s3' in obj) {
-    if (typeof obj['s3'] !== 'string' || !obj['s3']) {
-      throw new Error(`${loc}.s3: must be a non-empty string (s3:// URI)`);
+  if ('aws_s3' in obj) {
+    if (typeof obj['aws_s3'] !== 'string' || !obj['aws_s3']) {
+      throw new Error(`${loc}.aws_s3: must be a non-empty string (s3:// URI)`);
     }
-    const result = { s3: obj['s3'] } as { s3: string; sha?: string };
+    const result = { aws_s3: obj['aws_s3'] } as {
+      aws_s3: string;
+      sha?: string;
+    };
     const s3Sha = parseSha(obj['sha'], loc);
     if (s3Sha !== undefined) result.sha = s3Sha;
     return result;
@@ -608,8 +611,49 @@ function parseSingleSrc(
     };
   }
 
+  if ('aws_secrets_manager' in obj) {
+    const sm = obj['aws_secrets_manager'];
+    if (!sm || typeof sm !== 'object' || Array.isArray(sm)) {
+      throw new Error(`${loc}.aws_secrets_manager: must be an object`);
+    }
+    const smt = sm as Record<string, unknown>;
+    if (typeof smt['name'] !== 'string' || !smt['name']) {
+      throw new Error(`${loc}.aws_secrets_manager.name: required string`);
+    }
+    return {
+      aws_secrets_manager: {
+        name: smt['name'],
+        key: typeof smt['key'] === 'string' ? smt['key'] : undefined,
+        region: typeof smt['region'] === 'string' ? smt['region'] : undefined,
+        sha: parseSha(smt['sha'], `${loc}.aws_secrets_manager`),
+      },
+    };
+  }
+
+  if ('aws_systems_manager_parameter' in obj) {
+    const ssm = obj['aws_systems_manager_parameter'];
+    if (!ssm || typeof ssm !== 'object' || Array.isArray(ssm)) {
+      throw new Error(
+        `${loc}.aws_systems_manager_parameter: must be an object`,
+      );
+    }
+    const ssmt = ssm as Record<string, unknown>;
+    if (typeof ssmt['name'] !== 'string' || !ssmt['name']) {
+      throw new Error(
+        `${loc}.aws_systems_manager_parameter.name: required string`,
+      );
+    }
+    return {
+      aws_systems_manager_parameter: {
+        name: ssmt['name'],
+        region: typeof ssmt['region'] === 'string' ? ssmt['region'] : undefined,
+        sha: parseSha(ssmt['sha'], `${loc}.aws_systems_manager_parameter`),
+      },
+    };
+  }
+
   throw new Error(
-    `${loc}: unknown source type. Must be a string or map with exec/gitlab/github/bitbucket/git/s3/vault/http/url/path/raw`,
+    `${loc}: unknown source type. Must be a string or map with exec/gitlab/github/bitbucket/git/aws_s3/vault/http/url/path/raw/aws_secrets_manager/aws_systems_manager_parameter`,
   );
 }
 
