@@ -470,10 +470,10 @@ function parseCondition(raw: unknown, loc: string): Condition {
     cond.exec = obj['exec'];
   }
   if (obj['target_exists'] !== undefined) {
-    if (typeof obj['target_exists'] !== 'boolean') {
-      throw new Error(`${loc}.target_exists: must be a boolean`);
+    if (obj['target_exists'] !== true) {
+      throw new Error(`${loc}.target_exists: must be true`);
     }
-    cond.target_exists = obj['target_exists'];
+    cond.target_exists = true;
   }
   if (obj['not'] !== undefined) {
     if (typeof obj['not'] !== 'boolean') {
