@@ -23,7 +23,7 @@ import { FileDiff } from '../diff';
 import { AvantiConfig } from '../types';
 import { HistoryManager } from '../history';
 import { resolveVariableSpec } from '../variables-remote';
-import { evaluateConditions } from '../condition';
+import { evaluateConditions, conditionsNeedTargetPath } from '../condition';
 import { resolveVars } from '../variables';
 
 interface DiffLoopResult {
@@ -52,16 +52,13 @@ async function runDiffLoop(
   for (const [key, entry] of Object.entries(config.files)) {
     const isSelf = key === SELF_KEY;
     if (hasSelf && !isSelf) continue;
-    if (
-      !isSelf &&
-      !evaluateConditions(
-        entry['if'],
-        entry.ifAny,
-        path.resolve(workingDir, resolveVars(entry.target, vars)),
-        vars,
-      )
-    )
-      continue;
+    if (!isSelf) {
+      const resolvedTarget = conditionsNeedTargetPath(entry['if'], entry.ifAny)
+        ? path.resolve(workingDir, resolveVars(entry.target, vars))
+        : '';
+      if (!evaluateConditions(entry['if'], entry.ifAny, resolvedTarget, vars))
+        continue;
+    }
     try {
       const result = await fetchSource(entry, workingDir, vars, cache);
       for (const rec of result.sourceRecords) {
