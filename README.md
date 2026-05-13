@@ -104,6 +104,7 @@ avanti revert  # roll back instantly if something breaks
 - **Diff preview** — see exactly what will change before applying, or compare against any past pull
 - **Atomic writes** — all files are staged to a temp dir first; targets are only written if everything succeeds
 - **History** — every pull is recorded; inspect what changed, revert the whole project to a past state, or fully undo all avanti changes
+- **Conditions** — use `if` and `ifAny` on file entries or individual sources to conditionally skip based on OS, filesystem path existence, shell command exit code, or whether the target file already exists; supports AND/OR logic and negation with `not: true`
 - **Optional sources** — mark `path:` and `url:` sources `optional: true` to silently skip them when the file is missing or the URL returns 404; lets a central config reference per-user local overrides without erroring on machines that haven't created them
 - **Stale file cleanup** — files dropped from a directory source are automatically deleted or restored to their pre-avanti content
 
