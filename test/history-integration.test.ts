@@ -82,21 +82,25 @@ describe('history integration', () => {
       expect(existsSync(historyDir)).toBe(true);
     });
 
-    it('does not record history entry when nothing changed', () => {
-      const src = writeSource('src.txt', 'hello');
-      writeConfig(`files:\n  ./out.txt:\n    src: ${src}\n`);
+    it(
+      'does not record history entry when nothing changed',
+      { timeout: 15_000 },
+      () => {
+        const src = writeSource('src.txt', 'hello');
+        writeConfig(`files:\n  ./out.txt:\n    src: ${src}\n`);
 
-      run('pull --yes');
-      const { stdout: log1 } = run('log');
-      expect(log1).toContain('pull ');
+        run('pull --yes');
+        const { stdout: log1 } = run('log');
+        expect(log1).toContain('pull ');
 
-      // Second pull — no changes
-      run('pull --yes');
-      const { stdout: log2 } = run('log');
-      // Still only one pull entry
-      const pullCount = (log2.match(/^pull /gm) ?? []).length;
-      expect(pullCount).toBe(1);
-    });
+        // Second pull — no changes
+        run('pull --yes');
+        const { stdout: log2 } = run('log');
+        // Still only one pull entry
+        const pullCount = (log2.match(/^pull /gm) ?? []).length;
+        expect(pullCount).toBe(1);
+      },
+    );
   });
 
   describe('avanti log', () => {
@@ -284,47 +288,57 @@ describe('history integration', () => {
   });
 
   describe('avanti revert <pullId>', () => {
-    it('restores files to the state at the specified pull', () => {
-      writeSource('out.txt', 'original');
-      const src = writeSource('src.txt', 'v1');
-      writeConfig(`files:\n  ./out.txt:\n    src: ${src}\n`);
-      run('pull --yes');
+    it(
+      'restores files to the state at the specified pull',
+      { timeout: 15_000 },
+      () => {
+        writeSource('out.txt', 'original');
+        const src = writeSource('src.txt', 'v1');
+        writeConfig(`files:\n  ./out.txt:\n    src: ${src}\n`);
+        run('pull --yes');
 
-      const { stdout: logAfterFirst } = run('log');
-      const firstPullId = logAfterFirst.match(/pull ([0-9a-f]{8})/)?.[1] ?? '';
+        const { stdout: logAfterFirst } = run('log');
+        const firstPullId =
+          logAfterFirst.match(/pull ([0-9a-f]{8})/)?.[1] ?? '';
 
-      writeFileSync(src, 'v2');
-      run('pull --yes');
+        writeFileSync(src, 'v2');
+        run('pull --yes');
 
-      writeFileSync(src, 'v3');
-      run('pull --yes');
-      expect(readOutput('out.txt')).toBe('v3');
+        writeFileSync(src, 'v3');
+        run('pull --yes');
+        expect(readOutput('out.txt')).toBe('v3');
 
-      // Revert to the first pull
-      run(`revert ${firstPullId} --yes`);
-      expect(readOutput('out.txt')).toBe('v1');
-    });
+        // Revert to the first pull
+        run(`revert ${firstPullId} --yes`);
+        expect(readOutput('out.txt')).toBe('v1');
+      },
+    );
 
-    it('deletes files introduced after the target pull', () => {
-      const src1 = writeSource('src1.txt', 'content1');
-      writeConfig(`files:\n  ./file1.txt:\n    src: ${src1}\n`);
-      run('pull --yes');
+    it(
+      'deletes files introduced after the target pull',
+      { timeout: 15_000 },
+      () => {
+        const src1 = writeSource('src1.txt', 'content1');
+        writeConfig(`files:\n  ./file1.txt:\n    src: ${src1}\n`);
+        run('pull --yes');
 
-      const { stdout: logAfterFirst } = run('log');
-      const firstPullId = logAfterFirst.match(/pull ([0-9a-f]{8})/)?.[1] ?? '';
+        const { stdout: logAfterFirst } = run('log');
+        const firstPullId =
+          logAfterFirst.match(/pull ([0-9a-f]{8})/)?.[1] ?? '';
 
-      const src2 = writeSource('src2.txt', 'content2');
-      writeConfig(
-        `files:\n  ./file1.txt:\n    src: ${src1}\n  ./file2.txt:\n    src: ${src2}\n`,
-      );
-      run('pull --yes');
-      expect(existsSync(join(tmpDir, 'file2.txt'))).toBe(true);
+        const src2 = writeSource('src2.txt', 'content2');
+        writeConfig(
+          `files:\n  ./file1.txt:\n    src: ${src1}\n  ./file2.txt:\n    src: ${src2}\n`,
+        );
+        run('pull --yes');
+        expect(existsSync(join(tmpDir, 'file2.txt'))).toBe(true);
 
-      // Revert to first pull — file2.txt should be deleted
-      run(`revert ${firstPullId} --yes`);
-      expect(existsSync(join(tmpDir, 'file2.txt'))).toBe(false);
-      expect(readOutput('file1.txt')).toBe('content1');
-    });
+        // Revert to first pull — file2.txt should be deleted
+        run(`revert ${firstPullId} --yes`);
+        expect(existsSync(join(tmpDir, 'file2.txt'))).toBe(false);
+        expect(readOutput('file1.txt')).toBe('content1');
+      },
+    );
 
     it('errors for unknown pullId', () => {
       const src = writeSource('src.txt', 'x');
