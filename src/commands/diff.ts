@@ -53,7 +53,6 @@ async function runDiffLoop(
     if (hasSelf && !isSelf) continue;
     try {
       if (
-        !isSelf &&
         !evaluateConditions(
           entry['if'],
           entry.ifAny,
