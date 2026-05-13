@@ -625,6 +625,11 @@ files:
       conflicts: last_wins # abort | first_wins | last_wins (default)
       arrays: replace # replace (default) | concat
       objects: merge # merge (default) | replace
+      indent: 2 # number of spaces, or "tab"
+      trailing_commas: false # add trailing comma after last item (valid JSONC)
+      sort_keys: false # sort object keys alphabetically
+      minify: false # collapse to single line, strips comments
+      strip_comments: false # remove JSONC comments from output
 ```
 
 - `conflicts` — what to do when the same key holds a scalar (or an array/object when their strategy is `replace`):
@@ -637,6 +642,11 @@ files:
 - `objects` — how to combine objects (maps) at the same key:
   - `merge` _(default)_ — deep merge, applying the same rules recursively to nested keys
   - `replace` — the later source's object replaces the earlier one entirely
+- `indent` _(default: `2`)_ — indentation: a non-negative integer for spaces, or `"tab"` for tab characters
+- `trailing_commas` _(default: `false`)_ — append a trailing comma after the last element in every array and object; valid JSONC syntax that produces cleaner diffs
+- `sort_keys` _(default: `false`)_ — sort all object keys alphabetically (recursive); useful for stable diffs regardless of insertion order
+- `minify` _(default: `false`)_ — collapse output to a single line with no whitespace; also strips JSONC comments since they are not valid in strict JSON; overrides `indent` and `trailing_commas`
+- `strip_comments` _(default: `false`)_ — remove all JSONC comments from the output, producing valid strict JSON
 
 **Pretty-printing a single file** — `json` works on single-source entries too. Auto-detection applies here as well, so a single `.json` source is pretty-printed automatically:
 

@@ -767,7 +767,7 @@ function parseMergeOptions<
 }
 
 function parseJsonMergeOptions(raw: unknown, loc: string): JsonMergeOptions {
-  return parseMergeOptions<
+  const opts: JsonMergeOptions = parseMergeOptions<
     JsonConflictStrategy,
     JsonArrayStrategy,
     JsonObjectStrategy
@@ -779,6 +779,38 @@ function parseJsonMergeOptions(raw: unknown, loc: string): JsonMergeOptions {
     ['replace', 'concat'],
     ['replace', 'merge'],
   );
+
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return opts;
+  const r = raw as Record<string, unknown>;
+
+  if ('indent' in r) {
+    const v = r['indent'];
+    if (v === 'tab') {
+      opts.indent = 'tab';
+    } else if (typeof v === 'number' && Number.isInteger(v) && v >= 0) {
+      opts.indent = v;
+    } else {
+      throw new Error(
+        `${loc}.json.indent: must be a non-negative integer or "tab"`,
+      );
+    }
+  }
+
+  for (const [yamlKey, tsKey] of [
+    ['trailing_commas', 'trailingCommas'],
+    ['sort_keys', 'sortKeys'],
+    ['minify', 'minify'],
+    ['strip_comments', 'stripComments'],
+  ] as const) {
+    if (yamlKey in r) {
+      if (typeof r[yamlKey] !== 'boolean') {
+        throw new Error(`${loc}.json.${yamlKey}: must be a boolean`);
+      }
+      (opts as Record<string, unknown>)[tsKey] = r[yamlKey];
+    }
+  }
+
+  return opts;
 }
 
 function parseYamlMergeOptions(raw: unknown, loc: string): YamlMergeOptions {

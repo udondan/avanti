@@ -156,6 +156,118 @@ describe('mergeJson — JSONC', () => {
   });
 });
 
+describe('formatJson — indent', () => {
+  it('uses 4 spaces when indent:4', () => {
+    expect(formatJson('{"a":1}', { indent: 4 })).toBe('{\n    "a": 1\n}');
+  });
+
+  it('uses tab when indent:"tab"', () => {
+    expect(formatJson('{"a":1}', { indent: 'tab' })).toBe('{\n\t"a": 1\n}');
+  });
+
+  it('defaults to 2 spaces when no indent option', () => {
+    expect(formatJson('{"a":1}')).toBe('{\n  "a": 1\n}');
+  });
+});
+
+describe('formatJson — trailing_commas', () => {
+  it('adds trailing comma on last array element', () => {
+    expect(formatJson('[1,2,3]', { trailingCommas: true })).toBe(
+      '[\n  1,\n  2,\n  3,\n]',
+    );
+  });
+
+  it('adds trailing comma on last object property', () => {
+    expect(formatJson('{"a":1,"b":2}', { trailingCommas: true })).toBe(
+      '{\n  "a": 1,\n  "b": 2,\n}',
+    );
+  });
+
+  it('adds trailing comma on nested closing braces', () => {
+    const result = formatJson('{"a":{"x":1},"b":2}', { trailingCommas: true });
+    expect(result).toBe('{\n  "a": {\n    "x": 1,\n  },\n  "b": 2,\n}');
+  });
+
+  it('inserts trailing comma before inline // comment', () => {
+    const input = '{\n  "debug": true // enable debug\n}';
+    expect(formatJson(input, { trailingCommas: true })).toBe(
+      '{\n  "debug": true, // enable debug\n}',
+    );
+  });
+
+  it('does not double-comma already-trailing-comma lines', () => {
+    const already = '{\n  "a": 1,\n  "b": 2\n}';
+    const result = formatJson(already, { trailingCommas: true });
+    expect(result).toBe('{\n  "a": 1,\n  "b": 2,\n}');
+  });
+});
+
+describe('formatJson — sort_keys', () => {
+  it('sorts object keys alphabetically', () => {
+    expect(formatJson('{"z":3,"a":1,"m":2}', { sortKeys: true })).toBe(
+      '{\n  "a": 1,\n  "m": 2,\n  "z": 3\n}',
+    );
+  });
+
+  it('sorts nested object keys recursively', () => {
+    const result = JSON.parse(
+      formatJson('{"b":{"z":1,"a":2},"a":0}', { sortKeys: true }),
+    ) as unknown;
+    expect(Object.keys(result as Record<string, unknown>)).toEqual(['a', 'b']);
+    expect(
+      Object.keys((result as Record<string, Record<string, unknown>>)['b']),
+    ).toEqual(['a', 'z']);
+  });
+
+  it('leaves arrays unchanged', () => {
+    expect(formatJson('[3,1,2]', { sortKeys: true })).toBe(
+      '[\n  3,\n  1,\n  2\n]',
+    );
+  });
+});
+
+describe('formatJson — minify', () => {
+  it('produces compact single-line output', () => {
+    expect(formatJson('{"a":1,"b":2}', { minify: true })).toBe('{"a":1,"b":2}');
+  });
+
+  it('strips comments when minify:true', () => {
+    const input = '{\n  // comment\n  "a": 1\n}';
+    expect(formatJson(input, { minify: true })).toBe('{"a":1}');
+  });
+
+  it('ignores trailing_commas when minify:true', () => {
+    expect(formatJson('{"a":1}', { minify: true, trailingCommas: true })).toBe(
+      '{"a":1}',
+    );
+  });
+});
+
+describe('formatJson — strip_comments', () => {
+  it('removes line comments from output', () => {
+    const input = '{\n  // comment\n  "a": 1\n}';
+    expect(formatJson(input, { stripComments: true })).toBe('{\n  "a": 1\n}');
+  });
+
+  it('removes block comments from output', () => {
+    const input = '{\n  /* db config */\n  "port": 5432\n}';
+    expect(formatJson(input, { stripComments: true })).toBe(
+      '{\n  "port": 5432\n}',
+    );
+  });
+});
+
+describe('formatJson — combined options', () => {
+  it('sort_keys + trailing_commas + indent:tab', () => {
+    const result = formatJson('{"z":3,"a":1}', {
+      sortKeys: true,
+      trailingCommas: true,
+      indent: 'tab',
+    });
+    expect(result).toBe('{\n\t"a": 1,\n\t"z": 3,\n}');
+  });
+});
+
 describe('mergeJson — three sources', () => {
   it('applies last_wins across all sources', () => {
     const result = JSON.parse(mergeJson(['{"a":1}', '{"a":2}', '{"a":3}'])) as {

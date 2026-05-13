@@ -64,6 +64,108 @@ function deepMerge(
   return result;
 }
 
+function resolveIndent(opts: JsonMergeOptions): string | number {
+  return opts.indent === 'tab' ? '\t' : (opts.indent ?? 2);
+}
+
+function sortJsonKeys(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(sortJsonKeys);
+  if (value !== null && typeof value === 'object') {
+    const obj = value as Record<string, unknown>;
+    const sorted = Object.keys(obj)
+      .sort()
+      .reduce<Record<string, unknown>>((acc, k) => {
+        acc[k] = sortJsonKeys(obj[k]);
+        return acc;
+      }, {});
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return assign({} as any, sorted);
+  }
+  return value;
+}
+
+function addTrailingCommas(json: string): string {
+  const lines = json.split('\n');
+  const result: string[] = [];
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+
+    let nextNonBlank = i + 1;
+    while (nextNonBlank < lines.length && lines[nextNonBlank].trim() === '') {
+      nextNonBlank++;
+    }
+
+    if (nextNonBlank < lines.length) {
+      const nextTrimmed = lines[nextNonBlank].trim();
+      if (nextTrimmed.startsWith('}') || nextTrimmed.startsWith(']')) {
+        const trimmed = line.trim();
+        if (
+          trimmed &&
+          !trimmed.startsWith('//') &&
+          !trimmed.startsWith('/*') &&
+          !trimmed.startsWith('*')
+        ) {
+          // Find the position of a line comment, if any
+          const commentIdx = findLineCommentIndex(line);
+          const effectiveEnd =
+            commentIdx >= 0
+              ? line.substring(0, commentIdx).trimEnd()
+              : line.trimEnd();
+          const lastChar = effectiveEnd.slice(-1);
+
+          if (
+            lastChar &&
+            lastChar !== ',' &&
+            lastChar !== '{' &&
+            lastChar !== '['
+          ) {
+            if (commentIdx >= 0) {
+              result.push(
+                effectiveEnd +
+                  ',' +
+                  ' ' +
+                  line.substring(commentIdx).trimStart(),
+              );
+            } else {
+              result.push(effectiveEnd + ',');
+            }
+            continue;
+          }
+        }
+      }
+    }
+
+    result.push(line);
+  }
+
+  return result.join('\n');
+}
+
+function findLineCommentIndex(line: string): number {
+  let inString = false;
+  let escape = false;
+  for (let i = 0; i < line.length - 1; i++) {
+    const ch = line[i];
+    if (escape) {
+      escape = false;
+      continue;
+    }
+    if (ch === '\\' && inString) {
+      escape = true;
+      continue;
+    }
+    if (ch === '"') {
+      inString = !inString;
+      continue;
+    }
+    if (!inString && ch === '/' && line[i + 1] === '/') {
+      return i;
+    }
+  }
+  return -1;
+}
+
 export function mergeJson(
   parts: string[],
   opts: JsonMergeOptions = {},
@@ -92,12 +194,38 @@ export function mergeJson(
     result = mergeValues('', result, parsed[i], resolved);
   }
 
-  return stringify(result, null, 2);
+  const toFormat = opts.sortKeys ? sortJsonKeys(result) : result;
+
+  if (opts.stripComments || opts.minify) {
+    const indent = opts.minify ? undefined : resolveIndent(opts);
+    return JSON.stringify(toFormat, null, indent);
+  }
+
+  let output = String(stringify(toFormat, null, resolveIndent(opts)));
+  if (opts.trailingCommas) {
+    output = addTrailingCommas(output);
+  }
+  return output;
 }
 
-export function formatJson(content: string): string {
+export function formatJson(
+  content: string,
+  opts: JsonMergeOptions = {},
+): string {
   try {
-    return stringify(parse(content), null, 2);
+    const parsed = parse(content);
+    const toFormat = opts.sortKeys ? sortJsonKeys(parsed) : parsed;
+
+    if (opts.stripComments || opts.minify) {
+      const indent = opts.minify ? undefined : resolveIndent(opts);
+      return JSON.stringify(toFormat, null, indent);
+    }
+
+    let output = String(stringify(toFormat, null, resolveIndent(opts)));
+    if (opts.trailingCommas) {
+      output = addTrailingCommas(output);
+    }
+    return output;
   } catch (e) {
     throw new Error(`invalid JSON: ${(e as SyntaxError).message}`, {
       cause: e,

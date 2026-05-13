@@ -705,7 +705,7 @@ export async function fetchSource(
     }
     const text = v.toString('utf8');
     if (singleJsonOpts !== null) {
-      formatted.set(k, Buffer.from(formatJson(text), 'utf8'));
+      formatted.set(k, Buffer.from(formatJson(text, singleJsonOpts), 'utf8'));
     } else if (singleYamlOpts !== null) {
       formatted.set(k, Buffer.from(formatYaml(text), 'utf8'));
     } else {
