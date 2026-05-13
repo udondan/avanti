@@ -434,6 +434,12 @@ function parseCondition(raw: unknown, loc: string): Condition {
       throw new Error(`${loc}: unknown key "${key}"`);
     }
   }
+  const checkKeys = ['os', 'exists', 'exec', 'target_exists'] as const;
+  if (!checkKeys.some((k) => obj[k] !== undefined)) {
+    throw new Error(
+      `${loc}: must specify at least one of ${checkKeys.join(', ')}`,
+    );
+  }
   const cond: Condition = {};
   if (obj['os'] !== undefined) {
     if (Array.isArray(obj['os']) && obj['os'].length === 0) {

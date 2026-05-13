@@ -352,29 +352,9 @@ async function _fetchOneSrcRaw(
   src: FileSrc,
   workingDir: string,
   vars: Variables,
-  getTargetPath: () => string,
 ): Promise<{ files: Map<string, Buffer>; skipped?: boolean }> {
   if (isVerbose())
     verbose(`fetching source: ${redactUrl(labelForSrc(src, vars))}`);
-
-  if (typeof src !== 'string') {
-    const ifCond = 'if' in src ? (src as { if?: unknown })['if'] : undefined;
-    const ifAnyCond =
-      'ifAny' in src ? (src as { ifAny?: unknown }).ifAny : undefined;
-    if (ifCond !== undefined || ifAnyCond !== undefined) {
-      if (
-        !evaluateConditions(
-          ifCond as Parameters<typeof evaluateConditions>[0],
-          ifAnyCond as Parameters<typeof evaluateConditions>[1],
-          getTargetPath,
-          workingDir,
-          vars,
-        )
-      ) {
-        return { files: new Map(), skipped: true };
-      }
-    }
-  }
 
   if (typeof src === 'string') {
     const resolved = resolveVars(src, vars);
@@ -532,6 +512,27 @@ async function fetchOneSrc(
   record: SourceFetchRecord | null;
   skipped?: boolean;
 }> {
+  // Evaluate source-level conditions before the cache so a cached result for
+  // the same URL is not returned when conditions gate this source out.
+  if (typeof src !== 'string') {
+    const ifCond = 'if' in src ? (src as { if?: unknown })['if'] : undefined;
+    const ifAnyCond =
+      'ifAny' in src ? (src as { ifAny?: unknown }).ifAny : undefined;
+    if (ifCond !== undefined || ifAnyCond !== undefined) {
+      if (
+        !evaluateConditions(
+          ifCond as Parameters<typeof evaluateConditions>[0],
+          ifAnyCond as Parameters<typeof evaluateConditions>[1],
+          getTargetPath,
+          workingDir,
+          vars,
+        )
+      ) {
+        return { files: new Map(), record: null, skipped: true };
+      }
+    }
+  }
+
   const cacheKey = cacheKeyForSrc(src, vars);
   const cached = cache?.get(cacheKey);
 
@@ -542,7 +543,7 @@ async function fetchOneSrc(
     if (isVerbose()) verbose(`cache hit: ${redactUrl(labelForSrc(src, vars))}`);
     files = cached.files;
   } else {
-    const raw = await _fetchOneSrcRaw(src, workingDir, vars, getTargetPath);
+    const raw = await _fetchOneSrcRaw(src, workingDir, vars);
     files = raw.files;
     skipped = raw.skipped;
     // Don't cache skipped results: if optional changes to required between
