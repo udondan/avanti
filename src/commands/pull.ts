@@ -108,6 +108,15 @@ async function runFetchLoop(
         hasUnresolvableSkippedPath,
       };
     }
+    // $self was condition-skipped: protect configPath from stale cleanup so a
+    // previously-written config file is not restored or deleted on this run.
+    if (
+      !hasSelf &&
+      configPath !== undefined &&
+      !isRemoteConfigSpec(configPath)
+    ) {
+      skippedPaths.add(configPath);
+    }
   }
   for (const [key, entry] of Object.entries(config.files)) {
     const isSelf = key === SELF_KEY;
