@@ -12,6 +12,7 @@ import {
 import { fetchSource, FetchCache } from '../sources';
 import { applyReplace } from '../processors/replace';
 import { applyPost } from '../processors/post';
+import { applyInsertMode } from '../processors/insert';
 import { isBinary } from '../binary';
 import {
   computeDiff,
@@ -36,6 +37,7 @@ async function runDiffLoop(
   workingDir: string,
   cache?: FetchCache,
   configPath?: string,
+  history?: HistoryManager,
 ): Promise<DiffLoopResult> {
   let vars;
   try {
@@ -109,10 +111,29 @@ async function runDiffLoop(
       for (const [relPath, rawContent] of result.files) {
         let content = rawContent;
         if (!isBinary(content)) {
-          let text = content.toString('utf8');
+          const rawText = content.toString('utf8');
+          let text = rawText;
           if (entry.replace?.length)
             text = applyReplace(text, entry.replace, vars);
           if (entry.post) text = applyPost(text, entry.post, vars);
+          if (entry.strategy === 'insert' && !isSelf) {
+            const targetPath = resolveTargetPath(
+              entry,
+              relPath,
+              workingDir,
+              vars,
+            );
+            const lastInserted =
+              history?.getInsertedFragment(targetPath) ?? null;
+            if (lastInserted === null || rawText !== lastInserted.raw) {
+              text = applyInsertMode(
+                entry,
+                text,
+                lastInserted?.processed ?? null,
+                targetPath,
+              );
+            }
+          }
           content = Buffer.from(text, 'utf8');
         }
         if (isSelf) {
@@ -176,11 +197,16 @@ export function diffCommand(): Command {
         }
 
         const fetchCache: FetchCache = new Map();
+        const history = new HistoryManager(
+          normalizeConfigKey(configPath),
+          workingDir,
+        );
         const firstPass = await runDiffLoop(
           config,
           workingDir,
           fetchCache,
           configPath,
+          history,
         );
         let { allDiffs, hasError } = firstPass;
 
@@ -218,6 +244,7 @@ export function diffCommand(): Command {
               workingDir,
               fetchCache,
               configPath,
+              history,
             );
 
             if (next.hasError) {
@@ -249,6 +276,7 @@ export function diffCommand(): Command {
                 workingDir,
                 fetchCache,
                 configPath,
+                history,
               );
               allDiffs = second.allDiffs;
               hasError = second.hasError;

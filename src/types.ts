@@ -207,6 +207,7 @@ export interface FileEntry {
   json?: JsonMergeOptions | boolean;
   yaml?: YamlMergeOptions | boolean;
   toml?: TomlMergeOptions | boolean;
+  strategy?: 'replace' | 'insert';
 }
 
 export interface VariableEntry {

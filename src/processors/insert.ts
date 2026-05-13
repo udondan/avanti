@@ -1,0 +1,270 @@
+import * as fs from 'fs';
+import { parse as parseJson, stringify as stringifyJson } from 'comment-json';
+import { parseDocument, isMap, isSeq, isScalar, type Pair } from 'yaml';
+import { parse as parseToml, stringify as stringifyToml } from 'smol-toml';
+import type { FileEntry, FileSrc } from '../types';
+import { mergeJson } from './json';
+import { mergeYaml } from './yaml';
+import { mergeToml } from './toml';
+import {
+  resolveJsonOptions,
+  resolveYamlOptions,
+  resolveTomlOptions,
+} from '../sources';
+
+// ── Utilities ────────────────────────────────────────────────────────────────
+
+function deepEqual(a: unknown, b: unknown): boolean {
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
+function isPlainObject(v: unknown): v is Record<string, unknown> {
+  return v !== null && typeof v === 'object' && !Array.isArray(v);
+}
+
+// ── JSON removal (comment-json, preserves comments on retained keys) ─────────
+
+type CommentJsonValue = ReturnType<typeof parseJson>;
+
+function deepRemoveFromJsonObj(
+  existing: Record<string, CommentJsonValue>,
+  oldContrib: Record<string, unknown>,
+): void {
+  for (const key of Object.keys(oldContrib)) {
+    if (!(key in existing)) continue;
+    const oldVal = oldContrib[key];
+    const curVal = existing[key];
+
+    if (isPlainObject(oldVal) && isPlainObject(curVal)) {
+      deepRemoveFromJsonObj(curVal, oldVal);
+      if (Object.keys(curVal).length === 0) {
+        delete existing[key];
+      }
+    } else if (Array.isArray(oldVal) && Array.isArray(curVal)) {
+      removeArrayContribution(curVal, oldVal);
+      if (curVal.length === 0) {
+        delete existing[key];
+      }
+    } else {
+      if (deepEqual(curVal, oldVal)) {
+        delete existing[key];
+      }
+    }
+  }
+}
+
+// ── YAML removal (yaml AST, preserves comments on retained keys) ─────────────
+
+function yamlPairKey(pair: Pair): string {
+  if (isScalar(pair.key)) return String((pair.key as { value: unknown }).value);
+  return String(pair.key);
+}
+
+function yamlNodeToJs(node: unknown): unknown {
+  if (
+    node !== null &&
+    typeof node === 'object' &&
+    typeof (node as Record<string, unknown>)['toJSON'] === 'function'
+  ) {
+    return (node as { toJSON(): unknown }).toJSON();
+  }
+  return node;
+}
+
+function deepRemoveFromYamlMap(
+  base: ReturnType<typeof parseDocument>['contents'] & object,
+  oldContrib: Record<string, unknown>,
+): void {
+  if (!isMap(base)) return;
+
+  for (const key of Object.keys(oldContrib)) {
+    const pairIdx = base.items.findIndex((p) => yamlPairKey(p) === key);
+    if (pairIdx === -1) continue;
+
+    const pair = base.items[pairIdx];
+    const oldVal = oldContrib[key];
+    const pairVal = pair.value;
+
+    if (isPlainObject(oldVal) && isMap(pairVal)) {
+      deepRemoveFromYamlMap(pairVal, oldVal);
+      if ((pairVal as { items: unknown[] }).items.length === 0) {
+        base.items.splice(pairIdx, 1);
+      }
+    } else if (Array.isArray(oldVal) && isSeq(pairVal)) {
+      const seqItems = (pairVal as { items: unknown[] }).items;
+      removeArrayContribution(seqItems, oldVal, (item) => yamlNodeToJs(item));
+      if (seqItems.length === 0) {
+        base.items.splice(pairIdx, 1);
+      }
+    } else {
+      if (deepEqual(yamlNodeToJs(pairVal), oldVal)) {
+        base.items.splice(pairIdx, 1);
+      }
+    }
+  }
+}
+
+// ── TOML removal (plain objects) ─────────────────────────────────────────────
+
+type TomlObject = Record<string, unknown>;
+
+function deepRemoveFromTomlObj(
+  existing: TomlObject,
+  oldContrib: Record<string, unknown>,
+): void {
+  for (const key of Object.keys(oldContrib)) {
+    if (!(key in existing)) continue;
+    const oldVal = oldContrib[key];
+    const curVal = existing[key];
+
+    if (isPlainObject(oldVal) && isPlainObject(curVal)) {
+      deepRemoveFromTomlObj(curVal, oldVal);
+      if (Object.keys(curVal).length === 0) {
+        delete existing[key];
+      }
+    } else if (Array.isArray(oldVal) && Array.isArray(curVal)) {
+      removeArrayContribution(curVal, oldVal);
+      if (curVal.length === 0) {
+        delete existing[key];
+      }
+    } else {
+      if (deepEqual(curVal, oldVal)) {
+        delete existing[key];
+      }
+    }
+  }
+}
+
+// ── Array contribution removal (searching from end) ──────────────────────────
+
+function removeArrayContribution(
+  existing: unknown[],
+  oldItems: unknown[],
+  toJs: (item: unknown) => unknown = (x) => x,
+): void {
+  for (let i = oldItems.length - 1; i >= 0; i--) {
+    const target = oldItems[i];
+    for (let j = existing.length - 1; j >= 0; j--) {
+      if (deepEqual(toJs(existing[j]), target)) {
+        existing.splice(j, 1);
+        break;
+      }
+    }
+  }
+}
+
+// ── Structured insert helpers ─────────────────────────────────────────────────
+
+function applyJsonInsert(
+  existingContent: string,
+  processedText: string,
+  lastProcessed: string | null,
+  opts: Record<string, unknown>,
+): string {
+  let cleanedJson: string;
+  if (lastProcessed !== null) {
+    const existingParsed = parseJson(existingContent) as Record<
+      string,
+      CommentJsonValue
+    >;
+    const oldContrib = JSON.parse(lastProcessed) as Record<string, unknown>;
+    deepRemoveFromJsonObj(existingParsed, oldContrib);
+    cleanedJson = stringifyJson(existingParsed, null, 2);
+  } else {
+    cleanedJson = existingContent;
+  }
+  return mergeJson([cleanedJson, processedText], opts);
+}
+
+function applyYamlInsert(
+  existingContent: string,
+  processedText: string,
+  lastProcessed: string | null,
+  opts: Record<string, unknown>,
+): string {
+  let cleanedYaml: string;
+  if (lastProcessed !== null) {
+    const doc = parseDocument(existingContent);
+    if (doc.errors.length === 0 && isMap(doc.contents)) {
+      const oldContrib = JSON.parse(lastProcessed) as Record<string, unknown>;
+      deepRemoveFromYamlMap(doc.contents, oldContrib);
+    }
+    cleanedYaml = doc.toString();
+  } else {
+    cleanedYaml = existingContent;
+  }
+  return mergeYaml([cleanedYaml, processedText], opts);
+}
+
+function applyTomlInsert(
+  existingContent: string,
+  processedText: string,
+  lastProcessed: string | null,
+  opts: Record<string, unknown>,
+): string {
+  let cleanedToml: string;
+  if (lastProcessed !== null) {
+    const existingParsed = parseToml(existingContent) as TomlObject;
+    const oldContrib = JSON.parse(lastProcessed) as Record<string, unknown>;
+    deepRemoveFromTomlObj(existingParsed, oldContrib);
+    cleanedToml = stringifyToml(existingParsed);
+  } else {
+    cleanedToml = existingContent;
+  }
+  return mergeToml([cleanedToml, processedText], opts);
+}
+
+// ── Public API ────────────────────────────────────────────────────────────────
+
+export function applyInsertMode(
+  entry: FileEntry,
+  processedText: string,
+  lastProcessed: string | null,
+  targetPath: string,
+): string {
+  if (!fs.existsSync(targetPath)) {
+    return processedText;
+  }
+
+  const existingContent = fs.readFileSync(targetPath, 'utf8');
+  const srcs: FileSrc[] = Array.isArray(entry.src) ? entry.src : [entry.src];
+
+  const jsonOpts = resolveJsonOptions(entry, srcs);
+  const yamlOpts = jsonOpts === null ? resolveYamlOptions(entry, srcs) : null;
+  const tomlOpts =
+    jsonOpts === null && yamlOpts === null
+      ? resolveTomlOptions(entry, srcs)
+      : null;
+
+  if (jsonOpts !== null) {
+    return applyJsonInsert(
+      existingContent,
+      processedText,
+      lastProcessed,
+      jsonOpts as Record<string, unknown>,
+    );
+  }
+  if (yamlOpts !== null) {
+    return applyYamlInsert(
+      existingContent,
+      processedText,
+      lastProcessed,
+      yamlOpts as Record<string, unknown>,
+    );
+  }
+  if (tomlOpts !== null) {
+    return applyTomlInsert(
+      existingContent,
+      processedText,
+      lastProcessed,
+      tomlOpts as Record<string, unknown>,
+    );
+  }
+
+  // Plain text: find old fragment in file and replace; otherwise append
+  if (lastProcessed !== null && existingContent.includes(lastProcessed)) {
+    return existingContent.replace(lastProcessed, processedText);
+  }
+  const sep = existingContent.endsWith('\n') ? '' : '\n';
+  return existingContent + sep + processedText;
+}

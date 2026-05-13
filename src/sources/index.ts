@@ -105,7 +105,7 @@ function hasTomlExtension(src: FileSrc): boolean {
   return TOML_EXTENSIONS.has(path.extname(name).toLowerCase());
 }
 
-function resolveJsonOptions(
+export function resolveJsonOptions(
   entry: FileEntry,
   srcs: FileSrc[],
 ): JsonMergeOptions | null {
@@ -118,7 +118,7 @@ function resolveJsonOptions(
   return null;
 }
 
-function resolveYamlOptions(
+export function resolveYamlOptions(
   entry: FileEntry,
   srcs: FileSrc[],
 ): YamlMergeOptions | null {
@@ -131,7 +131,7 @@ function resolveYamlOptions(
   return null;
 }
 
-function resolveTomlOptions(
+export function resolveTomlOptions(
   entry: FileEntry,
   srcs: FileSrc[],
 ): TomlMergeOptions | null {

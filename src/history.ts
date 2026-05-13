@@ -10,6 +10,10 @@ export interface FileHistoryMeta {
   firstSeenAt: string;
   existedBeforeAvanti: boolean;
   currentVersion: number;
+  insertedFragment?: {
+    raw: string;
+    processed: string;
+  };
 }
 
 export interface PullLogEntry {
@@ -358,6 +362,34 @@ export class HistoryManager {
 
   hasHistory(): boolean {
     return fs.existsSync(this.pullsLogPath);
+  }
+
+  getInsertedFragment(
+    targetPath: string,
+  ): { raw: string; processed: string } | null {
+    const meta = this.getFileMeta(targetPath);
+    return meta?.insertedFragment ?? null;
+  }
+
+  saveInsertedFragment(
+    targetPath: string,
+    raw: string,
+    processed: string,
+  ): void {
+    try {
+      const index = this.readIndex();
+      const slug = index[targetPath];
+      if (!slug) return;
+      const metaPath = path.join(this.filesDir, slug, 'meta.json');
+      if (!fs.existsSync(metaPath)) return;
+      const meta = JSON.parse(
+        fs.readFileSync(metaPath, 'utf8'),
+      ) as FileHistoryMeta;
+      meta.insertedFragment = { raw, processed };
+      fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2), 'utf8');
+    } catch {
+      // non-fatal
+    }
   }
 
   private readIndex(): Record<string, string> {
