@@ -1,9 +1,9 @@
-import { Variables } from './types';
+import { Variables, VariableSpec } from './types';
 
 // $latest is a special sentinel used by the GitLab source to resolve the newest tag.
 export const RESERVED_VARS = new Set(['latest']);
 
-export function validateVariables(vars: Variables): void {
+export function validateVariables(vars: Variables | VariableSpec): void {
   for (const name of Object.keys(vars)) {
     if (RESERVED_VARS.has(name)) {
       throw new Error(`Variable name "${name}" is reserved and cannot be used`);

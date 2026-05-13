@@ -22,6 +22,7 @@ import {
 import { FileDiff } from '../diff';
 import { AvantiConfig } from '../types';
 import { HistoryManager } from '../history';
+import { resolveVariableSpec } from '../variables-remote';
 
 interface DiffLoopResult {
   allDiffs: FileDiff[];
@@ -34,7 +35,11 @@ async function runDiffLoop(
   workingDir: string,
   cache?: FetchCache,
 ): Promise<DiffLoopResult> {
-  const vars = config.variables ?? {};
+  const vars = await resolveVariableSpec(
+    config.variables ?? {},
+    workingDir,
+    cache,
+  );
   const allDiffs: FileDiff[] = [];
   let hasError = false;
   let selfContent: string | undefined;

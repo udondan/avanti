@@ -3,6 +3,7 @@ import * as path from 'path';
 import { isRemoteConfigSpec, loadConfig, resolveConfigPath } from '../config';
 import { fetchSource } from '../sources';
 import { writeUpdatedShas } from '../config-writeback';
+import { resolveVariableSpec } from '../variables-remote';
 
 export function lockCommand(): Command {
   return new Command('lock')
@@ -33,7 +34,10 @@ export function lockCommand(): Command {
         process.exit(2);
       }
 
-      const vars = config.variables ?? {};
+      const vars = await resolveVariableSpec(
+        config.variables ?? {},
+        workingDir,
+      );
       const toPin = new Map<string, string>(); // label → sha
       let hasError = false;
       let remoteSourceCount = 0;

@@ -166,7 +166,16 @@ export interface FileEntry {
   toml?: TomlMergeOptions | boolean;
 }
 
+export interface VariableEntry {
+  src: FileSrc | FileSrc[];
+  json?: JsonMergeOptions | boolean;
+  yaml?: YamlMergeOptions | boolean;
+  toml?: TomlMergeOptions | boolean;
+}
+
+export type VariableSpec = Record<string, string | VariableEntry>;
+
 export interface AvantiConfig {
-  variables?: Variables;
+  variables?: VariableSpec;
   files: Record<string, FileEntry>;
 }

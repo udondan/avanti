@@ -840,6 +840,52 @@ replace:
 
 Referencing an undefined variable or a missing environment variable is an error.
 
+#### Source-based variables
+
+A variable can be populated from any remote or local source — the same source types supported by `files:`. Instead of a plain string value, provide a `src:` key:
+
+```yaml
+variables:
+  auth_token:
+    src:
+      aws_secrets_manager:
+        name: my-artifactory-token
+  registry_url: https://my-registry.example.com
+
+files:
+  .npmrc:
+    src:
+      raw: |
+        registry=$registry_url
+        //$registry_url/:_authToken=$auth_token
+```
+
+The fetched content is trimmed of leading and trailing whitespace before being used as the variable value (secrets from AWS Secrets Manager, SSM Parameter Store, Vault, etc. often include a trailing newline).
+
+All source types are supported: `http`, `path`, `url`, `exec`, `github`, `gitlab`, `bitbucket`, `git`, `aws_s3`, `aws_secrets_manager`, `aws_systems_manager_parameter`, `vault`, and `raw`. Multi-source arrays and `json`/`yaml`/`toml` merging work exactly as they do in `files:`:
+
+```yaml
+variables:
+  config:
+    src:
+      - raw: '{"base":"value"}'
+      - raw: '{"extra":"added"}'
+    json:
+      conflicts: last_wins
+```
+
+**Evaluation order** — variables are resolved one by one in the order they are defined. A variable may reference any variable defined above it. Referencing a variable that has not yet been defined (a forward reference) is an error. This rule also prevents circular dependencies.
+
+```yaml
+variables:
+  host: registry.example.com
+  token:
+    src:
+      aws_secrets_manager:
+        name: my-token # fetched first; $host is already resolved
+  registry_line: //$host/:_authToken=$token # both $host and $token are available
+```
+
 `$latest` is a reserved keyword that resolves to the latest published version and cannot be used as a variable name. For GitLab it resolves to the latest tag sorted by semantic version. For GitHub it resolves to the tag of the latest release; if the repository has no releases, it falls back to the most recently created tag. For Bitbucket it resolves to the latest tag sorted by name; if no tags exist, it falls back to the repository's default branch.
 
 When `ref` is omitted, all source types (GitHub, GitLab, Bitbucket, git) resolve to the repository's default branch.

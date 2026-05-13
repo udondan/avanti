@@ -25,6 +25,7 @@ import { AvantiConfig } from '../types';
 import { HistoryManager, PullLogFileRef, SourceShaRecord } from '../history';
 import { confirm } from '../prompt';
 import { applyUpdatedShas, writeUpdatedShas } from '../config-writeback';
+import { resolveVariableSpec } from '../variables-remote';
 
 interface ShaError {
   sourceLabel: string;
@@ -48,7 +49,11 @@ async function runFetchLoop(
   workingDir: string,
   cache?: FetchCache,
 ): Promise<FetchLoopResult> {
-  const vars = config.variables ?? {};
+  const vars = await resolveVariableSpec(
+    config.variables ?? {},
+    workingDir,
+    cache,
+  );
   const writeTargets: WriteTarget[] = [];
   const allDiffs: FileDiff[] = [];
   const shaErrors: ShaError[] = [];

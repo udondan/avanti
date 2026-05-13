@@ -21,7 +21,8 @@ import {
   TomlMergeOptions,
   TomlObjectStrategy,
   ReplaceRule,
-  Variables,
+  VariableEntry,
+  VariableSpec,
   Via,
 } from './types';
 import { validateVariables } from './variables';
@@ -226,9 +227,9 @@ export function parseConfigContent(content: string): AvantiConfig {
 
     const src = Array.isArray(e['src'])
       ? (e['src'] as unknown[]).map((item, j) =>
-          parseSingleSrc(item, target, j),
+          parseSingleSrc(item, `files["${target}"].src[${j}]`),
         )
-      : parseSingleSrc(e['src'], target, undefined);
+      : parseSingleSrc(e['src'], `files["${target}"].src`);
 
     const fileEntry: FileEntry = { src, target };
 
@@ -249,7 +250,7 @@ export function parseConfigContent(content: string): AvantiConfig {
       if (rawJson === true || rawJson === false) {
         fileEntry.json = rawJson;
       } else {
-        fileEntry.json = parseJsonMergeOptions(rawJson, target);
+        fileEntry.json = parseJsonMergeOptions(rawJson, `files["${target}"]`);
       }
     }
 
@@ -258,7 +259,7 @@ export function parseConfigContent(content: string): AvantiConfig {
       if (rawYaml === true || rawYaml === false) {
         fileEntry.yaml = rawYaml;
       } else {
-        fileEntry.yaml = parseYamlMergeOptions(rawYaml, target);
+        fileEntry.yaml = parseYamlMergeOptions(rawYaml, `files["${target}"]`);
       }
     }
 
@@ -267,7 +268,7 @@ export function parseConfigContent(content: string): AvantiConfig {
       if (rawToml === true || rawToml === false) {
         fileEntry.toml = rawToml;
       } else {
-        fileEntry.toml = parseTomlMergeOptions(rawToml, target);
+        fileEntry.toml = parseTomlMergeOptions(rawToml, `files["${target}"]`);
       }
     }
 
@@ -290,23 +291,77 @@ export async function loadConfig(
   }
 }
 
-function parseVariables(raw: unknown): Variables {
+function parseVariables(raw: unknown): VariableSpec {
   if (raw === undefined || raw === null) return {};
   if (typeof raw !== 'object' || Array.isArray(raw)) {
-    throw new Error(
-      '"variables" must be a map of string keys to string values',
-    );
+    throw new Error('"variables" must be a map');
   }
   const obj = raw as Record<string, unknown>;
-  const vars: Variables = {};
+  const spec: VariableSpec = {};
   for (const [key, val] of Object.entries(obj)) {
-    if (typeof val !== 'string') {
-      throw new Error(`variables.${key}: value must be a string`);
+    if (typeof val === 'string') {
+      spec[key] = val;
+    } else if (
+      val &&
+      typeof val === 'object' &&
+      !Array.isArray(val) &&
+      'src' in val
+    ) {
+      spec[key] = parseVariableEntry(val, key);
+    } else {
+      throw new Error(
+        `variables.${key}: value must be a string or a source object with "src"`,
+      );
     }
-    vars[key] = val;
   }
-  validateVariables(vars);
-  return vars;
+  validateVariables(spec);
+  return spec;
+}
+
+function parseVariableEntry(
+  obj: Record<string, unknown>,
+  varName: string,
+): VariableEntry {
+  const loc = `variables.${varName}`;
+  const rawSrc = obj['src'];
+  if (rawSrc === undefined || rawSrc === null) {
+    throw new Error(`${loc}: "src" is required`);
+  }
+  const src = Array.isArray(rawSrc)
+    ? (rawSrc as unknown[]).map((item, j) =>
+        parseSingleSrc(item, `${loc}.src[${j}]`),
+      )
+    : parseSingleSrc(rawSrc, `${loc}.src`);
+  const entry: VariableEntry = { src };
+
+  if (obj['json'] !== undefined) {
+    const rawJson = obj['json'];
+    if (rawJson === true || rawJson === false) {
+      entry.json = rawJson;
+    } else {
+      entry.json = parseJsonMergeOptions(rawJson, loc);
+    }
+  }
+
+  if (obj['yaml'] !== undefined) {
+    const rawYaml = obj['yaml'];
+    if (rawYaml === true || rawYaml === false) {
+      entry.yaml = rawYaml;
+    } else {
+      entry.yaml = parseYamlMergeOptions(rawYaml, loc);
+    }
+  }
+
+  if (obj['toml'] !== undefined) {
+    const rawToml = obj['toml'];
+    if (rawToml === true || rawToml === false) {
+      entry.toml = rawToml;
+    } else {
+      entry.toml = parseTomlMergeOptions(rawToml, loc);
+    }
+  }
+
+  return entry;
 }
 
 function parseSha(value: unknown, loc: string): string | undefined {
@@ -355,14 +410,7 @@ export function parseVia(value: unknown, loc: string): Via | Via[] | undefined {
   throw new Error(`${loc}.via: must be a string or array`);
 }
 
-function parseSingleSrc(
-  raw: unknown,
-  target: string,
-  j: number | undefined,
-): FileSrc {
-  const loc =
-    j !== undefined ? `files["${target}"].src[${j}]` : `files["${target}"].src`;
-
+function parseSingleSrc(raw: unknown, loc: string): FileSrc {
   // Plain string → http/https URL or local path
   if (typeof raw === 'string') {
     return raw;
@@ -670,14 +718,14 @@ function parseMergeOptions<
   O extends string,
 >(
   raw: unknown,
-  target: string,
+  loc: string,
   kind: string,
   conflictValues: C[],
   arrayValues: A[],
   objectValues: O[],
 ): { conflicts?: C; arrays?: A; objects?: O } {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
-    throw new Error(`files["${target}"]: "${kind}" must be an object`);
+    throw new Error(`${loc}: "${kind}" must be an object`);
   }
   const obj = raw as Record<string, unknown>;
   const opts: { conflicts?: C; arrays?: A; objects?: O } = {};
@@ -685,7 +733,7 @@ function parseMergeOptions<
   if (obj['conflicts'] !== undefined) {
     if (!conflictValues.includes(obj['conflicts'] as C)) {
       throw new Error(
-        `files["${target}"].${kind}.conflicts: must be one of ${conflictValues.join(', ')}`,
+        `${loc}.${kind}.conflicts: must be one of ${conflictValues.join(', ')}`,
       );
     }
     opts.conflicts = obj['conflicts'] as C;
@@ -694,7 +742,7 @@ function parseMergeOptions<
   if (obj['arrays'] !== undefined) {
     if (!arrayValues.includes(obj['arrays'] as A)) {
       throw new Error(
-        `files["${target}"].${kind}.arrays: must be one of ${arrayValues.join(', ')}`,
+        `${loc}.${kind}.arrays: must be one of ${arrayValues.join(', ')}`,
       );
     }
     opts.arrays = obj['arrays'] as A;
@@ -703,7 +751,7 @@ function parseMergeOptions<
   if (obj['objects'] !== undefined) {
     if (!objectValues.includes(obj['objects'] as O)) {
       throw new Error(
-        `files["${target}"].${kind}.objects: must be one of ${objectValues.join(', ')}`,
+        `${loc}.${kind}.objects: must be one of ${objectValues.join(', ')}`,
       );
     }
     opts.objects = obj['objects'] as O;
@@ -712,14 +760,14 @@ function parseMergeOptions<
   return opts;
 }
 
-function parseJsonMergeOptions(raw: unknown, target: string): JsonMergeOptions {
+function parseJsonMergeOptions(raw: unknown, loc: string): JsonMergeOptions {
   return parseMergeOptions<
     JsonConflictStrategy,
     JsonArrayStrategy,
     JsonObjectStrategy
   >(
     raw,
-    target,
+    loc,
     'json',
     ['abort', 'first_wins', 'last_wins'],
     ['replace', 'concat'],
@@ -727,14 +775,14 @@ function parseJsonMergeOptions(raw: unknown, target: string): JsonMergeOptions {
   );
 }
 
-function parseYamlMergeOptions(raw: unknown, target: string): YamlMergeOptions {
+function parseYamlMergeOptions(raw: unknown, loc: string): YamlMergeOptions {
   return parseMergeOptions<
     YamlConflictStrategy,
     YamlArrayStrategy,
     YamlObjectStrategy
   >(
     raw,
-    target,
+    loc,
     'yaml',
     ['abort', 'first_wins', 'last_wins'],
     ['replace', 'concat'],
@@ -742,14 +790,14 @@ function parseYamlMergeOptions(raw: unknown, target: string): YamlMergeOptions {
   );
 }
 
-function parseTomlMergeOptions(raw: unknown, target: string): TomlMergeOptions {
+function parseTomlMergeOptions(raw: unknown, loc: string): TomlMergeOptions {
   return parseMergeOptions<
     TomlConflictStrategy,
     TomlArrayStrategy,
     TomlObjectStrategy
   >(
     raw,
-    target,
+    loc,
     'toml',
     ['abort', 'first_wins', 'last_wins'],
     ['replace', 'concat'],

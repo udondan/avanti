@@ -1587,3 +1587,124 @@ files:
     ).toThrow('via: array must not have more than 2 entries');
   });
 });
+
+describe('source-based variable parsing', () => {
+  it('parses a variable with a raw src', async () => {
+    const f = writeTmp(`
+variables:
+  token:
+    src:
+      raw: my-secret
+files:
+  out.txt:
+    src: https://example.com/out.txt
+`);
+    const cfg = await loadConfig(f);
+    const tokenVar = cfg.variables?.['token'];
+    expect(tokenVar).toBeDefined();
+    expect(typeof tokenVar).toBe('object');
+    expect(tokenVar).toHaveProperty('src');
+    const varEntry = tokenVar as { src: { raw: string } };
+    expect(varEntry.src).toEqual({ raw: 'my-secret' });
+  });
+
+  it('parses a variable with an array src', async () => {
+    const f = writeTmp(`
+variables:
+  token:
+    src:
+      - raw: part-a
+      - raw: part-b
+files:
+  out.txt:
+    src: https://example.com/out.txt
+`);
+    const cfg = await loadConfig(f);
+    const tokenVar = cfg.variables?.['token'];
+    expect(Array.isArray((tokenVar as { src: unknown }).src)).toBe(true);
+  });
+
+  it('parses a variable with an aws_secrets_manager src', async () => {
+    const f = writeTmp(`
+variables:
+  auth_token:
+    src:
+      aws_secrets_manager:
+        name: my-artifactory-token
+        region: us-east-1
+files:
+  out.txt:
+    src: https://example.com/out.txt
+`);
+    const cfg = await loadConfig(f);
+    const varEntry = cfg.variables?.['auth_token'] as {
+      src: { aws_secrets_manager: { name: string; region?: string } };
+    };
+    expect(varEntry.src.aws_secrets_manager.name).toBe('my-artifactory-token');
+    expect(varEntry.src.aws_secrets_manager.region).toBe('us-east-1');
+  });
+
+  it('parses a variable with json merge option', async () => {
+    const f = writeTmp(`
+variables:
+  merged:
+    src:
+      - raw: '{"a":1}'
+      - raw: '{"b":2}'
+    json:
+      conflicts: last_wins
+files:
+  out.txt:
+    src: https://example.com/out.txt
+`);
+    const cfg = await loadConfig(f);
+    const varEntry = cfg.variables?.['merged'] as {
+      json: { conflicts: string };
+    };
+    expect(varEntry.json?.conflicts).toBe('last_wins');
+  });
+
+  it('mixes plain string and source-based variables', async () => {
+    const f = writeTmp(`
+variables:
+  plain: hello
+  sourced:
+    src:
+      raw: world
+files:
+  out.txt:
+    src: https://example.com/out.txt
+`);
+    const cfg = await loadConfig(f);
+    expect(cfg.variables?.['plain']).toBe('hello');
+    expect(typeof cfg.variables?.['sourced']).toBe('object');
+  });
+
+  it('throws when a variable value is an object without src', async () => {
+    const f = writeTmp(`
+variables:
+  bad:
+    something: else
+files:
+  out.txt:
+    src: https://example.com/out.txt
+`);
+    await expect(loadConfig(f)).rejects.toThrow(
+      'variables.bad: value must be a string or a source object with "src"',
+    );
+  });
+
+  it('uses variables. prefix in error messages for variable source parsing', async () => {
+    const f = writeTmp(`
+variables:
+  token:
+    src:
+      aws_secrets_manager:
+        region: us-east-1
+files:
+  out.txt:
+    src: https://example.com/out.txt
+`);
+    await expect(loadConfig(f)).rejects.toThrow('variables.token');
+  });
+});
