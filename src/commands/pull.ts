@@ -93,7 +93,7 @@ async function runFetchLoop(
       );
     } catch (err: unknown) {
       console.error(
-        `Error processing ${JSON.stringify(selfEntry.src)}: ${err instanceof Error ? err.message : String(err)}`,
+        `Error processing ${SELF_KEY}: ${err instanceof Error ? err.message : String(err)}`,
       );
       return {
         writeTargets,
@@ -126,7 +126,13 @@ async function runFetchLoop(
         }
         continue;
       }
-      const result = await fetchSource(entry, workingDir, vars, cache);
+      const result = await fetchSource(
+        entry,
+        workingDir,
+        vars,
+        cache,
+        isSelf && configPath !== undefined ? () => configPath : undefined,
+      );
 
       if (result.allSkipped && !isSelf) {
         try {

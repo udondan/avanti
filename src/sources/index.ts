@@ -577,10 +577,13 @@ export async function fetchSource(
   workingDir: string,
   vars: Variables = {},
   cache?: FetchCache,
+  getTargetPathOverride?: () => string,
 ): Promise<FetchResult> {
   const { src } = entry;
 
-  const getTargetPath = () => resolveTargetPath(entry, '', workingDir, vars);
+  const getTargetPath =
+    getTargetPathOverride ??
+    (() => resolveTargetPath(entry, '', workingDir, vars));
 
   // List src → fetch each, then merge as JSON or concatenate with newline
   if (Array.isArray(src)) {

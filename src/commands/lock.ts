@@ -67,7 +67,13 @@ export function lockCommand(): Command {
             )
           )
             continue;
-          const result = await fetchSource(entry, workingDir, vars);
+          const result = await fetchSource(
+            entry,
+            workingDir,
+            vars,
+            undefined,
+            key === SELF_KEY ? () => configPath : undefined,
+          );
           remoteSourceCount += result.sourceRecords.length;
           for (const rec of result.sourceRecords) {
             if (!opts.force && rec.expectedSha !== undefined) continue;

@@ -64,7 +64,7 @@ async function runDiffLoop(
       );
     } catch (err: unknown) {
       console.error(
-        `Error processing ${JSON.stringify(selfEntry.src)}: ${err instanceof Error ? err.message : String(err)}`,
+        `Error processing ${SELF_KEY}: ${err instanceof Error ? err.message : String(err)}`,
       );
       return { allDiffs: [], hasError: true };
     }
@@ -84,7 +84,13 @@ async function runDiffLoop(
         )
       )
         continue;
-      const result = await fetchSource(entry, workingDir, vars, cache);
+      const result = await fetchSource(
+        entry,
+        workingDir,
+        vars,
+        cache,
+        isSelf && configPath !== undefined ? () => configPath : undefined,
+      );
       for (const rec of result.sourceRecords) {
         if (!rec.matched) {
           console.error(
