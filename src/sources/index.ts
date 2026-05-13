@@ -639,7 +639,7 @@ export async function fetchSource(
     record: singleRecord,
     skipped,
   } = await fetchOneSrc(src, workingDir, vars, cache, getTargetPath);
-  if (skipped) return { files: new Map(), sourceRecords: [] };
+  if (skipped) return { files: new Map(), sourceRecords: [], allSkipped: true };
   const singleResult = { files: singleFiles };
   const sourceRecords: SourceFetchRecord[] =
     singleRecord !== null ? [singleRecord] : [];
