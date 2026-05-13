@@ -206,6 +206,9 @@ async function runFetchLoop(
             );
             const lastInserted =
               history?.getInsertedFragment(targetPath) ?? null;
+            if (lastInserted !== null && rawText === lastInserted.raw) {
+              continue; // source unchanged — skip write entirely (no-op)
+            }
             const processedText = text;
             text = applyInsertMode(
               entry,

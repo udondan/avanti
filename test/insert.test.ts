@@ -243,7 +243,7 @@ describe('YAML — key removal', () => {
     const result = applyInsertMode(
       makeEntry({ yaml: true }),
       'k2: v2\n',
-      JSON.stringify({ k1: 'v1', k2: 'v2' }),
+      'k1: v1\nk2: v2\n',
       targetPath,
     );
     expect(result).not.toContain('k1');
@@ -259,7 +259,7 @@ describe('YAML — user override protection', () => {
     const result = applyInsertMode(
       makeEntry({ yaml: true }),
       '',
-      JSON.stringify({ k1: 'v1' }),
+      'k1: v1\n',
       targetPath,
     );
     expect(result).toContain('k1: custom');
@@ -290,7 +290,7 @@ describe('TOML — key removal', () => {
     const result = applyInsertMode(
       makeEntry({ toml: true }),
       'k2 = "v2"\n',
-      JSON.stringify({ k1: 'v1', k2: 'v2' }),
+      'k1 = "v1"\nk2 = "v2"\n',
       targetPath,
     );
     expect(result).not.toContain('k1');

@@ -377,14 +377,46 @@ export class HistoryManager {
     processed: string,
   ): void {
     try {
+      this.ensureStorageDir();
       const index = this.readIndex();
-      const slug = index[targetPath];
-      if (!slug) return;
+      let slug = index[targetPath];
+
+      if (!slug) {
+        // File wasn't staged (e.g. content was a no-op), create minimal entry.
+        slug = sha256(targetPath);
+        const fileDir = path.join(this.filesDir, slug);
+        fs.mkdirSync(fileDir, { recursive: true });
+        const meta: FileHistoryMeta = {
+          absolutePath: targetPath,
+          slug,
+          firstSeenAt: new Date().toISOString(),
+          existedBeforeAvanti: fs.existsSync(targetPath),
+          currentVersion: 0,
+          insertedFragment: { raw, processed },
+        };
+        fs.writeFileSync(
+          path.join(fileDir, 'meta.json'),
+          JSON.stringify(meta, null, 2),
+          'utf8',
+        );
+        index[targetPath] = slug;
+        this.writeIndex(index);
+        return;
+      }
+
       const metaPath = path.join(this.filesDir, slug, 'meta.json');
-      if (!fs.existsSync(metaPath)) return;
-      const meta = JSON.parse(
-        fs.readFileSync(metaPath, 'utf8'),
-      ) as FileHistoryMeta;
+      let meta: FileHistoryMeta;
+      if (fs.existsSync(metaPath)) {
+        meta = JSON.parse(fs.readFileSync(metaPath, 'utf8')) as FileHistoryMeta;
+      } else {
+        meta = {
+          absolutePath: targetPath,
+          slug,
+          firstSeenAt: new Date().toISOString(),
+          existedBeforeAvanti: fs.existsSync(targetPath),
+          currentVersion: 0,
+        };
+      }
       meta.insertedFragment = { raw, processed };
       fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2), 'utf8');
     } catch {

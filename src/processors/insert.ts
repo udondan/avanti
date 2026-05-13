@@ -14,8 +14,26 @@ import {
 
 // ── Utilities ────────────────────────────────────────────────────────────────
 
+function sortedStringify(v: unknown): string {
+  if (Array.isArray(v)) {
+    return '[' + v.map(sortedStringify).join(',') + ']';
+  }
+  if (v !== null && typeof v === 'object') {
+    const obj = v as Record<string, unknown>;
+    const keys = Object.keys(obj).sort();
+    return (
+      '{' +
+      keys
+        .map((k) => JSON.stringify(k) + ':' + sortedStringify(obj[k]))
+        .join(',') +
+      '}'
+    );
+  }
+  return JSON.stringify(v);
+}
+
 function deepEqual(a: unknown, b: unknown): boolean {
-  return JSON.stringify(a) === JSON.stringify(b);
+  return sortedStringify(a) === sortedStringify(b);
 }
 
 function isPlainObject(v: unknown): v is Record<string, unknown> {
@@ -167,7 +185,7 @@ function applyJsonInsert(
       string,
       CommentJsonValue
     >;
-    const oldContrib = JSON.parse(lastProcessed) as Record<string, unknown>;
+    const oldContrib = parseJson(lastProcessed) as Record<string, unknown>;
     deepRemoveFromJsonObj(existingParsed, oldContrib);
     cleanedJson = stringifyJson(existingParsed, null, 2);
   } else {
@@ -186,7 +204,10 @@ function applyYamlInsert(
   if (lastProcessed !== null) {
     const doc = parseDocument(existingContent);
     if (doc.errors.length === 0 && isMap(doc.contents)) {
-      const oldContrib = JSON.parse(lastProcessed) as Record<string, unknown>;
+      const oldContrib = parseDocument(lastProcessed).toJSON() as Record<
+        string,
+        unknown
+      >;
       deepRemoveFromYamlMap(doc.contents, oldContrib);
     }
     cleanedYaml = doc.toString();
@@ -205,7 +226,7 @@ function applyTomlInsert(
   let cleanedToml: string;
   if (lastProcessed !== null) {
     const existingParsed = parseToml(existingContent) as TomlObject;
-    const oldContrib = JSON.parse(lastProcessed) as Record<string, unknown>;
+    const oldContrib = parseToml(lastProcessed) as Record<string, unknown>;
     deepRemoveFromTomlObj(existingParsed, oldContrib);
     cleanedToml = stringifyToml(existingParsed);
   } else {
