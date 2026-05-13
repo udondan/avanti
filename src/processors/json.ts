@@ -92,8 +92,18 @@ function addTrailingCommas(json: string): string {
     const line = lines[i];
 
     let nextNonBlank = i + 1;
-    while (nextNonBlank < lines.length && lines[nextNonBlank].trim() === '') {
-      nextNonBlank++;
+    while (nextNonBlank < lines.length) {
+      const t = lines[nextNonBlank].trim();
+      if (
+        t === '' ||
+        t.startsWith('//') ||
+        t.startsWith('/*') ||
+        t.startsWith('*')
+      ) {
+        nextNonBlank++;
+      } else {
+        break;
+      }
     }
 
     if (nextNonBlank < lines.length) {

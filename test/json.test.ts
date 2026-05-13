@@ -195,6 +195,13 @@ describe('formatJson — trailing_commas', () => {
     );
   });
 
+  it('adds trailing comma when last element is followed by a comment before }', () => {
+    const input = '{\n  "a": 1\n  // end\n}';
+    expect(formatJson(input, { trailingCommas: true })).toBe(
+      '{\n  "a": 1,\n  // end\n}',
+    );
+  });
+
   it('does not double-comma already-trailing-comma lines', () => {
     const already = '{\n  "a": 1,\n  "b": 2\n}';
     const result = formatJson(already, { trailingCommas: true });
@@ -265,6 +272,49 @@ describe('formatJson — combined options', () => {
       indent: 'tab',
     });
     expect(result).toBe('{\n\t"a": 1,\n\t"z": 3,\n}');
+  });
+});
+
+describe('mergeJson — formatting options', () => {
+  it('indent:4 applies to merged output', () => {
+    const result = mergeJson(['{"a":1}', '{"b":2}'], { indent: 4 });
+    expect(result).toBe('{\n    "a": 1,\n    "b": 2\n}');
+  });
+
+  it('indent:"tab" applies to merged output', () => {
+    const result = mergeJson(['{"a":1}', '{"b":2}'], { indent: 'tab' });
+    expect(result).toBe('{\n\t"a": 1,\n\t"b": 2\n}');
+  });
+
+  it('trailing_commas applies to merged output', () => {
+    const result = mergeJson(['{"a":1}', '{"b":2}'], { trailingCommas: true });
+    expect(result).toBe('{\n  "a": 1,\n  "b": 2,\n}');
+  });
+
+  it('sort_keys applies after merge', () => {
+    const result = mergeJson(['{"z":3}', '{"a":1}'], { sortKeys: true });
+    expect(result).toBe('{\n  "a": 1,\n  "z": 3\n}');
+  });
+
+  it('minify applies to merged output', () => {
+    const result = mergeJson(['{"a":1}', '{"b":2}'], { minify: true });
+    expect(result).toBe('{"a":1,"b":2}');
+  });
+
+  it('strip_comments applies to merged output', () => {
+    const a = '{\n  // comment\n  "a": 1\n}';
+    const b = '{"b": 2}';
+    const result = mergeJson([a, b], { stripComments: true });
+    expect(result).toBe('{\n  "a": 1,\n  "b": 2\n}');
+  });
+
+  it('sort_keys + trailing_commas + indent applied together', () => {
+    const result = mergeJson(['{"z":3}', '{"a":1}'], {
+      sortKeys: true,
+      trailingCommas: true,
+      indent: 4,
+    });
+    expect(result).toBe('{\n    "a": 1,\n    "z": 3,\n}');
   });
 });
 

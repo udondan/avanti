@@ -780,7 +780,6 @@ function parseJsonMergeOptions(raw: unknown, loc: string): JsonMergeOptions {
     ['replace', 'merge'],
   );
 
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return opts;
   const r = raw as Record<string, unknown>;
 
   if ('indent' in r) {

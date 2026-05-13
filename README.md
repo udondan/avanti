@@ -646,7 +646,7 @@ files:
 - `trailing_commas` _(default: `false`)_ — append a trailing comma after the last element in every array and object; valid JSONC syntax that produces cleaner diffs
 - `sort_keys` _(default: `false`)_ — sort all object keys alphabetically (recursive); useful for stable diffs regardless of insertion order
 - `minify` _(default: `false`)_ — collapse output to a single line with no whitespace; also strips JSONC comments since they are not valid in strict JSON; overrides `indent` and `trailing_commas`
-- `strip_comments` _(default: `false`)_ — remove all JSONC comments from the output, producing valid strict JSON
+- `strip_comments` _(default: `false`)_ — remove all JSONC comments from the output, producing valid strict JSON; also overrides `trailing_commas` (strict JSON does not support trailing commas)
 
 **Pretty-printing a single file** — `json` works on single-source entries too. Auto-detection applies here as well, so a single `.json` source is pretty-printed automatically:
 
