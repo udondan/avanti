@@ -71,7 +71,7 @@ export async function fetchS3(uri: string): Promise<S3Result> {
             if (!get.Body)
               throw new Error(`No body returned for s3://${bucket}/${objKey}`);
             const bytes = await get.Body.transformToByteArray();
-            const relKey = objKey.slice(key.length);
+            const relKey = objKey.slice(key.length).replace(/^\/+/, '');
             files.set(relKey, Buffer.from(bytes));
           }),
         );
