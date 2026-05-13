@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.20.0](https://github.com/udondan/avanti/compare/v0.19.1...v0.20.0) (2026-05-13)
+
+
+### Features
+
+* add aws_secrets_manager and aws_systems_manager_parameter sources, rename s3 to aws_s3 ([#152](https://github.com/udondan/avanti/issues/152)) ([85defb4](https://github.com/udondan/avanti/commit/85defb47430ecda9ba57b5c877f3e988d4c15a15))
+* add JSON formatting options (indent, trailing_commas, sort_keys, minify, strip_comments) ([#154](https://github.com/udondan/avanti/issues/154)) ([5e9c50a](https://github.com/udondan/avanti/commit/5e9c50a2f7014e0e2d7e8a2b520079ddbaceec9d))
+* replace aws CLI shell-out with @aws-sdk/client-s3 SDK ([#150](https://github.com/udondan/avanti/issues/150)) ([4252cfa](https://github.com/udondan/avanti/commit/4252cfad7e8045f3a0e61d0b634d0f04d744ef83))
+* variables support remote sources with sequential evaluation ([#153](https://github.com/udondan/avanti/issues/153)) ([678185e](https://github.com/udondan/avanti/commit/678185e12213f7663177ac63fd4d30750f5fab5d))
+
 ## [0.19.1](https://github.com/udondan/avanti/compare/v0.19.0...v0.19.1) (2026-05-12)
 
 
