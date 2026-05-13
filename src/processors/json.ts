@@ -74,10 +74,13 @@ function sortJsonKeys(value: unknown): unknown {
     const obj = value as Record<string, unknown>;
     const sorted = Object.keys(obj)
       .sort()
-      .reduce<Record<string, unknown>>((acc, k) => {
-        acc[k] = sortJsonKeys(obj[k]);
-        return acc;
-      }, {});
+      .reduce<Record<string, unknown>>(
+        (acc, k) => {
+          acc[k] = sortJsonKeys(obj[k]);
+          return acc;
+        },
+        Object.create(null) as Record<string, unknown>,
+      );
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     return assign({} as any, sorted);
   }
@@ -206,9 +209,14 @@ export function mergeJson(
 
   const toFormat = opts.sortKeys ? sortJsonKeys(result) : result;
 
-  if (opts.stripComments || opts.minify) {
-    const indent = opts.minify ? undefined : resolveIndent(opts);
-    return JSON.stringify(toFormat, null, indent);
+  if (opts.minify) {
+    return JSON.stringify(toFormat);
+  }
+  if (opts.stripComments) {
+    // JSON.stringify strips Symbol-based comment metadata; re-parse to get a plain object,
+    // then use comment-json stringify which has no 10-space indent cap.
+    const clean = JSON.parse(JSON.stringify(toFormat)) as unknown;
+    return String(stringify(clean, null, resolveIndent(opts)));
   }
 
   let output = String(stringify(toFormat, null, resolveIndent(opts)));
@@ -226,9 +234,12 @@ export function formatJson(
     const parsed = parse(content);
     const toFormat = opts.sortKeys ? sortJsonKeys(parsed) : parsed;
 
-    if (opts.stripComments || opts.minify) {
-      const indent = opts.minify ? undefined : resolveIndent(opts);
-      return JSON.stringify(toFormat, null, indent);
+    if (opts.minify) {
+      return JSON.stringify(toFormat);
+    }
+    if (opts.stripComments) {
+      const clean = JSON.parse(JSON.stringify(toFormat)) as unknown;
+      return String(stringify(clean, null, resolveIndent(opts)));
     }
 
     let output = String(stringify(toFormat, null, resolveIndent(opts)));

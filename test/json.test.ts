@@ -262,6 +262,12 @@ describe('formatJson — strip_comments', () => {
       '{\n  "port": 5432\n}',
     );
   });
+
+  it('respects indent > 10 (not capped like JSON.stringify)', () => {
+    const input = '{\n  // comment\n  "a": 1\n}';
+    const result = formatJson(input, { stripComments: true, indent: 12 });
+    expect(result).toBe('{\n            "a": 1\n}');
+  });
 });
 
 describe('formatJson — combined options', () => {
