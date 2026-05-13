@@ -112,11 +112,36 @@ export function applyUpdatedShas(
           label = `exec:${cmd}`;
           shaPath = [...srcBase, 'sha'];
         }
-      } else if (n.get('s3') !== undefined) {
-        const s3 = n.get('s3') as string | null;
+      } else if (n.get('aws_s3') !== undefined) {
+        const s3 = n.get('aws_s3') as string | null;
         if (s3) {
-          label = `s3:${s3}`;
+          label = `aws_s3:${s3}`;
           shaPath = [...srcBase, 'sha'];
+        }
+      } else if (n.get('aws_secrets_manager')) {
+        const sm = n.get('aws_secrets_manager') as {
+          get?: (k: string) => unknown;
+        } | null;
+        if (sm?.get) {
+          const smName = sm.get('name') as string | null;
+          const smKey = sm.get('key') as string | null;
+          const smRegion = sm.get('region') as string | null;
+          if (smName) {
+            label = `aws_secrets_manager:${smName}${smKey ? `#${smKey}` : ''}${smRegion ? `@${smRegion}` : ''}`;
+            shaPath = [...srcBase, 'aws_secrets_manager', 'sha'];
+          }
+        }
+      } else if (n.get('aws_systems_manager_parameter')) {
+        const ssm = n.get('aws_systems_manager_parameter') as {
+          get?: (k: string) => unknown;
+        } | null;
+        if (ssm?.get) {
+          const ssmName = ssm.get('name') as string | null;
+          const ssmRegion = ssm.get('region') as string | null;
+          if (ssmName) {
+            label = `aws_systems_manager_parameter:${ssmName}${ssmRegion ? `@${ssmRegion}` : ''}`;
+            shaPath = [...srcBase, 'aws_systems_manager_parameter', 'sha'];
+          }
         }
       } else if (n.get('vault')) {
         const vt = n.get('vault') as { get?: (k: string) => unknown } | null;

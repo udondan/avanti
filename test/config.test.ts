@@ -604,27 +604,27 @@ files:
     await expect(loadConfig(f)).rejects.toThrow('git.file');
   });
 
-  it('loads an s3 src', async () => {
+  it('loads an aws_s3 src', async () => {
     const f = writeTmp(`
 files:
   config.yml:
     src:
-      s3: s3://my-bucket/path/to/config.yml
+      aws_s3: s3://my-bucket/path/to/config.yml
 `);
     const cfg = await loadConfig(f);
-    const src = cfg.files['config.yml'].src as { s3: string };
-    expect(src.s3).toBe('s3://my-bucket/path/to/config.yml');
+    const src = cfg.files['config.yml'].src as { aws_s3: string };
+    expect(src.aws_s3).toBe('s3://my-bucket/path/to/config.yml');
   });
 
-  it('throws if s3 src is not a string', async () => {
+  it('throws if aws_s3 src is not a string', async () => {
     const f = writeTmp(`
 files:
   config.yml:
     src:
-      s3:
+      aws_s3:
         bucket: my-bucket
 `);
-    await expect(loadConfig(f)).rejects.toThrow('s3:');
+    await expect(loadConfig(f)).rejects.toThrow('aws_s3:');
   });
 
   it('loads a vault src map', async () => {
@@ -669,6 +669,139 @@ files:
         field: password
 `);
     await expect(loadConfig(f)).rejects.toThrow('vault.path');
+  });
+
+  it('loads an aws_secrets_manager src', async () => {
+    const f = writeTmp(`
+files:
+  secret.txt:
+    src:
+      aws_secrets_manager:
+        name: myapp/prod/db
+        key: password
+        region: us-east-1
+`);
+    const cfg = await loadConfig(f);
+    const src = cfg.files['secret.txt'].src as {
+      aws_secrets_manager: { name: string; key?: string; region?: string };
+    };
+    expect(src.aws_secrets_manager.name).toBe('myapp/prod/db');
+    expect(src.aws_secrets_manager.key).toBe('password');
+    expect(src.aws_secrets_manager.region).toBe('us-east-1');
+  });
+
+  it('loads an aws_secrets_manager src without optional fields', async () => {
+    const f = writeTmp(`
+files:
+  secret.txt:
+    src:
+      aws_secrets_manager:
+        name: myapp/prod/db
+`);
+    const cfg = await loadConfig(f);
+    const src = cfg.files['secret.txt'].src as {
+      aws_secrets_manager: { name: string; key?: string; region?: string };
+    };
+    expect(src.aws_secrets_manager.name).toBe('myapp/prod/db');
+    expect(src.aws_secrets_manager.key).toBeUndefined();
+    expect(src.aws_secrets_manager.region).toBeUndefined();
+  });
+
+  it('normalizes empty-string key/region to undefined for aws_secrets_manager', async () => {
+    const f = writeTmp(`
+files:
+  secret.txt:
+    src:
+      aws_secrets_manager:
+        name: myapp/prod/db
+        key: ''
+        region: ''
+`);
+    const cfg = await loadConfig(f);
+    const src = cfg.files['secret.txt'].src as {
+      aws_secrets_manager: { name: string; key?: string; region?: string };
+    };
+    expect(src.aws_secrets_manager.key).toBeUndefined();
+    expect(src.aws_secrets_manager.region).toBeUndefined();
+  });
+
+  it('throws if aws_secrets_manager src missing name', async () => {
+    const f = writeTmp(`
+files:
+  secret.txt:
+    src:
+      aws_secrets_manager:
+        key: password
+`);
+    await expect(loadConfig(f)).rejects.toThrow('aws_secrets_manager.name');
+  });
+
+  it('throws if aws_secrets_manager src is not an object', async () => {
+    const f = writeTmp(`
+files:
+  secret.txt:
+    src:
+      aws_secrets_manager: plain-string
+`);
+    await expect(loadConfig(f)).rejects.toThrow('aws_secrets_manager');
+  });
+
+  it('loads an aws_systems_manager_parameter src', async () => {
+    const f = writeTmp(`
+files:
+  param.txt:
+    src:
+      aws_systems_manager_parameter:
+        name: /myapp/prod/host
+        region: eu-west-1
+`);
+    const cfg = await loadConfig(f);
+    const src = cfg.files['param.txt'].src as {
+      aws_systems_manager_parameter: { name: string; region?: string };
+    };
+    expect(src.aws_systems_manager_parameter.name).toBe('/myapp/prod/host');
+    expect(src.aws_systems_manager_parameter.region).toBe('eu-west-1');
+  });
+
+  it('normalizes empty-string region to undefined for aws_systems_manager_parameter', async () => {
+    const f = writeTmp(`
+files:
+  param.txt:
+    src:
+      aws_systems_manager_parameter:
+        name: /myapp/prod/host
+        region: ''
+`);
+    const cfg = await loadConfig(f);
+    const src = cfg.files['param.txt'].src as {
+      aws_systems_manager_parameter: { name: string; region?: string };
+    };
+    expect(src.aws_systems_manager_parameter.region).toBeUndefined();
+  });
+
+  it('throws if aws_systems_manager_parameter src missing name', async () => {
+    const f = writeTmp(`
+files:
+  param.txt:
+    src:
+      aws_systems_manager_parameter:
+        region: us-east-1
+`);
+    await expect(loadConfig(f)).rejects.toThrow(
+      'aws_systems_manager_parameter.name',
+    );
+  });
+
+  it('throws if aws_systems_manager_parameter src is not an object', async () => {
+    const f = writeTmp(`
+files:
+  param.txt:
+    src:
+      aws_systems_manager_parameter: plain-string
+`);
+    await expect(loadConfig(f)).rejects.toThrow(
+      'aws_systems_manager_parameter',
+    );
   });
 
   it('loads replace rules', async () => {

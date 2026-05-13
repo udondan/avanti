@@ -38,7 +38,7 @@ atomic rollbacks, and diff-before-apply safety.
   - [CI/CD: Shared Workflow Fragments](#cicd-shared-workflow-fragments)
   - [CI/CD: Scheduled Sync PR](#cicd-scheduled-sync-pr)
   - [Environment-Specific Config from a Single Spec](#environment-specific-config-from-a-single-spec)
-  - [Secrets from Vault or S3](#secrets-from-vault-or-s3)
+  - [Secrets from Vault or AWS](#secrets-from-vault-or-aws)
   - [Multi-Project Deployment](#multi-project-deployment)
   - [Docker Compose from Upstream Sources](#docker-compose-from-upstream-sources)
   - [Developer Onboarding Bootstrap](#developer-onboarding-bootstrap)
@@ -393,7 +393,8 @@ src: ~/templates/file.txt
 src: /absolute/path/file.txt
 ```
 
-**Map** — for path, url, exec, gitlab, github, bitbucket, git, s3, vault, http, raw:
+**Map** — for path, url, exec, gitlab, github, bitbucket, git, aws_s3,
+aws_secrets_manager, aws_systems_manager_parameter, vault, http, raw:
 
 ```yaml
 src:
@@ -461,8 +462,21 @@ src:
   url: git+ssh://git@ssh.git.private.de/org/repo.git//path/to/file.txt@main
 
 src:
-  s3: s3://my-bucket/path/to/file.txt      # S3 URI; end with / for a prefix sync
+  aws_s3: s3://my-bucket/path/to/file.txt  # end with / for a prefix sync
   sha: abc123...                           # optional SHA-256 fingerprint
+
+src:
+  aws_secrets_manager:
+    name: myapp/prod/db         # secret name or ARN
+    key: password               # optional: extract one field from a JSON secret
+    region: us-east-1           # optional: AWS region (default: SDK chain)
+    sha: abc123...              # optional SHA-256 fingerprint
+
+src:
+  aws_systems_manager_parameter:
+    name: /myapp/prod/db-host   # parameter name; end with / for path prefix fetch
+    region: us-east-1           # optional: AWS region (default: SDK chain)
+    sha: abc123...              # optional SHA-256 fingerprint
 
 src:
   vault:
@@ -521,7 +535,7 @@ files:
   # S3 prefix → local directory (trailing / triggers sync)
   configs/:
     src:
-      s3: s3://my-bucket/configs/
+      aws_s3: s3://my-bucket/configs/
 
   # Local directory → local directory
   .githooks/:
@@ -878,14 +892,16 @@ files:
 
 Public repositories on github.com and gitlab.com work without any configuration. For private repositories or instances, supply credentials via environment variables:
 
-| Platform  | Environment variable(s)                                          | Notes                                      |
-| --------- | ---------------------------------------------------------------- | ------------------------------------------ |
-| GitHub    | `GITHUB_TOKEN`                                                   | `Authorization: Bearer <token>`            |
-| GitLab    | `GITLAB_TOKEN` or `GITLAB_PRIVATE_TOKEN`                         | `PRIVATE-TOKEN: <token>`                   |
-| Bitbucket | `BITBUCKET_TOKEN`                                                | `Authorization: Bearer <token>`            |
-| Bitbucket | `BITBUCKET_USERNAME` + `BITBUCKET_APP_PASSWORD`                  | Basic auth (alternative to token)          |
-| S3        | Standard AWS env vars (`AWS_ACCESS_KEY_ID`, `AWS_PROFILE`, etc.) | Delegates entirely to the `aws` CLI        |
-| Vault     | `VAULT_TOKEN` + `VAULT_ADDR` (and optionally `VAULT_NAMESPACE`)  | Used when the `vault` CLI is not installed |
+| Platform        | Environment variable(s)                                          | Notes                                      |
+| --------------- | ---------------------------------------------------------------- | ------------------------------------------ |
+| GitHub          | `GITHUB_TOKEN`                                                   | `Authorization: Bearer <token>`            |
+| GitLab          | `GITLAB_TOKEN` or `GITLAB_PRIVATE_TOKEN`                         | `PRIVATE-TOKEN: <token>`                   |
+| Bitbucket       | `BITBUCKET_TOKEN`                                                | `Authorization: Bearer <token>`            |
+| Bitbucket       | `BITBUCKET_USERNAME` + `BITBUCKET_APP_PASSWORD`                  | Basic auth (alternative to token)          |
+| S3              | Standard AWS env vars (`AWS_ACCESS_KEY_ID`, `AWS_PROFILE`, etc.) | AWS SDK credential chain                   |
+| Secrets Manager | Standard AWS env vars (`AWS_ACCESS_KEY_ID`, `AWS_PROFILE`, etc.) | AWS SDK credential chain                   |
+| SSM             | Standard AWS env vars (`AWS_ACCESS_KEY_ID`, `AWS_PROFILE`, etc.) | AWS SDK credential chain                   |
+| Vault           | `VAULT_TOKEN` + `VAULT_ADDR` (and optionally `VAULT_NAMESPACE`)  | Used when the `vault` CLI is not installed |
 
 If a GitHub or GitLab request fails with a 401, 403, or 404 response, or with a network-level connectivity error, and `gh` / `glab` is installed and authenticated, the tool falls back to the CLI automatically. This means existing CLI setups continue to work for private repos without any extra configuration.
 
@@ -900,7 +916,8 @@ HTTP server errors (5xx) do not trigger CLI fallback regardless of the `via` ord
 
 **Vault** uses the `vault` CLI when it is installed (picks up `VAULT_TOKEN`, `~/.vault-token`, and any other auth methods configured in the CLI). If the CLI is not available, it falls back to the HTTP API using `VAULT_ADDR` and `VAULT_TOKEN`.
 
-**S3** delegates entirely to the `aws` CLI, so any credential method that works with `aws s3 cp` (env vars, `~/.aws/credentials`, instance profiles, etc.) works here too.
+**S3, Secrets Manager, and SSM** use the AWS SDK default credential chain (env
+vars, `~/.aws/credentials`, instance profiles, etc.).
 
 ### Private Instances
 
@@ -1123,9 +1140,13 @@ files:
 
 CI sets `DEPLOY_VERSION` and `ENVIRONMENT`; the config pins every file to exactly the version being deployed.
 
-### Secrets from Vault or S3
+### Secrets from Vault or AWS
 
-Pull secrets at runtime and write them to local files with tight permissions. The native `vault:` and `s3:` sources handle auth automatically via the CLI or env vars — no shell scripting needed.
+Pull secrets at runtime and write them to local files with tight permissions.
+The native `vault:` source authenticates via the Vault CLI or `VAULT_TOKEN` env
+var. The `aws_s3:`, `aws_secrets_manager:`, and `aws_systems_manager_parameter:`
+sources authenticate via the AWS SDK credential chain (env vars, `~/.aws/credentials`,
+IAM roles). No shell scripting needed.
 
 ```yaml
 files:
@@ -1147,7 +1168,7 @@ files:
   # Config file stored in S3
   config/app.json:
     src:
-      s3: s3://my-bucket/configs/app.json
+      aws_s3: s3://my-bucket/configs/app.json
     mode: '0600'
 ```
 

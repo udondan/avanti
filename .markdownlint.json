@@ -1,5 +1,3 @@
 {
-  "MD033": {
-    "allowed_elements": ["br", "div", "img"]
-  }
+  "MD013": false
 }
