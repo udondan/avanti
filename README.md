@@ -804,13 +804,13 @@ When both are present, both must pass. Each condition object may also include `n
 
 #### Condition fields
 
-| Field           | Type           | Description                                                                  |
-| --------------- | -------------- | ---------------------------------------------------------------------------- |
-| `os`            | string or list | Platform must match. Values: `linux`, `mac`, `windows`. List = any matches.  |
-| `exists`        | string         | Path (file or directory) must exist. Variables are resolved.                 |
-| `exec`          | string         | Shell command must exit with code `0`.                                       |
-| `target_exists` | boolean        | `true` — skip entry if the target file does not already exist (update-only). |
-| `not`           | boolean        | `true` — invert the result of all checks in this condition object.           |
+| Field           | Type           | Description                                                                 |
+| --------------- | -------------- | --------------------------------------------------------------------------- |
+| `os`            | string or list | Platform must match. Values: `linux`, `mac`, `windows`. List = any matches. |
+| `exists`        | string         | Path (file or directory) must exist. Variables are resolved.                |
+| `exec`          | string         | Shell command must exit with code `0`.                                      |
+| `target_exists` | `true`         | Skip entry if the target path does not already exist (update-only guard).   |
+| `not`           | boolean        | `true` — invert the result of all checks in this condition object.          |
 
 #### Examples
 
