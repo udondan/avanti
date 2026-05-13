@@ -11,17 +11,22 @@ export interface S3Result {
   files: Map<string, Buffer>;
 }
 
-function parseS3Uri(uri: string): { bucket: string; key: string } {
+function parseS3Uri(
+  uri: string,
+  isDir: boolean,
+): { bucket: string; key: string } {
   const match = uri.match(/^s3:\/\/([^/]+)\/?(.*)$/);
   if (!match) throw new Error(`Invalid S3 URI: ${uri}`);
-  return { bucket: match[1], key: match[2] };
+  const key = match[2];
+  if (!isDir && !key) throw new Error(`S3 object key is required: ${uri}`);
+  return { bucket: match[1], key };
 }
 
 export async function fetchS3(uri: string): Promise<S3Result> {
   const client = new S3Client({});
   try {
-    const { bucket, key } = parseS3Uri(uri);
     const isDir = uri.endsWith('/');
+    const { bucket, key } = parseS3Uri(uri, isDir);
 
     if (!isDir) {
       if (isVerbose()) verbose(`s3 GetObject ${redactUrl(uri)}`);

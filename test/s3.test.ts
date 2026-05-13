@@ -22,7 +22,7 @@ function fakeBody(content: string) {
 }
 
 beforeEach(() => {
-  vi.clearAllMocks();
+  vi.resetAllMocks();
 });
 
 describe('fetchS3 — single object', () => {
@@ -45,6 +45,12 @@ describe('fetchS3 — single object', () => {
 
   it('throws for an invalid S3 URI', async () => {
     await expect(fetchS3('not-an-s3-uri')).rejects.toThrow('Invalid S3 URI');
+  });
+
+  it('throws when no object key is provided (bucket-only URI)', async () => {
+    await expect(fetchS3('s3://my-bucket')).rejects.toThrow(
+      'S3 object key is required',
+    );
   });
 
   it('destroys the client in a finally block on success', async () => {
@@ -72,7 +78,8 @@ describe('fetchS3 — directory prefix', () => {
         Contents: [{ Key: 'prefix/a.txt' }, { Key: 'prefix/b.txt' }],
         NextContinuationToken: undefined,
       })
-      .mockResolvedValue({ Body: fakeBody('content') });
+      .mockResolvedValueOnce({ Body: fakeBody('content') })
+      .mockResolvedValueOnce({ Body: fakeBody('content') });
 
     const result = await fetchS3('s3://my-bucket/prefix/');
 
