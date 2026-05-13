@@ -1,12 +1,16 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-const { mockSend, mockDestroy } = vi.hoisted(() => ({
+const { mockSend, mockDestroy, mockConstructor } = vi.hoisted(() => ({
   mockSend: vi.fn(),
   mockDestroy: vi.fn(),
+  mockConstructor: vi.fn(),
 }));
 
 vi.mock('@aws-sdk/client-ssm', () => {
   class SSMClient {
+    constructor(config?: unknown) {
+      mockConstructor(config);
+    }
     send = mockSend;
     destroy = mockDestroy;
   }
@@ -69,7 +73,7 @@ describe('fetchSsm — single parameter', () => {
 
     await fetchSsm('/myapp/param', 'ap-southeast-1');
 
-    expect(mockDestroy).toHaveBeenCalled();
+    expect(mockConstructor).toHaveBeenCalledWith({ region: 'ap-southeast-1' });
   });
 });
 

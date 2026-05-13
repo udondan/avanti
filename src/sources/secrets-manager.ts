@@ -49,7 +49,7 @@ export async function fetchSecretsManager(
       if (
         typeof parsed !== 'object' ||
         parsed === null ||
-        !(key in (parsed as Record<string, unknown>))
+        !Object.prototype.hasOwnProperty.call(parsed, key)
       ) {
         throw new Error(
           `aws_secrets_manager: key "${key}" not found in secret "${name}"`,

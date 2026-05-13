@@ -1,12 +1,16 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-const { mockSend, mockDestroy } = vi.hoisted(() => ({
+const { mockSend, mockDestroy, mockConstructor } = vi.hoisted(() => ({
   mockSend: vi.fn(),
   mockDestroy: vi.fn(),
+  mockConstructor: vi.fn(),
 }));
 
 vi.mock('@aws-sdk/client-secrets-manager', () => {
   class SecretsManagerClient {
+    constructor(config?: unknown) {
+      mockConstructor(config);
+    }
     send = mockSend;
     destroy = mockDestroy;
   }
@@ -122,6 +126,6 @@ describe('fetchSecretsManager — error handling', () => {
 
     await fetchSecretsManager('myapp/prod/db', undefined, 'eu-west-1');
 
-    expect(mockDestroy).toHaveBeenCalled();
+    expect(mockConstructor).toHaveBeenCalledWith({ region: 'eu-west-1' });
   });
 });
