@@ -429,13 +429,14 @@ export function pullCommand(): Command {
       if (historyAvailable) {
         const lastFiles = history.getLastPullFiles();
         const currentPaths = new Set(writeTargets.map((t) => t.targetPath));
+        const skippedPathsArr = [...skippedPaths];
         for (const ref of lastFiles) {
           if (currentPaths.has(ref.absolutePath)) continue;
           // Files covered by a skipped (condition-gated) entry should not be
           // treated as stale — the entry is still in the config, it just didn't
           // run this time. Exact match for file entries; prefix match for
           // directory entries (whose resolved base path is the directory itself).
-          const coveredBySkipped = [...skippedPaths].some(
+          const coveredBySkipped = skippedPathsArr.some(
             (sp) =>
               ref.absolutePath === sp ||
               ref.absolutePath.startsWith(sp + path.sep),
