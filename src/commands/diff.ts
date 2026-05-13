@@ -23,6 +23,7 @@ import { FileDiff } from '../diff';
 import { AvantiConfig } from '../types';
 import { HistoryManager } from '../history';
 import { resolveVariableSpec } from '../variables-remote';
+import { evaluateConditions } from '../condition';
 
 interface DiffLoopResult {
   allDiffs: FileDiff[];
@@ -34,6 +35,7 @@ async function runDiffLoop(
   config: AvantiConfig,
   workingDir: string,
   cache?: FetchCache,
+  configPath?: string,
 ): Promise<DiffLoopResult> {
   let vars;
   try {
@@ -46,12 +48,49 @@ async function runDiffLoop(
   let hasError = false;
   let selfContent: string | undefined;
 
-  const hasSelf = SELF_KEY in config.files;
+  let hasSelf = SELF_KEY in config.files;
+  if (hasSelf) {
+    const selfEntry = config.files[SELF_KEY];
+    try {
+      hasSelf = evaluateConditions(
+        selfEntry['if'],
+        selfEntry.ifAny,
+        () =>
+          configPath !== undefined
+            ? configPath
+            : resolveTargetPath(selfEntry, '', workingDir, vars),
+        workingDir,
+        vars,
+      );
+    } catch (err: unknown) {
+      console.error(
+        `Error processing ${SELF_KEY}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return { allDiffs: [], hasError: true };
+    }
+  }
   for (const [key, entry] of Object.entries(config.files)) {
     const isSelf = key === SELF_KEY;
-    if (hasSelf && !isSelf) continue;
+    if (hasSelf !== isSelf) continue;
     try {
-      const result = await fetchSource(entry, workingDir, vars, cache);
+      if (
+        !isSelf &&
+        !evaluateConditions(
+          entry['if'],
+          entry.ifAny,
+          () => resolveTargetPath(entry, '', workingDir, vars),
+          workingDir,
+          vars,
+        )
+      )
+        continue;
+      const result = await fetchSource(
+        entry,
+        workingDir,
+        vars,
+        cache,
+        isSelf && configPath !== undefined ? () => configPath : undefined,
+      );
       for (const rec of result.sourceRecords) {
         if (!rec.matched) {
           console.error(
@@ -137,7 +176,12 @@ export function diffCommand(): Command {
         }
 
         const fetchCache: FetchCache = new Map();
-        const firstPass = await runDiffLoop(config, workingDir, fetchCache);
+        const firstPass = await runDiffLoop(
+          config,
+          workingDir,
+          fetchCache,
+          configPath,
+        );
         let { allDiffs, hasError } = firstPass;
 
         if (hasError) process.exit(2);
@@ -173,6 +217,7 @@ export function diffCommand(): Command {
               currentConfig,
               workingDir,
               fetchCache,
+              configPath,
             );
 
             if (next.hasError) {
@@ -203,6 +248,7 @@ export function diffCommand(): Command {
                 { ...stableConfig, files: filesWithoutSelf },
                 workingDir,
                 fetchCache,
+                configPath,
               );
               allDiffs = second.allDiffs;
               hasError = second.hasError;

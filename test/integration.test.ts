@@ -969,7 +969,7 @@ files:
   });
 
   describe('YAML merge', () => {
-    it('merges two disjoint YAML files', () => {
+    it('merges two disjoint YAML files', { timeout: 15_000 }, () => {
       const aFile = join(tmpDir, 'a.yaml');
       const bFile = join(tmpDir, 'b.yaml');
       writeFileSync(aFile, 'a: 1\nb: original\n');

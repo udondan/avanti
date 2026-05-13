@@ -1,7 +1,14 @@
 import { Command } from 'commander';
 import * as path from 'path';
-import { isRemoteConfigSpec, loadConfig, resolveConfigPath } from '../config';
+import {
+  isRemoteConfigSpec,
+  loadConfig,
+  resolveConfigPath,
+  SELF_KEY,
+} from '../config';
+import { evaluateConditions } from '../condition';
 import { fetchSource } from '../sources';
+import { resolveTargetPath } from '../diff';
 import { writeUpdatedShas } from '../config-writeback';
 import { resolveVariableSpec } from '../variables-remote';
 
@@ -45,9 +52,28 @@ export function lockCommand(): Command {
       let hasError = false;
       let remoteSourceCount = 0;
 
-      for (const entry of Object.values(config.files)) {
+      for (const [key, entry] of Object.entries(config.files)) {
         try {
-          const result = await fetchSource(entry, workingDir, vars);
+          if (
+            !evaluateConditions(
+              entry['if'],
+              entry.ifAny,
+              () =>
+                key === SELF_KEY
+                  ? configPath
+                  : resolveTargetPath(entry, '', workingDir, vars),
+              workingDir,
+              vars,
+            )
+          )
+            continue;
+          const result = await fetchSource(
+            entry,
+            workingDir,
+            vars,
+            undefined,
+            key === SELF_KEY ? () => configPath : undefined,
+          );
           remoteSourceCount += result.sourceRecords.length;
           for (const rec of result.sourceRecords) {
             if (!opts.force && rec.expectedSha !== undefined) continue;

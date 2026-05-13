@@ -9,6 +9,7 @@ import {
   resolveConfigPath,
   SELF_KEY,
 } from '../config';
+import { evaluateConditions } from '../condition';
 import { fetchSource, FetchCache, SourceFetchRecord } from '../sources';
 import { applyReplace } from '../processors/replace';
 import { applyPost } from '../processors/post';
@@ -39,6 +40,8 @@ interface FetchLoopResult {
   hasError: boolean;
   shaErrors: ShaError[];
   sourceRecordsByTarget: Map<string, SourceFetchRecord[]>;
+  skippedPaths: Set<string>;
+  hasUnresolvableSkippedPath: boolean;
   selfContent?: string;
   selfMode?: string;
   selfSourceRecords?: SourceFetchRecord[];
@@ -48,6 +51,7 @@ async function runFetchLoop(
   config: AvantiConfig,
   workingDir: string,
   cache?: FetchCache,
+  configPath?: string,
 ): Promise<FetchLoopResult> {
   let vars;
   try {
@@ -60,6 +64,8 @@ async function runFetchLoop(
       hasError: true,
       shaErrors: [],
       sourceRecordsByTarget: new Map(),
+      skippedPaths: new Set(),
+      hasUnresolvableSkippedPath: false,
     };
   }
   const writeTargets: WriteTarget[] = [];
@@ -67,17 +73,94 @@ async function runFetchLoop(
   const shaErrors: ShaError[] = [];
   const seenShaErrorLabels = new Set<string>();
   const sourceRecordsByTarget = new Map<string, SourceFetchRecord[]>();
+  const skippedPaths = new Set<string>();
+  let hasUnresolvableSkippedPath = false;
   let hasError = false;
   let selfContent: string | undefined;
   let selfMode: string | undefined;
   let selfSourceRecords: SourceFetchRecord[] | undefined;
 
-  const hasSelf = SELF_KEY in config.files;
+  let hasSelf = SELF_KEY in config.files;
+  if (hasSelf) {
+    const selfEntry = config.files[SELF_KEY];
+    try {
+      hasSelf = evaluateConditions(
+        selfEntry['if'],
+        selfEntry.ifAny,
+        () =>
+          configPath !== undefined
+            ? configPath
+            : resolveTargetPath(selfEntry, '', workingDir, vars),
+        workingDir,
+        vars,
+      );
+    } catch (err: unknown) {
+      console.error(
+        `Error processing ${SELF_KEY}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return {
+        writeTargets,
+        allDiffs,
+        hasError: true,
+        shaErrors,
+        sourceRecordsByTarget,
+        skippedPaths,
+        hasUnresolvableSkippedPath,
+      };
+    }
+    // $self was condition-skipped: protect configPath from stale cleanup so a
+    // previously-written config file is not restored or deleted on this run.
+    if (
+      !hasSelf &&
+      configPath !== undefined &&
+      !isRemoteConfigSpec(configPath)
+    ) {
+      skippedPaths.add(configPath);
+    }
+  }
   for (const [key, entry] of Object.entries(config.files)) {
     const isSelf = key === SELF_KEY;
-    if (hasSelf && !isSelf) continue;
+    if (hasSelf !== isSelf) continue;
     try {
-      const result = await fetchSource(entry, workingDir, vars, cache);
+      if (
+        !isSelf &&
+        !evaluateConditions(
+          entry['if'],
+          entry.ifAny,
+          () => resolveTargetPath(entry, '', workingDir, vars),
+          workingDir,
+          vars,
+        )
+      ) {
+        try {
+          skippedPaths.add(resolveTargetPath(entry, '', workingDir, vars));
+        } catch {
+          console.warn(
+            `Warning: skipped entry has an unresolvable target path — stale cleanup disabled for this run.`,
+          );
+          hasUnresolvableSkippedPath = true;
+        }
+        continue;
+      }
+      const result = await fetchSource(
+        entry,
+        workingDir,
+        vars,
+        cache,
+        isSelf && configPath !== undefined ? () => configPath : undefined,
+      );
+
+      if (result.allSkipped && !isSelf) {
+        try {
+          skippedPaths.add(resolveTargetPath(entry, '', workingDir, vars));
+        } catch {
+          console.warn(
+            `Warning: skipped entry has an unresolvable target path — stale cleanup disabled for this run.`,
+          );
+          hasUnresolvableSkippedPath = true;
+        }
+        continue;
+      }
 
       for (const rec of result.sourceRecords) {
         if (!rec.matched && !seenShaErrorLabels.has(rec.sourceLabel)) {
@@ -134,6 +217,8 @@ async function runFetchLoop(
     hasError,
     shaErrors,
     sourceRecordsByTarget,
+    skippedPaths,
+    hasUnresolvableSkippedPath,
     selfContent,
     selfMode,
     selfSourceRecords,
@@ -188,8 +273,15 @@ export function pullCommand(): Command {
       const pullId = historyAvailable ? history.openPullSession() : null;
 
       const fetchCache: FetchCache = new Map();
-      const firstPass = await runFetchLoop(config, workingDir, fetchCache);
+      const firstPass = await runFetchLoop(
+        config,
+        workingDir,
+        fetchCache,
+        configPath,
+      );
       let { writeTargets, allDiffs, sourceRecordsByTarget } = firstPass;
+      let skippedPaths = firstPass.skippedPaths;
+      let hasUnresolvableSkippedPath = firstPass.hasUnresolvableSkippedPath;
 
       if (firstPass.hasError) {
         console.error('Aborting due to errors.');
@@ -242,6 +334,7 @@ export function pullCommand(): Command {
             currentConfig,
             workingDir,
             fetchCache,
+            configPath,
           );
 
           if (next.hasError) {
@@ -290,6 +383,7 @@ export function pullCommand(): Command {
               { ...stableConfig, files: filesWithoutSelf },
               workingDir,
               fetchCache,
+              configPath,
             );
             if (second.hasError) {
               console.error('Aborting due to errors.');
@@ -305,6 +399,9 @@ export function pullCommand(): Command {
             writeTargets = second.writeTargets;
             allDiffs = second.allDiffs;
             sourceRecordsByTarget = second.sourceRecordsByTarget;
+            skippedPaths = second.skippedPaths;
+            if (second.hasUnresolvableSkippedPath)
+              hasUnresolvableSkippedPath = true;
             const seenInSecond = new Set(
               firstPass.shaErrors.map((e) => e.sourceLabel),
             );
@@ -352,11 +449,22 @@ export function pullCommand(): Command {
       const staleToRestore: WriteTarget[] = [];
       const staleDiffs: FileDiff[] = [];
 
-      if (historyAvailable) {
+      if (historyAvailable && !hasUnresolvableSkippedPath) {
         const lastFiles = history.getLastPullFiles();
         const currentPaths = new Set(writeTargets.map((t) => t.targetPath));
+        const skippedPathsArr = [...skippedPaths];
         for (const ref of lastFiles) {
           if (currentPaths.has(ref.absolutePath)) continue;
+          // Files covered by a skipped (condition-gated) entry should not be
+          // treated as stale — the entry is still in the config, it just didn't
+          // run this time. Exact match for file entries; prefix match for
+          // directory entries (whose resolved base path is the directory itself).
+          const coveredBySkipped = skippedPathsArr.some(
+            (sp) =>
+              ref.absolutePath === sp ||
+              ref.absolutePath.startsWith(sp + path.sep),
+          );
+          if (coveredBySkipped) continue;
           const meta = history.getFileMeta(ref.absolutePath);
           if (!meta) continue;
           if (meta.existedBeforeAvanti) {

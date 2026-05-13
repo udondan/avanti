@@ -10,6 +10,8 @@ import {
   TomlMergeOptions,
   Variables,
 } from '../types';
+import { evaluateConditions } from '../condition';
+import { resolveTargetPath } from '../diff';
 import { resolveVars, resolveVarsShellSafe } from '../variables';
 import { fetchHttp, inferFilenameFromUrl } from './http';
 import { fetchLocal } from './local';
@@ -152,6 +154,7 @@ export interface SourceFetchRecord {
 export interface FetchResult {
   files: Map<string, Buffer>;
   sourceRecords: SourceFetchRecord[];
+  allSkipped?: boolean;
 }
 
 export type FetchCache = Map<string, { files: Map<string, Buffer> }>;
@@ -353,6 +356,7 @@ async function _fetchOneSrcRaw(
 ): Promise<{ files: Map<string, Buffer>; skipped?: boolean }> {
   if (isVerbose())
     verbose(`fetching source: ${redactUrl(labelForSrc(src, vars))}`);
+
   if (typeof src === 'string') {
     const resolved = resolveVars(src, vars);
     if (resolved.startsWith('http://') || resolved.startsWith('https://')) {
@@ -503,11 +507,33 @@ async function fetchOneSrc(
   workingDir: string,
   vars: Variables,
   cache?: FetchCache,
+  getTargetPath: () => string = () => '',
 ): Promise<{
   files: Map<string, Buffer>;
   record: SourceFetchRecord | null;
   skipped?: boolean;
 }> {
+  // Evaluate source-level conditions before the cache so a cached result for
+  // the same URL is not returned when conditions gate this source out.
+  if (typeof src !== 'string') {
+    const ifCond = 'if' in src ? (src as { if?: unknown })['if'] : undefined;
+    const ifAnyCond =
+      'ifAny' in src ? (src as { ifAny?: unknown }).ifAny : undefined;
+    if (ifCond !== undefined || ifAnyCond !== undefined) {
+      if (
+        !evaluateConditions(
+          ifCond as Parameters<typeof evaluateConditions>[0],
+          ifAnyCond as Parameters<typeof evaluateConditions>[1],
+          getTargetPath,
+          workingDir,
+          vars,
+        )
+      ) {
+        return { files: new Map(), record: null, skipped: true };
+      }
+    }
+  }
+
   const cacheKey = cacheKeyForSrc(src, vars);
   const cached = cache?.get(cacheKey);
 
@@ -551,8 +577,13 @@ export async function fetchSource(
   workingDir: string,
   vars: Variables = {},
   cache?: FetchCache,
+  getTargetPathOverride?: () => string,
 ): Promise<FetchResult> {
   const { src } = entry;
+
+  const getTargetPath =
+    getTargetPathOverride ??
+    (() => resolveTargetPath(entry, '', workingDir, vars));
 
   // List src → fetch each, then merge as JSON or concatenate with newline
   if (Array.isArray(src)) {
@@ -565,6 +596,7 @@ export async function fetchSource(
           workingDir,
           vars,
           cache,
+          getTargetPath,
         );
         if (skipped) continue;
         assertTextFiles(files, `source ${i}`);
@@ -579,7 +611,8 @@ export async function fetchSource(
         throw new Error(`[source ${i}] ${msg}`, { cause: err });
       }
     }
-    if (parts.length === 0) return { files: new Map(), sourceRecords: [] };
+    if (parts.length === 0)
+      return { files: new Map(), sourceRecords: [], allSkipped: true };
     const filename = path.basename(entry.target);
     const jsonOpts = resolveJsonOptions(entry, src);
     const yamlOpts = jsonOpts === null ? resolveYamlOptions(entry, src) : null;
@@ -608,8 +641,8 @@ export async function fetchSource(
     files: singleFiles,
     record: singleRecord,
     skipped,
-  } = await fetchOneSrc(src, workingDir, vars, cache);
-  if (skipped) return { files: new Map(), sourceRecords: [] };
+  } = await fetchOneSrc(src, workingDir, vars, cache, getTargetPath);
+  if (skipped) return { files: new Map(), sourceRecords: [], allSkipped: true };
   const singleResult = { files: singleFiles };
   const sourceRecords: SourceFetchRecord[] =
     singleRecord !== null ? [singleRecord] : [];

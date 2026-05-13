@@ -1708,3 +1708,160 @@ files:
     await expect(loadConfig(f)).rejects.toThrow('variables.token');
   });
 });
+
+describe('if/ifAny condition parsing in config', () => {
+  it('parses if as a single condition object on a file entry', () => {
+    const f = writeTmp(`
+files:
+  out.txt:
+    src: https://example.com/out.txt
+    if:
+      os: linux
+`);
+    const cfg = parseConfigContent(fs.readFileSync(f, 'utf8'));
+    expect(cfg.files['out.txt']['if']).toEqual({ os: 'linux' });
+  });
+
+  it('parses if as a list of condition objects (AND)', () => {
+    const f = writeTmp(`
+files:
+  out.txt:
+    src: https://example.com/out.txt
+    if:
+      - os: linux
+      - exists: /tmp
+`);
+    const cfg = parseConfigContent(fs.readFileSync(f, 'utf8'));
+    expect(cfg.files['out.txt']['if']).toEqual([
+      { os: 'linux' },
+      { exists: '/tmp' },
+    ]);
+  });
+
+  it('parses ifAny as a list of condition objects (OR)', () => {
+    const f = writeTmp(`
+files:
+  out.txt:
+    src: https://example.com/out.txt
+    ifAny:
+      - os: linux
+      - os: mac
+`);
+    const cfg = parseConfigContent(fs.readFileSync(f, 'utf8'));
+    expect(cfg.files['out.txt'].ifAny).toEqual([
+      { os: 'linux' },
+      { os: 'mac' },
+    ]);
+  });
+
+  it('parses not: true in a condition', () => {
+    const f = writeTmp(`
+files:
+  out.txt:
+    src: https://example.com/out.txt
+    if:
+      os: windows
+      not: true
+`);
+    const cfg = parseConfigContent(fs.readFileSync(f, 'utf8'));
+    expect(cfg.files['out.txt']['if']).toEqual({ os: 'windows', not: true });
+  });
+
+  it('parses os as an array', () => {
+    const f = writeTmp(`
+files:
+  out.txt:
+    src: https://example.com/out.txt
+    if:
+      os:
+        - linux
+        - mac
+`);
+    const cfg = parseConfigContent(fs.readFileSync(f, 'utf8'));
+    expect(cfg.files['out.txt']['if']).toEqual({ os: ['linux', 'mac'] });
+  });
+
+  it('throws on unknown key in condition', () => {
+    const f = writeTmp(`
+files:
+  out.txt:
+    src: https://example.com/out.txt
+    if:
+      badkey: true
+`);
+    expect(() => parseConfigContent(fs.readFileSync(f, 'utf8'))).toThrow(
+      'unknown key',
+    );
+  });
+
+  it('throws on invalid os value', () => {
+    const f = writeTmp(`
+files:
+  out.txt:
+    src: https://example.com/out.txt
+    if:
+      os: solaris
+`);
+    expect(() => parseConfigContent(fs.readFileSync(f, 'utf8'))).toThrow(
+      '.os:',
+    );
+  });
+
+  it('throws on empty if array', () => {
+    const f = writeTmp(`
+files:
+  out.txt:
+    src: https://example.com/out.txt
+    if: []
+`);
+    expect(() => parseConfigContent(fs.readFileSync(f, 'utf8'))).toThrow(
+      'must not be an empty array',
+    );
+  });
+
+  it('throws on empty ifAny array', () => {
+    const f = writeTmp(`
+files:
+  out.txt:
+    src: https://example.com/out.txt
+    ifAny: []
+`);
+    expect(() => parseConfigContent(fs.readFileSync(f, 'utf8'))).toThrow(
+      'must not be an empty array',
+    );
+  });
+
+  it('throws when ifAny is not an array', () => {
+    const f = writeTmp(`
+files:
+  out.txt:
+    src: https://example.com/out.txt
+    ifAny:
+      os: linux
+`);
+    expect(() => parseConfigContent(fs.readFileSync(f, 'utf8'))).toThrow(
+      'must be an array',
+    );
+  });
+
+  it('parses if on a source object within a multi-src entry', () => {
+    const f = writeTmp(`
+files:
+  out.txt:
+    src:
+      - raw: "# linux\n"
+        if:
+          os: linux
+      - raw: "# mac\n"
+        if:
+          os: mac
+`);
+    const cfg = parseConfigContent(fs.readFileSync(f, 'utf8'));
+    const srcs = cfg.files['out.txt'].src as Array<{
+      raw: string;
+      if?: unknown;
+    }>;
+    expect(srcs[0]['if']).toEqual({ os: 'linux' });
+    expect(srcs[1]['if']).toEqual({ os: 'mac' });
+  });
+});
