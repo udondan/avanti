@@ -1,3 +1,4 @@
+import * as os from 'os';
 import * as path from 'path';
 import { existsSync } from 'fs';
 import { spawnSync } from 'child_process';
@@ -18,9 +19,11 @@ export function evaluateCondition(
     if (!(platforms as string[]).includes(currentPlatform())) result = false;
   }
   if (result && cond.exists !== undefined) {
-    result = existsSync(
-      path.resolve(workingDir, resolveVars(cond.exists, vars)),
-    );
+    let existsPath = resolveVars(cond.exists, vars);
+    if (existsPath.startsWith('~/')) {
+      existsPath = path.join(os.homedir(), existsPath.slice(2));
+    }
+    result = existsSync(path.resolve(workingDir, existsPath));
   }
   if (result && cond.exec !== undefined) {
     const { shell, args } = getShellArgs(resolveVarsShellSafe(cond.exec, vars));
