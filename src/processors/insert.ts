@@ -212,7 +212,9 @@ function applyYamlInsert(
         string,
         unknown
       >;
-      deepRemoveFromYamlMap(doc.contents, oldContrib);
+      if (isPlainObject(oldContrib)) {
+        deepRemoveFromYamlMap(doc.contents, oldContrib);
+      }
     }
     cleanedYaml = doc.toString();
   } else {
@@ -287,7 +289,11 @@ export function applyInsertMode(
   }
 
   // Plain text: find old fragment in file and replace; otherwise append
-  if (lastProcessed !== null && existingContent.includes(lastProcessed)) {
+  if (
+    lastProcessed !== null &&
+    lastProcessed.length > 0 &&
+    existingContent.includes(lastProcessed)
+  ) {
     return existingContent.replace(lastProcessed, processedText);
   }
   const sep = existingContent.endsWith('\n') ? '' : '\n';
