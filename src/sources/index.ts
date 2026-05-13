@@ -10,7 +10,8 @@ import {
   TomlMergeOptions,
   Variables,
 } from '../types';
-import { evaluateConditions } from '../condition';
+import { evaluateConditions, conditionsNeedTargetPath } from '../condition';
+import { resolveTargetPath } from '../diff';
 import { resolveVars, resolveVarsShellSafe } from '../variables';
 import { fetchHttp, inferFilenameFromUrl } from './http';
 import { fetchLocal } from './local';
@@ -366,6 +367,7 @@ async function _fetchOneSrcRaw(
           ifCond as Parameters<typeof evaluateConditions>[0],
           ifAnyCond as Parameters<typeof evaluateConditions>[1],
           targetPath,
+          workingDir,
           vars,
         )
       ) {
@@ -576,10 +578,18 @@ export async function fetchSource(
 ): Promise<FetchResult> {
   const { src } = entry;
 
-  const resolvedTargetPath = path.resolve(
-    workingDir,
-    resolveVars(entry.target, vars),
-  );
+  const srcList = Array.isArray(src) ? src : [src];
+  const anySourceNeedsTargetPath = srcList.some((s) => {
+    if (typeof s === 'string') return false;
+    const obj = s as { if?: unknown; ifAny?: unknown };
+    return conditionsNeedTargetPath(
+      obj['if'] as Parameters<typeof conditionsNeedTargetPath>[0],
+      obj.ifAny as Parameters<typeof conditionsNeedTargetPath>[1],
+    );
+  });
+  const resolvedTargetPath = anySourceNeedsTargetPath
+    ? resolveTargetPath(entry, '', workingDir, vars)
+    : '';
 
   // List src → fetch each, then merge as JSON or concatenate with newline
   if (Array.isArray(src)) {
