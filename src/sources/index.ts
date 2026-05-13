@@ -179,13 +179,23 @@ function labelForSrc(src: FileSrc, vars: Variables): string {
   if ('exec' in src) return `exec:${src.exec}`;
   if ('aws_s3' in src) return `aws_s3:${src.aws_s3}`;
   if ('aws_secrets_manager' in src) {
-    const k = src.aws_secrets_manager.key
-      ? `#${src.aws_secrets_manager.key}`
-      : '';
-    return `aws_secrets_manager:${src.aws_secrets_manager.name}${k}`;
+    const k =
+      src.aws_secrets_manager.key !== undefined
+        ? `#${src.aws_secrets_manager.key}`
+        : '';
+    const r =
+      src.aws_secrets_manager.region !== undefined
+        ? `@${src.aws_secrets_manager.region}`
+        : '';
+    return `aws_secrets_manager:${src.aws_secrets_manager.name}${k}${r}`;
   }
-  if ('aws_systems_manager_parameter' in src)
-    return `aws_systems_manager_parameter:${src.aws_systems_manager_parameter.name}`;
+  if ('aws_systems_manager_parameter' in src) {
+    const r =
+      src.aws_systems_manager_parameter.region !== undefined
+        ? `@${src.aws_systems_manager_parameter.region}`
+        : '';
+    return `aws_systems_manager_parameter:${src.aws_systems_manager_parameter.name}${r}`;
+  }
   if ('vault' in src) {
     const field = src.vault.field ? `#${src.vault.field}` : '';
     return `vault:${src.vault.path}${field}`;
@@ -243,13 +253,23 @@ function cacheKeyForSrc(src: FileSrc, vars: Variables): string {
   if ('exec' in src) return `exec:${resolveVars(src.exec, vars)}`;
   if ('aws_s3' in src) return `aws_s3:${resolveVars(src.aws_s3, vars)}`;
   if ('aws_secrets_manager' in src) {
-    const k = src.aws_secrets_manager.key
-      ? `#${resolveVars(src.aws_secrets_manager.key, vars)}`
-      : '';
-    return `aws_secrets_manager:${resolveVars(src.aws_secrets_manager.name, vars)}${k}`;
+    const k =
+      src.aws_secrets_manager.key !== undefined
+        ? `#${resolveVars(src.aws_secrets_manager.key, vars)}`
+        : '';
+    const r =
+      src.aws_secrets_manager.region !== undefined
+        ? `@${resolveVars(src.aws_secrets_manager.region, vars)}`
+        : '';
+    return `aws_secrets_manager:${resolveVars(src.aws_secrets_manager.name, vars)}${k}${r}`;
   }
-  if ('aws_systems_manager_parameter' in src)
-    return `aws_systems_manager_parameter:${resolveVars(src.aws_systems_manager_parameter.name, vars)}`;
+  if ('aws_systems_manager_parameter' in src) {
+    const r =
+      src.aws_systems_manager_parameter.region !== undefined
+        ? `@${resolveVars(src.aws_systems_manager_parameter.region, vars)}`
+        : '';
+    return `aws_systems_manager_parameter:${resolveVars(src.aws_systems_manager_parameter.name, vars)}${r}`;
+  }
   if ('vault' in src) {
     const field = src.vault.field
       ? `#${resolveVars(src.vault.field, vars)}`

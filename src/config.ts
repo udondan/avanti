@@ -370,7 +370,7 @@ function parseSingleSrc(
 
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
     throw new Error(
-      `${loc}: must be a string or a map with one of: exec, gitlab, github, bitbucket, git, aws_s3, vault, http, raw, aws_secrets_manager, aws_systems_manager_parameter`,
+      `${loc}: must be a string or a map with one of: path, url, exec, gitlab, github, bitbucket, git, aws_s3, vault, http, raw, aws_secrets_manager, aws_systems_manager_parameter`,
     );
   }
 
@@ -623,8 +623,12 @@ function parseSingleSrc(
     return {
       aws_secrets_manager: {
         name: smt['name'],
-        key: typeof smt['key'] === 'string' ? smt['key'] : undefined,
-        region: typeof smt['region'] === 'string' ? smt['region'] : undefined,
+        key:
+          typeof smt['key'] === 'string' && smt['key'] ? smt['key'] : undefined,
+        region:
+          typeof smt['region'] === 'string' && smt['region']
+            ? smt['region']
+            : undefined,
         sha: parseSha(smt['sha'], `${loc}.aws_secrets_manager`),
       },
     };
@@ -646,7 +650,10 @@ function parseSingleSrc(
     return {
       aws_systems_manager_parameter: {
         name: ssmt['name'],
-        region: typeof ssmt['region'] === 'string' ? ssmt['region'] : undefined,
+        region:
+          typeof ssmt['region'] === 'string' && ssmt['region']
+            ? ssmt['region']
+            : undefined,
         sha: parseSha(ssmt['sha'], `${loc}.aws_systems_manager_parameter`),
       },
     };

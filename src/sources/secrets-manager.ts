@@ -2,7 +2,6 @@ import {
   GetSecretValueCommand,
   SecretsManagerClient,
 } from '@aws-sdk/client-secrets-manager';
-import * as path from 'path';
 import { verbose, isVerbose } from '../logger';
 
 export interface SecretsManagerResult {
@@ -21,9 +20,15 @@ export async function fetchSecretsManager(
       new GetSecretValueCommand({ SecretId: name }),
     );
 
-    const filename = path.basename(name) || 'secret';
+    // ARNs use ':' as separator; split on both ':' and '/' to get the leaf name
+    const filename = name.split(/[:/]/).filter(Boolean).pop() || 'secret';
 
     if (response.SecretBinary) {
+      if (key !== undefined) {
+        throw new Error(
+          `aws_secrets_manager: secret "${name}" is binary — key extraction requires a JSON string secret`,
+        );
+      }
       const buf = Buffer.from(response.SecretBinary);
       return { files: new Map([[filename, buf]]) };
     }

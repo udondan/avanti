@@ -70,6 +70,25 @@ describe('fetchSecretsManager — binary secrets', () => {
 
     expect(result.files.get('cert')).toEqual(binary);
   });
+
+  it('throws when key is requested but secret is binary', async () => {
+    const binary = Buffer.from([0xde, 0xad, 0xbe, 0xef]);
+    mockSend.mockResolvedValueOnce({ SecretBinary: binary });
+
+    await expect(
+      fetchSecretsManager('myapp/prod/cert', 'somekey'),
+    ).rejects.toThrow('binary');
+  });
+
+  it('uses leaf name from ARN as filename', async () => {
+    mockSend.mockResolvedValueOnce({ SecretString: 'val' });
+
+    const result = await fetchSecretsManager(
+      'arn:aws:secretsmanager:us-east-1:123456789012:secret:MySecretName',
+    );
+
+    expect(result.files.has('MySecretName')).toBe(true);
+  });
 });
 
 describe('fetchSecretsManager — error handling', () => {

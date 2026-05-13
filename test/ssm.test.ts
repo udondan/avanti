@@ -108,6 +108,26 @@ describe('fetchSsm — path prefix', () => {
     expect(result.files.get('port')?.toString('utf8')).toBe('5432');
   });
 
+  it('keys parameters by relative path under prefix to avoid basename collisions', async () => {
+    mockSend.mockResolvedValueOnce({
+      Parameters: [
+        { Name: '/myapp/prod/db/host', Value: 'db.example.com' },
+        { Name: '/myapp/prod/cache/host', Value: 'cache.example.com' },
+      ],
+      NextToken: undefined,
+    });
+
+    const result = await fetchSsm('/myapp/prod/');
+
+    expect(result.files.get('db/host')?.toString('utf8')).toBe(
+      'db.example.com',
+    );
+    expect(result.files.get('cache/host')?.toString('utf8')).toBe(
+      'cache.example.com',
+    );
+    expect(result.files.size).toBe(2);
+  });
+
   it('returns an empty map when path has no parameters', async () => {
     mockSend.mockResolvedValueOnce({ Parameters: [], NextToken: undefined });
 

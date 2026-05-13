@@ -45,8 +45,11 @@ export async function fetchSsm(
 
       for (const param of response.Parameters ?? []) {
         if (!param.Name || param.Value === undefined) continue;
-        const filename = path.basename(param.Name);
-        files.set(filename, Buffer.from(param.Value, 'utf8'));
+        const relKey = param.Name.slice(name.length).replace(/^\/+/, '');
+        files.set(
+          relKey || path.basename(param.Name),
+          Buffer.from(param.Value, 'utf8'),
+        );
       }
 
       nextToken = response.NextToken;
