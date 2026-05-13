@@ -1,74 +1,67 @@
-import { spawnSync } from 'child_process';
-import * as fs from 'fs';
-import * as os from 'os';
+import {
+  GetObjectCommand,
+  ListObjectsV2Command,
+  S3Client,
+} from '@aws-sdk/client-s3';
 import * as path from 'path';
-import { isVerbose, verbose } from '../logger';
+import { verbose, isVerbose } from '../logger';
 import { redactUrl } from '../fetch';
 
 export interface S3Result {
   files: Map<string, Buffer>;
 }
 
-function awsRun(args: string[]): {
-  stdout: string;
-  stderr: string;
-  status: number | null;
-} {
-  const result = spawnSync('aws', args, { encoding: 'utf8' });
-  if (result.error) throw new Error(`aws CLI error: ${result.error.message}`);
-  return {
-    stdout: result.stdout ?? '',
-    stderr: result.stderr ?? '',
-    status: result.status,
-  };
+function parseS3Uri(uri: string): { bucket: string; key: string } {
+  const match = uri.match(/^s3:\/\/([^/]+)\/?(.*)$/);
+  if (!match) throw new Error(`Invalid S3 URI: ${uri}`);
+  return { bucket: match[1], key: match[2] };
 }
 
-function collectFiles(
-  base: string,
-  dir: string,
-  files: Map<string, Buffer>,
-): void {
-  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-    const full = path.join(dir, entry.name);
-    if (entry.isDirectory()) {
-      collectFiles(base, full, files);
-    } else if (entry.isFile()) {
-      files.set(path.relative(base, full), fs.readFileSync(full));
-    }
-  }
-}
-
-export function fetchS3(uri: string): S3Result {
+export async function fetchS3(uri: string): Promise<S3Result> {
+  const client = new S3Client({});
+  const { bucket, key } = parseS3Uri(uri);
   const isDir = uri.endsWith('/');
 
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'avanti-s3-'));
-  try {
-    if (!isDir) {
-      let filename: string;
-      try {
-        filename = path.basename(new URL(uri).pathname) || 'download';
-      } catch {
-        filename = path.basename(uri) || 'download';
-      }
-      // Download to a temp file to support binary content
-      const tmpFile = path.join(tmpDir, filename);
-      if (isVerbose()) verbose(`aws s3 cp ${redactUrl(uri)} <tmpfile>`);
-      const res = awsRun(['s3', 'cp', uri, tmpFile]);
-      if (res.status !== 0) {
-        throw new Error(`Failed to fetch ${uri}: ${res.stderr.trim()}`);
-      }
-      return { files: new Map([[filename, fs.readFileSync(tmpFile)]]) };
+  if (!isDir) {
+    if (isVerbose()) verbose(`s3 GetObject ${redactUrl(uri)}`);
+    const response = await client.send(
+      new GetObjectCommand({ Bucket: bucket, Key: key }),
+    );
+    if (!response.Body) throw new Error(`No body returned for ${uri}`);
+    const bytes = await response.Body.transformToByteArray();
+    const buf = Buffer.from(bytes);
+    const filename = path.basename(key) || 'download';
+    return { files: new Map([[filename, buf]]) };
+  }
+
+  if (isVerbose()) verbose(`s3 ListObjectsV2 ${redactUrl(uri)}`);
+  const files = new Map<string, Buffer>();
+  let continuationToken: string | undefined;
+
+  do {
+    const response = await client.send(
+      new ListObjectsV2Command({
+        Bucket: bucket,
+        Prefix: key,
+        ContinuationToken: continuationToken,
+      }),
+    );
+
+    for (const obj of response.Contents ?? []) {
+      if (!obj.Key || obj.Key.endsWith('/')) continue;
+      if (isVerbose()) verbose(`s3 GetObject s3://${bucket}/${obj.Key}`);
+      const get = await client.send(
+        new GetObjectCommand({ Bucket: bucket, Key: obj.Key }),
+      );
+      if (!get.Body) continue;
+      const bytes = await get.Body.transformToByteArray();
+      const buf = Buffer.from(bytes);
+      const relKey = obj.Key.slice(key.length);
+      files.set(relKey, buf);
     }
 
-    if (isVerbose()) verbose(`aws s3 sync ${redactUrl(uri)} <tmpdir>`);
-    const res = awsRun(['s3', 'sync', uri, tmpDir]);
-    if (res.status !== 0) {
-      throw new Error(`Failed to sync ${uri}: ${res.stderr.trim()}`);
-    }
-    const files = new Map<string, Buffer>();
-    collectFiles(tmpDir, tmpDir, files);
-    return { files };
-  } finally {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
-  }
+    continuationToken = response.NextContinuationToken;
+  } while (continuationToken);
+
+  return { files };
 }
