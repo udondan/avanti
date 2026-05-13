@@ -3,9 +3,9 @@ import * as path from 'path';
 import { isRemoteConfigSpec, loadConfig, resolveConfigPath } from '../config';
 import { evaluateConditions, conditionsNeedTargetPath } from '../condition';
 import { fetchSource } from '../sources';
+import { resolveTargetPath } from '../diff';
 import { writeUpdatedShas } from '../config-writeback';
 import { resolveVariableSpec } from '../variables-remote';
-import { resolveVars } from '../variables';
 
 export function lockCommand(): Command {
   return new Command('lock')
@@ -52,9 +52,17 @@ export function lockCommand(): Command {
           entry['if'],
           entry.ifAny,
         )
-          ? path.resolve(workingDir, resolveVars(entry.target, vars))
+          ? resolveTargetPath(entry, '', workingDir, vars)
           : '';
-        if (!evaluateConditions(entry['if'], entry.ifAny, resolvedTarget, vars))
+        if (
+          !evaluateConditions(
+            entry['if'],
+            entry.ifAny,
+            resolvedTarget,
+            workingDir,
+            vars,
+          )
+        )
           continue;
         try {
           const result = await fetchSource(entry, workingDir, vars);

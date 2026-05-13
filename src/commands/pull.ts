@@ -27,7 +27,6 @@ import { HistoryManager, PullLogFileRef, SourceShaRecord } from '../history';
 import { confirm } from '../prompt';
 import { applyUpdatedShas, writeUpdatedShas } from '../config-writeback';
 import { resolveVariableSpec } from '../variables-remote';
-import { resolveVars } from '../variables';
 
 interface ShaError {
   sourceLabel: string;
@@ -80,9 +79,17 @@ async function runFetchLoop(
     if (hasSelf && !isSelf) continue;
     if (!isSelf) {
       const resolvedTarget = conditionsNeedTargetPath(entry['if'], entry.ifAny)
-        ? path.resolve(workingDir, resolveVars(entry.target, vars))
+        ? resolveTargetPath(entry, '', workingDir, vars)
         : '';
-      if (!evaluateConditions(entry['if'], entry.ifAny, resolvedTarget, vars))
+      if (
+        !evaluateConditions(
+          entry['if'],
+          entry.ifAny,
+          resolvedTarget,
+          workingDir,
+          vars,
+        )
+      )
         continue;
     }
     try {
