@@ -1,8 +1,8 @@
 import { existsSync } from 'fs';
 import { spawnSync } from 'child_process';
-import { Condition, OsPlatform, Variables } from './types.js';
-import { resolveVars } from './variables.js';
-import { getShellArgs } from './shell.js';
+import { Condition, OsPlatform, Variables } from './types';
+import { resolveVars } from './variables';
+import { getShellArgs } from './shell';
 
 export function evaluateCondition(
   cond: Condition,

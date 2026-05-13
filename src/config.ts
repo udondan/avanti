@@ -482,6 +482,9 @@ function parseConditionField(
   const result: { if?: Condition | Condition[]; ifAny?: Condition[] } = {};
   if (obj['if'] !== undefined) {
     if (Array.isArray(obj['if'])) {
+      if (obj['if'].length === 0) {
+        throw new Error(`${loc}.if: must not be an empty array`);
+      }
       result['if'] = (obj['if'] as unknown[]).map((c, i) =>
         parseCondition(c, `${loc}.if[${i}]`),
       );
@@ -492,6 +495,9 @@ function parseConditionField(
   if (obj['ifAny'] !== undefined) {
     if (!Array.isArray(obj['ifAny'])) {
       throw new Error(`${loc}.ifAny: must be an array`);
+    }
+    if (obj['ifAny'].length === 0) {
+      throw new Error(`${loc}.ifAny: must not be an empty array`);
     }
     result.ifAny = (obj['ifAny'] as unknown[]).map((c, i) =>
       parseCondition(c, `${loc}.ifAny[${i}]`),

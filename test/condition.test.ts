@@ -1,5 +1,5 @@
-import { describe, it, expect, vi, afterEach } from 'vitest';
-import { mkdtempSync, writeFileSync, mkdirSync } from 'fs';
+import { describe, it, expect, vi, afterEach, afterAll } from 'vitest';
+import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import * as path from 'path';
 import { evaluateCondition, evaluateConditions } from '../src/condition';
@@ -11,6 +11,10 @@ writeFileSync(existingFile, 'hello');
 const existingDir = path.join(tmpDir, 'subdir');
 mkdirSync(existingDir);
 const missingPath = path.join(tmpDir, 'missing.txt');
+
+afterAll(() => {
+  rmSync(tmpDir, { recursive: true, force: true });
+});
 
 afterEach(() => {
   vi.restoreAllMocks();
