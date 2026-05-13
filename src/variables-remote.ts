@@ -43,7 +43,7 @@ export async function resolveVariableSpec(
           `variables.${name}: source resolved to multiple files; set json/yaml/toml to merge them into one`,
         );
       }
-      const buf = [...result.files.values()][0];
+      const buf = result.files.values().next().value as Buffer;
       if (isBinary(buf)) {
         throw new Error(
           `variables.${name}: source resolved to binary content, which cannot be used as a variable value`,

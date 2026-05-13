@@ -853,14 +853,14 @@ variables:
     src:
       aws_secrets_manager:
         name: my-artifactory-token
-  registry_url: https://my-registry.example.com
+  registry_host: my-registry.example.com
 
 files:
   .npmrc:
     src:
       raw: |
-        registry=$registry_url
-        //$registry_url/:_authToken=$auth_token
+        registry=https://$registry_host
+        //$registry_host/:_authToken=$auth_token
 ```
 
 The fetched content is trimmed of leading and trailing whitespace before being used as the variable value (secrets from AWS Secrets Manager, SSM Parameter Store, Vault, etc. often include a trailing newline).

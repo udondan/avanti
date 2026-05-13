@@ -295,7 +295,9 @@ function parseVariables(raw: unknown): VariableSpec {
   if (raw === undefined || raw === null)
     return Object.create(null) as VariableSpec;
   if (typeof raw !== 'object' || Array.isArray(raw)) {
-    throw new Error('"variables" must be a map');
+    throw new Error(
+      '"variables" must be a map of variable names to string values or source objects',
+    );
   }
   const obj = raw as Record<string, unknown>;
   const spec: VariableSpec = Object.create(null) as VariableSpec;
