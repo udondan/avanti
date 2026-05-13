@@ -27,7 +27,8 @@ export function evaluateCondition(
   }
   if (result && cond.exec !== undefined) {
     const { shell, args } = getShellArgs(resolveVarsShellSafe(cond.exec, vars));
-    result = spawnSync(shell, args, { cwd: workingDir }).status === 0;
+    result =
+      spawnSync(shell, args, { cwd: workingDir, stdio: 'ignore' }).status === 0;
   }
   if (result && cond.target_exists === true) {
     result = existsSync(getTargetPath());
