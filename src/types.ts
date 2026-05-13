@@ -133,6 +133,11 @@ export interface JsonMergeOptions {
   conflicts?: JsonConflictStrategy;
   arrays?: JsonArrayStrategy;
   objects?: JsonObjectStrategy;
+  indent?: number | 'tab';
+  trailingCommas?: boolean;
+  sortKeys?: boolean;
+  minify?: boolean;
+  stripComments?: boolean;
 }
 
 export type YamlConflictStrategy = 'abort' | 'first_wins' | 'last_wins';
