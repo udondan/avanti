@@ -1,6 +1,11 @@
 import { Command } from 'commander';
 import * as path from 'path';
-import { isRemoteConfigSpec, loadConfig, resolveConfigPath } from '../config';
+import {
+  isRemoteConfigSpec,
+  loadConfig,
+  resolveConfigPath,
+  SELF_KEY,
+} from '../config';
 import { evaluateConditions } from '../condition';
 import { fetchSource } from '../sources';
 import { resolveTargetPath } from '../diff';
@@ -47,13 +52,16 @@ export function lockCommand(): Command {
       let hasError = false;
       let remoteSourceCount = 0;
 
-      for (const entry of Object.values(config.files)) {
+      for (const [key, entry] of Object.entries(config.files)) {
         try {
           if (
             !evaluateConditions(
               entry['if'],
               entry.ifAny,
-              () => resolveTargetPath(entry, '', workingDir, vars),
+              () =>
+                key === SELF_KEY
+                  ? configPath
+                  : resolveTargetPath(entry, '', workingDir, vars),
               workingDir,
               vars,
             )

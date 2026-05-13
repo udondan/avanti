@@ -50,6 +50,7 @@ async function runFetchLoop(
   config: AvantiConfig,
   workingDir: string,
   cache?: FetchCache,
+  configPath?: string,
 ): Promise<FetchLoopResult> {
   let vars;
   try {
@@ -83,7 +84,10 @@ async function runFetchLoop(
       hasSelf = evaluateConditions(
         selfEntry['if'],
         selfEntry.ifAny,
-        () => resolveTargetPath(selfEntry, '', workingDir, vars),
+        () =>
+          configPath !== undefined
+            ? configPath
+            : resolveTargetPath(selfEntry, '', workingDir, vars),
         workingDir,
         vars,
       );
@@ -123,6 +127,15 @@ async function runFetchLoop(
         continue;
       }
       const result = await fetchSource(entry, workingDir, vars, cache);
+
+      if (result.allSkipped && !isSelf) {
+        try {
+          skippedPaths.add(resolveTargetPath(entry, '', workingDir, vars));
+        } catch {
+          // target path unresolvable — stale cleanup handles it
+        }
+        continue;
+      }
 
       for (const rec of result.sourceRecords) {
         if (!rec.matched && !seenShaErrorLabels.has(rec.sourceLabel)) {
@@ -234,7 +247,12 @@ export function pullCommand(): Command {
       const pullId = historyAvailable ? history.openPullSession() : null;
 
       const fetchCache: FetchCache = new Map();
-      const firstPass = await runFetchLoop(config, workingDir, fetchCache);
+      const firstPass = await runFetchLoop(
+        config,
+        workingDir,
+        fetchCache,
+        configPath,
+      );
       let { writeTargets, allDiffs, sourceRecordsByTarget } = firstPass;
       let skippedPaths = firstPass.skippedPaths;
 
@@ -289,6 +307,7 @@ export function pullCommand(): Command {
             currentConfig,
             workingDir,
             fetchCache,
+            configPath,
           );
 
           if (next.hasError) {
@@ -337,6 +356,7 @@ export function pullCommand(): Command {
               { ...stableConfig, files: filesWithoutSelf },
               workingDir,
               fetchCache,
+              configPath,
             );
             if (second.hasError) {
               console.error('Aborting due to errors.');

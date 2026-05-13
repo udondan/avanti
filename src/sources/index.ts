@@ -154,6 +154,7 @@ export interface SourceFetchRecord {
 export interface FetchResult {
   files: Map<string, Buffer>;
   sourceRecords: SourceFetchRecord[];
+  allSkipped?: boolean;
 }
 
 export type FetchCache = Map<string, { files: Map<string, Buffer> }>;
@@ -607,7 +608,8 @@ export async function fetchSource(
         throw new Error(`[source ${i}] ${msg}`, { cause: err });
       }
     }
-    if (parts.length === 0) return { files: new Map(), sourceRecords: [] };
+    if (parts.length === 0)
+      return { files: new Map(), sourceRecords: [], allSkipped: true };
     const filename = path.basename(entry.target);
     const jsonOpts = resolveJsonOptions(entry, src);
     const yamlOpts = jsonOpts === null ? resolveYamlOptions(entry, src) : null;

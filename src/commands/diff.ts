@@ -35,6 +35,7 @@ async function runDiffLoop(
   config: AvantiConfig,
   workingDir: string,
   cache?: FetchCache,
+  configPath?: string,
 ): Promise<DiffLoopResult> {
   let vars;
   try {
@@ -54,7 +55,10 @@ async function runDiffLoop(
       hasSelf = evaluateConditions(
         selfEntry['if'],
         selfEntry.ifAny,
-        () => resolveTargetPath(selfEntry, '', workingDir, vars),
+        () =>
+          configPath !== undefined
+            ? configPath
+            : resolveTargetPath(selfEntry, '', workingDir, vars),
         workingDir,
         vars,
       );
@@ -166,7 +170,12 @@ export function diffCommand(): Command {
         }
 
         const fetchCache: FetchCache = new Map();
-        const firstPass = await runDiffLoop(config, workingDir, fetchCache);
+        const firstPass = await runDiffLoop(
+          config,
+          workingDir,
+          fetchCache,
+          configPath,
+        );
         let { allDiffs, hasError } = firstPass;
 
         if (hasError) process.exit(2);
@@ -202,6 +211,7 @@ export function diffCommand(): Command {
               currentConfig,
               workingDir,
               fetchCache,
+              configPath,
             );
 
             if (next.hasError) {
@@ -232,6 +242,7 @@ export function diffCommand(): Command {
                 { ...stableConfig, files: filesWithoutSelf },
                 workingDir,
                 fetchCache,
+                configPath,
               );
               allDiffs = second.allDiffs;
               hasError = second.hasError;
