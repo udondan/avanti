@@ -1,6 +1,6 @@
 import { existsSync } from 'fs';
 import { spawnSync } from 'child_process';
-import { Condition, OsPlatform, Variables } from './types';
+import { Condition, Variables } from './types';
 import { resolveVars } from './variables';
 import { getShellArgs } from './shell';
 
@@ -13,7 +13,7 @@ export function evaluateCondition(
 
   if (cond.os !== undefined) {
     const platforms = Array.isArray(cond.os) ? cond.os : [cond.os];
-    if (!platforms.includes(currentPlatform())) result = false;
+    if (!(platforms as string[]).includes(currentPlatform())) result = false;
   }
   if (result && cond.exists !== undefined) {
     result = existsSync(resolveVars(cond.exists, vars));
@@ -48,8 +48,19 @@ export function evaluateConditions(
   return true;
 }
 
-function currentPlatform(): OsPlatform {
+export function conditionsNeedTargetPath(
+  ifCond: Condition | Condition[] | undefined,
+  ifAnyCond: Condition[] | undefined,
+): boolean {
+  const all: Condition[] = [
+    ...(Array.isArray(ifCond) ? ifCond : ifCond !== undefined ? [ifCond] : []),
+    ...(ifAnyCond ?? []),
+  ];
+  return all.some((c) => c.target_exists === true);
+}
+
+function currentPlatform(): string {
   if (process.platform === 'win32') return 'windows';
   if (process.platform === 'darwin') return 'mac';
-  return 'linux';
+  return process.platform;
 }
