@@ -9,7 +9,7 @@ import {
   resolveConfigPath,
   SELF_KEY,
 } from '../config';
-import { evaluateConditions, conditionsNeedTargetPath } from '../condition';
+import { evaluateConditions } from '../condition';
 import { fetchSource, FetchCache, SourceFetchRecord } from '../sources';
 import { applyReplace } from '../processors/replace';
 import { applyPost } from '../processors/post';
@@ -77,21 +77,17 @@ async function runFetchLoop(
   for (const [key, entry] of Object.entries(config.files)) {
     const isSelf = key === SELF_KEY;
     if (hasSelf && !isSelf) continue;
-    if (!isSelf) {
-      const resolvedTarget = conditionsNeedTargetPath(entry['if'], entry.ifAny)
-        ? resolveTargetPath(entry, '', workingDir, vars)
-        : '';
-      if (
-        !evaluateConditions(
-          entry['if'],
-          entry.ifAny,
-          resolvedTarget,
-          workingDir,
-          vars,
-        )
+    if (
+      !isSelf &&
+      !evaluateConditions(
+        entry['if'],
+        entry.ifAny,
+        () => resolveTargetPath(entry, '', workingDir, vars),
+        workingDir,
+        vars,
       )
-        continue;
-    }
+    )
+      continue;
     try {
       const result = await fetchSource(entry, workingDir, vars, cache);
 

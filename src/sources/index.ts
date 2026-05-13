@@ -10,7 +10,7 @@ import {
   TomlMergeOptions,
   Variables,
 } from '../types';
-import { evaluateConditions, conditionsNeedTargetPath } from '../condition';
+import { evaluateConditions } from '../condition';
 import { resolveTargetPath } from '../diff';
 import { resolveVars, resolveVarsShellSafe } from '../variables';
 import { fetchHttp, inferFilenameFromUrl } from './http';
@@ -352,7 +352,7 @@ async function _fetchOneSrcRaw(
   src: FileSrc,
   workingDir: string,
   vars: Variables,
-  targetPath: string,
+  getTargetPath: () => string,
 ): Promise<{ files: Map<string, Buffer>; skipped?: boolean }> {
   if (isVerbose())
     verbose(`fetching source: ${redactUrl(labelForSrc(src, vars))}`);
@@ -366,7 +366,7 @@ async function _fetchOneSrcRaw(
         !evaluateConditions(
           ifCond as Parameters<typeof evaluateConditions>[0],
           ifAnyCond as Parameters<typeof evaluateConditions>[1],
-          targetPath,
+          getTargetPath,
           workingDir,
           vars,
         )
@@ -526,7 +526,7 @@ async function fetchOneSrc(
   workingDir: string,
   vars: Variables,
   cache?: FetchCache,
-  targetPath: string = '',
+  getTargetPath: () => string = () => '',
 ): Promise<{
   files: Map<string, Buffer>;
   record: SourceFetchRecord | null;
@@ -542,7 +542,7 @@ async function fetchOneSrc(
     if (isVerbose()) verbose(`cache hit: ${redactUrl(labelForSrc(src, vars))}`);
     files = cached.files;
   } else {
-    const raw = await _fetchOneSrcRaw(src, workingDir, vars, targetPath);
+    const raw = await _fetchOneSrcRaw(src, workingDir, vars, getTargetPath);
     files = raw.files;
     skipped = raw.skipped;
     // Don't cache skipped results: if optional changes to required between
@@ -578,18 +578,7 @@ export async function fetchSource(
 ): Promise<FetchResult> {
   const { src } = entry;
 
-  const srcList = Array.isArray(src) ? src : [src];
-  const anySourceNeedsTargetPath = srcList.some((s) => {
-    if (typeof s === 'string') return false;
-    const obj = s as { if?: unknown; ifAny?: unknown };
-    return conditionsNeedTargetPath(
-      obj['if'] as Parameters<typeof conditionsNeedTargetPath>[0],
-      obj.ifAny as Parameters<typeof conditionsNeedTargetPath>[1],
-    );
-  });
-  const resolvedTargetPath = anySourceNeedsTargetPath
-    ? resolveTargetPath(entry, '', workingDir, vars)
-    : '';
+  const getTargetPath = () => resolveTargetPath(entry, '', workingDir, vars);
 
   // List src → fetch each, then merge as JSON or concatenate with newline
   if (Array.isArray(src)) {
@@ -602,7 +591,7 @@ export async function fetchSource(
           workingDir,
           vars,
           cache,
-          resolvedTargetPath,
+          getTargetPath,
         );
         if (skipped) continue;
         assertTextFiles(files, `source ${i}`);
@@ -646,7 +635,7 @@ export async function fetchSource(
     files: singleFiles,
     record: singleRecord,
     skipped,
-  } = await fetchOneSrc(src, workingDir, vars, cache, resolvedTargetPath);
+  } = await fetchOneSrc(src, workingDir, vars, cache, getTargetPath);
   if (skipped) return { files: new Map(), sourceRecords: [] };
   const singleResult = { files: singleFiles };
   const sourceRecords: SourceFetchRecord[] =

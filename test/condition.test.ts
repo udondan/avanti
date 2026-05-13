@@ -30,88 +30,98 @@ describe('evaluateCondition', () => {
   describe('os', () => {
     it('passes when os matches current platform', () => {
       spoofPlatform('linux');
-      expect(evaluateCondition({ os: 'linux' }, '', tmpDir, {})).toBe(true);
-    });
-
-    it('fails when os does not match', () => {
-      spoofPlatform('linux');
-      expect(evaluateCondition({ os: 'mac' }, '', tmpDir, {})).toBe(false);
-    });
-
-    it('maps darwin → mac', () => {
-      spoofPlatform('darwin');
-      expect(evaluateCondition({ os: 'mac' }, '', tmpDir, {})).toBe(true);
-    });
-
-    it('maps win32 → windows', () => {
-      spoofPlatform('win32');
-      expect(evaluateCondition({ os: 'windows' }, '', tmpDir, {})).toBe(true);
-    });
-
-    it('passes when current platform is in the list', () => {
-      spoofPlatform('linux');
-      expect(evaluateCondition({ os: ['linux', 'mac'] }, '', tmpDir, {})).toBe(
+      expect(evaluateCondition({ os: 'linux' }, () => '', tmpDir, {})).toBe(
         true,
       );
     });
 
-    it('fails when current platform is not in the list', () => {
-      spoofPlatform('win32');
-      expect(evaluateCondition({ os: ['linux', 'mac'] }, '', tmpDir, {})).toBe(
+    it('fails when os does not match', () => {
+      spoofPlatform('linux');
+      expect(evaluateCondition({ os: 'mac' }, () => '', tmpDir, {})).toBe(
         false,
       );
+    });
+
+    it('maps darwin → mac', () => {
+      spoofPlatform('darwin');
+      expect(evaluateCondition({ os: 'mac' }, () => '', tmpDir, {})).toBe(true);
+    });
+
+    it('maps win32 → windows', () => {
+      spoofPlatform('win32');
+      expect(evaluateCondition({ os: 'windows' }, () => '', tmpDir, {})).toBe(
+        true,
+      );
+    });
+
+    it('passes when current platform is in the list', () => {
+      spoofPlatform('linux');
+      expect(
+        evaluateCondition({ os: ['linux', 'mac'] }, () => '', tmpDir, {}),
+      ).toBe(true);
+    });
+
+    it('fails when current platform is not in the list', () => {
+      spoofPlatform('win32');
+      expect(
+        evaluateCondition({ os: ['linux', 'mac'] }, () => '', tmpDir, {}),
+      ).toBe(false);
     });
   });
 
   describe('exists', () => {
     it('passes when path exists (file)', () => {
-      expect(evaluateCondition({ exists: existingFile }, '', tmpDir, {})).toBe(
-        true,
-      );
+      expect(
+        evaluateCondition({ exists: existingFile }, () => '', tmpDir, {}),
+      ).toBe(true);
     });
 
     it('passes when path exists (directory)', () => {
-      expect(evaluateCondition({ exists: existingDir }, '', tmpDir, {})).toBe(
-        true,
-      );
+      expect(
+        evaluateCondition({ exists: existingDir }, () => '', tmpDir, {}),
+      ).toBe(true);
     });
 
     it('fails when path does not exist', () => {
-      expect(evaluateCondition({ exists: missingPath }, '', tmpDir, {})).toBe(
-        false,
-      );
+      expect(
+        evaluateCondition({ exists: missingPath }, () => '', tmpDir, {}),
+      ).toBe(false);
     });
 
     it('resolves variables in exists path', () => {
       expect(
-        evaluateCondition({ exists: '$dir/exists.txt' }, '', tmpDir, {
+        evaluateCondition({ exists: '$dir/exists.txt' }, () => '', tmpDir, {
           dir: tmpDir,
         }),
       ).toBe(true);
     });
 
     it('resolves relative exists path against workingDir', () => {
-      expect(evaluateCondition({ exists: 'exists.txt' }, '', tmpDir, {})).toBe(
-        true,
-      );
+      expect(
+        evaluateCondition({ exists: 'exists.txt' }, () => '', tmpDir, {}),
+      ).toBe(true);
     });
   });
 
   describe('exec', () => {
     it('passes when command exits 0', () => {
       if (isWindows) return;
-      expect(evaluateCondition({ exec: 'true' }, '', tmpDir, {})).toBe(true);
+      expect(evaluateCondition({ exec: 'true' }, () => '', tmpDir, {})).toBe(
+        true,
+      );
     });
 
     it('fails when command exits non-zero', () => {
       if (isWindows) return;
-      expect(evaluateCondition({ exec: 'false' }, '', tmpDir, {})).toBe(false);
+      expect(evaluateCondition({ exec: 'false' }, () => '', tmpDir, {})).toBe(
+        false,
+      );
     });
 
     it('resolves variables in exec command', () => {
       if (isWindows) return;
       expect(
-        evaluateCondition({ exec: 'test -f $path' }, '', tmpDir, {
+        evaluateCondition({ exec: 'test -f $path' }, () => '', tmpDir, {
           path: existingFile,
         }),
       ).toBe(true);
@@ -121,13 +131,23 @@ describe('evaluateCondition', () => {
   describe('target_exists', () => {
     it('passes when target exists', () => {
       expect(
-        evaluateCondition({ target_exists: true }, existingFile, tmpDir, {}),
+        evaluateCondition(
+          { target_exists: true },
+          () => existingFile,
+          tmpDir,
+          {},
+        ),
       ).toBe(true);
     });
 
     it('fails when target does not exist', () => {
       expect(
-        evaluateCondition({ target_exists: true }, missingPath, tmpDir, {}),
+        evaluateCondition(
+          { target_exists: true },
+          () => missingPath,
+          tmpDir,
+          {},
+        ),
       ).toBe(false);
     });
   });
@@ -136,27 +156,32 @@ describe('evaluateCondition', () => {
     it('inverts a passing condition', () => {
       spoofPlatform('linux');
       expect(
-        evaluateCondition({ os: 'linux', not: true }, '', tmpDir, {}),
+        evaluateCondition({ os: 'linux', not: true }, () => '', tmpDir, {}),
       ).toBe(false);
     });
 
     it('inverts a failing condition', () => {
       spoofPlatform('linux');
-      expect(evaluateCondition({ os: 'mac', not: true }, '', tmpDir, {})).toBe(
-        true,
-      );
+      expect(
+        evaluateCondition({ os: 'mac', not: true }, () => '', tmpDir, {}),
+      ).toBe(true);
     });
 
     it('inverts exists check', () => {
       expect(
-        evaluateCondition({ exists: missingPath, not: true }, '', tmpDir, {}),
+        evaluateCondition(
+          { exists: missingPath, not: true },
+          () => '',
+          tmpDir,
+          {},
+        ),
       ).toBe(true);
     });
 
     it('inverts exec check', () => {
       if (isWindows) return;
       expect(
-        evaluateCondition({ exec: 'false', not: true }, '', tmpDir, {}),
+        evaluateCondition({ exec: 'false', not: true }, () => '', tmpDir, {}),
       ).toBe(true);
     });
   });
@@ -167,7 +192,7 @@ describe('evaluateCondition', () => {
       expect(
         evaluateCondition(
           { os: 'linux', exists: existingFile },
-          '',
+          () => '',
           tmpDir,
           {},
         ),
@@ -177,7 +202,12 @@ describe('evaluateCondition', () => {
     it('fails when one check fails', () => {
       spoofPlatform('linux');
       expect(
-        evaluateCondition({ os: 'linux', exists: missingPath }, '', tmpDir, {}),
+        evaluateCondition(
+          { os: 'linux', exists: missingPath },
+          () => '',
+          tmpDir,
+          {},
+        ),
       ).toBe(false);
     });
   });
@@ -185,17 +215,19 @@ describe('evaluateCondition', () => {
 
 describe('evaluateConditions', () => {
   it('passes with no conditions', () => {
-    expect(evaluateConditions(undefined, undefined, '', tmpDir, {})).toBe(true);
+    expect(evaluateConditions(undefined, undefined, () => '', tmpDir, {})).toBe(
+      true,
+    );
   });
 
   it('applies if condition (AND)', () => {
     spoofPlatform('linux');
-    expect(evaluateConditions({ os: 'linux' }, undefined, '', tmpDir, {})).toBe(
-      true,
-    );
-    expect(evaluateConditions({ os: 'mac' }, undefined, '', tmpDir, {})).toBe(
-      false,
-    );
+    expect(
+      evaluateConditions({ os: 'linux' }, undefined, () => '', tmpDir, {}),
+    ).toBe(true);
+    expect(
+      evaluateConditions({ os: 'mac' }, undefined, () => '', tmpDir, {}),
+    ).toBe(false);
   });
 
   it('applies if as list — all must pass', () => {
@@ -204,7 +236,7 @@ describe('evaluateConditions', () => {
       evaluateConditions(
         [{ os: 'linux' }, { exists: existingFile }],
         undefined,
-        '',
+        () => '',
         tmpDir,
         {},
       ),
@@ -213,7 +245,7 @@ describe('evaluateConditions', () => {
       evaluateConditions(
         [{ os: 'linux' }, { exists: missingPath }],
         undefined,
-        '',
+        () => '',
         tmpDir,
         {},
       ),
@@ -226,7 +258,7 @@ describe('evaluateConditions', () => {
       evaluateConditions(
         undefined,
         [{ os: 'mac' }, { os: 'linux' }],
-        '',
+        () => '',
         tmpDir,
         {},
       ),
@@ -239,7 +271,7 @@ describe('evaluateConditions', () => {
       evaluateConditions(
         undefined,
         [{ os: 'mac' }, { os: 'windows' }],
-        '',
+        () => '',
         tmpDir,
         {},
       ),
@@ -252,7 +284,7 @@ describe('evaluateConditions', () => {
       evaluateConditions(
         { os: 'linux' },
         [{ exists: existingFile }],
-        '',
+        () => '',
         tmpDir,
         {},
       ),
@@ -261,7 +293,7 @@ describe('evaluateConditions', () => {
       evaluateConditions(
         { os: 'mac' },
         [{ exists: existingFile }],
-        '',
+        () => '',
         tmpDir,
         {},
       ),
@@ -270,7 +302,7 @@ describe('evaluateConditions', () => {
       evaluateConditions(
         { os: 'linux' },
         [{ exists: missingPath }],
-        '',
+        () => '',
         tmpDir,
         {},
       ),
@@ -283,7 +315,7 @@ describe('evaluateConditions', () => {
       evaluateConditions(
         undefined,
         [{ os: 'windows', not: true }, { os: 'mac' }],
-        '',
+        () => '',
         tmpDir,
         {},
       ),

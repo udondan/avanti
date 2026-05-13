@@ -7,7 +7,7 @@ import { getShellArgs } from './shell';
 
 export function evaluateCondition(
   cond: Condition,
-  targetPath: string,
+  getTargetPath: () => string,
   workingDir: string,
   vars: Variables,
 ): boolean {
@@ -27,7 +27,7 @@ export function evaluateCondition(
     result = spawnSync(shell, args, { cwd: workingDir }).status === 0;
   }
   if (result && cond.target_exists === true) {
-    result = existsSync(targetPath);
+    result = existsSync(getTargetPath());
   }
 
   return cond.not === true ? !result : result;
@@ -36,32 +36,25 @@ export function evaluateCondition(
 export function evaluateConditions(
   ifCond: Condition | Condition[] | undefined,
   ifAnyCond: Condition[] | undefined,
-  targetPath: string,
+  getTargetPath: () => string,
   workingDir: string,
   vars: Variables,
 ): boolean {
   if (ifCond !== undefined) {
     const list = Array.isArray(ifCond) ? ifCond : [ifCond];
-    if (!list.every((c) => evaluateCondition(c, targetPath, workingDir, vars)))
+    if (
+      !list.every((c) => evaluateCondition(c, getTargetPath, workingDir, vars))
+    )
       return false;
   }
   if (
     ifAnyCond !== undefined &&
-    !ifAnyCond.some((c) => evaluateCondition(c, targetPath, workingDir, vars))
+    !ifAnyCond.some((c) =>
+      evaluateCondition(c, getTargetPath, workingDir, vars),
+    )
   )
     return false;
   return true;
-}
-
-export function conditionsNeedTargetPath(
-  ifCond: Condition | Condition[] | undefined,
-  ifAnyCond: Condition[] | undefined,
-): boolean {
-  const all: Condition[] = [
-    ...(Array.isArray(ifCond) ? ifCond : ifCond !== undefined ? [ifCond] : []),
-    ...(ifAnyCond ?? []),
-  ];
-  return all.some((c) => c.target_exists === true);
 }
 
 function currentPlatform(): string {
