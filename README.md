@@ -644,7 +644,7 @@ files:
   - `replace` — the later source's object replaces the earlier one entirely
 - `indent` _(default: `2`)_ — indentation: a non-negative integer for spaces, or `"tab"` for tab characters
 - `trailing_commas` _(default: `false`)_ — append a trailing comma after the last element in every array and object; valid JSONC syntax that produces cleaner diffs
-- `sort_keys` _(default: `false`)_ — sort all object keys alphabetically (recursive); useful for stable diffs regardless of insertion order
+- `sort_keys` _(default: `false`)_ — sort all object keys alphabetically (recursive); useful for stable diffs regardless of insertion order; rebuilds objects from scratch so JSONC comments are not preserved in the output
 - `minify` _(default: `false`)_ — collapse output to a single line with no whitespace; also strips JSONC comments since they are not valid in strict JSON; overrides `indent` and `trailing_commas`
 - `strip_comments` _(default: `false`)_ — remove all JSONC comments from the output, producing valid strict JSON; also overrides `trailing_commas` (strict JSON does not support trailing commas)
 

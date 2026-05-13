@@ -72,7 +72,7 @@ function sortJsonKeys(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(sortJsonKeys);
   if (value !== null && typeof value === 'object') {
     const obj = value as Record<string, unknown>;
-    const sorted = Object.keys(obj)
+    return Object.keys(obj)
       .sort()
       .reduce<Record<string, unknown>>(
         (acc, k) => {
@@ -81,8 +81,6 @@ function sortJsonKeys(value: unknown): unknown {
         },
         Object.create(null) as Record<string, unknown>,
       );
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return assign({} as any, sorted);
   }
   return value;
 }
