@@ -58,21 +58,24 @@ export async function fetchS3(uri: string): Promise<S3Result> {
         (obj) => obj.Key && !obj.Key.endsWith('/'),
       );
 
-      await Promise.all(
-        objects.map(async (obj) => {
-          const objKey = obj.Key!;
-          if (isVerbose())
-            verbose(`s3 GetObject ${redactUrl(`s3://${bucket}/${objKey}`)}`);
-          const get = await client.send(
-            new GetObjectCommand({ Bucket: bucket, Key: objKey }),
-          );
-          if (!get.Body)
-            throw new Error(`No body returned for s3://${bucket}/${objKey}`);
-          const bytes = await get.Body.transformToByteArray();
-          const relKey = objKey.slice(key.length);
-          files.set(relKey, Buffer.from(bytes));
-        }),
-      );
+      const BATCH = 50;
+      for (let i = 0; i < objects.length; i += BATCH) {
+        await Promise.all(
+          objects.slice(i, i + BATCH).map(async (obj) => {
+            const objKey = obj.Key!;
+            if (isVerbose())
+              verbose(`s3 GetObject ${redactUrl(`s3://${bucket}/${objKey}`)}`);
+            const get = await client.send(
+              new GetObjectCommand({ Bucket: bucket, Key: objKey }),
+            );
+            if (!get.Body)
+              throw new Error(`No body returned for s3://${bucket}/${objKey}`);
+            const bytes = await get.Body.transformToByteArray();
+            const relKey = objKey.slice(key.length);
+            files.set(relKey, Buffer.from(bytes));
+          }),
+        );
+      }
 
       isTruncated = response.IsTruncated ?? false;
       continuationToken = response.NextContinuationToken;
