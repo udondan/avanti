@@ -461,10 +461,10 @@ async function _fetchOneSrcRaw(
     const result = await fetchSecretsManager(
       resolveVars(src.aws_secrets_manager.name, vars),
       src.aws_secrets_manager.key !== undefined
-        ? resolveVars(src.aws_secrets_manager.key, vars)
+        ? resolveVars(src.aws_secrets_manager.key, vars) || undefined
         : undefined,
       src.aws_secrets_manager.region !== undefined
-        ? resolveVars(src.aws_secrets_manager.region, vars)
+        ? resolveVars(src.aws_secrets_manager.region, vars) || undefined
         : undefined,
     );
     files = result.files;
@@ -472,7 +472,8 @@ async function _fetchOneSrcRaw(
     const result = await fetchSsm(
       resolveVars(src.aws_systems_manager_parameter.name, vars),
       src.aws_systems_manager_parameter.region !== undefined
-        ? resolveVars(src.aws_systems_manager_parameter.region, vars)
+        ? resolveVars(src.aws_systems_manager_parameter.region, vars) ||
+            undefined
         : undefined,
     );
     files = result.files;

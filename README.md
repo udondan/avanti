@@ -1143,8 +1143,10 @@ CI sets `DEPLOY_VERSION` and `ENVIRONMENT`; the config pins every file to exactl
 ### Secrets from Vault or AWS
 
 Pull secrets at runtime and write them to local files with tight permissions.
-The native `vault:`, `aws_s3:`, and `aws_secrets_manager:` sources handle auth
-automatically via the AWS credential chain — no shell scripting needed.
+The native `vault:` source authenticates via the Vault CLI or `VAULT_TOKEN` env
+var. The `aws_s3:`, `aws_secrets_manager:`, and `aws_systems_manager_parameter:`
+sources authenticate via the AWS SDK credential chain (env vars, `~/.aws/credentials`,
+IAM roles). No shell scripting needed.
 
 ```yaml
 files:
