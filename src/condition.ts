@@ -1,12 +1,14 @@
+import * as path from 'path';
 import { existsSync } from 'fs';
 import { spawnSync } from 'child_process';
 import { Condition, Variables } from './types';
-import { resolveVars } from './variables';
+import { resolveVars, resolveVarsShellSafe } from './variables';
 import { getShellArgs } from './shell';
 
 export function evaluateCondition(
   cond: Condition,
   targetPath: string,
+  workingDir: string,
   vars: Variables,
 ): boolean {
   let result = true;
@@ -16,11 +18,13 @@ export function evaluateCondition(
     if (!(platforms as string[]).includes(currentPlatform())) result = false;
   }
   if (result && cond.exists !== undefined) {
-    result = existsSync(resolveVars(cond.exists, vars));
+    result = existsSync(
+      path.resolve(workingDir, resolveVars(cond.exists, vars)),
+    );
   }
   if (result && cond.exec !== undefined) {
-    const { shell, args } = getShellArgs(resolveVars(cond.exec, vars));
-    result = spawnSync(shell, args).status === 0;
+    const { shell, args } = getShellArgs(resolveVarsShellSafe(cond.exec, vars));
+    result = spawnSync(shell, args, { cwd: workingDir }).status === 0;
   }
   if (result && cond.target_exists === true) {
     result = existsSync(targetPath);
@@ -33,16 +37,17 @@ export function evaluateConditions(
   ifCond: Condition | Condition[] | undefined,
   ifAnyCond: Condition[] | undefined,
   targetPath: string,
+  workingDir: string,
   vars: Variables,
 ): boolean {
   if (ifCond !== undefined) {
     const list = Array.isArray(ifCond) ? ifCond : [ifCond];
-    if (!list.every((c) => evaluateCondition(c, targetPath, vars)))
+    if (!list.every((c) => evaluateCondition(c, targetPath, workingDir, vars)))
       return false;
   }
   if (
     ifAnyCond !== undefined &&
-    !ifAnyCond.some((c) => evaluateCondition(c, targetPath, vars))
+    !ifAnyCond.some((c) => evaluateCondition(c, targetPath, workingDir, vars))
   )
     return false;
   return true;
