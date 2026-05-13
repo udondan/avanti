@@ -298,3 +298,35 @@ describe('TOML — key removal', () => {
     expect(result).toContain('userKey');
   });
 });
+
+describe('TOML — datetime values', () => {
+  it('preserves user datetime values (not incorrectly removed)', () => {
+    const targetPath = path.join(tmpDir, 'file.toml');
+    // User has a datetime value; avanti contributes a string key
+    fs.writeFileSync(targetPath, 'created = 2023-01-01T00:00:00Z\nk1 = "v1"\n');
+    // lastProcessed only contributed k1; after source removes k1, created must survive
+    const result = applyInsertMode(
+      makeEntry({ toml: true }),
+      '',
+      'k1 = "v1"\n',
+      targetPath,
+    );
+    expect(result).toContain('created');
+    expect(result).not.toContain('k1');
+  });
+
+  it('two different datetimes are not considered equal', () => {
+    const targetPath = path.join(tmpDir, 'file.toml');
+    // User has one datetime; avanti contributed a DIFFERENT datetime
+    // deepEqual must return false so the user value is preserved
+    fs.writeFileSync(targetPath, 'ts = 2023-12-31T00:00:00Z\n');
+    const result = applyInsertMode(
+      makeEntry({ toml: true }),
+      '',
+      'ts = 2023-01-01T00:00:00Z\n',
+      targetPath,
+    );
+    // ts had a different value from what avanti contributed → user override → preserved
+    expect(result).toContain('ts');
+  });
+});

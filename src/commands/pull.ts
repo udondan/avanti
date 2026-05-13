@@ -207,6 +207,7 @@ async function runFetchLoop(
             const lastInserted =
               history?.getInsertedFragment(targetPath) ?? null;
             if (lastInserted !== null && rawText === lastInserted.raw) {
+              skippedPaths.add(targetPath); // keep stale detection from treating this as missing
               continue; // source unchanged — skip write entirely (no-op)
             }
             const processedText = text;

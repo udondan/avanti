@@ -14,30 +14,32 @@ import {
 
 // ── Utilities ────────────────────────────────────────────────────────────────
 
+function isPlainObject(v: unknown): v is Record<string, unknown> {
+  if (v === null || typeof v !== 'object' || Array.isArray(v)) return false;
+  const proto = Object.getPrototypeOf(v) as unknown;
+  return proto === Object.prototype || proto === null;
+}
+
 function sortedStringify(v: unknown): string {
   if (Array.isArray(v)) {
     return '[' + v.map(sortedStringify).join(',') + ']';
   }
-  if (v !== null && typeof v === 'object') {
-    const obj = v as Record<string, unknown>;
-    const keys = Object.keys(obj).sort();
+  if (isPlainObject(v)) {
+    const keys = Object.keys(v).sort();
     return (
       '{' +
       keys
-        .map((k) => JSON.stringify(k) + ':' + sortedStringify(obj[k]))
+        .map((k) => JSON.stringify(k) + ':' + sortedStringify(v[k]))
         .join(',') +
       '}'
     );
   }
+  // Handles Date (via .toJSON()), primitives, and other non-plain objects.
   return JSON.stringify(v);
 }
 
 function deepEqual(a: unknown, b: unknown): boolean {
   return sortedStringify(a) === sortedStringify(b);
-}
-
-function isPlainObject(v: unknown): v is Record<string, unknown> {
-  return v !== null && typeof v === 'object' && !Array.isArray(v);
 }
 
 // ── JSON removal (comment-json, preserves comments on retained keys) ─────────
@@ -186,7 +188,9 @@ function applyJsonInsert(
       CommentJsonValue
     >;
     const oldContrib = parseJson(lastProcessed) as Record<string, unknown>;
-    deepRemoveFromJsonObj(existingParsed, oldContrib);
+    if (isPlainObject(existingParsed) && isPlainObject(oldContrib)) {
+      deepRemoveFromJsonObj(existingParsed, oldContrib);
+    }
     cleanedJson = stringifyJson(existingParsed, null, 2);
   } else {
     cleanedJson = existingContent;
