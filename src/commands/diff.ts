@@ -22,6 +22,7 @@ import {
 import { FileDiff } from '../diff';
 import { AvantiConfig } from '../types';
 import { HistoryManager } from '../history';
+import { resolveVariableSpec } from '../variables-remote';
 
 interface DiffLoopResult {
   allDiffs: FileDiff[];
@@ -34,7 +35,13 @@ async function runDiffLoop(
   workingDir: string,
   cache?: FetchCache,
 ): Promise<DiffLoopResult> {
-  const vars = config.variables ?? {};
+  let vars;
+  try {
+    vars = await resolveVariableSpec(config.variables ?? {}, workingDir, cache);
+  } catch (err: unknown) {
+    console.error(err instanceof Error ? err.message : String(err));
+    return { allDiffs: [], hasError: true };
+  }
   const allDiffs: FileDiff[] = [];
   let hasError = false;
   let selfContent: string | undefined;
@@ -78,7 +85,7 @@ async function runDiffLoop(
       }
     } catch (err: unknown) {
       console.error(
-        `Error processing ${JSON.stringify(entry.src)}: ${(err as Error).message}`,
+        `Error processing ${JSON.stringify(entry.src)}: ${err instanceof Error ? err.message : String(err)}`,
       );
       hasError = true;
     }
@@ -125,7 +132,7 @@ export function diffCommand(): Command {
         try {
           config = await loadConfig(configPath, via);
         } catch (err: unknown) {
-          console.error((err as Error).message);
+          console.error(err instanceof Error ? err.message : String(err));
           process.exit(2);
         }
 
@@ -146,7 +153,7 @@ export function diffCommand(): Command {
               currentConfig = parseConfigContent(currentSelfContent);
             } catch (err: unknown) {
               console.error(
-                `$self config is invalid: ${(err as Error).message}`,
+                `$self config is invalid: ${err instanceof Error ? err.message : String(err)}`,
               );
               process.exit(2);
             }

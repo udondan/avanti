@@ -67,7 +67,9 @@ export function atomicWrite(
     try {
       fs.rmSync(p, { force: true });
     } catch (err) {
-      console.warn(`Warning: could not delete ${p}: ${(err as Error).message}`);
+      console.warn(
+        `Warning: could not delete ${p}: ${err instanceof Error ? err.message : String(err)}`,
+      );
     }
   }
 }

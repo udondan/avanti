@@ -4,6 +4,7 @@ import {
   resolveVarsShellSafe,
   validateVariables,
 } from '../src/variables';
+import { resolveVariableSpec } from '../src/variables-remote';
 import { isWindows } from '../src/shell';
 
 describe('resolveVars', () => {
@@ -149,5 +150,97 @@ describe('validateVariables', () => {
     expect(() => validateVariables({ latest: '1.0.0' })).toThrow(
       '"latest" is reserved',
     );
+  });
+});
+
+describe('resolveVariableSpec', () => {
+  const cwd = process.cwd();
+
+  it('returns empty object for empty spec', async () => {
+    expect(await resolveVariableSpec({}, cwd)).toEqual({});
+  });
+
+  it('passes plain string variables through unchanged', async () => {
+    const result = await resolveVariableSpec({ foo: 'bar', baz: 'qux' }, cwd);
+    expect(result).toEqual({ foo: 'bar', baz: 'qux' });
+  });
+
+  it('resolves references in plain string variables to prior variables', async () => {
+    const result = await resolveVariableSpec(
+      { prefix: 'hello', msg: '$prefix world' },
+      cwd,
+    );
+    expect(result).toEqual({ prefix: 'hello', msg: 'hello world' });
+  });
+
+  it('throws on forward reference in plain string variable', async () => {
+    await expect(resolveVariableSpec({ b: '$a', a: 'x' }, cwd)).rejects.toThrow(
+      'Undefined variable: $a',
+    );
+  });
+
+  it('fetches a raw source and trims whitespace', async () => {
+    const result = await resolveVariableSpec(
+      { token: { src: { raw: '  my-secret-token\n' } } },
+      cwd,
+    );
+    expect(result).toEqual({ token: 'my-secret-token' });
+  });
+
+  it('resolves variables in raw source content using prior variables', async () => {
+    const result = await resolveVariableSpec(
+      { base: 'hello', greeting: { src: { raw: '$base world' } } },
+      cwd,
+    );
+    expect(result).toEqual({ base: 'hello', greeting: 'hello world' });
+  });
+
+  it('throws when raw source references a forward variable', async () => {
+    await expect(
+      resolveVariableSpec(
+        { greeting: { src: { raw: '$later' } }, later: 'x' },
+        cwd,
+      ),
+    ).rejects.toThrow('Undefined variable: $later');
+  });
+
+  it('mix of string and source-based variables resolves in order', async () => {
+    const result = await resolveVariableSpec(
+      {
+        host: 'registry.example.com',
+        token: { src: { raw: 'abc123\n' } },
+        url: 'https://$host',
+        line: { src: { raw: '//$host/:_authToken=$token' } },
+      },
+      cwd,
+    );
+    expect(result).toEqual({
+      host: 'registry.example.com',
+      token: 'abc123',
+      url: 'https://registry.example.com',
+      line: '//registry.example.com/:_authToken=abc123',
+    });
+  });
+
+  it('throws when source resolves to no content (all-optional empty)', async () => {
+    await expect(
+      resolveVariableSpec(
+        {
+          tok: {
+            src: { path: '/nonexistent-avanti-test-path', optional: true },
+          },
+        },
+        cwd,
+      ),
+    ).rejects.toThrow('variables.tok: source resolved to no content');
+  });
+
+  it('wraps fetch errors with variable location context', async () => {
+    await expect(
+      resolveVariableSpec(
+        { tok: { src: { path: '/definitely-does-not-exist-avanti' } } },
+        cwd,
+      ),
+    ).rejects.toThrow('variables.tok:');
   });
 });

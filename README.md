@@ -90,13 +90,16 @@ avanti revert  # roll back instantly if something breaks
 
 ## Features
 
-- Fetch files from **HTTP/HTTPS**, **local paths**, **GitLab** (via `glab`), **GitHub** (via `gh`), **Bitbucket**, **any git remote**, **S3**, **HashiCorp Vault**, **shell commands**, or **inline raw content**
+- Fetch files from **HTTP/HTTPS**, **local paths**, **GitLab** (via `glab`), **GitHub** (via `gh`), **Bitbucket**, **any git remote**, **S3**, **AWS Secrets Manager**, **SSM Parameter Store**, **HashiCorp Vault**, **shell commands**, or **inline raw content**
 - **Multi-source entries** — combine multiple sources into a single file by providing `src` as a list
 - **JSON merging** — deep-merge multiple JSON/JSONC sources with configurable conflict, array, and object strategies
 - **YAML merging** — deep-merge multiple YAML/YML sources with the same strategies, with full comment preservation
-- **Variables** — define reusable values in a `variables:` block and reference them anywhere with `$name`; use `$env:NAME` for environment variables
+- **TOML merging** — deep-merge multiple TOML sources with configurable conflict, array, and table strategies
+- **Variables** — define reusable values in a `variables:` block and reference them anywhere with `$name`; variables can be plain strings, `$env:NAME` environment variable references, or fetched from any remote/local source (the same source types as `files:`)
 - **Post-processing** — apply text replacements (string or regex) and/or pipe content through a shell script
 - **Directory sync** — recursively sync directories from GitLab/GitHub/Bitbucket/git/S3/local sources
+- **SHA pinning** — pin any remote source to a content fingerprint with `sha:`; use `avanti lock` to compute and write SHAs automatically; `avanti pull --accept-changes` reviews a mismatch and updates the pin
+- **`$self`** — avanti can manage its own config file; declare `$self` in `files:` and the fetched content becomes the active config for the rest of the run, including YAML/JSON merge from multiple sources
 - **Diff preview** — see exactly what will change before applying, or compare against any past pull
 - **Atomic writes** — all files are staged to a temp dir first; targets are only written if everything succeeds
 - **History** — every pull is recorded; inspect what changed, revert the whole project to a past state, or fully undo all avanti changes
@@ -839,6 +842,52 @@ replace:
 ```
 
 Referencing an undefined variable or a missing environment variable is an error.
+
+#### Source-based variables
+
+A variable can be populated from any remote or local source — the same source types supported by `files:`. Instead of a plain string value, provide a `src:` key:
+
+```yaml
+variables:
+  auth_token:
+    src:
+      aws_secrets_manager:
+        name: my-artifactory-token
+  registry_host: my-registry.example.com
+
+files:
+  .npmrc:
+    src:
+      raw: |
+        registry=https://$registry_host
+        //$registry_host/:_authToken=$auth_token
+```
+
+The fetched content is trimmed of leading and trailing whitespace before being used as the variable value (secrets from AWS Secrets Manager, SSM Parameter Store, Vault, etc. often include a trailing newline).
+
+All source types are supported: `http`, `path`, `url`, `exec`, `github`, `gitlab`, `bitbucket`, `git`, `aws_s3`, `aws_secrets_manager`, `aws_systems_manager_parameter`, `vault`, and `raw`. Multi-source arrays and `json`/`yaml`/`toml` merging work exactly as they do in `files:`:
+
+```yaml
+variables:
+  config:
+    src:
+      - raw: '{"base":"value"}'
+      - raw: '{"extra":"added"}'
+    json:
+      conflicts: last_wins
+```
+
+**Evaluation order** — variables are resolved one by one in the order they are defined. A variable may reference any variable defined above it. Referencing a variable that has not yet been defined (a forward reference) is an error. This rule also prevents circular dependencies.
+
+```yaml
+variables:
+  host: registry.example.com
+  token:
+    src:
+      aws_secrets_manager:
+        name: my-token # fetched first; $host is already resolved
+  registry_line: //$host/:_authToken=$token # both $host and $token are available
+```
 
 `$latest` is a reserved keyword that resolves to the latest published version and cannot be used as a variable name. For GitLab it resolves to the latest tag sorted by semantic version. For GitHub it resolves to the tag of the latest release; if the repository has no releases, it falls back to the most recently created tag. For Bitbucket it resolves to the latest tag sorted by name; if no tags exist, it falls back to the repository's default branch.
 

@@ -3,6 +3,7 @@ import * as path from 'path';
 import { isRemoteConfigSpec, loadConfig, resolveConfigPath } from '../config';
 import { fetchSource } from '../sources';
 import { writeUpdatedShas } from '../config-writeback';
+import { resolveVariableSpec } from '../variables-remote';
 
 export function lockCommand(): Command {
   return new Command('lock')
@@ -29,11 +30,17 @@ export function lockCommand(): Command {
       try {
         config = await loadConfig(configPath);
       } catch (err: unknown) {
-        console.error((err as Error).message);
+        console.error(err instanceof Error ? err.message : String(err));
         process.exit(2);
       }
 
-      const vars = config.variables ?? {};
+      let vars;
+      try {
+        vars = await resolveVariableSpec(config.variables ?? {}, workingDir);
+      } catch (err: unknown) {
+        console.error(err instanceof Error ? err.message : String(err));
+        process.exit(2);
+      }
       const toPin = new Map<string, string>(); // label → sha
       let hasError = false;
       let remoteSourceCount = 0;
@@ -48,7 +55,7 @@ export function lockCommand(): Command {
           }
         } catch (err: unknown) {
           console.error(
-            `Error processing ${JSON.stringify(entry.src)}: ${(err as Error).message}`,
+            `Error processing ${JSON.stringify(entry.src)}: ${err instanceof Error ? err.message : String(err)}`,
           );
           hasError = true;
         }

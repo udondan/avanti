@@ -155,7 +155,9 @@ export function revertCommand(): Command {
             `Reverted ${writeTargets.length + deletions.length} file(s).`,
           );
         } catch (err: unknown) {
-          console.error(`Revert failed: ${(err as Error).message}`);
+          console.error(
+            `Revert failed: ${err instanceof Error ? err.message : String(err)}`,
+          );
           process.exit(2);
         }
       },

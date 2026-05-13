@@ -103,7 +103,7 @@ export class HistoryManager {
       return true;
     } catch (err) {
       console.warn(
-        `Warning: could not initialise history storage at ${this.baseDir}: ${(err as Error).message}`,
+        `Warning: could not initialise history storage at ${this.baseDir}: ${err instanceof Error ? err.message : String(err)}`,
       );
       return false;
     }
