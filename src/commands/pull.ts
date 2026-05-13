@@ -41,6 +41,7 @@ interface FetchLoopResult {
   shaErrors: ShaError[];
   sourceRecordsByTarget: Map<string, SourceFetchRecord[]>;
   skippedPaths: Set<string>;
+  hasUnresolvableSkippedPath: boolean;
   selfContent?: string;
   selfMode?: string;
   selfSourceRecords?: SourceFetchRecord[];
@@ -64,6 +65,7 @@ async function runFetchLoop(
       shaErrors: [],
       sourceRecordsByTarget: new Map(),
       skippedPaths: new Set(),
+      hasUnresolvableSkippedPath: false,
     };
   }
   const writeTargets: WriteTarget[] = [];
@@ -72,6 +74,7 @@ async function runFetchLoop(
   const seenShaErrorLabels = new Set<string>();
   const sourceRecordsByTarget = new Map<string, SourceFetchRecord[]>();
   const skippedPaths = new Set<string>();
+  let hasUnresolvableSkippedPath = false;
   let hasError = false;
   let selfContent: string | undefined;
   let selfMode: string | undefined;
@@ -102,6 +105,7 @@ async function runFetchLoop(
         shaErrors,
         sourceRecordsByTarget,
         skippedPaths,
+        hasUnresolvableSkippedPath,
       };
     }
   }
@@ -122,7 +126,10 @@ async function runFetchLoop(
         try {
           skippedPaths.add(resolveTargetPath(entry, '', workingDir, vars));
         } catch {
-          // target path unresolvable — stale cleanup handles it
+          console.warn(
+            `Warning: skipped entry has an unresolvable target path — stale cleanup disabled for this run.`,
+          );
+          hasUnresolvableSkippedPath = true;
         }
         continue;
       }
@@ -138,7 +145,10 @@ async function runFetchLoop(
         try {
           skippedPaths.add(resolveTargetPath(entry, '', workingDir, vars));
         } catch {
-          // target path unresolvable — stale cleanup handles it
+          console.warn(
+            `Warning: skipped entry has an unresolvable target path — stale cleanup disabled for this run.`,
+          );
+          hasUnresolvableSkippedPath = true;
         }
         continue;
       }
@@ -199,6 +209,7 @@ async function runFetchLoop(
     shaErrors,
     sourceRecordsByTarget,
     skippedPaths,
+    hasUnresolvableSkippedPath,
     selfContent,
     selfMode,
     selfSourceRecords,
@@ -261,6 +272,7 @@ export function pullCommand(): Command {
       );
       let { writeTargets, allDiffs, sourceRecordsByTarget } = firstPass;
       let skippedPaths = firstPass.skippedPaths;
+      let hasUnresolvableSkippedPath = firstPass.hasUnresolvableSkippedPath;
 
       if (firstPass.hasError) {
         console.error('Aborting due to errors.');
@@ -379,6 +391,8 @@ export function pullCommand(): Command {
             allDiffs = second.allDiffs;
             sourceRecordsByTarget = second.sourceRecordsByTarget;
             skippedPaths = second.skippedPaths;
+            if (second.hasUnresolvableSkippedPath)
+              hasUnresolvableSkippedPath = true;
             const seenInSecond = new Set(
               firstPass.shaErrors.map((e) => e.sourceLabel),
             );
@@ -426,7 +440,7 @@ export function pullCommand(): Command {
       const staleToRestore: WriteTarget[] = [];
       const staleDiffs: FileDiff[] = [];
 
-      if (historyAvailable) {
+      if (historyAvailable && !hasUnresolvableSkippedPath) {
         const lastFiles = history.getLastPullFiles();
         const currentPaths = new Set(writeTargets.map((t) => t.targetPath));
         const skippedPathsArr = [...skippedPaths];
