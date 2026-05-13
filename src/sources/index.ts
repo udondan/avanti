@@ -54,6 +54,12 @@ function srcFilename(src: FileSrc): string | null {
   if ('bitbucket' in src) return src.bitbucket.file;
   if ('git' in src) return src.git.file;
   if ('aws_s3' in src) return src.aws_s3;
+  if ('aws_secrets_manager' in src)
+    return (
+      src.aws_secrets_manager.name.split(/[:/]/).filter(Boolean).pop() ?? null
+    );
+  if ('aws_systems_manager_parameter' in src)
+    return src.aws_systems_manager_parameter.name;
   if ('http' in src) {
     try {
       return new URL(src.http).pathname;
