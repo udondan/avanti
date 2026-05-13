@@ -73,12 +73,36 @@ async function runFetchLoop(
   let selfMode: string | undefined;
   let selfSourceRecords: SourceFetchRecord[] | undefined;
 
-  const hasSelf = SELF_KEY in config.files;
+  let hasSelf = SELF_KEY in config.files;
+  if (hasSelf) {
+    const selfEntry = config.files[SELF_KEY];
+    try {
+      hasSelf = evaluateConditions(
+        selfEntry['if'],
+        selfEntry.ifAny,
+        () => resolveTargetPath(selfEntry, '', workingDir, vars),
+        workingDir,
+        vars,
+      );
+    } catch (err: unknown) {
+      console.error(
+        `Error processing ${JSON.stringify(selfEntry.src)}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return {
+        writeTargets,
+        allDiffs,
+        hasError: true,
+        shaErrors,
+        sourceRecordsByTarget,
+      };
+    }
+  }
   for (const [key, entry] of Object.entries(config.files)) {
     const isSelf = key === SELF_KEY;
-    if (hasSelf && !isSelf) continue;
+    if (hasSelf !== isSelf) continue;
     try {
       if (
+        !isSelf &&
         !evaluateConditions(
           entry['if'],
           entry.ifAny,
