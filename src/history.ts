@@ -417,6 +417,7 @@ export class HistoryManager {
         meta = JSON.parse(fs.readFileSync(metaPath, 'utf8')) as FileHistoryMeta;
       } else {
         const fileDir = path.join(this.filesDir, slug);
+        fs.mkdirSync(fileDir, { recursive: true });
         const existedBeforeAvanti = fs.existsSync(targetPath);
         if (existedBeforeAvanti) {
           fs.writeFileSync(
