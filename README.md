@@ -808,7 +808,7 @@ files:
 **How it works:**
 
 - **First run** — the fetched content is merged into the existing file (or written as-is if the file does not exist yet).
-- **Subsequent runs (source unchanged)** — avanti detects that the raw source has not changed and skips the file entirely (no-op).
+- **Subsequent runs (no-op)** — avanti detects that the raw source and the post-processed output (`replace`/`post`) are both unchanged and skips the file entirely.
 - **Subsequent runs (source changed)** — avanti removes the keys/text it previously contributed, then merges the updated content in.
 - **User edits are preserved** — keys or text the user added or modified are left untouched. If a user overrides an avanti-managed key, avanti will not remove it even if the source no longer includes it.
 
