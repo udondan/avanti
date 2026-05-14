@@ -34,7 +34,8 @@ function sortedStringify(v: unknown): string {
       '}'
     );
   }
-  // Handles Date (via .toJSON()), primitives, and other non-plain objects.
+  // Tag Date distinctly so it never compares equal to an ISO string.
+  if (v instanceof Date) return `Date(${v.toISOString()})`;
   return JSON.stringify(v);
 }
 
