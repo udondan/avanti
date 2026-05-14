@@ -183,13 +183,25 @@ function applyJsonInsert(
 ): string {
   let cleanedJson: string;
   if (lastProcessed !== null) {
-    const existingParsed = parseJson(existingContent) as Record<
-      string,
-      CommentJsonValue
-    >;
-    const oldContrib = parseJson(lastProcessed) as Record<string, unknown>;
-    if (isPlainObject(existingParsed) && isPlainObject(oldContrib)) {
-      deepRemoveFromJsonObj(existingParsed, oldContrib);
+    let existingParsed: Record<string, CommentJsonValue>;
+    try {
+      existingParsed = parseJson(existingContent) as Record<
+        string,
+        CommentJsonValue
+      >;
+    } catch (err) {
+      throw new Error(
+        `insert mode: existing file is not valid JSON: ${err instanceof Error ? err.message : String(err)}`,
+        { cause: err },
+      );
+    }
+    try {
+      const oldContrib = parseJson(lastProcessed) as Record<string, unknown>;
+      if (isPlainObject(existingParsed) && isPlainObject(oldContrib)) {
+        deepRemoveFromJsonObj(existingParsed, oldContrib);
+      }
+    } catch {
+      // Corrupted history fragment — skip key removal, fall through to merge
     }
     cleanedJson = stringifyJson(existingParsed, null, 2);
   } else {
@@ -208,12 +220,12 @@ function applyYamlInsert(
   if (lastProcessed !== null) {
     const doc = parseDocument(existingContent);
     if (doc.errors.length === 0 && isMap(doc.contents)) {
-      const oldContrib = parseDocument(lastProcessed).toJSON() as Record<
-        string,
-        unknown
-      >;
-      if (isPlainObject(oldContrib)) {
-        deepRemoveFromYamlMap(doc.contents, oldContrib);
+      const lpDoc = parseDocument(lastProcessed);
+      if (lpDoc.errors.length === 0) {
+        const oldContrib = lpDoc.toJSON() as Record<string, unknown>;
+        if (isPlainObject(oldContrib)) {
+          deepRemoveFromYamlMap(doc.contents, oldContrib);
+        }
       }
     }
     cleanedYaml = doc.toString();
@@ -231,9 +243,21 @@ function applyTomlInsert(
 ): string {
   let cleanedToml: string;
   if (lastProcessed !== null) {
-    const existingParsed = parseToml(existingContent) as TomlObject;
-    const oldContrib = parseToml(lastProcessed) as Record<string, unknown>;
-    deepRemoveFromTomlObj(existingParsed, oldContrib);
+    let existingParsed: TomlObject;
+    try {
+      existingParsed = parseToml(existingContent);
+    } catch (err) {
+      throw new Error(
+        `insert mode: existing file is not valid TOML: ${err instanceof Error ? err.message : String(err)}`,
+        { cause: err },
+      );
+    }
+    try {
+      const oldContrib = parseToml(lastProcessed) as Record<string, unknown>;
+      deepRemoveFromTomlObj(existingParsed, oldContrib);
+    } catch {
+      // Corrupted history fragment — skip key removal, fall through to merge
+    }
     cleanedToml = stringifyToml(existingParsed);
   } else {
     cleanedToml = existingContent;
