@@ -51,7 +51,7 @@ function writeConfig(dir: string, content: string): string {
   return configPath;
 }
 
-const hasBitbucketCreds = !!process.env.BITBUCKET_TOKEN;
+const hasBitbucketCreds = !!process.env.BITBUCKET_TOKEN?.trim();
 
 describe('Integration', () => {
   let tmpDir: string;
