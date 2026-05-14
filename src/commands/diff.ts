@@ -1,4 +1,5 @@
 import { Command } from 'commander';
+import * as fs from 'fs';
 import * as path from 'path';
 import {
   isRemoteConfigSpec,
@@ -128,7 +129,8 @@ async function runDiffLoop(
             if (
               lastInserted !== null &&
               rawText === lastInserted.raw &&
-              text === lastInserted.processed
+              text === lastInserted.processed &&
+              fs.existsSync(targetPath)
             ) {
               continue; // source and processed output unchanged — would be a no-op write, skip diff
             }

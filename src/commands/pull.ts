@@ -1,4 +1,5 @@
 import { Command } from 'commander';
+import * as fs from 'fs';
 import * as path from 'path';
 import {
   isRemoteConfigSpec,
@@ -209,7 +210,8 @@ async function runFetchLoop(
             if (
               lastInserted !== null &&
               rawText === lastInserted.raw &&
-              text === lastInserted.processed
+              text === lastInserted.processed &&
+              fs.existsSync(targetPath)
             ) {
               skippedPaths.add(targetPath); // keep stale detection from treating this as missing
               continue; // source and processed output unchanged — skip write entirely (no-op)
@@ -540,6 +542,15 @@ export function pullCommand(): Command {
       }
 
       if (!hasChanges && firstPass.shaErrors.length === 0) {
+        if (historyAvailable && insertedFragments.size > 0) {
+          for (const [targetPath, fragment] of insertedFragments) {
+            history.saveInsertedFragment(
+              targetPath,
+              fragment.raw,
+              fragment.processed,
+            );
+          }
+        }
         console.log('Nothing to do.');
         process.exit(0);
       }
