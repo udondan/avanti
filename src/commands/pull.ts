@@ -1,4 +1,5 @@
 import { Command } from 'commander';
+import * as fs from 'fs';
 import * as path from 'path';
 import {
   isRemoteConfigSpec,
@@ -13,6 +14,7 @@ import { evaluateConditions } from '../condition';
 import { fetchSource, FetchCache, SourceFetchRecord } from '../sources';
 import { applyReplace } from '../processors/replace';
 import { applyPost } from '../processors/post';
+import { applyInsertMode } from '../processors/insert';
 import { isBinary } from '../binary';
 import {
   computeDiff,
@@ -42,6 +44,7 @@ interface FetchLoopResult {
   sourceRecordsByTarget: Map<string, SourceFetchRecord[]>;
   skippedPaths: Set<string>;
   hasUnresolvableSkippedPath: boolean;
+  insertedFragments: Map<string, { raw: string; processed: string }>;
   selfContent?: string;
   selfMode?: string;
   selfSourceRecords?: SourceFetchRecord[];
@@ -52,6 +55,7 @@ async function runFetchLoop(
   workingDir: string,
   cache?: FetchCache,
   configPath?: string,
+  history?: HistoryManager,
 ): Promise<FetchLoopResult> {
   let vars;
   try {
@@ -66,6 +70,7 @@ async function runFetchLoop(
       sourceRecordsByTarget: new Map(),
       skippedPaths: new Set(),
       hasUnresolvableSkippedPath: false,
+      insertedFragments: new Map(),
     };
   }
   const writeTargets: WriteTarget[] = [];
@@ -74,6 +79,10 @@ async function runFetchLoop(
   const seenShaErrorLabels = new Set<string>();
   const sourceRecordsByTarget = new Map<string, SourceFetchRecord[]>();
   const skippedPaths = new Set<string>();
+  const insertedFragments = new Map<
+    string,
+    { raw: string; processed: string }
+  >();
   let hasUnresolvableSkippedPath = false;
   let hasError = false;
   let selfContent: string | undefined;
@@ -106,6 +115,7 @@ async function runFetchLoop(
         sourceRecordsByTarget,
         skippedPaths,
         hasUnresolvableSkippedPath,
+        insertedFragments,
       };
     }
     // $self was condition-skipped: protect configPath from stale cleanup so a
@@ -183,10 +193,41 @@ async function runFetchLoop(
         let content = rawContent;
         if (!isBinary(content)) {
           // Processors only operate on text; binary files are passed through unchanged.
-          let text = content.toString('utf8');
+          const rawText = content.toString('utf8');
+          let text = rawText;
           if (entry.replace?.length)
             text = applyReplace(text, entry.replace, vars);
           if (entry.post) text = applyPost(text, entry.post, vars);
+          if (entry.strategy === 'insert' && !isSelf) {
+            const targetPath = resolveTargetPath(
+              entry,
+              relPath,
+              workingDir,
+              vars,
+            );
+            const lastInserted =
+              history?.getInsertedFragment(targetPath) ?? null;
+            if (
+              lastInserted !== null &&
+              rawText === lastInserted.raw &&
+              text === lastInserted.processed &&
+              fs.existsSync(targetPath)
+            ) {
+              skippedPaths.add(targetPath); // keep stale detection from treating this as missing
+              continue; // source and processed output unchanged — skip write entirely (no-op)
+            }
+            const processedText = text;
+            text = applyInsertMode(
+              entry,
+              processedText,
+              lastInserted?.processed ?? null,
+              targetPath,
+            );
+            insertedFragments.set(targetPath, {
+              raw: rawText,
+              processed: processedText,
+            });
+          }
           content = Buffer.from(text, 'utf8');
         }
         if (isSelf) {
@@ -219,6 +260,7 @@ async function runFetchLoop(
     sourceRecordsByTarget,
     skippedPaths,
     hasUnresolvableSkippedPath,
+    insertedFragments,
     selfContent,
     selfMode,
     selfSourceRecords,
@@ -278,8 +320,10 @@ export function pullCommand(): Command {
         workingDir,
         fetchCache,
         configPath,
+        history,
       );
       let { writeTargets, allDiffs, sourceRecordsByTarget } = firstPass;
+      let insertedFragments = firstPass.insertedFragments;
       let skippedPaths = firstPass.skippedPaths;
       let hasUnresolvableSkippedPath = firstPass.hasUnresolvableSkippedPath;
 
@@ -335,6 +379,7 @@ export function pullCommand(): Command {
             workingDir,
             fetchCache,
             configPath,
+            history,
           );
 
           if (next.hasError) {
@@ -384,6 +429,7 @@ export function pullCommand(): Command {
               workingDir,
               fetchCache,
               configPath,
+              history,
             );
             if (second.hasError) {
               console.error('Aborting due to errors.');
@@ -399,6 +445,7 @@ export function pullCommand(): Command {
             writeTargets = second.writeTargets;
             allDiffs = second.allDiffs;
             sourceRecordsByTarget = second.sourceRecordsByTarget;
+            insertedFragments = second.insertedFragments;
             skippedPaths = second.skippedPaths;
             if (second.hasUnresolvableSkippedPath)
               hasUnresolvableSkippedPath = true;
@@ -495,6 +542,15 @@ export function pullCommand(): Command {
       }
 
       if (!hasChanges && firstPass.shaErrors.length === 0) {
+        if (historyAvailable && insertedFragments.size > 0) {
+          for (const [targetPath, fragment] of insertedFragments) {
+            history.saveInsertedFragment(
+              targetPath,
+              fragment.raw,
+              fragment.processed,
+            );
+          }
+        }
         console.log('Nothing to do.');
         process.exit(0);
       }
@@ -619,6 +675,17 @@ export function pullCommand(): Command {
           `Write failed: ${err instanceof Error ? err.message : String(err)}`,
         );
         process.exit(2);
+      }
+
+      // Save inserted fragments to history for future idempotency detection
+      if (historyAvailable && insertedFragments.size > 0) {
+        for (const [targetPath, fragment] of insertedFragments) {
+          history.saveInsertedFragment(
+            targetPath,
+            fragment.raw,
+            fragment.processed,
+          );
+        }
       }
 
       // SHA writeback: write updated sha values into config file after all writes complete.

@@ -834,6 +834,40 @@ files:
     expect(cfg.files['out.yml'].post).toBe("sed -e 's/v3/v4/g'");
   });
 
+  it('loads strategy: insert', async () => {
+    const f = writeTmp(`
+files:
+  foo.json:
+    src: https://example.com/foo.json
+    strategy: insert
+`);
+    const cfg = await loadConfig(f);
+    expect(cfg.files['foo.json'].strategy).toBe('insert');
+  });
+
+  it('loads strategy: replace', async () => {
+    const f = writeTmp(`
+files:
+  foo.json:
+    src: https://example.com/foo.json
+    strategy: replace
+`);
+    const cfg = await loadConfig(f);
+    expect(cfg.files['foo.json'].strategy).toBe('replace');
+  });
+
+  it('rejects unknown strategy values', async () => {
+    const f = writeTmp(`
+files:
+  foo.json:
+    src: https://example.com/foo.json
+    strategy: overwrite
+`);
+    await expect(loadConfig(f)).rejects.toThrow(
+      'strategy: must be "replace" or "insert"',
+    );
+  });
+
   // ── multi-source ──────────────────────────────────────────────────────────
 
   it('loads a list src with mixed types', async () => {

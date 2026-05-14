@@ -10,6 +10,10 @@ export interface FileHistoryMeta {
   firstSeenAt: string;
   existedBeforeAvanti: boolean;
   currentVersion: number;
+  insertedFragment?: {
+    raw: string;
+    processed: string;
+  };
 }
 
 export interface PullLogEntry {
@@ -358,6 +362,82 @@ export class HistoryManager {
 
   hasHistory(): boolean {
     return fs.existsSync(this.pullsLogPath);
+  }
+
+  getInsertedFragment(
+    targetPath: string,
+  ): { raw: string; processed: string } | null {
+    const meta = this.getFileMeta(targetPath);
+    return meta?.insertedFragment ?? null;
+  }
+
+  saveInsertedFragment(
+    targetPath: string,
+    raw: string,
+    processed: string,
+  ): void {
+    try {
+      this.ensureStorageDir();
+      const index = this.readIndex();
+      let slug = index[targetPath];
+
+      if (!slug) {
+        // File wasn't staged (e.g. content was a no-op), create minimal entry.
+        slug = sha256(targetPath);
+        const fileDir = path.join(this.filesDir, slug);
+        fs.mkdirSync(fileDir, { recursive: true });
+        const existedBeforeAvanti = fs.existsSync(targetPath);
+        if (existedBeforeAvanti) {
+          fs.writeFileSync(
+            path.join(fileDir, 'v0'),
+            fs.readFileSync(targetPath),
+          );
+        }
+        const meta: FileHistoryMeta = {
+          absolutePath: targetPath,
+          slug,
+          firstSeenAt: new Date().toISOString(),
+          existedBeforeAvanti,
+          currentVersion: 0,
+          insertedFragment: { raw, processed },
+        };
+        fs.writeFileSync(
+          path.join(fileDir, 'meta.json'),
+          JSON.stringify(meta, null, 2),
+          'utf8',
+        );
+        index[targetPath] = slug;
+        this.writeIndex(index);
+        return;
+      }
+
+      const metaPath = path.join(this.filesDir, slug, 'meta.json');
+      let meta: FileHistoryMeta;
+      if (fs.existsSync(metaPath)) {
+        meta = JSON.parse(fs.readFileSync(metaPath, 'utf8')) as FileHistoryMeta;
+      } else {
+        const fileDir = path.join(this.filesDir, slug);
+        fs.mkdirSync(fileDir, { recursive: true });
+        const existedBeforeAvanti = fs.existsSync(targetPath);
+        if (existedBeforeAvanti) {
+          fs.writeFileSync(
+            path.join(fileDir, 'v0'),
+            fs.readFileSync(targetPath),
+          );
+        }
+        meta = {
+          absolutePath: targetPath,
+          slug,
+          firstSeenAt: new Date().toISOString(),
+          existedBeforeAvanti,
+          currentVersion: 0,
+        };
+      }
+      meta.insertedFragment = { raw, processed };
+      fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2), 'utf8');
+    } catch {
+      // non-fatal
+    }
   }
 
   private readIndex(): Record<string, string> {

@@ -379,16 +379,17 @@ files:
 
 End the target path with `/` to write a directory source as a mirror; omit the trailing slash to merge all files from the directory into a single output file (YAML/JSON auto-detected by extension, or forced with `yaml:`/`json:`).
 
-| Field     | Required | Description                                                                                                                                                                                                                             |
-| --------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `src`     | Yes      | Source (see below). May be a single source or a **list** of sources to concatenate.                                                                                                                                                     |
-| `if`      | No       | Condition object (or list of objects). All must pass for the entry to be processed. See [Conditions](#conditions).                                                                                                                      |
-| `ifAny`   | No       | List of condition objects. At least one must pass. See [Conditions](#conditions).                                                                                                                                                       |
-| `mode`    | No       | File permission mode, e.g. `"0755"`                                                                                                                                                                                                     |
-| `replace` | No       | List of `{from, to}` replacement rules. `from` may be a plain string or `/pattern/flags` regex.                                                                                                                                         |
-| `post`    | No       | Shell script. Content is piped via stdin; stdout is used as the result. Runs after `replace`.                                                                                                                                           |
-| `json`    | No       | JSON merge/format options (see below). When omitted, merging is auto-enabled if all sources have a `.json` or `.jsonc` extension. Use `true`/`false` to force on or off regardless of extension.                                        |
-| `yaml`    | No       | YAML merge/format options (see below). When omitted, merging is auto-enabled if all sources have a `.yaml` or `.yml` extension. Use `true`/`false` to force on or off regardless of extension. Comments are preserved in merged output. |
+| Field      | Required | Description                                                                                                                                                                                                                             |
+| ---------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src`      | Yes      | Source (see below). May be a single source or a **list** of sources to concatenate.                                                                                                                                                     |
+| `if`       | No       | Condition object (or list of objects). All must pass for the entry to be processed. See [Conditions](#conditions).                                                                                                                      |
+| `ifAny`    | No       | List of condition objects. At least one must pass. See [Conditions](#conditions).                                                                                                                                                       |
+| `mode`     | No       | File permission mode, e.g. `"0755"`                                                                                                                                                                                                     |
+| `replace`  | No       | List of `{from, to}` replacement rules. `from` may be a plain string or `/pattern/flags` regex.                                                                                                                                         |
+| `post`     | No       | Shell script. Content is piped via stdin; stdout is used as the result. Runs after `replace`.                                                                                                                                           |
+| `json`     | No       | JSON merge/format options (see below). When omitted, merging is auto-enabled if all sources have a `.json` or `.jsonc` extension. Use `true`/`false` to force on or off regardless of extension.                                        |
+| `yaml`     | No       | YAML merge/format options (see below). When omitted, merging is auto-enabled if all sources have a `.yaml` or `.yml` extension. Use `true`/`false` to force on or off regardless of extension. Comments are preserved in merged output. |
+| `strategy` | No       | Write strategy: `replace` _(default)_ — overwrite the target file entirely; `insert` — merge content into the existing file without clobbering unrelated content. See [Insert Mode](#insert-mode).                                      |
 
 ### Source Types
 
@@ -791,6 +792,47 @@ files:
   config.toml:
     src: ./config.toml
 ```
+
+### Insert Mode
+
+By default (`strategy: replace`) avanti overwrites the target file with the fully processed source content. Set `strategy: insert` to **merge** content into an existing file instead of replacing it.
+
+```yaml
+files:
+  .vscode/settings.json:
+    src: ./shared/vscode-settings.json
+    json: true
+    strategy: insert
+```
+
+**How it works:**
+
+- **First run** — the fetched content is merged into the existing file (or written as-is if the file does not exist yet).
+- **Subsequent runs (no-op)** — avanti detects that the raw source and the post-processed output (`replace`/`post`) are both unchanged and skips the file entirely.
+- **Subsequent runs (source changed)** — avanti removes the keys/text it previously contributed, then merges the updated content in.
+- **User edits are preserved** — keys or text the user added or modified are left untouched. If a user overrides an avanti-managed key, avanti will not remove it even if the source no longer includes it.
+
+**Structured files (JSON / YAML / TOML):**
+
+Avanti tracks which keys it contributed in the previous pull. On the next pull it removes only those keys (if they still match) and then merges the new contribution. This means:
+
+- Keys removed from the remote source are removed from the local file.
+- Keys the user added or modified independently are preserved.
+- Nested objects and arrays are handled recursively. For arrays, combine with `arrays: concat` so avanti appends items; avanti removes only the items it previously appended, leaving user-owned items intact.
+
+```yaml
+files:
+  tsconfig.json:
+    src: https://example.com/shared-tsconfig.json
+    json:
+      objects: merge
+      arrays: concat
+    strategy: insert
+```
+
+**Plain text:**
+
+On the first insert, the text is appended to the existing file. On subsequent runs, the old block is replaced in-place when the source changes; if it is no longer found (e.g. the user removed it), the new block is appended.
 
 ### Conditions
 

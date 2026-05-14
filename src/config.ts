@@ -243,6 +243,14 @@ export function parseConfigContent(content: string): AvantiConfig {
 
     if (typeof e['mode'] === 'string') fileEntry.mode = e['mode'];
     if (typeof e['post'] === 'string') fileEntry.post = e['post'];
+    if (e['strategy'] !== undefined) {
+      if (e['strategy'] !== 'replace' && e['strategy'] !== 'insert') {
+        throw new Error(
+          `files["${target}"].strategy: must be "replace" or "insert"`,
+        );
+      }
+      fileEntry.strategy = e['strategy'];
+    }
 
     if (e['replace'] !== undefined) {
       if (!Array.isArray(e['replace'])) {
