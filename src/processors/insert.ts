@@ -51,7 +51,7 @@ function deepRemoveFromJsonObj(
   oldContrib: Record<string, unknown>,
 ): void {
   for (const key of Object.keys(oldContrib)) {
-    if (!(key in existing)) continue;
+    if (!Object.hasOwn(existing, key)) continue;
     const oldVal = oldContrib[key];
     const curVal = existing[key];
 
@@ -133,7 +133,7 @@ function deepRemoveFromTomlObj(
   oldContrib: Record<string, unknown>,
 ): void {
   for (const key of Object.keys(oldContrib)) {
-    if (!(key in existing)) continue;
+    if (!Object.hasOwn(existing, key)) continue;
     const oldVal = oldContrib[key];
     const curVal = existing[key];
 
