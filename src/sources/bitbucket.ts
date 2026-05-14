@@ -16,15 +16,16 @@ function getApiBase(override?: string): string {
 
 function apiHeaders(): Record<string, string> {
   const headers: Record<string, string> = { 'User-Agent': 'avanti' };
-  const token = process.env.BITBUCKET_TOKEN;
-  if (token) {
-    headers.Authorization = `Bearer ${token}`;
+  const token = process.env.BITBUCKET_TOKEN?.trim();
+  const email = process.env.BITBUCKET_EMAIL?.trim();
+  if (token && email) {
+    // Atlassian API token (created in Atlassian account settings): Basic auth with email:token
+    headers.Authorization = `Basic ${Buffer.from(`${email}:${token}`).toString('base64')}`;
     return headers;
   }
-  const user = process.env.BITBUCKET_USERNAME;
-  const pass = process.env.BITBUCKET_APP_PASSWORD;
-  if (user && pass) {
-    headers.Authorization = `Basic ${Buffer.from(`${user}:${pass}`).toString('base64')}`;
+  if (token) {
+    // Workspace/Repository Access Token: Bearer auth
+    headers.Authorization = `Bearer ${token}`;
   }
   return headers;
 }

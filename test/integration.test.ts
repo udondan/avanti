@@ -51,6 +51,8 @@ function writeConfig(dir: string, content: string): string {
   return configPath;
 }
 
+const hasBitbucketCreds = !!process.env.BITBUCKET_TOKEN;
+
 describe('Integration', () => {
   let tmpDir: string;
 
@@ -403,7 +405,7 @@ describe('Integration', () => {
     });
   });
 
-  describe('Bitbucket source', () => {
+  describe.skipIf(!hasBitbucketCreds)('Bitbucket source', () => {
     it(
       'fetches a single file from a public Bitbucket repo',
       { timeout: 30_000 },
@@ -969,7 +971,7 @@ files:
   });
 
   describe('YAML merge', () => {
-    it('merges two disjoint YAML files', { timeout: 15_000 }, () => {
+    it('merges two disjoint YAML files', () => {
       const aFile = join(tmpDir, 'a.yaml');
       const bFile = join(tmpDir, 'b.yaml');
       writeFileSync(aFile, 'a: 1\nb: original\n');
