@@ -1,7 +1,13 @@
+import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { describe, it, expect } from 'vitest';
-import { resolveTargetPath } from '../src/diff';
+import { beforeEach, afterEach, describe, it, expect } from 'vitest';
+import {
+  computeDiff,
+  computeDeleteDiff,
+  formatDiff,
+  resolveTargetPath,
+} from '../src/diff';
 
 // Platform-agnostic working directory and root for tests.
 // os.tmpdir() is a valid absolute path on every OS.
@@ -95,5 +101,166 @@ describe('resolveTargetPath', () => {
     expect(() =>
       resolveTargetPath({ target: '~/../../etc/hosts' }, '', wdir),
     ).toThrow('escapes home directory');
+  });
+});
+
+// ── computeDiff ───────────────────────────────────────────────────────────────
+
+describe('computeDiff', () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'avanti-diff-test-'));
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('marks a new file (target does not exist) with isNew: true and hasChanges: true', () => {
+    const result = computeDiff(
+      path.join(tmpDir, 'new.txt'),
+      Buffer.from('hello'),
+    );
+    expect(result.isNew).toBe(true);
+    expect(result.hasChanges).toBe(true);
+  });
+
+  it('marks an unchanged file with hasChanges: false', () => {
+    const file = path.join(tmpDir, 'same.txt');
+    fs.writeFileSync(file, 'unchanged');
+    const result = computeDiff(file, Buffer.from('unchanged'));
+    expect(result.hasChanges).toBe(false);
+    expect(result.isNew).toBe(false);
+  });
+
+  it('marks a modified file with hasChanges: true and includes old/new lines in patch', () => {
+    const file = path.join(tmpDir, 'modified.txt');
+    fs.writeFileSync(file, 'old content\n');
+    const result = computeDiff(file, Buffer.from('new content\n'));
+    expect(result.hasChanges).toBe(true);
+    expect(result.isNew).toBe(false);
+    expect(result.patch).toContain('-old content');
+    expect(result.patch).toContain('+new content');
+  });
+
+  it('detects binary new content and sets isBinary: true with empty patch', () => {
+    const file = path.join(tmpDir, 'text.txt');
+    fs.writeFileSync(file, 'text');
+    const binary = Buffer.concat([Buffer.alloc(1), Buffer.from('DATA')]);
+    const result = computeDiff(file, binary);
+    expect(result.isBinary).toBe(true);
+    expect(result.patch).toBe('');
+  });
+
+  it('detects binary existing file and sets isBinary: true', () => {
+    const file = path.join(tmpDir, 'bin.dat');
+    fs.writeFileSync(file, Buffer.concat([Buffer.alloc(1), Buffer.from('X')]));
+    const result = computeDiff(file, Buffer.from('new text'));
+    expect(result.isBinary).toBe(true);
+  });
+});
+
+// ── computeDeleteDiff ─────────────────────────────────────────────────────────
+
+describe('computeDeleteDiff', () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'avanti-diff-test-'));
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('produces a deletion patch for an existing text file', () => {
+    const file = path.join(tmpDir, 'existing.txt');
+    fs.writeFileSync(file, 'to be deleted\n');
+    const result = computeDeleteDiff(file);
+    expect(result.hasChanges).toBe(true);
+    expect(result.patch).toContain('-to be deleted');
+  });
+
+  it('returns hasChanges: false when the file does not exist', () => {
+    const result = computeDeleteDiff(path.join(tmpDir, 'missing.txt'));
+    expect(result.hasChanges).toBe(false);
+    expect(result.patch).toBe('');
+  });
+
+  it('sets isBinary: true and hasChanges: true for a binary file being deleted', () => {
+    const file = path.join(tmpDir, 'bin.dat');
+    fs.writeFileSync(file, Buffer.concat([Buffer.alloc(1), Buffer.from('X')]));
+    const result = computeDeleteDiff(file);
+    expect(result.isBinary).toBe(true);
+    expect(result.isDelete).toBe(true);
+    expect(result.hasChanges).toBe(true);
+  });
+});
+
+// ── formatDiff ────────────────────────────────────────────────────────────────
+
+describe('formatDiff', () => {
+  it('returns an empty string when hasChanges is false', () => {
+    expect(
+      formatDiff({
+        targetPath: '/f',
+        isNew: false,
+        hasChanges: false,
+        patch: '',
+      }),
+    ).toBe('');
+  });
+
+  it('includes --- and +++ header lines for a new text file', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'avanti-fmt-'));
+    try {
+      const d = computeDiff(
+        path.join(tmpDir, 'nonexistent.txt'),
+        Buffer.from('new content\n'),
+      );
+      const output = formatDiff(d);
+      expect(output).toContain('---');
+      expect(output).toContain('+++');
+      expect(output).toContain('+new content');
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it('shows "new binary file" label for a new binary file', () => {
+    const output = formatDiff({
+      targetPath: '/path/to/img.png',
+      isNew: true,
+      hasChanges: true,
+      patch: '',
+      isBinary: true,
+    });
+    expect(output).toContain('new binary file');
+    expect(output).toContain('/dev/null');
+  });
+
+  it('shows "binary file deleted" label for a deleted binary file', () => {
+    const output = formatDiff({
+      targetPath: '/path/to/img.png',
+      isNew: false,
+      isDelete: true,
+      hasChanges: true,
+      patch: '',
+      isBinary: true,
+    });
+    expect(output).toContain('binary file deleted');
+    expect(output).toContain('/dev/null');
+  });
+
+  it('shows "binary file changed" label for a changed binary file', () => {
+    const output = formatDiff({
+      targetPath: '/path/to/img.png',
+      isNew: false,
+      hasChanges: true,
+      patch: '',
+      isBinary: true,
+    });
+    expect(output).toContain('binary file changed');
   });
 });

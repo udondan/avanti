@@ -1087,8 +1087,8 @@ Public repositories on github.com and gitlab.com work without any configuration.
 | --------------- | ---------------------------------------------------------------- | ------------------------------------------ |
 | GitHub          | `GITHUB_TOKEN`                                                   | `Authorization: Bearer <token>`            |
 | GitLab          | `GITLAB_TOKEN` or `GITLAB_PRIVATE_TOKEN`                         | `PRIVATE-TOKEN: <token>`                   |
-| Bitbucket       | `BITBUCKET_TOKEN`                                                | `Authorization: Bearer <token>`            |
-| Bitbucket       | `BITBUCKET_USERNAME` + `BITBUCKET_APP_PASSWORD`                  | Basic auth (alternative to token)          |
+| Bitbucket       | `BITBUCKET_EMAIL` + `BITBUCKET_TOKEN`                            | Basic auth (Atlassian API token)           |
+| Bitbucket       | `BITBUCKET_TOKEN`                                                | Bearer auth (workspace/repo access token)  |
 | S3              | Standard AWS env vars (`AWS_ACCESS_KEY_ID`, `AWS_PROFILE`, etc.) | AWS SDK credential chain                   |
 | Secrets Manager | Standard AWS env vars (`AWS_ACCESS_KEY_ID`, `AWS_PROFILE`, etc.) | AWS SDK credential chain                   |
 | SSM             | Standard AWS env vars (`AWS_ACCESS_KEY_ID`, `AWS_PROFILE`, etc.) | AWS SDK credential chain                   |
