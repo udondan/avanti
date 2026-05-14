@@ -191,7 +191,7 @@ function applyJsonInsert(
       >;
     } catch (err) {
       throw new Error(
-        `insert mode: existing file is not valid JSON: ${err instanceof Error ? err.message : String(err)}`,
+        `insert mode: existing file is not valid JSON/JSONC: ${err instanceof Error ? err.message : String(err)}`,
         { cause: err },
       );
     }
@@ -219,7 +219,13 @@ function applyYamlInsert(
   let cleanedYaml: string;
   if (lastProcessed !== null) {
     const doc = parseDocument(existingContent);
-    if (doc.errors.length === 0 && isMap(doc.contents)) {
+    if (doc.errors.length > 0) {
+      throw new Error(
+        `insert mode: existing file is not valid YAML: ${doc.errors[0].message}`,
+        { cause: doc.errors[0] },
+      );
+    }
+    if (isMap(doc.contents)) {
       const lpDoc = parseDocument(lastProcessed);
       if (lpDoc.errors.length === 0) {
         const oldContrib = lpDoc.toJSON() as Record<string, unknown>;
@@ -318,7 +324,12 @@ export function applyInsertMode(
     lastProcessed.length > 0 &&
     existingContent.includes(lastProcessed)
   ) {
-    return existingContent.replace(lastProcessed, processedText);
+    const idx = existingContent.lastIndexOf(lastProcessed);
+    return (
+      existingContent.slice(0, idx) +
+      processedText +
+      existingContent.slice(idx + lastProcessed.length)
+    );
   }
   const sep = existingContent.endsWith('\n') ? '' : '\n';
   return existingContent + sep + processedText;
