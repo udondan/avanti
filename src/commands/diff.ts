@@ -125,8 +125,12 @@ async function runDiffLoop(
             );
             const lastInserted =
               history?.getInsertedFragment(targetPath) ?? null;
-            if (lastInserted !== null && rawText === lastInserted.raw) {
-              continue; // source unchanged — would be a no-op write, skip diff
+            if (
+              lastInserted !== null &&
+              rawText === lastInserted.raw &&
+              text === lastInserted.processed
+            ) {
+              continue; // source and processed output unchanged — would be a no-op write, skip diff
             }
             text = applyInsertMode(
               entry,
