@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.21.0](https://github.com/udondan/avanti/compare/v0.20.0...v0.21.0) (2026-05-14)
+
+
+### Features
+
+* add conditional file/source writing with if and ifAny ([#155](https://github.com/udondan/avanti/issues/155)) ([e67e2ab](https://github.com/udondan/avanti/commit/e67e2ab26044fa16627bbb7f0739cd82aef33166))
+
+
+### Bug Fixes
+
+* **deps:** update dependency yaml to v2.9.0 ([#159](https://github.com/udondan/avanti/issues/159)) ([189c4b5](https://github.com/udondan/avanti/commit/189c4b5e99a19b05e38ef69e4461b6da06c00bff))
+
 ## [0.20.0](https://github.com/udondan/avanti/compare/v0.19.1...v0.20.0) (2026-05-13)
 
 
