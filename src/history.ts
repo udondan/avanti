@@ -386,11 +386,18 @@ export class HistoryManager {
         slug = sha256(targetPath);
         const fileDir = path.join(this.filesDir, slug);
         fs.mkdirSync(fileDir, { recursive: true });
+        const existedBeforeAvanti = fs.existsSync(targetPath);
+        if (existedBeforeAvanti) {
+          fs.writeFileSync(
+            path.join(fileDir, 'v0'),
+            fs.readFileSync(targetPath),
+          );
+        }
         const meta: FileHistoryMeta = {
           absolutePath: targetPath,
           slug,
           firstSeenAt: new Date().toISOString(),
-          existedBeforeAvanti: fs.existsSync(targetPath),
+          existedBeforeAvanti,
           currentVersion: 0,
           insertedFragment: { raw, processed },
         };
@@ -409,11 +416,19 @@ export class HistoryManager {
       if (fs.existsSync(metaPath)) {
         meta = JSON.parse(fs.readFileSync(metaPath, 'utf8')) as FileHistoryMeta;
       } else {
+        const fileDir = path.join(this.filesDir, slug);
+        const existedBeforeAvanti = fs.existsSync(targetPath);
+        if (existedBeforeAvanti) {
+          fs.writeFileSync(
+            path.join(fileDir, 'v0'),
+            fs.readFileSync(targetPath),
+          );
+        }
         meta = {
           absolutePath: targetPath,
           slug,
           firstSeenAt: new Date().toISOString(),
-          existedBeforeAvanti: fs.existsSync(targetPath),
+          existedBeforeAvanti,
           currentVersion: 0,
         };
       }
