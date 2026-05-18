@@ -179,3 +179,13 @@ describe('mergeYaml — three sources', () => {
     expect(result.a).toBe(1);
   });
 });
+
+describe('trailing newline', () => {
+  it('mergeYaml output always ends with newline', () => {
+    expect(mergeYaml(['a: 1\n', 'b: 2\n'])).toMatch(/\n$/);
+  });
+
+  it('formatYaml output always ends with newline', () => {
+    expect(formatYaml('a: 1')).toMatch(/\n$/);
+  });
+});

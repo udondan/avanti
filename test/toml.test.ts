@@ -173,3 +173,13 @@ describe('mergeToml — datetime values', () => {
     expect(result.ts.getFullYear()).toBe(2000);
   });
 });
+
+describe('trailing newline', () => {
+  it('mergeToml output always ends with newline', () => {
+    expect(mergeToml(['a = 1\n', 'b = 2\n'])).toMatch(/\n$/);
+  });
+
+  it('formatToml output always ends with newline', () => {
+    expect(formatToml('a = 1')).toMatch(/\n$/);
+  });
+});
