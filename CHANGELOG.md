@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.21.1](https://github.com/udondan/avanti/compare/v0.21.0...v0.21.1) (2026-05-18)
+
+
+### Bug Fixes
+
+* **deps:** update aws-sdk-js-v3 monorepo to v3.1046.0 ([#168](https://github.com/udondan/avanti/issues/168)) ([744239a](https://github.com/udondan/avanti/commit/744239a38b0b177601805584d704b1793f3a3052))
+* remove deprecated Bitbucket App Password auth and improve test coverage ([#163](https://github.com/udondan/avanti/issues/163)) ([efa4c99](https://github.com/udondan/avanti/commit/efa4c99143cfa702a30545a00d80c8a6b0a1c512))
+
 ## [0.21.0](https://github.com/udondan/avanti/compare/v0.20.0...v0.21.0) (2026-05-14)
 
 
