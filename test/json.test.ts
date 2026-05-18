@@ -18,6 +18,10 @@ describe('formatJson', () => {
 });
 
 describe('mergeJson — basic', () => {
+  it('returns null\\n for empty parts', () => {
+    expect(mergeJson([])).toBe('null\n');
+  });
+
   it('returns single source formatted', () => {
     expect(mergeJson(['{"a":1}'])).toBe('{\n  "a": 1\n}\n');
   });
