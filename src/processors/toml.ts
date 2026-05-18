@@ -119,12 +119,14 @@ export function mergeToml(
     result = deepMerge(result, parsed[i], resolved, '');
   }
 
-  return stringify(result as Parameters<typeof stringify>[0]);
+  const out = stringify(result as Parameters<typeof stringify>[0]);
+  return out.endsWith('\n') ? out : out + '\n';
 }
 
 export function formatToml(content: string): string {
   try {
-    return stringify(parse(content) as Parameters<typeof stringify>[0]);
+    const out = stringify(parse(content) as Parameters<typeof stringify>[0]);
+    return out.endsWith('\n') ? out : out + '\n';
   } catch (e) {
     throw new Error(`invalid TOML: ${(e as Error).message}`, { cause: e });
   }

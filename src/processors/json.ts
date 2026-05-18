@@ -187,7 +187,7 @@ export function mergeJson(
     objects: opts.objects ?? 'merge',
   };
 
-  if (parts.length === 0) return 'null';
+  if (parts.length === 0) return 'null\n';
 
   const parsed = parts.map((p, i) => {
     try {
@@ -208,20 +208,20 @@ export function mergeJson(
   const toFormat = opts.sortKeys ? sortJsonKeys(result) : result;
 
   if (opts.minify) {
-    return JSON.stringify(toFormat);
+    return JSON.stringify(toFormat) + '\n';
   }
   if (opts.stripComments) {
     // JSON.stringify strips Symbol-based comment metadata; re-parse to get a plain object,
     // then use comment-json stringify which has no 10-space indent cap.
     const clean = JSON.parse(JSON.stringify(toFormat)) as unknown;
-    return String(stringify(clean, null, resolveIndent(opts)));
+    return String(stringify(clean, null, resolveIndent(opts))) + '\n';
   }
 
   let output = String(stringify(toFormat, null, resolveIndent(opts)));
   if (opts.trailingCommas) {
     output = addTrailingCommas(output);
   }
-  return output;
+  return output + '\n';
 }
 
 export function formatJson(
@@ -233,18 +233,18 @@ export function formatJson(
     const toFormat = opts.sortKeys ? sortJsonKeys(parsed) : parsed;
 
     if (opts.minify) {
-      return JSON.stringify(toFormat);
+      return JSON.stringify(toFormat) + '\n';
     }
     if (opts.stripComments) {
       const clean = JSON.parse(JSON.stringify(toFormat)) as unknown;
-      return String(stringify(clean, null, resolveIndent(opts)));
+      return String(stringify(clean, null, resolveIndent(opts))) + '\n';
     }
 
     let output = String(stringify(toFormat, null, resolveIndent(opts)));
     if (opts.trailingCommas) {
       output = addTrailingCommas(output);
     }
-    return output;
+    return output + '\n';
   } catch (e) {
     throw new Error(`invalid JSON: ${(e as SyntaxError).message}`, {
       cause: e,

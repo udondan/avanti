@@ -4,11 +4,11 @@ import { mergeJson, formatJson } from '../src/processors/json';
 
 describe('formatJson', () => {
   it('pretty-prints compact JSON', () => {
-    expect(formatJson('{"a":1,"b":2}')).toBe('{\n  "a": 1,\n  "b": 2\n}');
+    expect(formatJson('{"a":1,"b":2}')).toBe('{\n  "a": 1,\n  "b": 2\n}\n');
   });
 
   it('is idempotent on already-formatted JSON', () => {
-    const pretty = '{\n  "a": 1\n}';
+    const pretty = '{\n  "a": 1\n}\n';
     expect(formatJson(pretty)).toBe(pretty);
   });
 
@@ -19,7 +19,7 @@ describe('formatJson', () => {
 
 describe('mergeJson — basic', () => {
   it('returns single source formatted', () => {
-    expect(mergeJson(['{"a":1}'])).toBe('{\n  "a": 1\n}');
+    expect(mergeJson(['{"a":1}'])).toBe('{\n  "a": 1\n}\n');
   });
 
   it('merges disjoint keys', () => {
@@ -125,17 +125,17 @@ describe('mergeJson — arrays', () => {
 describe('formatJson — JSONC', () => {
   it('preserves line comments', () => {
     const input = '{\n  // server host\n  "host": "localhost"\n}';
-    expect(formatJson(input)).toBe(input);
+    expect(formatJson(input)).toBe(input + '\n');
   });
 
   it('preserves block comments', () => {
     const input = '{\n  /* db config */\n  "port": 5432\n}';
-    expect(formatJson(input)).toBe(input);
+    expect(formatJson(input)).toBe(input + '\n');
   });
 
   it('preserves inline trailing comments', () => {
     const input = '{\n  "debug": true // enable debug\n}';
-    expect(formatJson(input)).toBe(input);
+    expect(formatJson(input)).toBe(input + '\n');
   });
 });
 
@@ -152,67 +152,69 @@ describe('mergeJson — JSONC', () => {
     const a = '{\n  // from a\n  "a": 1\n}';
     const b = '{\n  // from b\n  "b": 2\n}';
     const result = mergeJson([a, b]);
-    expect(result).toBe('{\n  // from a\n  "a": 1,\n  // from b\n  "b": 2\n}');
+    expect(result).toBe(
+      '{\n  // from a\n  "a": 1,\n  // from b\n  "b": 2\n}\n',
+    );
   });
 });
 
 describe('formatJson — indent', () => {
   it('uses 4 spaces when indent:4', () => {
-    expect(formatJson('{"a":1}', { indent: 4 })).toBe('{\n    "a": 1\n}');
+    expect(formatJson('{"a":1}', { indent: 4 })).toBe('{\n    "a": 1\n}\n');
   });
 
   it('uses tab when indent:"tab"', () => {
-    expect(formatJson('{"a":1}', { indent: 'tab' })).toBe('{\n\t"a": 1\n}');
+    expect(formatJson('{"a":1}', { indent: 'tab' })).toBe('{\n\t"a": 1\n}\n');
   });
 
   it('defaults to 2 spaces when no indent option', () => {
-    expect(formatJson('{"a":1}')).toBe('{\n  "a": 1\n}');
+    expect(formatJson('{"a":1}')).toBe('{\n  "a": 1\n}\n');
   });
 });
 
 describe('formatJson — trailing_commas', () => {
   it('adds trailing comma on last array element', () => {
     expect(formatJson('[1,2,3]', { trailingCommas: true })).toBe(
-      '[\n  1,\n  2,\n  3,\n]',
+      '[\n  1,\n  2,\n  3,\n]\n',
     );
   });
 
   it('adds trailing comma on last object property', () => {
     expect(formatJson('{"a":1,"b":2}', { trailingCommas: true })).toBe(
-      '{\n  "a": 1,\n  "b": 2,\n}',
+      '{\n  "a": 1,\n  "b": 2,\n}\n',
     );
   });
 
   it('adds trailing comma on nested closing braces', () => {
     const result = formatJson('{"a":{"x":1},"b":2}', { trailingCommas: true });
-    expect(result).toBe('{\n  "a": {\n    "x": 1,\n  },\n  "b": 2,\n}');
+    expect(result).toBe('{\n  "a": {\n    "x": 1,\n  },\n  "b": 2,\n}\n');
   });
 
   it('inserts trailing comma before inline // comment', () => {
     const input = '{\n  "debug": true // enable debug\n}';
     expect(formatJson(input, { trailingCommas: true })).toBe(
-      '{\n  "debug": true, // enable debug\n}',
+      '{\n  "debug": true, // enable debug\n}\n',
     );
   });
 
   it('adds trailing comma when last element is followed by a comment before }', () => {
     const input = '{\n  "a": 1\n  // end\n}';
     expect(formatJson(input, { trailingCommas: true })).toBe(
-      '{\n  "a": 1,\n  // end\n}',
+      '{\n  "a": 1,\n  // end\n}\n',
     );
   });
 
   it('does not double-comma already-trailing-comma lines', () => {
     const already = '{\n  "a": 1,\n  "b": 2\n}';
     const result = formatJson(already, { trailingCommas: true });
-    expect(result).toBe('{\n  "a": 1,\n  "b": 2,\n}');
+    expect(result).toBe('{\n  "a": 1,\n  "b": 2,\n}\n');
   });
 });
 
 describe('formatJson — sort_keys', () => {
   it('sorts object keys alphabetically', () => {
     expect(formatJson('{"z":3,"a":1,"m":2}', { sortKeys: true })).toBe(
-      '{\n  "a": 1,\n  "m": 2,\n  "z": 3\n}',
+      '{\n  "a": 1,\n  "m": 2,\n  "z": 3\n}\n',
     );
   });
 
@@ -228,24 +230,26 @@ describe('formatJson — sort_keys', () => {
 
   it('leaves arrays unchanged', () => {
     expect(formatJson('[3,1,2]', { sortKeys: true })).toBe(
-      '[\n  3,\n  1,\n  2\n]',
+      '[\n  3,\n  1,\n  2\n]\n',
     );
   });
 });
 
 describe('formatJson — minify', () => {
   it('produces compact single-line output', () => {
-    expect(formatJson('{"a":1,"b":2}', { minify: true })).toBe('{"a":1,"b":2}');
+    expect(formatJson('{"a":1,"b":2}', { minify: true })).toBe(
+      '{"a":1,"b":2}\n',
+    );
   });
 
   it('strips comments when minify:true', () => {
     const input = '{\n  // comment\n  "a": 1\n}';
-    expect(formatJson(input, { minify: true })).toBe('{"a":1}');
+    expect(formatJson(input, { minify: true })).toBe('{"a":1}\n');
   });
 
   it('ignores trailing_commas when minify:true', () => {
     expect(formatJson('{"a":1}', { minify: true, trailingCommas: true })).toBe(
-      '{"a":1}',
+      '{"a":1}\n',
     );
   });
 });
@@ -253,20 +257,20 @@ describe('formatJson — minify', () => {
 describe('formatJson — strip_comments', () => {
   it('removes line comments from output', () => {
     const input = '{\n  // comment\n  "a": 1\n}';
-    expect(formatJson(input, { stripComments: true })).toBe('{\n  "a": 1\n}');
+    expect(formatJson(input, { stripComments: true })).toBe('{\n  "a": 1\n}\n');
   });
 
   it('removes block comments from output', () => {
     const input = '{\n  /* db config */\n  "port": 5432\n}';
     expect(formatJson(input, { stripComments: true })).toBe(
-      '{\n  "port": 5432\n}',
+      '{\n  "port": 5432\n}\n',
     );
   });
 
   it('respects indent > 10 (not capped like JSON.stringify)', () => {
     const input = '{\n  // comment\n  "a": 1\n}';
     const result = formatJson(input, { stripComments: true, indent: 12 });
-    expect(result).toBe('{\n            "a": 1\n}');
+    expect(result).toBe('{\n            "a": 1\n}\n');
   });
 });
 
@@ -277,41 +281,41 @@ describe('formatJson — combined options', () => {
       trailingCommas: true,
       indent: 'tab',
     });
-    expect(result).toBe('{\n\t"a": 1,\n\t"z": 3,\n}');
+    expect(result).toBe('{\n\t"a": 1,\n\t"z": 3,\n}\n');
   });
 });
 
 describe('mergeJson — formatting options', () => {
   it('indent:4 applies to merged output', () => {
     const result = mergeJson(['{"a":1}', '{"b":2}'], { indent: 4 });
-    expect(result).toBe('{\n    "a": 1,\n    "b": 2\n}');
+    expect(result).toBe('{\n    "a": 1,\n    "b": 2\n}\n');
   });
 
   it('indent:"tab" applies to merged output', () => {
     const result = mergeJson(['{"a":1}', '{"b":2}'], { indent: 'tab' });
-    expect(result).toBe('{\n\t"a": 1,\n\t"b": 2\n}');
+    expect(result).toBe('{\n\t"a": 1,\n\t"b": 2\n}\n');
   });
 
   it('trailing_commas applies to merged output', () => {
     const result = mergeJson(['{"a":1}', '{"b":2}'], { trailingCommas: true });
-    expect(result).toBe('{\n  "a": 1,\n  "b": 2,\n}');
+    expect(result).toBe('{\n  "a": 1,\n  "b": 2,\n}\n');
   });
 
   it('sort_keys applies after merge', () => {
     const result = mergeJson(['{"z":3}', '{"a":1}'], { sortKeys: true });
-    expect(result).toBe('{\n  "a": 1,\n  "z": 3\n}');
+    expect(result).toBe('{\n  "a": 1,\n  "z": 3\n}\n');
   });
 
   it('minify applies to merged output', () => {
     const result = mergeJson(['{"a":1}', '{"b":2}'], { minify: true });
-    expect(result).toBe('{"a":1,"b":2}');
+    expect(result).toBe('{"a":1,"b":2}\n');
   });
 
   it('strip_comments applies to merged output', () => {
     const a = '{\n  // comment\n  "a": 1\n}';
     const b = '{"b": 2}';
     const result = mergeJson([a, b], { stripComments: true });
-    expect(result).toBe('{\n  "a": 1,\n  "b": 2\n}');
+    expect(result).toBe('{\n  "a": 1,\n  "b": 2\n}\n');
   });
 
   it('sort_keys + trailing_commas + indent applied together', () => {
@@ -320,7 +324,21 @@ describe('mergeJson — formatting options', () => {
       trailingCommas: true,
       indent: 4,
     });
-    expect(result).toBe('{\n    "a": 1,\n    "z": 3,\n}');
+    expect(result).toBe('{\n    "a": 1,\n    "z": 3,\n}\n');
+  });
+});
+
+describe('trailing newline', () => {
+  it('mergeJson output always ends with newline', () => {
+    expect(mergeJson(['{"a":1}', '{"b":2}'])).toMatch(/\n$/);
+  });
+
+  it('formatJson output always ends with newline', () => {
+    expect(formatJson('{"a":1}')).toMatch(/\n$/);
+  });
+
+  it('mergeJson minify output ends with newline', () => {
+    expect(mergeJson(['{"a":1}'], { minify: true })).toMatch(/\n$/);
   });
 });
 

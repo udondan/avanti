@@ -119,7 +119,8 @@ export function mergeYaml(
     }
   }
 
-  return base.toString();
+  const result = base.toString();
+  return result.endsWith('\n') ? result : result + '\n';
 }
 
 export function formatYaml(content: string): string {
@@ -128,7 +129,8 @@ export function formatYaml(content: string): string {
     if (doc.errors.length > 0) {
       throw new Error(doc.errors[0].message);
     }
-    return doc.toString();
+    const result = doc.toString();
+    return result.endsWith('\n') ? result : result + '\n';
   } catch (e) {
     throw new Error(`invalid YAML: ${(e as Error).message}`, { cause: e });
   }
