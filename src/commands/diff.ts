@@ -129,16 +129,19 @@ async function runDiffLoop(
         );
       }
 
+      const applyTemplate =
+        entry.template !== undefined
+          ? (await import('../processors/template')).applyTemplate
+          : undefined;
       for (const [relPath, rawContent] of result.files) {
         let content = rawContent;
         if (!isBinary(content)) {
           const rawText = content.toString('utf8');
           let text = rawText;
-          if (entry.template !== undefined) {
-            const { applyTemplate } = await import('../processors/template');
+          if (applyTemplate !== undefined) {
             text = await applyTemplate(
               text,
-              entry.template,
+              entry.template!,
               vars,
               relPath || undefined,
             );
