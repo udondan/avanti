@@ -208,6 +208,12 @@ describe('applyTemplate', () => {
     ).toBe(fixtureOutput);
   });
 
+  it('auto-detects nunjucks from .jinja extension', async () => {
+    expect(
+      await applyTemplate(fixture('app.njk'), true, fixtureVars, 'app.jinja'),
+    ).toBe(fixtureOutput);
+  });
+
   it('auto-detects liquidjs from .liquid extension', async () => {
     expect(
       await applyTemplate(
