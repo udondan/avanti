@@ -7,6 +7,9 @@ import Mustache from 'mustache';
 import { Eta } from 'eta';
 import { Variables, TemplateEngine, VALID_TEMPLATE_ENGINES } from '../types';
 
+// avanti renders config files, not HTML — disable all engine HTML escaping
+Mustache.escape = String;
+
 export { VALID_TEMPLATE_ENGINES };
 
 const EXTENSION_MAP: Record<string, TemplateEngine> = {
@@ -37,11 +40,16 @@ function getLiquid(): Liquid {
 function getNunjucksEnv(): nunjucks.Environment {
   return (nunjucksEnv ??= new nunjucks.Environment(null, {
     throwOnUndefined: true,
+    autoescape: false,
   }));
 }
 
 function getEta(): Eta {
-  return (eta ??= new Eta({ useWith: true, autoTrim: false }));
+  return (eta ??= new Eta({
+    useWith: true,
+    autoTrim: false,
+    autoEscape: false,
+  }));
 }
 
 function resolveEngine(
@@ -71,13 +79,15 @@ export async function applyTemplate(
   const engine = resolveEngine(spec, srcPath);
   switch (engine) {
     case 'handlebars':
-      return Handlebars.compile(content, { strict: true })(vars);
+      return Handlebars.compile(content, { strict: true, noEscape: true })(
+        vars,
+      );
     case 'nunjucks':
       return getNunjucksEnv().renderString(content, vars);
     case 'liquidjs':
       return String(await getLiquid().parseAndRender(content, vars));
     case 'ejs':
-      return ejs.render(content, vars);
+      return ejs.render(content, vars, { escape: String });
     case 'mustache':
       return Mustache.render(content, vars);
     case 'eta':

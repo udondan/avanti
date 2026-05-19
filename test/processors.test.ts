@@ -296,4 +296,50 @@ describe('applyTemplate', () => {
   it('mustache renders undefined variable as empty string (logic-less, no strict mode)', async () => {
     expect(await applyTemplate('{{missing}}', 'mustache', {})).toBe('');
   });
+
+  // avanti variables come from resolveVariableSpec which uses Object.create(null)
+  it('handles null-prototype vars object for all engines', async () => {
+    const vars = Object.assign(Object.create(null), {
+      app: 'myapp',
+      version: '1.2.3',
+    }) as Record<string, string>;
+    for (const [tmpl, engine] of [
+      [fixture('app.hbs'), 'handlebars'],
+      [fixture('app.njk'), 'nunjucks'],
+      [fixture('app.liquid'), 'liquidjs'],
+      [fixture('app.ejs'), 'ejs'],
+      [fixture('app.mustache'), 'mustache'],
+      [fixture('app.eta'), 'eta'],
+    ] as const) {
+      expect(
+        await applyTemplate(
+          tmpl,
+          engine as Parameters<typeof applyTemplate>[1],
+          vars,
+        ),
+      ).toBe(fixtureOutput);
+    }
+  });
+
+  // avanti renders config/text files — variable values must not be HTML-escaped
+  it('does not HTML-escape variable values (all engines)', async () => {
+    const vars = { val: '<a>&"' };
+    const expected = '<a>&"';
+    for (const [tmpl, engine] of [
+      ['{{val}}', 'handlebars'],
+      ['{{ val }}', 'nunjucks'],
+      ['{{ val }}', 'liquidjs'],
+      ['<%= val %>', 'ejs'],
+      ['{{val}}', 'mustache'],
+      ['<%= val %>', 'eta'],
+    ] as const) {
+      expect(
+        await applyTemplate(
+          tmpl,
+          engine as Parameters<typeof applyTemplate>[1],
+          vars,
+        ),
+      ).toBe(expected);
+    }
+  });
 });

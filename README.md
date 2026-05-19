@@ -841,6 +841,8 @@ files:
 | Mustache     | `mustache`   | `{{varName}}`    | `.mustache`, `.mst`                |
 | Eta          | `eta`        | `<%= varName %>` | `.eta`                             |
 
+All engines are configured with HTML escaping **disabled** — variable values are written verbatim, without converting `&`, `<`, `>`, `"`, or `'` to HTML entities.
+
 `template: true` infers the engine from the source file's extension (including the filename extracted from a URL). Use an explicit engine name when the extension is absent or unrecognised — e.g. `exec:` sources, `raw:` sources, or URLs whose path has no recognised template extension.
 
 **`jinja2` alias** — `template: jinja2` is equivalent to `template: nunjucks`. Nunjucks is a JavaScript implementation heavily inspired by Jinja2; most Jinja2 templates work without changes.
