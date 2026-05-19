@@ -1,3 +1,4 @@
+import { join } from 'path';
 import { describe, it, expect } from 'vitest';
 import {
   resolveVars,
@@ -6,6 +7,8 @@ import {
 } from '../src/variables';
 import { resolveVariableSpec } from '../src/variables-remote';
 import { isWindows } from '../src/shell';
+
+const FIXTURES = join(__dirname, 'fixtures/templates');
 
 describe('resolveVars', () => {
   it('resolves a named variable', () => {
@@ -285,5 +288,22 @@ describe('resolveVariableSpec', () => {
         cwd,
       ),
     ).rejects.toThrow('variables.bad: template rendering failed');
+  });
+
+  it('template: true on a variable auto-detects engine from source file extension', async () => {
+    const result = await resolveVariableSpec(
+      {
+        app: 'myapp',
+        version: '1.2.3',
+        rendered: {
+          src: { path: join(FIXTURES, 'app.hbs') },
+          template: true,
+        },
+      },
+      cwd,
+    );
+    expect(result.rendered).toBe(
+      'app: myapp\nversion: 1.2.3\nurl: https://example.com/myapp/1.2.3',
+    );
   });
 });

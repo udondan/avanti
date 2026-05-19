@@ -42,7 +42,10 @@ export async function resolveVariableSpec(
           `variables.${name}: source resolved to multiple files; set json/yaml/toml to merge them into one`,
         );
       }
-      const buf = result.files.values().next().value as Buffer;
+      const [srcPath, buf] = result.files.entries().next().value as [
+        string,
+        Buffer,
+      ];
       if (isBinary(buf)) {
         throw new Error(
           `variables.${name}: source resolved to binary content, which cannot be used as a variable value`,
@@ -52,7 +55,12 @@ export async function resolveVariableSpec(
       if (value.template !== undefined) {
         const { applyTemplate } = await import('./processors/template');
         try {
-          text = await applyTemplate(text, value.template, resolved);
+          text = await applyTemplate(
+            text,
+            value.template,
+            resolved,
+            srcPath || undefined,
+          );
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
           throw new Error(
