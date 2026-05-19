@@ -128,12 +128,21 @@ jobs:
           curl -sf -X POST http://127.0.0.1:8200/v1/kv1/myapp/token \
             -H "X-Vault-Token: root" -H "Content-Type: application/json" \
             -d '{"apikey":"v1key123"}'
+          # Create a policy scoped only to the test paths
+          POLICY=$(printf 'path "secret/data/myapp/*" { capabilities = ["read"] }\npath "kv1/myapp/*" { capabilities = ["read"] }')
+          curl -sf -X PUT http://127.0.0.1:8200/v1/sys/policies/acl/avanti-read \
+            -H "X-Vault-Token: root" -H "Content-Type: application/json" \
+            -d "$(jq -n --arg p "$POLICY" '{"policy":$p}')"
+          # Create a restricted token and export it for the test step
+          RESTRICTED_TOKEN=$(curl -sf -X POST http://127.0.0.1:8200/v1/auth/token/create \
+            -H "X-Vault-Token: root" -H "Content-Type: application/json" \
+            -d '{"policies":["avanti-read"],"ttl":"1h"}' | jq -r '.auth.client_token')
+          echo "VAULT_TOKEN=$RESTRICTED_TOKEN" >> "$GITHUB_ENV"
 
       - name: Run Vault integration tests
         run: bunx vitest run test/vault-integration.test.ts
         env:
           VAULT_ADDR: http://127.0.0.1:8200
-          VAULT_TOKEN: root
 
   required:
     runs-on: ubuntu-latest

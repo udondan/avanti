@@ -86,6 +86,12 @@ describe.skipIf(!hasVaultAddr)('Vault integration — HTTP API', () => {
         'HTTP 404',
       );
     });
+
+    it('throws HTTP 403 when the token lacks permission for the path', async () => {
+      await expect(fetchVault('secret/other/secret')).rejects.toThrow(
+        'HTTP 403',
+      );
+    });
   });
 
   describe('KV v1 fallback', () => {
