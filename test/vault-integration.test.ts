@@ -1,5 +1,11 @@
 import { execSync } from 'child_process';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'fs';
 import { tmpdir } from 'os';
 import { join, resolve } from 'path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -51,12 +57,21 @@ function writeConfig(dir: string, content: string): string {
 
 describe.skipIf(!hasVaultCreds)('Vault integration — HTTP API', () => {
   let tmpDir: string;
+  let originalPath: string;
 
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), 'avanti-vault-integration-'));
+    // Strip the vault binary from PATH so fetchVault() always uses the HTTP
+    // API path regardless of whether vault CLI is installed on the machine.
+    originalPath = process.env.PATH ?? '';
+    process.env.PATH = originalPath
+      .split(':')
+      .filter((dir) => !existsSync(join(dir, 'vault')))
+      .join(':');
   });
 
   afterEach(() => {
+    process.env.PATH = originalPath;
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
