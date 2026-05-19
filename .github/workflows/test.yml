@@ -73,13 +73,71 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITLAB_TOKEN: ${{ secrets.GITLAB_TOKEN }}
 
+  integration-tests-vault:
+    runs-on: ubuntu-latest
+    needs: [changes]
+    if: always() && (needs.changes.result == 'skipped' || (needs.changes.result == 'success' && needs.changes.outputs.src == 'true'))
+    services:
+      vault:
+        image: hashicorp/vault:latest
+        env:
+          VAULT_DEV_ROOT_TOKEN_ID: root
+          VAULT_DEV_LISTEN_ADDRESS: 0.0.0.0:8200
+        ports:
+          - 8200:8200
+        options: >-
+          --cap-add=IPC_LOCK
+          --health-cmd "wget -qO- http://127.0.0.1:8200/v1/sys/health || exit 1"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.3.14'
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: lts/*
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Seed Vault test secrets
+        run: |
+          # KV v2 on default 'secret/' mount (enabled in dev mode)
+          curl -sf -X POST http://127.0.0.1:8200/v1/secret/data/myapp/db \
+            -H "X-Vault-Token: root" -H "Content-Type: application/json" \
+            -d '{"data":{"username":"admin","password":"s3cr3t"}}'
+          # Enable KV v1 mount at 'kv1/'
+          curl -sf -X POST http://127.0.0.1:8200/v1/sys/mounts/kv1 \
+            -H "X-Vault-Token: root" -H "Content-Type: application/json" \
+            -d '{"type":"kv","options":{"version":"1"}}'
+          # KV v1 secret (fields at top level, no 'data' wrapper)
+          curl -sf -X POST http://127.0.0.1:8200/v1/kv1/myapp/token \
+            -H "X-Vault-Token: root" -H "Content-Type: application/json" \
+            -d '{"apikey":"v1key123"}'
+
+      - name: Run Vault integration tests
+        run: bunx vitest run test/vault-integration.test.ts
+        env:
+          VAULT_ADDR: http://127.0.0.1:8200
+          VAULT_TOKEN: root
+
   required:
     runs-on: ubuntu-latest
-    needs: [changes, test]
+    needs: [changes, test, integration-tests-vault]
     if: always()
     steps:
       - name: Check result
         run: |
-          if [[ "${{ needs.changes.result }}" == "failure" || "${{ needs.changes.result }}" == "cancelled" || "${{ needs.test.result }}" == "failure" || "${{ needs.test.result }}" == "cancelled" ]]; then
+          if [[ "${{ needs.changes.result }}" == "failure" || \
+                "${{ needs.changes.result }}" == "cancelled" || \
+                "${{ needs.test.result }}" == "failure" || \
+                "${{ needs.test.result }}" == "cancelled" || \
+                "${{ needs.integration-tests-vault.result }}" == "failure" || \
+                "${{ needs.integration-tests-vault.result }}" == "cancelled" ]]; then
             exit 1
           fi
