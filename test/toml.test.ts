@@ -121,6 +121,62 @@ describe('mergeToml — arrays', () => {
   });
 });
 
+describe('mergeToml — arrays: dedupe', () => {
+  it('appends only items not already present (primitives)', () => {
+    const result = parse(
+      mergeToml(['x = [1, 2, 3]\n', 'x = [2, 3, 4, 5]\n'], {
+        arrays: 'dedupe',
+      }),
+    ) as { x: number[] };
+    expect(result.x).toEqual([1, 2, 3, 4, 5]);
+  });
+
+  it('appends all items when there are no duplicates', () => {
+    const result = parse(
+      mergeToml(['x = [1, 2]\n', 'x = [3, 4]\n'], { arrays: 'dedupe' }),
+    ) as { x: number[] };
+    expect(result.x).toEqual([1, 2, 3, 4]);
+  });
+
+  it('keeps base array unchanged when all overlay items already present', () => {
+    const result = parse(
+      mergeToml(['x = [1, 2, 3]\n', 'x = [1, 2]\n'], { arrays: 'dedupe' }),
+    ) as { x: number[] };
+    expect(result.x).toEqual([1, 2, 3]);
+  });
+
+  it('accumulates correctly across three sources', () => {
+    const result = parse(
+      mergeToml(['x = [1, 2]\n', 'x = [2, 3]\n', 'x = [3, 4]\n'], {
+        arrays: 'dedupe',
+      }),
+    ) as { x: number[] };
+    expect(result.x).toEqual([1, 2, 3, 4]);
+  });
+
+  it('preserves order: base items first, new items in encounter order', () => {
+    const result = parse(
+      mergeToml(['x = [3, 1, 2]\n', 'x = [2, 4, 1, 5]\n'], {
+        arrays: 'dedupe',
+      }),
+    ) as { x: number[] };
+    expect(result.x).toEqual([3, 1, 2, 4, 5]);
+  });
+
+  it('deduplicates Date values using getTime() comparison', () => {
+    const a = 'ts = [1987-07-05T17:45:00Z]\n';
+    const b = 'ts = [1987-07-05T17:45:00Z, 2000-01-01T00:00:00Z]\n';
+    const result = parse(
+      mergeToml([a, b], { arrays: 'dedupe' }),
+    ) as unknown as {
+      ts: Date[];
+    };
+    expect(result.ts).toHaveLength(2);
+    expect(result.ts[0].getFullYear()).toBe(1987);
+    expect(result.ts[1].getFullYear()).toBe(2000);
+  });
+});
+
 describe('mergeToml — three sources', () => {
   it('applies last_wins across all sources', () => {
     const result = parse(mergeToml(['a = 1\n', 'a = 2\n', 'a = 3\n'])) as {

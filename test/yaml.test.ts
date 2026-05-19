@@ -136,6 +136,65 @@ describe('mergeYaml — arrays', () => {
   });
 });
 
+describe('mergeYaml — arrays: dedupe', () => {
+  it('appends only items not already present (primitives)', () => {
+    const result = parseDocument(
+      mergeYaml(
+        ['x:\n  - 1\n  - 2\n  - 3\n', 'x:\n  - 2\n  - 3\n  - 4\n  - 5\n'],
+        { arrays: 'dedupe' },
+      ),
+    ).toJSON() as { x: number[] };
+    expect(result.x).toEqual([1, 2, 3, 4, 5]);
+  });
+
+  it('appends all items when there are no duplicates', () => {
+    const result = parseDocument(
+      mergeYaml(['x:\n  - 1\n  - 2\n', 'x:\n  - 3\n  - 4\n'], {
+        arrays: 'dedupe',
+      }),
+    ).toJSON() as { x: number[] };
+    expect(result.x).toEqual([1, 2, 3, 4]);
+  });
+
+  it('keeps base array unchanged when all overlay items already present', () => {
+    const result = parseDocument(
+      mergeYaml(['x:\n  - 1\n  - 2\n  - 3\n', 'x:\n  - 1\n  - 2\n'], {
+        arrays: 'dedupe',
+      }),
+    ).toJSON() as { x: number[] };
+    expect(result.x).toEqual([1, 2, 3]);
+  });
+
+  it('deduplicates mapping items using deep equality', () => {
+    const result = parseDocument(
+      mergeYaml(['x:\n  - id: 1\n  - id: 2\n', 'x:\n  - id: 2\n  - id: 3\n'], {
+        arrays: 'dedupe',
+      }),
+    ).toJSON() as { x: Array<{ id: number }> };
+    expect(result.x).toEqual([{ id: 1 }, { id: 2 }, { id: 3 }]);
+  });
+
+  it('accumulates correctly across three sources', () => {
+    const result = parseDocument(
+      mergeYaml(
+        ['x:\n  - 1\n  - 2\n', 'x:\n  - 2\n  - 3\n', 'x:\n  - 3\n  - 4\n'],
+        { arrays: 'dedupe' },
+      ),
+    ).toJSON() as { x: number[] };
+    expect(result.x).toEqual([1, 2, 3, 4]);
+  });
+
+  it('preserves order: base items first, new items in encounter order', () => {
+    const result = parseDocument(
+      mergeYaml(
+        ['x:\n  - 3\n  - 1\n  - 2\n', 'x:\n  - 2\n  - 4\n  - 1\n  - 5\n'],
+        { arrays: 'dedupe' },
+      ),
+    ).toJSON() as { x: number[] };
+    expect(result.x).toEqual([3, 1, 2, 4, 5]);
+  });
+});
+
 describe('mergeYaml — comment preservation', () => {
   it('preserves leading comment from first source', () => {
     const a = '# server\nhost: a\n';

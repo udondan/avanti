@@ -3,7 +3,7 @@ import { YamlMergeOptions } from '../types';
 
 interface ResolvedOptions {
   conflicts: 'abort' | 'first_wins' | 'last_wins';
-  arrays: 'replace' | 'concat';
+  arrays: 'replace' | 'concat' | 'dedupe';
   objects: 'replace' | 'merge';
 }
 
@@ -25,6 +25,16 @@ function nodeToJs(node: unknown): unknown {
 
 function nodesEqual(a: unknown, b: unknown): boolean {
   return JSON.stringify(nodeToJs(a)) === JSON.stringify(nodeToJs(b));
+}
+
+function dedupeSeqItems(existing: unknown[], incoming: unknown[]): unknown[] {
+  const result = [...existing];
+  for (const item of incoming) {
+    if (!result.some((e) => nodesEqual(e, item))) {
+      result.push(item);
+    }
+  }
+  return result;
 }
 
 function mergeMapNodes(
@@ -57,6 +67,12 @@ function mergeMapNodes(
         for (const item of overlayVal.items) {
           baseVal.items.push(item);
         }
+      } else if (
+        isSeq(baseVal) &&
+        isSeq(overlayVal) &&
+        opts.arrays === 'dedupe'
+      ) {
+        baseVal.items = dedupeSeqItems(baseVal.items, overlayVal.items);
       } else {
         if (nodesEqual(baseVal, overlayVal)) continue;
         if (opts.conflicts === 'abort') {

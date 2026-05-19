@@ -126,6 +126,67 @@ describe('mergeJson — arrays', () => {
   });
 });
 
+describe('mergeJson — arrays: dedupe', () => {
+  it('appends only items not already present (primitives)', () => {
+    const result = JSON.parse(
+      mergeJson(['{"x":[1,2,3]}', '{"x":[2,3,4,5]}'], { arrays: 'dedupe' }),
+    ) as { x: number[] };
+    expect(result.x).toEqual([1, 2, 3, 4, 5]);
+  });
+
+  it('appends all items when there are no duplicates', () => {
+    const result = JSON.parse(
+      mergeJson(['{"x":[1,2]}', '{"x":[3,4]}'], { arrays: 'dedupe' }),
+    ) as { x: number[] };
+    expect(result.x).toEqual([1, 2, 3, 4]);
+  });
+
+  it('keeps base array unchanged when all overlay items already present', () => {
+    const result = JSON.parse(
+      mergeJson(['{"x":[1,2,3]}', '{"x":[1,2]}'], { arrays: 'dedupe' }),
+    ) as { x: number[] };
+    expect(result.x).toEqual([1, 2, 3]);
+  });
+
+  it('deduplicates object items using deep equality', () => {
+    const result = JSON.parse(
+      mergeJson(['{"x":[{"id":1},{"id":2}]}', '{"x":[{"id":2},{"id":3}]}'], {
+        arrays: 'dedupe',
+      }),
+    ) as { x: Array<{ id: number }> };
+    expect(result.x).toEqual([{ id: 1 }, { id: 2 }, { id: 3 }]);
+  });
+
+  it('deduplicates nested array items using deep equality', () => {
+    const result = JSON.parse(
+      mergeJson(['{"x":[[1,2],[3,4]]}', '{"x":[[3,4],[5,6]]}'], {
+        arrays: 'dedupe',
+      }),
+    ) as { x: number[][] };
+    expect(result.x).toEqual([
+      [1, 2],
+      [3, 4],
+      [5, 6],
+    ]);
+  });
+
+  it('accumulates correctly across three sources', () => {
+    const result = JSON.parse(
+      mergeJson(['{"x":[1,2]}', '{"x":[2,3]}', '{"x":[3,4]}'], {
+        arrays: 'dedupe',
+      }),
+    ) as { x: number[] };
+    expect(result.x).toEqual([1, 2, 3, 4]);
+  });
+
+  it('preserves order: base items first, new items in encounter order', () => {
+    const result = JSON.parse(
+      mergeJson(['{"x":[3,1,2]}', '{"x":[2,4,1,5]}'], { arrays: 'dedupe' }),
+    ) as { x: number[] };
+    expect(result.x).toEqual([3, 1, 2, 4, 5]);
+  });
+});
+
 describe('formatJson — JSONC', () => {
   it('preserves line comments', () => {
     const input = '{\n  // server host\n  "host": "localhost"\n}';
