@@ -9,6 +9,9 @@ export async function resolveVariableSpec(
   cache?: FetchCache,
 ): Promise<Variables> {
   const resolved: Variables = Object.create(null) as Variables;
+  let applyTemplate:
+    | typeof import('./processors/template').applyTemplate
+    | undefined;
   for (const [name, value] of Object.entries(spec)) {
     if (typeof value === 'string') {
       try {
@@ -53,7 +56,7 @@ export async function resolveVariableSpec(
       }
       let text = buf.toString('utf8');
       if (value.template !== undefined) {
-        const { applyTemplate } = await import('./processors/template');
+        applyTemplate ??= (await import('./processors/template')).applyTemplate;
         try {
           text = await applyTemplate(
             text,
