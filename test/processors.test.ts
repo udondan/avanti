@@ -1,7 +1,16 @@
+import { readFileSync } from 'fs';
+import { join } from 'path';
 import { describe, it, expect } from 'vitest';
 import { applyReplace } from '../src/processors/replace';
 import { applyPost } from '../src/processors/post';
+import { applyTemplate } from '../src/processors/template';
 import { isWindows } from '../src/shell';
+
+const FIXTURES = join(__dirname, 'fixtures/templates');
+
+function fixture(name: string): string {
+  return readFileSync(join(FIXTURES, name), 'utf8').replace(/\r\n/g, '\n');
+}
 
 describe('applyReplace', () => {
   it('replaces plain string', () => {
@@ -111,5 +120,232 @@ describe('applyReplace with variables', () => {
     expect(() =>
       applyReplace('x', [{ from: 'x', to: '$missing' }], {}),
     ).toThrow('Undefined variable: $missing');
+  });
+});
+
+describe('applyTemplate', () => {
+  // Fixtures at test/fixtures/templates/app.<ext> — multi-variable templates
+  // that each produce the same output using each engine's native syntax.
+  const fixtureVars = { app: 'myapp', version: '1.2.3' };
+  const fixtureOutput =
+    'app: myapp\nversion: 1.2.3\nurl: https://example.com/myapp/1.2.3\n';
+
+  it('renders handlebars fixture ({{var}} syntax, variable used twice)', async () => {
+    expect(
+      await applyTemplate(fixture('app.hbs'), 'handlebars', fixtureVars),
+    ).toBe(fixtureOutput);
+  });
+
+  it('renders nunjucks fixture ({{ var }} syntax)', async () => {
+    expect(
+      await applyTemplate(fixture('app.njk'), 'nunjucks', fixtureVars),
+    ).toBe(fixtureOutput);
+  });
+
+  it('treats jinja2 as alias for nunjucks (same fixture, same output)', async () => {
+    expect(await applyTemplate(fixture('app.njk'), 'jinja2', fixtureVars)).toBe(
+      fixtureOutput,
+    );
+  });
+
+  it('renders liquidjs fixture ({{ var }} syntax)', async () => {
+    expect(
+      await applyTemplate(fixture('app.liquid'), 'liquidjs', fixtureVars),
+    ).toBe(fixtureOutput);
+  });
+
+  it('renders ejs fixture (<%= var %> syntax)', async () => {
+    expect(await applyTemplate(fixture('app.ejs'), 'ejs', fixtureVars)).toBe(
+      fixtureOutput,
+    );
+  });
+
+  it('renders mustache fixture ({{var}} syntax)', async () => {
+    expect(
+      await applyTemplate(fixture('app.mustache'), 'mustache', fixtureVars),
+    ).toBe(fixtureOutput);
+  });
+
+  it('renders eta fixture (<%= var %> syntax, no it. prefix)', async () => {
+    expect(await applyTemplate(fixture('app.eta'), 'eta', fixtureVars)).toBe(
+      fixtureOutput,
+    );
+  });
+
+  // Auto-detection by extension
+  it('auto-detects handlebars from .hbs extension', async () => {
+    expect(
+      await applyTemplate(fixture('app.hbs'), true, fixtureVars, 'app.hbs'),
+    ).toBe(fixtureOutput);
+  });
+
+  it('auto-detects handlebars from .handlebars extension', async () => {
+    expect(
+      await applyTemplate(
+        fixture('app.hbs'),
+        true,
+        fixtureVars,
+        'app.handlebars',
+      ),
+    ).toBe(fixtureOutput);
+  });
+
+  it('auto-detects nunjucks from .njk extension', async () => {
+    expect(
+      await applyTemplate(fixture('app.njk'), true, fixtureVars, 'app.njk'),
+    ).toBe(fixtureOutput);
+  });
+
+  it('auto-detects nunjucks from .j2 extension', async () => {
+    expect(
+      await applyTemplate(fixture('app.njk'), true, fixtureVars, 'app.j2'),
+    ).toBe(fixtureOutput);
+  });
+
+  it('auto-detects nunjucks from .jinja2 extension', async () => {
+    expect(
+      await applyTemplate(fixture('app.njk'), true, fixtureVars, 'app.jinja2'),
+    ).toBe(fixtureOutput);
+  });
+
+  it('auto-detects nunjucks from .jinja extension', async () => {
+    expect(
+      await applyTemplate(fixture('app.njk'), true, fixtureVars, 'app.jinja'),
+    ).toBe(fixtureOutput);
+  });
+
+  it('auto-detects liquidjs from .liquid extension', async () => {
+    expect(
+      await applyTemplate(
+        fixture('app.liquid'),
+        true,
+        fixtureVars,
+        'app.liquid',
+      ),
+    ).toBe(fixtureOutput);
+  });
+
+  it('auto-detects ejs from .ejs extension', async () => {
+    expect(
+      await applyTemplate(fixture('app.ejs'), true, fixtureVars, 'app.ejs'),
+    ).toBe(fixtureOutput);
+  });
+
+  it('auto-detects eta from .eta extension', async () => {
+    expect(
+      await applyTemplate(fixture('app.eta'), true, fixtureVars, 'app.eta'),
+    ).toBe(fixtureOutput);
+  });
+
+  it('auto-detects mustache from .mustache extension', async () => {
+    expect(
+      await applyTemplate(
+        fixture('app.mustache'),
+        true,
+        fixtureVars,
+        'app.mustache',
+      ),
+    ).toBe(fixtureOutput);
+  });
+
+  it('auto-detects mustache from .mst extension', async () => {
+    expect(
+      await applyTemplate(
+        fixture('app.mustache'),
+        true,
+        fixtureVars,
+        'app.mst',
+      ),
+    ).toBe(fixtureOutput);
+  });
+
+  // Error cases
+  it('throws on unrecognized extension with template: true', async () => {
+    await expect(
+      applyTemplate(fixture('app.hbs'), true, fixtureVars, 'app.txt'),
+    ).rejects.toThrow('template: true requires a recognized extension');
+  });
+
+  it('throws when template: true has no srcPath', async () => {
+    await expect(
+      applyTemplate(fixture('app.hbs'), true, fixtureVars),
+    ).rejects.toThrow('template: true requires a recognized extension');
+  });
+
+  // Undefined variable behavior — consistent with resolveVars which throws on missing $var
+  it('handlebars throws on undefined variable', async () => {
+    await expect(
+      applyTemplate('{{missing}}', 'handlebars', {}),
+    ).rejects.toThrow();
+  });
+
+  it('nunjucks throws on undefined variable', async () => {
+    await expect(
+      applyTemplate('{{ missing }}', 'nunjucks', {}),
+    ).rejects.toThrow();
+  });
+
+  it('liquidjs throws on undefined variable', async () => {
+    await expect(
+      applyTemplate('{{ missing }}', 'liquidjs', {}),
+    ).rejects.toThrow();
+  });
+
+  it('ejs throws on undefined variable', async () => {
+    await expect(applyTemplate('<%= missing %>', 'ejs', {})).rejects.toThrow();
+  });
+
+  it('eta throws on undefined variable', async () => {
+    await expect(applyTemplate('<%= missing %>', 'eta', {})).rejects.toThrow();
+  });
+
+  it('mustache renders undefined variable as empty string (logic-less, no strict mode)', async () => {
+    expect(await applyTemplate('{{missing}}', 'mustache', {})).toBe('');
+  });
+
+  // avanti variables come from resolveVariableSpec which uses Object.create(null)
+  it('handles null-prototype vars object for all engines', async () => {
+    const vars = Object.assign(Object.create(null), {
+      app: 'myapp',
+      version: '1.2.3',
+    }) as Record<string, string>;
+    for (const [tmpl, engine] of [
+      [fixture('app.hbs'), 'handlebars'],
+      [fixture('app.njk'), 'nunjucks'],
+      [fixture('app.liquid'), 'liquidjs'],
+      [fixture('app.ejs'), 'ejs'],
+      [fixture('app.mustache'), 'mustache'],
+      [fixture('app.eta'), 'eta'],
+    ] as const) {
+      expect(
+        await applyTemplate(
+          tmpl,
+          engine as Parameters<typeof applyTemplate>[1],
+          vars,
+        ),
+      ).toBe(fixtureOutput);
+    }
+  });
+
+  // avanti renders config/text files — variable values must not be HTML-escaped
+  it('does not HTML-escape variable values (all engines)', async () => {
+    const vars = { val: '<a>&"' };
+    const expected = '<a>&"';
+    for (const [tmpl, engine] of [
+      ['{{val}}', 'handlebars'],
+      ['{{ val }}', 'nunjucks'],
+      ['{{ val }}', 'liquidjs'],
+      ['<%= val %>', 'ejs'],
+      ['{{val}}', 'mustache'],
+      ['<%= val %>', 'eta'],
+    ] as const) {
+      expect(
+        await applyTemplate(
+          tmpl,
+          engine as Parameters<typeof applyTemplate>[1],
+          vars,
+        ),
+      ).toBe(expected);
+    }
   });
 });

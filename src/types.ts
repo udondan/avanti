@@ -196,6 +196,25 @@ export interface TomlMergeOptions {
   objects?: TomlObjectStrategy;
 }
 
+export type TemplateEngine =
+  | 'handlebars'
+  | 'nunjucks'
+  | 'jinja2'
+  | 'liquidjs'
+  | 'ejs'
+  | 'mustache'
+  | 'eta';
+
+export const VALID_TEMPLATE_ENGINES: TemplateEngine[] = [
+  'handlebars',
+  'nunjucks',
+  'jinja2',
+  'liquidjs',
+  'ejs',
+  'mustache',
+  'eta',
+];
+
 export interface FileEntry {
   src: FileSrc | FileSrc[];
   target: string;
@@ -204,6 +223,7 @@ export interface FileEntry {
   mode?: string;
   replace?: ReplaceRule[];
   post?: string;
+  template?: TemplateEngine | true;
   json?: JsonMergeOptions | boolean;
   yaml?: YamlMergeOptions | boolean;
   toml?: TomlMergeOptions | boolean;
@@ -215,6 +235,7 @@ export interface VariableEntry {
   json?: JsonMergeOptions | boolean;
   yaml?: YamlMergeOptions | boolean;
   toml?: TomlMergeOptions | boolean;
+  template?: TemplateEngine | true;
 }
 
 export type VariableSpec = Record<string, string | VariableEntry>;

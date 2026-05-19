@@ -1,3 +1,4 @@
+import { join } from 'path';
 import { describe, it, expect } from 'vitest';
 import {
   resolveVars,
@@ -6,6 +7,8 @@ import {
 } from '../src/variables';
 import { resolveVariableSpec } from '../src/variables-remote';
 import { isWindows } from '../src/shell';
+
+const FIXTURES = join(__dirname, 'fixtures/templates');
 
 describe('resolveVars', () => {
   it('resolves a named variable', () => {
@@ -248,5 +251,59 @@ describe('resolveVariableSpec', () => {
         cwd,
       ),
     ).rejects.toThrow('variables.tok:');
+  });
+
+  it('renders a source variable through a template engine', async () => {
+    const result = await resolveVariableSpec(
+      {
+        env: 'prod',
+        label: {
+          src: { raw: 'env={{env}}\n' },
+          template: 'handlebars',
+        },
+      },
+      cwd,
+    );
+    expect(result.label).toBe('env=prod');
+  });
+
+  it('template variable can reference prior variables in its context', async () => {
+    const result = await resolveVariableSpec(
+      {
+        version: '1.2.3',
+        tag: {
+          src: { raw: 'v{{ version }}' },
+          template: 'nunjucks',
+        },
+      },
+      cwd,
+    );
+    expect(result.tag).toBe('v1.2.3');
+  });
+
+  it('template rendering error on a variable is wrapped with location context', async () => {
+    await expect(
+      resolveVariableSpec(
+        { bad: { src: { raw: '{{missing}}' }, template: 'handlebars' } },
+        cwd,
+      ),
+    ).rejects.toThrow('variables.bad: template rendering failed');
+  });
+
+  it('template: true on a variable auto-detects engine from source file extension', async () => {
+    const result = await resolveVariableSpec(
+      {
+        app: 'myapp',
+        version: '1.2.3',
+        rendered: {
+          src: { path: join(FIXTURES, 'app.hbs') },
+          template: true,
+        },
+      },
+      cwd,
+    );
+    expect(result.rendered.replace(/\r\n/g, '\n')).toBe(
+      'app: myapp\nversion: 1.2.3\nurl: https://example.com/myapp/1.2.3',
+    );
   });
 });

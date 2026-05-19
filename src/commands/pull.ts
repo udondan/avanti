@@ -218,12 +218,24 @@ async function runFetchLoop(
         );
       }
 
+      const applyTemplate =
+        entry.template !== undefined
+          ? (await import('../processors/template')).applyTemplate
+          : undefined;
       for (const [relPath, rawContent] of result.files) {
         let content = rawContent;
         if (!isBinary(content)) {
           // Processors only operate on text; binary files are passed through unchanged.
           const rawText = content.toString('utf8');
           let text = rawText;
+          if (applyTemplate !== undefined) {
+            text = await applyTemplate(
+              text,
+              entry.template!,
+              vars,
+              relPath || undefined,
+            );
+          }
           if (entry.replace?.length)
             text = applyReplace(text, entry.replace, vars);
           if (entry.post) text = applyPost(text, entry.post, vars);

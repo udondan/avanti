@@ -9,6 +9,9 @@ export async function resolveVariableSpec(
   cache?: FetchCache,
 ): Promise<Variables> {
   const resolved: Variables = Object.create(null) as Variables;
+  let applyTemplate:
+    | typeof import('./processors/template').applyTemplate
+    | undefined;
   for (const [name, value] of Object.entries(spec)) {
     if (typeof value === 'string') {
       try {
@@ -42,13 +45,34 @@ export async function resolveVariableSpec(
           `variables.${name}: source resolved to multiple files; set json/yaml/toml to merge them into one`,
         );
       }
-      const buf = result.files.values().next().value as Buffer;
+      const [srcPath, buf] = result.files.entries().next().value as [
+        string,
+        Buffer,
+      ];
       if (isBinary(buf)) {
         throw new Error(
           `variables.${name}: source resolved to binary content, which cannot be used as a variable value`,
         );
       }
-      resolved[name] = buf.toString('utf8').trim();
+      let text = buf.toString('utf8');
+      if (value.template !== undefined) {
+        applyTemplate ??= (await import('./processors/template')).applyTemplate;
+        try {
+          text = await applyTemplate(
+            text,
+            value.template,
+            resolved,
+            srcPath || undefined,
+          );
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          throw new Error(
+            `variables.${name}: template rendering failed: ${msg}`,
+            { cause: err },
+          );
+        }
+      }
+      resolved[name] = text.trim();
     }
   }
   return resolved;

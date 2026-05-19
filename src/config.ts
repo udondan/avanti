@@ -25,6 +25,8 @@ import {
   TomlMergeOptions,
   TomlObjectStrategy,
   ReplaceRule,
+  TemplateEngine,
+  VALID_TEMPLATE_ENGINES,
   VariableEntry,
   VariableSpec,
   Via,
@@ -288,6 +290,23 @@ export function parseConfigContent(content: string): AvantiConfig {
       }
     }
 
+    if (e['template'] !== undefined) {
+      const rawTemplate = e['template'];
+      if (rawTemplate === true) {
+        fileEntry.template = true;
+      } else {
+        if (
+          typeof rawTemplate !== 'string' ||
+          !VALID_TEMPLATE_ENGINES.includes(rawTemplate as TemplateEngine)
+        ) {
+          throw new Error(
+            `files["${target}"].template: must be true or one of ${VALID_TEMPLATE_ENGINES.join(', ')}`,
+          );
+        }
+        fileEntry.template = rawTemplate as TemplateEngine;
+      }
+    }
+
     files[target] = fileEntry;
   }
 
@@ -377,6 +396,23 @@ function parseVariableEntry(
       entry.toml = rawToml;
     } else {
       entry.toml = parseTomlMergeOptions(rawToml, loc);
+    }
+  }
+
+  if (obj['template'] !== undefined) {
+    const rawTemplate = obj['template'];
+    if (rawTemplate === true) {
+      entry.template = true;
+    } else {
+      if (
+        typeof rawTemplate !== 'string' ||
+        !VALID_TEMPLATE_ENGINES.includes(rawTemplate as TemplateEngine)
+      ) {
+        throw new Error(
+          `${loc}.template: must be true or one of ${VALID_TEMPLATE_ENGINES.join(', ')}`,
+        );
+      }
+      entry.template = rawTemplate as TemplateEngine;
     }
   }
 
