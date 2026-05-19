@@ -129,7 +129,7 @@ jobs:
             -H "X-Vault-Token: root" -H "Content-Type: application/json" \
             -d '{"apikey":"v1key123"}'
           # Create a policy scoped only to the test paths
-          POLICY=$(printf 'path "secret/data/myapp/*" { capabilities = ["read"] }\npath "kv1/myapp/*" { capabilities = ["read"] }')
+          POLICY=$(printf 'path "secret/data/myapp/*" { capabilities = ["read"] }\npath "secret/myapp/*" { capabilities = ["read"] }\npath "kv1/myapp/*" { capabilities = ["read"] }')
           curl -sf -X PUT http://127.0.0.1:8200/v1/sys/policies/acl/avanti-read \
             -H "X-Vault-Token: root" -H "Content-Type: application/json" \
             -d "$(jq -n --arg p "$POLICY" '{"policy":$p}')"
