@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.21.2](https://github.com/udondan/avanti/compare/v0.21.1...v0.21.2) (2026-05-19)
+
+
+### Bug Fixes
+
+* **deps:** update aws-sdk-js-v3 monorepo to v3.1047.0 ([#172](https://github.com/udondan/avanti/issues/172)) ([3dc8a80](https://github.com/udondan/avanti/commit/3dc8a808469d33832e713b5423a8ea62c4ad7226))
+* **deps:** update aws-sdk-js-v3 monorepo to v3.1048.0 ([#176](https://github.com/udondan/avanti/issues/176)) ([105e01b](https://github.com/udondan/avanti/commit/105e01bf51853a71507f7b78270084da84f1e00e))
+* ensure merged JSON/YAML/TOML files end with a trailing newline ([#175](https://github.com/udondan/avanti/issues/175)) ([97b55c5](https://github.com/udondan/avanti/commit/97b55c5bff72c93ad4c204073efe77fca8871fbb))
+
 ## [0.21.1](https://github.com/udondan/avanti/compare/v0.21.0...v0.21.1) (2026-05-18)
 
 
