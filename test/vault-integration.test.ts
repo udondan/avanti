@@ -8,7 +8,8 @@ import { fetchVault } from '../src/sources/vault';
 const CLI = resolve(__dirname, '../src/cli.ts');
 const PROJECT_ROOT = resolve(__dirname, '..');
 
-const hasVaultAddr = !!process.env.VAULT_ADDR?.trim();
+const hasVaultCreds =
+  !!process.env.VAULT_ADDR?.trim() && !!process.env.VAULT_TOKEN?.trim();
 
 interface RunResult {
   stdout: string;
@@ -48,7 +49,7 @@ function writeConfig(dir: string, content: string): string {
 //   KV v2 (secret/ mount):  secret/myapp/db  → { username: 'admin', password: 's3cr3t' }
 //   KV v1 (kv1/ mount):     kv1/myapp/token  → { apikey: 'v1key123' }
 
-describe.skipIf(!hasVaultAddr)('Vault integration — HTTP API', () => {
+describe.skipIf(!hasVaultCreds)('Vault integration — HTTP API', () => {
   let tmpDir: string;
 
   beforeEach(() => {
