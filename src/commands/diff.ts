@@ -47,6 +47,9 @@ async function runDiffLoop(
     console.error(err instanceof Error ? err.message : String(err));
     return { allDiffs: [], hasError: true };
   }
+  if (configPath !== undefined) {
+    vars['self'] = configPath;
+  }
   const allDiffs: FileDiff[] = [];
   let hasError = false;
   let selfContent: string | undefined;

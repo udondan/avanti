@@ -1330,6 +1330,82 @@ files:
     });
   });
 
+  describe('$self as variable', () => {
+    it('expands $self to the config file path in a replace rule', () => {
+      const config = writeConfig(
+        tmpDir,
+        `files:
+  ./output.txt:
+    src:
+      raw: "config is at: PLACEHOLDER"
+    replace:
+      - from: PLACEHOLDER
+        to: $self
+`,
+      );
+
+      const { exitCode } = runAvanti(config, tmpDir);
+      expect(exitCode).toBe(0);
+      expect(readFileSync(join(tmpDir, 'output.txt'), 'utf8')).toBe(
+        `config is at: ${config}`,
+      );
+    });
+
+    it('expands $self to the config file path in an exists condition', () => {
+      const config = writeConfig(
+        tmpDir,
+        `files:
+  ./output.txt:
+    src:
+      raw: "written"
+    if:
+      exists: $self
+`,
+      );
+
+      const { exitCode } = runAvanti(config, tmpDir);
+      expect(exitCode).toBe(0);
+      expect(readFileSync(join(tmpDir, 'output.txt'), 'utf8')).toBe('written');
+    });
+
+    it.skipIf(isWindows)(
+      'expands $self to the config file path in an exec source',
+      () => {
+        const config = writeConfig(
+          tmpDir,
+          `files:
+  ./output.txt:
+    src:
+      exec: "cat $self"
+`,
+        );
+
+        const { exitCode } = runAvanti(config, tmpDir);
+        expect(exitCode).toBe(0);
+        expect(readFileSync(join(tmpDir, 'output.txt'), 'utf8')).toContain(
+          'output.txt',
+        );
+      },
+    );
+
+    it('rejects "self" as a user-defined variable name', () => {
+      const config = writeConfig(
+        tmpDir,
+        `variables:
+  self: /some/path
+files:
+  ./output.txt:
+    src:
+      raw: "hello"
+`,
+      );
+
+      const { exitCode, stderr } = runAvanti(config, tmpDir);
+      expect(exitCode).toBe(2);
+      expect(stderr).toContain('"self" is reserved');
+    });
+  });
+
   describe('--verbose flag', () => {
     function runAvantiVerbose(
       configPath: string,
