@@ -12,6 +12,7 @@ export function fetchLocal(
   src: string,
   workingDir: string,
   optional = false,
+  pendingWrites?: Map<string, Buffer>,
 ): LocalResult {
   let resolved: string;
   if (src.startsWith('~/')) {
@@ -22,6 +23,28 @@ export function fetchLocal(
     resolved = path.resolve(workingDir, src);
   }
   verbose(`local: reading ${resolved}`);
+
+  if (pendingWrites !== undefined) {
+    if (pendingWrites.has(resolved)) {
+      return {
+        files: new Map([
+          [path.basename(resolved), pendingWrites.get(resolved)!],
+        ]),
+      };
+    }
+    const prefix = resolved + path.sep;
+    const dirEntries = [...pendingWrites.entries()].filter(([k]) =>
+      k.startsWith(prefix),
+    );
+    if (dirEntries.length > 0) {
+      const files = new Map<string, Buffer>();
+      for (const [abs, content] of dirEntries) {
+        files.set(path.relative(resolved, abs), content);
+      }
+      return { files };
+    }
+  }
+
   if (!fs.existsSync(resolved)) {
     if (optional) return { files: new Map(), missing: true };
     throw new Error(`Local source not found: ${resolved}`);

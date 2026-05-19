@@ -12,6 +12,7 @@ import {
 } from '../config';
 import { evaluateConditions } from '../condition';
 import { fetchSource, FetchCache, SourceFetchRecord } from '../sources';
+import { sortByDependencies } from '../dependencies';
 import { applyReplace } from '../processors/replace';
 import { applyPost } from '../processors/post';
 import { applyInsertMode } from '../processors/insert';
@@ -24,7 +25,7 @@ import {
 } from '../diff';
 import { atomicWrite, WriteTarget } from '../writer';
 import { FileDiff } from '../diff';
-import { AvantiConfig } from '../types';
+import { AvantiConfig, FileEntry } from '../types';
 import { HistoryManager, PullLogFileRef, SourceShaRecord } from '../history';
 import { confirm } from '../prompt';
 import { applyUpdatedShas, writeUpdatedShas } from '../config-writeback';
@@ -86,6 +87,7 @@ async function runFetchLoop(
     string,
     { raw: string; processed: string }
   >();
+  const pendingWrites = new Map<string, Buffer>();
   let hasUnresolvableSkippedPath = false;
   let hasError = false;
   let selfContent: string | undefined;
@@ -131,7 +133,23 @@ async function runFetchLoop(
       skippedPaths.add(configPath);
     }
   }
-  for (const [key, entry] of Object.entries(config.files)) {
+  const nonSelfEntries = Object.entries(config.files).filter(
+    ([k]) => k !== SELF_KEY,
+  );
+  const sortedEntries = (() => {
+    try {
+      return sortByDependencies(nonSelfEntries, workingDir, vars);
+    } catch (err: unknown) {
+      console.error(err instanceof Error ? err.message : String(err));
+      hasError = true;
+      return nonSelfEntries;
+    }
+  })();
+  const entriesToProcess: [string, FileEntry][] = hasSelf
+    ? [[SELF_KEY, config.files[SELF_KEY]], ...sortedEntries]
+    : sortedEntries;
+
+  for (const [key, entry] of entriesToProcess) {
     const isSelf = key === SELF_KEY;
     if (hasSelf !== isSelf) continue;
     try {
@@ -161,6 +179,7 @@ async function runFetchLoop(
         vars,
         cache,
         isSelf && configPath !== undefined ? () => configPath : undefined,
+        pendingWrites,
       );
 
       if (result.allSkipped && !isSelf) {
@@ -243,6 +262,7 @@ async function runFetchLoop(
         const targetPath = resolveTargetPath(entry, relPath, workingDir, vars);
         allDiffs.push(computeDiff(targetPath, content));
         writeTargets.push({ targetPath, content, mode: entry.mode });
+        pendingWrites.set(targetPath, content);
         if (result.sourceRecords.length > 0) {
           sourceRecordsByTarget.set(targetPath, result.sourceRecords);
         }

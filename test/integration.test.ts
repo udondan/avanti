@@ -1406,6 +1406,109 @@ files:
     });
   });
 
+  describe('scaffold pattern — target used as source in same run', () => {
+    it('first run: file-A gets default content and file-B includes it', () => {
+      const config = writeConfig(
+        tmpDir,
+        `files:
+  ./file-a.txt:
+    src:
+      raw: DEFAULT CONTENT
+    if:
+      target_exists: true
+      not: true
+  ./file-b.txt:
+    src:
+      - path: ./file-a.txt
+`,
+      );
+
+      const { exitCode } = runAvanti(config, tmpDir);
+      expect(exitCode).toBe(0);
+      expect(readFileSync(join(tmpDir, 'file-a.txt'), 'utf8')).toBe(
+        'DEFAULT CONTENT',
+      );
+      expect(readFileSync(join(tmpDir, 'file-b.txt'), 'utf8')).toBe(
+        'DEFAULT CONTENT',
+      );
+    });
+
+    it('second run: file-A is untouched, file-B picks up user modifications', () => {
+      const config = writeConfig(
+        tmpDir,
+        `files:
+  ./file-a.txt:
+    src:
+      raw: DEFAULT CONTENT
+    if:
+      target_exists: true
+      not: true
+  ./file-b.txt:
+    src:
+      - path: ./file-a.txt
+`,
+      );
+
+      // Simulate user having modified file-A after the first run
+      writeFileSync(join(tmpDir, 'file-a.txt'), 'CUSTOM USER CONTENT');
+
+      const { exitCode } = runAvanti(config, tmpDir);
+      expect(exitCode).toBe(0);
+      // file-A is untouched because target_exists: true condition is now false (not: true means skip)
+      expect(readFileSync(join(tmpDir, 'file-a.txt'), 'utf8')).toBe(
+        'CUSTOM USER CONTENT',
+      );
+      // file-B now uses the user's modified content
+      expect(readFileSync(join(tmpDir, 'file-b.txt'), 'utf8')).toBe(
+        'CUSTOM USER CONTENT',
+      );
+    });
+
+    it('auto-reorders so file-A is processed before file-B even when defined after', () => {
+      const config = writeConfig(
+        tmpDir,
+        `files:
+  ./file-b.txt:
+    src:
+      - path: ./file-a.txt
+  ./file-a.txt:
+    src:
+      raw: REORDERED CONTENT
+    if:
+      target_exists: true
+      not: true
+`,
+      );
+
+      const { exitCode } = runAvanti(config, tmpDir);
+      expect(exitCode).toBe(0);
+      expect(readFileSync(join(tmpDir, 'file-a.txt'), 'utf8')).toBe(
+        'REORDERED CONTENT',
+      );
+      expect(readFileSync(join(tmpDir, 'file-b.txt'), 'utf8')).toBe(
+        'REORDERED CONTENT',
+      );
+    });
+
+    it('detects a circular dependency and exits with error', () => {
+      const config = writeConfig(
+        tmpDir,
+        `files:
+  ./file-a.txt:
+    src:
+      - path: ./file-b.txt
+  ./file-b.txt:
+    src:
+      - path: ./file-a.txt
+`,
+      );
+
+      const { exitCode, stderr } = runAvanti(config, tmpDir);
+      expect(exitCode).toBe(2);
+      expect(stderr).toContain('Circular dependency');
+    });
+  });
+
   describe('--verbose flag', () => {
     function runAvantiVerbose(
       configPath: string,

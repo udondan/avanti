@@ -1,4 +1,5 @@
 import * as crypto from 'crypto';
+import * as os from 'os';
 import * as path from 'path';
 import { isVerbose, verbose } from '../logger';
 import { redactUrl } from '../fetch';
@@ -353,6 +354,7 @@ async function _fetchOneSrcRaw(
   src: FileSrc,
   workingDir: string,
   vars: Variables,
+  pendingWrites?: Map<string, Buffer>,
 ): Promise<{ files: Map<string, Buffer>; skipped?: boolean }> {
   if (isVerbose())
     verbose(`fetching source: ${redactUrl(labelForSrc(src, vars))}`);
@@ -368,7 +370,9 @@ async function _fetchOneSrcRaw(
       const { repo, file, ref } = parseGitRemoteSpec(resolved);
       return { files: fetchGit(repo, file, ref).files };
     }
-    return { files: fetchLocal(resolved, workingDir).files };
+    return {
+      files: fetchLocal(resolved, workingDir, false, pendingWrites).files,
+    };
   }
 
   if ('raw' in src) {
@@ -381,7 +385,12 @@ async function _fetchOneSrcRaw(
 
   if ('path' in src) {
     const resolved = resolveVars(src.path, vars);
-    const result = fetchLocal(resolved, workingDir, src.optional ?? false);
+    const result = fetchLocal(
+      resolved,
+      workingDir,
+      src.optional ?? false,
+      pendingWrites,
+    );
     if (result.missing) {
       return { files: new Map(), skipped: true };
     }
@@ -508,6 +517,7 @@ async function fetchOneSrc(
   vars: Variables,
   cache?: FetchCache,
   getTargetPath: () => string = () => '',
+  pendingWrites?: Map<string, Buffer>,
 ): Promise<{
   files: Map<string, Buffer>;
   record: SourceFetchRecord | null;
@@ -534,6 +544,16 @@ async function fetchOneSrc(
     }
   }
 
+  // Check pending writes before hitting the cache: a local path that is also a
+  // write target in this run should resolve to the future content, not whatever
+  // is on disk (or in the cache from a previous iteration).
+  if (pendingWrites !== undefined) {
+    const pending = pendingLocalFiles(src, workingDir, vars, pendingWrites);
+    if (pending !== null) {
+      return { files: pending, record: buildRecord(src, pending, vars) };
+    }
+  }
+
   const cacheKey = cacheKeyForSrc(src, vars);
   const cached = cache?.get(cacheKey);
 
@@ -544,7 +564,7 @@ async function fetchOneSrc(
     if (isVerbose()) verbose(`cache hit: ${redactUrl(labelForSrc(src, vars))}`);
     files = cached.files;
   } else {
-    const raw = await _fetchOneSrcRaw(src, workingDir, vars);
+    const raw = await _fetchOneSrcRaw(src, workingDir, vars, pendingWrites);
     files = raw.files;
     skipped = raw.skipped;
     // Don't cache skipped results: if optional changes to required between
@@ -556,6 +576,63 @@ async function fetchOneSrc(
   // Recompute record from the current source spec so expectedSha/matched
   // always reflect the caller's config iteration, not the first fetch.
   return { files, record: buildRecord(src, files, vars) };
+}
+
+function pendingLocalFiles(
+  src: FileSrc,
+  workingDir: string,
+  vars: Variables,
+  pendingWrites: Map<string, Buffer>,
+): Map<string, Buffer> | null {
+  let rawPath: string | null = null;
+  try {
+    if (typeof src === 'string') {
+      const resolved = resolveVars(src, vars);
+      if (
+        !resolved.startsWith('http://') &&
+        !resolved.startsWith('https://') &&
+        !isGitRemoteUrl(resolved)
+      ) {
+        rawPath = resolved;
+      }
+    } else if ('path' in src) {
+      rawPath = resolveVars(src.path, vars);
+    }
+  } catch {
+    return null;
+  }
+  if (rawPath === null) return null;
+  return pendingWritesForPath(rawPath, workingDir, pendingWrites);
+}
+
+function pendingWritesForPath(
+  rawPath: string,
+  workingDir: string,
+  pendingWrites: Map<string, Buffer>,
+): Map<string, Buffer> | null {
+  let abs: string;
+  if (rawPath.startsWith('~/')) {
+    abs = path.resolve(os.homedir(), rawPath.slice(2));
+  } else if (path.isAbsolute(rawPath)) {
+    abs = rawPath;
+  } else {
+    abs = path.resolve(workingDir, rawPath);
+  }
+  if (pendingWrites.has(abs)) {
+    return new Map([[path.basename(abs), pendingWrites.get(abs)!]]);
+  }
+  const prefix = abs + path.sep;
+  const dirEntries = [...pendingWrites.entries()].filter(([k]) =>
+    k.startsWith(prefix),
+  );
+  if (dirEntries.length > 0) {
+    const files = new Map<string, Buffer>();
+    for (const [absPath, content] of dirEntries) {
+      files.set(path.relative(abs, absPath), content);
+    }
+    return files;
+  }
+  return null;
 }
 
 // Asserts that all buffers in the map are text (not binary). Throws with a
@@ -578,6 +655,7 @@ export async function fetchSource(
   vars: Variables = {},
   cache?: FetchCache,
   getTargetPathOverride?: () => string,
+  pendingWrites?: Map<string, Buffer>,
 ): Promise<FetchResult> {
   const { src } = entry;
 
@@ -597,6 +675,7 @@ export async function fetchSource(
           vars,
           cache,
           getTargetPath,
+          pendingWrites,
         );
         if (skipped) continue;
         assertTextFiles(files, `source ${i}`);
@@ -641,7 +720,14 @@ export async function fetchSource(
     files: singleFiles,
     record: singleRecord,
     skipped,
-  } = await fetchOneSrc(src, workingDir, vars, cache, getTargetPath);
+  } = await fetchOneSrc(
+    src,
+    workingDir,
+    vars,
+    cache,
+    getTargetPath,
+    pendingWrites,
+  );
   if (skipped) return { files: new Map(), sourceRecords: [], allSkipped: true };
   const singleResult = { files: singleFiles };
   const sourceRecords: SourceFetchRecord[] =

@@ -33,6 +33,7 @@ atomic rollbacks, and diff-before-apply safety.
   - [TOML Merging](#toml-merging)
   - [Insert Mode](#insert-mode)
   - [Conditions](#conditions)
+  - [Scaffold Pattern](#scaffold-pattern)
   - [Variables](#variables)
   - [$self — Self-managing Config](#self--self-managing-config)
   - [Authentication](#authentication)
@@ -47,6 +48,7 @@ atomic rollbacks, and diff-before-apply safety.
   - [Multi-Project Deployment](#multi-project-deployment)
   - [Docker Compose from Upstream Sources](#docker-compose-from-upstream-sources)
   - [Developer Onboarding Bootstrap](#developer-onboarding-bootstrap)
+  - [Scaffold Defaults with Local Overrides](#scaffold-defaults-with-local-overrides)
   - [Self-managing Config](#self-managing-config)
 - [Exit Codes](#exit-codes)
 - [Development](#development)
@@ -923,6 +925,43 @@ files:
       - path: /common/base.conf
 ```
 
+### Scaffold Pattern
+
+A local file can be both a **write target** and a **source** for another entry in the same run. When avanti processes an entry whose source path resolves to a file that is also being written in the same run, it uses the **pending content** — the content that entry would write — rather than whatever is currently on disk. This means the downstream entry sees the final result even if the target file does not exist yet.
+
+This enables a scaffold-and-customize pattern: create a default file on first run, let the user modify it, and automatically incorporate their changes into downstream files on every subsequent run.
+
+```yaml
+files:
+  # Created once with a default template. Never touched again after the user edits it.
+  ./config/team.md:
+    src:
+      raw: |
+        # Team Configuration
+        Edit this file to customize your team settings.
+    if:
+      target_exists: true
+      not: true
+
+  # Always rebuilt. On first run it picks up the default template above.
+  # After the user edits team.md, it picks up their version.
+  ./docs/handbook.md:
+    src:
+      - github:
+          repo: org/docs
+          file: handbook-base.md
+          ref: main
+      - path: ./config/team.md
+```
+
+On **first run**: `team.md` does not exist, so the `raw:` entry creates it. `handbook.md` sources from `team.md` and picks up the default template content — even though `team.md` has not been written to disk yet.
+
+On **subsequent runs**: `team.md` already exists, so the `target_exists: true / not: true` condition skips it. `handbook.md` reads `team.md` from disk and picks up any changes the user made.
+
+**Automatic ordering** — avanti resolves dependencies between entries and processes them in the correct order automatically. You can define entries in any order in the config; if entry B sources from entry A's target path, A is always processed before B.
+
+**Cycle detection** — if two entries form a cycle (A sources from B and B sources from A), avanti exits with an error listing the cycle before writing any files.
+
 ### Variables
 
 Define reusable values at the top level under `variables:`:
@@ -1490,6 +1529,39 @@ files:
         file: workflows/
         ref: main
 ```
+
+### Scaffold Defaults with Local Overrides
+
+Ship default config files that users can customize, and automatically compose downstream files from those customized versions — all in a single `avanti pull`.
+
+```yaml
+files:
+  # Created once on first run. The user edits this to set their preferences.
+  ./config/prettier.json:
+    src:
+      raw: |
+        {
+          "singleQuote": true,
+          "semi": false
+        }
+    if:
+      target_exists: true
+      not: true
+
+  # Always rebuilt. Sources org defaults from GitHub, then merges in local overrides.
+  ./.prettierrc.json:
+    src:
+      - github:
+          repo: org/standards
+          file: prettier-base.json
+          ref: main
+      - path: ./config/prettier.json
+    json:
+      conflicts: last_wins
+      objects: merge
+```
+
+On first run both files are created: `config/prettier.json` gets the default template, `.prettierrc.json` merges the org base with those defaults. The user then edits `config/prettier.json` to suit their preferences. On every subsequent run, `.prettierrc.json` is rebuilt from the org base plus whatever the user has in their local override file — and `config/prettier.json` is left untouched.
 
 ### Self-managing Config
 
