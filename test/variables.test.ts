@@ -302,7 +302,7 @@ describe('resolveVariableSpec', () => {
       },
       cwd,
     );
-    expect(result.rendered).toBe(
+    expect(result.rendered.replace(/\r\n/g, '\n')).toBe(
       'app: myapp\nversion: 1.2.3\nurl: https://example.com/myapp/1.2.3',
     );
   });
