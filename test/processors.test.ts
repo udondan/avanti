@@ -9,7 +9,7 @@ import { isWindows } from '../src/shell';
 const FIXTURES = join(__dirname, 'fixtures/templates');
 
 function fixture(name: string): string {
-  return readFileSync(join(FIXTURES, name), 'utf8');
+  return readFileSync(join(FIXTURES, name), 'utf8').replace(/\r\n/g, '\n');
 }
 
 describe('applyReplace', () => {
