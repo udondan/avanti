@@ -14,7 +14,7 @@ function resolveEntryTarget(
     if (target.startsWith('~/')) {
       return path.resolve(os.homedir(), target.slice(2));
     }
-    if (path.isAbsolute(target)) return target;
+    if (path.isAbsolute(target)) return path.resolve(target);
     return path.resolve(workingDir, target);
   } catch {
     return null;
@@ -53,7 +53,7 @@ function localSourcePaths(
 function absoluteLocal(resolved: string, workingDir: string): string {
   if (resolved.startsWith('~/'))
     return path.resolve(os.homedir(), resolved.slice(2));
-  if (path.isAbsolute(resolved)) return resolved;
+  if (path.isAbsolute(resolved)) return path.resolve(resolved);
   return path.resolve(workingDir, resolved);
 }
 
