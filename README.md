@@ -1035,6 +1035,30 @@ variables:
 
 When `ref` is omitted, all source types (GitHub, GitLab, Bitbucket, git) resolve to the repository's default branch.
 
+`$self` is a reserved keyword that expands to the absolute path of the active config file. It is injected automatically and cannot be used as a variable name. Use it anywhere a variable is valid — `exec:` commands, `replace:` rules, `exists:` conditions, `post:` scripts, or any source field:
+
+```yaml
+files:
+  ./output.txt:
+    src:
+      raw: 'generated from: PLACEHOLDER'
+    replace:
+      - from: PLACEHOLDER
+        to: $self # expands to e.g. /home/user/project/.avanti.yml
+
+  ./copy-of-config.yml:
+    src:
+      exec: cat $self # reads the config file itself
+
+  ./guarded.txt:
+    src:
+      raw: 'only written when config exists'
+    if:
+      exists: $self
+```
+
+When the config is specified as a remote spec (e.g. `--config github:org/repo:.avanti.yml`), `$self` expands to that spec string. In an `exists:` condition this will always evaluate to false since the remote spec is not a local path.
+
 ### $self — Self-managing Config
 
 The special `$self` key in the `files:` map tells avanti to manage its own config file. When `$self` is present, avanti fetches the listed sources and uses the result as the active config for the rest of the run — all in a single invocation.
