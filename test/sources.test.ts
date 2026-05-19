@@ -61,6 +61,101 @@ describe('fetchLocal — optional flag', () => {
   });
 });
 
+describe('fetchSource — pendingWrites', () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'avanti-pending-test-'));
+  });
+
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('returns pending content for a plain string local path that does not exist on disk', async () => {
+    const filePath = join(tmpDir, 'new.txt');
+    const pendingWrites = new Map([[filePath, Buffer.from('pending content')]]);
+    const result = await fetchSource(
+      { src: filePath, target: 'new.txt' },
+      tmpDir,
+      {},
+      undefined,
+      undefined,
+      pendingWrites,
+    );
+    expect(result.files.get('new.txt')?.toString('utf8')).toBe(
+      'pending content',
+    );
+  });
+
+  it('pending content takes priority over existing disk file', async () => {
+    const filePath = join(tmpDir, 'existing.txt');
+    writeFileSync(filePath, 'disk content');
+    const pendingWrites = new Map([[filePath, Buffer.from('pending content')]]);
+    const result = await fetchSource(
+      { src: filePath, target: 'existing.txt' },
+      tmpDir,
+      {},
+      undefined,
+      undefined,
+      pendingWrites,
+    );
+    expect(result.files.get('existing.txt')?.toString('utf8')).toBe(
+      'pending content',
+    );
+  });
+
+  it('falls through to disk when path is not in pendingWrites', async () => {
+    const filePath = join(tmpDir, 'real.txt');
+    writeFileSync(filePath, 'disk content');
+    const result = await fetchSource(
+      { src: filePath, target: 'real.txt' },
+      tmpDir,
+      {},
+      undefined,
+      undefined,
+      new Map(),
+    );
+    expect(result.files.get('real.txt')?.toString('utf8')).toBe('disk content');
+  });
+
+  it('returns pending content for a {path:} style local source', async () => {
+    const filePath = join(tmpDir, 'path-style.txt');
+    const pendingWrites = new Map([[filePath, Buffer.from('path style')]]);
+    const result = await fetchSource(
+      { src: { path: filePath }, target: 'out.txt' },
+      tmpDir,
+      {},
+      undefined,
+      undefined,
+      pendingWrites,
+    );
+    expect(result.files.get('path-style.txt')?.toString('utf8')).toBe(
+      'path style',
+    );
+  });
+
+  it('returns pending directory entries for a directory path not yet on disk', async () => {
+    const dirPath = join(tmpDir, 'subdir');
+    const fileA = join(dirPath, 'a.txt');
+    const fileB = join(dirPath, 'b.txt');
+    const pendingWrites = new Map([
+      [fileA, Buffer.from('content a')],
+      [fileB, Buffer.from('content b')],
+    ]);
+    const result = await fetchSource(
+      { src: dirPath, target: 'out/' },
+      tmpDir,
+      {},
+      undefined,
+      undefined,
+      pendingWrites,
+    );
+    expect(result.files.get('a.txt')?.toString('utf8')).toBe('content a');
+    expect(result.files.get('b.txt')?.toString('utf8')).toBe('content b');
+  });
+});
+
 describe('fetchHttp — optional flag', () => {
   beforeEach(() => {
     vi.spyOn(_testable, 'sleep').mockResolvedValue(undefined);

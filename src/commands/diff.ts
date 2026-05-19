@@ -11,6 +11,7 @@ import {
   SELF_KEY,
 } from '../config';
 import { fetchSource, FetchCache } from '../sources';
+import { sortByDependencies } from '../dependencies';
 import { applyReplace } from '../processors/replace';
 import { applyPost } from '../processors/post';
 import { applyInsertMode } from '../processors/insert';
@@ -22,7 +23,7 @@ import {
   resolveTargetPath,
 } from '../diff';
 import { FileDiff } from '../diff';
-import { AvantiConfig } from '../types';
+import { AvantiConfig, FileEntry } from '../types';
 import { HistoryManager } from '../history';
 import { resolveVariableSpec } from '../variables-remote';
 import { evaluateConditions } from '../condition';
@@ -51,6 +52,7 @@ async function runDiffLoop(
     vars['self'] = configPath;
   }
   const allDiffs: FileDiff[] = [];
+  const pendingWrites = new Map<string, Buffer>();
   let hasError = false;
   let selfContent: string | undefined;
 
@@ -75,7 +77,21 @@ async function runDiffLoop(
       return { allDiffs: [], hasError: true };
     }
   }
-  for (const [key, entry] of Object.entries(config.files)) {
+  const nonSelfEntries = Object.entries(config.files).filter(
+    ([k]) => k !== SELF_KEY,
+  );
+  let sortedEntries: [string, FileEntry][];
+  try {
+    sortedEntries = sortByDependencies(nonSelfEntries, workingDir, vars);
+  } catch (err: unknown) {
+    console.error(err instanceof Error ? err.message : String(err));
+    return { allDiffs: [], hasError: true };
+  }
+  const entriesToProcess: [string, FileEntry][] = hasSelf
+    ? [[SELF_KEY, config.files[SELF_KEY]], ...sortedEntries]
+    : sortedEntries;
+
+  for (const [key, entry] of entriesToProcess) {
     const isSelf = key === SELF_KEY;
     if (hasSelf !== isSelf) continue;
     try {
@@ -96,6 +112,7 @@ async function runDiffLoop(
         vars,
         cache,
         isSelf && configPath !== undefined ? () => configPath : undefined,
+        pendingWrites,
       );
       for (const rec of result.sourceRecords) {
         if (!rec.matched) {
@@ -152,6 +169,7 @@ async function runDiffLoop(
         }
         const targetPath = resolveTargetPath(entry, relPath, workingDir, vars);
         allDiffs.push(computeDiff(targetPath, content));
+        pendingWrites.set(targetPath, content);
       }
     } catch (err: unknown) {
       console.error(

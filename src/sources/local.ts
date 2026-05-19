@@ -22,6 +22,7 @@ export function fetchLocal(
     resolved = path.resolve(workingDir, src);
   }
   verbose(`local: reading ${resolved}`);
+
   if (!fs.existsSync(resolved)) {
     if (optional) return { files: new Map(), missing: true };
     throw new Error(`Local source not found: ${resolved}`);
