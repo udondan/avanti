@@ -77,19 +77,6 @@ jobs:
     runs-on: ubuntu-latest
     needs: [changes]
     if: always() && (needs.changes.result == 'skipped' || (needs.changes.result == 'success' && needs.changes.outputs.src == 'true'))
-    services:
-      vault:
-        image: hashicorp/vault:latest
-        env:
-          VAULT_DEV_ROOT_TOKEN_ID: root
-          VAULT_DEV_LISTEN_ADDRESS: 0.0.0.0:8200
-        ports:
-          - 8200:8200
-        options: >-
-          --health-cmd "wget -qO- http://127.0.0.1:8200/v1/sys/health || exit 1"
-          --health-interval 5s
-          --health-timeout 3s
-          --health-retries 10
     steps:
       - uses: actions/checkout@v6
 
@@ -103,6 +90,19 @@ jobs:
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
+
+      - name: Start Vault
+        run: |
+          docker run -d \
+            --name vault \
+            -p 8200:8200 \
+            -e VAULT_DEV_ROOT_TOKEN_ID=root \
+            -e VAULT_DEV_LISTEN_ADDRESS=0.0.0.0:8200 \
+            -e VAULT_DISABLE_MLOCK=1 \
+            hashicorp/vault:latest
+          for i in $(seq 1 20); do
+            curl -sf http://127.0.0.1:8200/v1/sys/health && break || sleep 2
+          done
 
       - name: Seed Vault test secrets
         run: |
