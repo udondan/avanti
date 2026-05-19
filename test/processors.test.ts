@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { applyReplace } from '../src/processors/replace';
 import { applyPost } from '../src/processors/post';
+import { applyTemplate } from '../src/processors/template';
 import { isWindows } from '../src/shell';
 
 describe('applyReplace', () => {
@@ -111,5 +112,123 @@ describe('applyReplace with variables', () => {
     expect(() =>
       applyReplace('x', [{ from: 'x', to: '$missing' }], {}),
     ).toThrow('Undefined variable: $missing');
+  });
+});
+
+describe('applyTemplate', () => {
+  const vars = { name: 'world', greeting: 'Hello' };
+
+  it('renders handlebars template', async () => {
+    expect(await applyTemplate('Hello {{name}}!', 'handlebars', vars)).toBe(
+      'Hello world!',
+    );
+  });
+
+  it('renders nunjucks template', async () => {
+    expect(await applyTemplate('Hello {{ name }}!', 'nunjucks', vars)).toBe(
+      'Hello world!',
+    );
+  });
+
+  it('treats jinja2 as an alias for nunjucks', async () => {
+    expect(
+      await applyTemplate('{{ greeting }} {{ name }}!', 'jinja2', vars),
+    ).toBe('Hello world!');
+  });
+
+  it('renders liquidjs template', async () => {
+    expect(await applyTemplate('Hello {{ name }}!', 'liquidjs', vars)).toBe(
+      'Hello world!',
+    );
+  });
+
+  it('renders ejs template', async () => {
+    expect(await applyTemplate('Hello <%= name %>!', 'ejs', vars)).toBe(
+      'Hello world!',
+    );
+  });
+
+  it('renders mustache template', async () => {
+    expect(await applyTemplate('Hello {{name}}!', 'mustache', vars)).toBe(
+      'Hello world!',
+    );
+  });
+
+  it('renders eta template without it. prefix', async () => {
+    expect(await applyTemplate('Hello <%= name %>!', 'eta', vars)).toBe(
+      'Hello world!',
+    );
+  });
+
+  it('auto-detects handlebars from .hbs extension', async () => {
+    expect(await applyTemplate('{{name}}', true, vars, 'template.hbs')).toBe(
+      'world',
+    );
+  });
+
+  it('auto-detects handlebars from .handlebars extension', async () => {
+    expect(
+      await applyTemplate('{{name}}', true, vars, 'template.handlebars'),
+    ).toBe('world');
+  });
+
+  it('auto-detects nunjucks from .njk extension', async () => {
+    expect(await applyTemplate('{{ name }}', true, vars, 'template.njk')).toBe(
+      'world',
+    );
+  });
+
+  it('auto-detects nunjucks from .j2 extension', async () => {
+    expect(await applyTemplate('{{ name }}', true, vars, 'template.j2')).toBe(
+      'world',
+    );
+  });
+
+  it('auto-detects nunjucks from .jinja2 extension', async () => {
+    expect(
+      await applyTemplate('{{ name }}', true, vars, 'template.jinja2'),
+    ).toBe('world');
+  });
+
+  it('auto-detects liquidjs from .liquid extension', async () => {
+    expect(
+      await applyTemplate('{{ name }}', true, vars, 'template.liquid'),
+    ).toBe('world');
+  });
+
+  it('auto-detects ejs from .ejs extension', async () => {
+    expect(await applyTemplate('<%= name %>', true, vars, 'template.ejs')).toBe(
+      'world',
+    );
+  });
+
+  it('auto-detects eta from .eta extension', async () => {
+    expect(await applyTemplate('<%= name %>', true, vars, 'template.eta')).toBe(
+      'world',
+    );
+  });
+
+  it('auto-detects mustache from .mustache extension', async () => {
+    expect(
+      await applyTemplate('{{name}}', true, vars, 'template.mustache'),
+    ).toBe('world');
+  });
+
+  it('auto-detects mustache from .mst extension', async () => {
+    expect(await applyTemplate('{{name}}', true, vars, 'template.mst')).toBe(
+      'world',
+    );
+  });
+
+  it('throws on unrecognized extension with template: true', async () => {
+    await expect(
+      applyTemplate('{{name}}', true, vars, 'template.txt'),
+    ).rejects.toThrow('template: true requires a recognized extension');
+  });
+
+  it('throws when template: true has no srcPath', async () => {
+    await expect(applyTemplate('{{name}}', true, vars)).rejects.toThrow(
+      'template: true requires a recognized extension',
+    );
   });
 });

@@ -31,6 +31,7 @@ atomic rollbacks, and diff-before-apply safety.
   - [JSON Merging](#json-merging)
   - [YAML Merging](#yaml-merging)
   - [TOML Merging](#toml-merging)
+  - [Template Rendering](#template-rendering)
   - [Insert Mode](#insert-mode)
   - [Conditions](#conditions)
   - [Scaffold Pattern](#scaffold-pattern)
@@ -393,6 +394,7 @@ End the target path with `/` to write a directory source as a mirror; omit the t
 | `mode`     | No       | File permission mode, e.g. `"0755"`                                                                                                                                                                                                     |
 | `replace`  | No       | List of `{from, to}` replacement rules. `from` may be a plain string or `/pattern/flags` regex.                                                                                                                                         |
 | `post`     | No       | Shell script. Content is piped via stdin; stdout is used as the result. Runs after `replace`.                                                                                                                                           |
+| `template` | No       | Treat the fetched content as a template and render it with avanti config variables as context. See [Template Rendering](#template-rendering).                                                                                           |
 | `json`     | No       | JSON merge/format options (see below). When omitted, merging is auto-enabled if all sources have a `.json` or `.jsonc` extension. Use `true`/`false` to force on or off regardless of extension.                                        |
 | `yaml`     | No       | YAML merge/format options (see below). When omitted, merging is auto-enabled if all sources have a `.yaml` or `.yml` extension. Use `true`/`false` to force on or off regardless of extension. Comments are preserved in merged output. |
 | `strategy` | No       | Write strategy: `replace` _(default)_ — overwrite the target file entirely; `insert` — merge content into the existing file without clobbering unrelated content. See [Insert Mode](#insert-mode).                                      |
@@ -801,6 +803,47 @@ files:
   config.toml:
     src: ./config.toml
 ```
+
+### Template Rendering
+
+Set `template` to treat the fetched content as a template. avanti renders it at deploy time using all avanti config variables as the template context, then writes the rendered output to the target file.
+
+```yaml
+variables:
+  env: production
+  region: us-east-1
+
+files:
+  deploy-config.txt:
+    src: ./deploy.hbs
+    template: handlebars
+
+  k8s-manifest.yaml:
+    src: ./manifest.njk
+    template: nunjucks # or: template: jinja2 (alias)
+
+  nginx.conf:
+    src: ./nginx.conf.liquid
+    template: true # auto-detect engine from file extension
+```
+
+**Supported engines:**
+
+| Engine       | Value        | Variable syntax  | Auto-detected extensions           |
+| ------------ | ------------ | ---------------- | ---------------------------------- |
+| Handlebars   | `handlebars` | `{{varName}}`    | `.hbs`, `.handlebars`              |
+| Nunjucks     | `nunjucks`   | `{{ varName }}`  | `.njk`, `.j2`, `.jinja`, `.jinja2` |
+| Jinja2 alias | `jinja2`     | `{{ varName }}`  | _(same as nunjucks)_               |
+| Liquid       | `liquidjs`   | `{{ varName }}`  | `.liquid`                          |
+| EJS          | `ejs`        | `<%= varName %>` | `.ejs`                             |
+| Mustache     | `mustache`   | `{{varName}}`    | `.mustache`, `.mst`                |
+| Eta          | `eta`        | `<%= varName %>` | `.eta`                             |
+
+`template: true` infers the engine from the source file's extension. Use an explicit engine name when the source extension does not match a recognised template extension (e.g. a URL or `exec:` source).
+
+**`jinja2` alias** — `template: jinja2` is equivalent to `template: nunjucks`. Nunjucks is a JavaScript implementation heavily inspired by Jinja2; most Jinja2 templates work without changes.
+
+**Pipeline order** — template rendering runs first, before `replace` and `post`. Subsequent processors receive the already-rendered content.
 
 ### Insert Mode
 

@@ -868,6 +868,86 @@ files:
     );
   });
 
+  // ── template ──────────────────────────────────────────────────────────────
+
+  it('loads template: handlebars', async () => {
+    const f = writeTmp(`
+files:
+  output.txt:
+    src: https://example.com/template.hbs
+    template: handlebars
+`);
+    const cfg = await loadConfig(f);
+    expect(cfg.files['output.txt'].template).toBe('handlebars');
+  });
+
+  it('loads template: true', async () => {
+    const f = writeTmp(`
+files:
+  output.txt:
+    src: https://example.com/template.hbs
+    template: true
+`);
+    const cfg = await loadConfig(f);
+    expect(cfg.files['output.txt'].template).toBe(true);
+  });
+
+  it('loads template: jinja2 (alias preserved at parse time)', async () => {
+    const f = writeTmp(`
+files:
+  output.txt:
+    src: https://example.com/template.j2
+    template: jinja2
+`);
+    const cfg = await loadConfig(f);
+    expect(cfg.files['output.txt'].template).toBe('jinja2');
+  });
+
+  it('loads all supported template engines', async () => {
+    for (const engine of [
+      'handlebars',
+      'nunjucks',
+      'jinja2',
+      'liquidjs',
+      'ejs',
+      'mustache',
+      'eta',
+    ]) {
+      const f = writeTmp(`
+files:
+  output.txt:
+    src: https://example.com/template
+    template: ${engine}
+`);
+      const cfg = await loadConfig(f);
+      expect(cfg.files['output.txt'].template).toBe(engine);
+    }
+  });
+
+  it('rejects unknown template engine names', async () => {
+    const f = writeTmp(`
+files:
+  output.txt:
+    src: https://example.com/template
+    template: pug
+`);
+    await expect(loadConfig(f)).rejects.toThrow(
+      'files["output.txt"].template: must be true or one of',
+    );
+  });
+
+  it('rejects non-string, non-true template value', async () => {
+    const f = writeTmp(`
+files:
+  output.txt:
+    src: https://example.com/template
+    template: 123
+`);
+    await expect(loadConfig(f)).rejects.toThrow(
+      'files["output.txt"].template: must be true or one of',
+    );
+  });
+
   // ── multi-source ──────────────────────────────────────────────────────────
 
   it('loads a list src with mixed types', async () => {

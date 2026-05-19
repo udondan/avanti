@@ -1592,4 +1592,98 @@ files:
       expect(stderr).toContain('local: reading');
     });
   });
+
+  describe('template processor', () => {
+    it('renders a handlebars template with config variables', () => {
+      const sourceFile = join(tmpDir, 'greeting.hbs');
+      writeFileSync(sourceFile, 'Hello {{name}}!');
+
+      const config = writeConfig(
+        tmpDir,
+        `variables:
+  name: world
+files:
+  ./output.txt:
+    src: ${sourceFile}
+    template: handlebars
+`,
+      );
+
+      const { exitCode } = runAvanti(config, tmpDir);
+      expect(exitCode).toBe(0);
+      expect(readFileSync(join(tmpDir, 'output.txt'), 'utf8')).toBe(
+        'Hello world!',
+      );
+    });
+
+    it('auto-detects engine from .hbs extension when template: true', () => {
+      const sourceFile = join(tmpDir, 'greeting.hbs');
+      writeFileSync(sourceFile, 'Hello {{name}}!');
+
+      const config = writeConfig(
+        tmpDir,
+        `variables:
+  name: world
+files:
+  ./output.txt:
+    src: ${sourceFile}
+    template: true
+`,
+      );
+
+      const { exitCode } = runAvanti(config, tmpDir);
+      expect(exitCode).toBe(0);
+      expect(readFileSync(join(tmpDir, 'output.txt'), 'utf8')).toBe(
+        'Hello world!',
+      );
+    });
+
+    it('renders a nunjucks template (jinja2 alias) with config variables', () => {
+      const sourceFile = join(tmpDir, 'greeting.njk');
+      writeFileSync(sourceFile, '{{ greeting }} {{ name }}!');
+
+      const config = writeConfig(
+        tmpDir,
+        `variables:
+  greeting: Hi
+  name: world
+files:
+  ./output.txt:
+    src: ${sourceFile}
+    template: jinja2
+`,
+      );
+
+      const { exitCode } = runAvanti(config, tmpDir);
+      expect(exitCode).toBe(0);
+      expect(readFileSync(join(tmpDir, 'output.txt'), 'utf8')).toBe(
+        'Hi world!',
+      );
+    });
+
+    it('applies replace rules to already-rendered template output', () => {
+      const sourceFile = join(tmpDir, 'tmpl.hbs');
+      writeFileSync(sourceFile, 'Hello {{name}}!');
+
+      const config = writeConfig(
+        tmpDir,
+        `variables:
+  name: world
+files:
+  ./output.txt:
+    src: ${sourceFile}
+    template: handlebars
+    replace:
+      - from: Hello
+        to: Hi
+`,
+      );
+
+      const { exitCode } = runAvanti(config, tmpDir);
+      expect(exitCode).toBe(0);
+      expect(readFileSync(join(tmpDir, 'output.txt'), 'utf8')).toBe(
+        'Hi world!',
+      );
+    });
+  });
 });
