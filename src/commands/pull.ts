@@ -136,15 +136,22 @@ async function runFetchLoop(
   const nonSelfEntries = Object.entries(config.files).filter(
     ([k]) => k !== SELF_KEY,
   );
-  const sortedEntries = (() => {
-    try {
-      return sortByDependencies(nonSelfEntries, workingDir, vars);
-    } catch (err: unknown) {
-      console.error(err instanceof Error ? err.message : String(err));
-      hasError = true;
-      return nonSelfEntries;
-    }
-  })();
+  let sortedEntries: [string, FileEntry][];
+  try {
+    sortedEntries = sortByDependencies(nonSelfEntries, workingDir, vars);
+  } catch (err: unknown) {
+    console.error(err instanceof Error ? err.message : String(err));
+    return {
+      writeTargets: [],
+      allDiffs: [],
+      hasError: true,
+      shaErrors: [],
+      sourceRecordsByTarget: new Map(),
+      skippedPaths: new Set(),
+      hasUnresolvableSkippedPath: false,
+      insertedFragments: new Map(),
+    };
+  }
   const entriesToProcess: [string, FileEntry][] = hasSelf
     ? [[SELF_KEY, config.files[SELF_KEY]], ...sortedEntries]
     : sortedEntries;

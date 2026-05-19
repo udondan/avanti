@@ -354,7 +354,6 @@ async function _fetchOneSrcRaw(
   src: FileSrc,
   workingDir: string,
   vars: Variables,
-  pendingWrites?: Map<string, Buffer>,
 ): Promise<{ files: Map<string, Buffer>; skipped?: boolean }> {
   if (isVerbose())
     verbose(`fetching source: ${redactUrl(labelForSrc(src, vars))}`);
@@ -370,9 +369,7 @@ async function _fetchOneSrcRaw(
       const { repo, file, ref } = parseGitRemoteSpec(resolved);
       return { files: fetchGit(repo, file, ref).files };
     }
-    return {
-      files: fetchLocal(resolved, workingDir, false, pendingWrites).files,
-    };
+    return { files: fetchLocal(resolved, workingDir).files };
   }
 
   if ('raw' in src) {
@@ -385,12 +382,7 @@ async function _fetchOneSrcRaw(
 
   if ('path' in src) {
     const resolved = resolveVars(src.path, vars);
-    const result = fetchLocal(
-      resolved,
-      workingDir,
-      src.optional ?? false,
-      pendingWrites,
-    );
+    const result = fetchLocal(resolved, workingDir, src.optional ?? false);
     if (result.missing) {
       return { files: new Map(), skipped: true };
     }
@@ -564,7 +556,7 @@ async function fetchOneSrc(
     if (isVerbose()) verbose(`cache hit: ${redactUrl(labelForSrc(src, vars))}`);
     files = cached.files;
   } else {
-    const raw = await _fetchOneSrcRaw(src, workingDir, vars, pendingWrites);
+    const raw = await _fetchOneSrcRaw(src, workingDir, vars);
     files = raw.files;
     skipped = raw.skipped;
     // Don't cache skipped results: if optional changes to required between

@@ -80,15 +80,13 @@ async function runDiffLoop(
   const nonSelfEntries = Object.entries(config.files).filter(
     ([k]) => k !== SELF_KEY,
   );
-  const sortedEntries: [string, FileEntry][] = (() => {
-    try {
-      return sortByDependencies(nonSelfEntries, workingDir, vars);
-    } catch (err: unknown) {
-      console.error(err instanceof Error ? err.message : String(err));
-      hasError = true;
-      return nonSelfEntries;
-    }
-  })();
+  let sortedEntries: [string, FileEntry][];
+  try {
+    sortedEntries = sortByDependencies(nonSelfEntries, workingDir, vars);
+  } catch (err: unknown) {
+    console.error(err instanceof Error ? err.message : String(err));
+    return { allDiffs: [], hasError: true };
+  }
   const entriesToProcess: [string, FileEntry][] = hasSelf
     ? [[SELF_KEY, config.files[SELF_KEY]], ...sortedEntries]
     : sortedEntries;

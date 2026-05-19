@@ -61,7 +61,7 @@ describe('fetchLocal — optional flag', () => {
   });
 });
 
-describe('fetchLocal — pendingWrites', () => {
+describe('fetchSource — pendingWrites', () => {
   let tmpDir: string;
 
   beforeEach(() => {
@@ -72,42 +72,70 @@ describe('fetchLocal — pendingWrites', () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it('returns pending content for a file that does not exist on disk', () => {
+  it('returns pending content for a plain string local path that does not exist on disk', async () => {
     const filePath = join(tmpDir, 'new.txt');
     const pendingWrites = new Map([[filePath, Buffer.from('pending content')]]);
-    const result = fetchLocal(filePath, tmpDir, false, pendingWrites);
+    const result = await fetchSource(
+      { src: filePath, target: 'new.txt' },
+      tmpDir,
+      {},
+      undefined,
+      undefined,
+      pendingWrites,
+    );
     expect(result.files.get('new.txt')?.toString('utf8')).toBe(
       'pending content',
     );
   });
 
-  it('pending content takes priority over existing disk file', () => {
+  it('pending content takes priority over existing disk file', async () => {
     const filePath = join(tmpDir, 'existing.txt');
     writeFileSync(filePath, 'disk content');
     const pendingWrites = new Map([[filePath, Buffer.from('pending content')]]);
-    const result = fetchLocal(filePath, tmpDir, false, pendingWrites);
+    const result = await fetchSource(
+      { src: filePath, target: 'existing.txt' },
+      tmpDir,
+      {},
+      undefined,
+      undefined,
+      pendingWrites,
+    );
     expect(result.files.get('existing.txt')?.toString('utf8')).toBe(
       'pending content',
     );
   });
 
-  it('falls through to disk when path is not in pendingWrites', () => {
+  it('falls through to disk when path is not in pendingWrites', async () => {
     const filePath = join(tmpDir, 'real.txt');
     writeFileSync(filePath, 'disk content');
-    const pendingWrites = new Map<string, Buffer>();
-    const result = fetchLocal(filePath, tmpDir, false, pendingWrites);
+    const result = await fetchSource(
+      { src: filePath, target: 'real.txt' },
+      tmpDir,
+      {},
+      undefined,
+      undefined,
+      new Map(),
+    );
     expect(result.files.get('real.txt')?.toString('utf8')).toBe('disk content');
   });
 
-  it('throws for a missing file not in pendingWrites when optional is false', () => {
-    const filePath = join(tmpDir, 'missing.txt');
-    const pendingWrites = new Map<string, Buffer>();
-    expect(() => fetchLocal(filePath, tmpDir, false, pendingWrites)).toThrow(
-      /Local source not found/,
+  it('returns pending content for a {path:} style local source', async () => {
+    const filePath = join(tmpDir, 'path-style.txt');
+    const pendingWrites = new Map([[filePath, Buffer.from('path style')]]);
+    const result = await fetchSource(
+      { src: { path: filePath }, target: 'out.txt' },
+      tmpDir,
+      {},
+      undefined,
+      undefined,
+      pendingWrites,
+    );
+    expect(result.files.get('path-style.txt')?.toString('utf8')).toBe(
+      'path style',
     );
   });
 
-  it('returns pending directory entries for a directory path not yet on disk', () => {
+  it('returns pending directory entries for a directory path not yet on disk', async () => {
     const dirPath = join(tmpDir, 'subdir');
     const fileA = join(dirPath, 'a.txt');
     const fileB = join(dirPath, 'b.txt');
@@ -115,7 +143,14 @@ describe('fetchLocal — pendingWrites', () => {
       [fileA, Buffer.from('content a')],
       [fileB, Buffer.from('content b')],
     ]);
-    const result = fetchLocal(dirPath, tmpDir, false, pendingWrites);
+    const result = await fetchSource(
+      { src: dirPath, target: 'out/' },
+      tmpDir,
+      {},
+      undefined,
+      undefined,
+      pendingWrites,
+    );
     expect(result.files.get('a.txt')?.toString('utf8')).toBe('content a');
     expect(result.files.get('b.txt')?.toString('utf8')).toBe('content b');
   });
