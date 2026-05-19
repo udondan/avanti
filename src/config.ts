@@ -399,6 +399,23 @@ function parseVariableEntry(
     }
   }
 
+  if (obj['template'] !== undefined) {
+    const rawTemplate = obj['template'];
+    if (rawTemplate === true) {
+      entry.template = true;
+    } else {
+      if (
+        typeof rawTemplate !== 'string' ||
+        !VALID_TEMPLATE_ENGINES.includes(rawTemplate as TemplateEngine)
+      ) {
+        throw new Error(
+          `${loc}.template: must be true or one of ${VALID_TEMPLATE_ENGINES.join(', ')}`,
+        );
+      }
+      entry.template = rawTemplate as TemplateEngine;
+    }
+  }
+
   return entry;
 }
 

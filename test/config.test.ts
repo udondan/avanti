@@ -1860,6 +1860,53 @@ files:
 `);
     await expect(loadConfig(f)).rejects.toThrow('variables.token');
   });
+
+  it('loads template: handlebars on a source variable', async () => {
+    const f = writeTmp(`
+variables:
+  ver:
+    src: https://example.com/ver.hbs
+    template: handlebars
+files:
+  out.txt:
+    src: https://example.com/out.txt
+`);
+    const cfg = await loadConfig(f);
+    expect((cfg.variables!['ver'] as { template: string }).template).toBe(
+      'handlebars',
+    );
+  });
+
+  it('loads template: true on a source variable', async () => {
+    const f = writeTmp(`
+variables:
+  ver:
+    src: https://example.com/ver.hbs
+    template: true
+files:
+  out.txt:
+    src: https://example.com/out.txt
+`);
+    const cfg = await loadConfig(f);
+    expect((cfg.variables!['ver'] as { template: boolean }).template).toBe(
+      true,
+    );
+  });
+
+  it('rejects unknown template engine on a source variable', async () => {
+    const f = writeTmp(`
+variables:
+  ver:
+    src: https://example.com/ver.hbs
+    template: pug
+files:
+  out.txt:
+    src: https://example.com/out.txt
+`);
+    await expect(loadConfig(f)).rejects.toThrow(
+      'variables.ver.template: must be true or one of',
+    );
+  });
 });
 
 describe('if/ifAny condition parsing in config', () => {

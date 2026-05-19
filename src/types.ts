@@ -235,6 +235,7 @@ export interface VariableEntry {
   json?: JsonMergeOptions | boolean;
   yaml?: YamlMergeOptions | boolean;
   toml?: TomlMergeOptions | boolean;
+  template?: TemplateEngine | true;
 }
 
 export type VariableSpec = Record<string, string | VariableEntry>;

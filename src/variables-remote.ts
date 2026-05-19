@@ -48,7 +48,20 @@ export async function resolveVariableSpec(
           `variables.${name}: source resolved to binary content, which cannot be used as a variable value`,
         );
       }
-      resolved[name] = buf.toString('utf8').trim();
+      let text = buf.toString('utf8');
+      if (value.template !== undefined) {
+        const { applyTemplate } = await import('./processors/template');
+        try {
+          text = await applyTemplate(text, value.template, resolved);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          throw new Error(
+            `variables.${name}: template rendering failed: ${msg}`,
+            { cause: err },
+          );
+        }
+      }
+      resolved[name] = text.trim();
     }
   }
   return resolved;

@@ -249,4 +249,41 @@ describe('resolveVariableSpec', () => {
       ),
     ).rejects.toThrow('variables.tok:');
   });
+
+  it('renders a source variable through a template engine', async () => {
+    const result = await resolveVariableSpec(
+      {
+        env: 'prod',
+        label: {
+          src: { raw: 'env={{env}}\n' },
+          template: 'handlebars',
+        },
+      },
+      cwd,
+    );
+    expect(result.label).toBe('env=prod');
+  });
+
+  it('template variable can reference prior variables in its context', async () => {
+    const result = await resolveVariableSpec(
+      {
+        version: '1.2.3',
+        tag: {
+          src: { raw: 'v{{ version }}' },
+          template: 'nunjucks',
+        },
+      },
+      cwd,
+    );
+    expect(result.tag).toBe('v1.2.3');
+  });
+
+  it('template rendering error on a variable is wrapped with location context', async () => {
+    await expect(
+      resolveVariableSpec(
+        { bad: { src: { raw: '{{missing}}' }, template: 'handlebars' } },
+        cwd,
+      ),
+    ).rejects.toThrow('variables.bad: template rendering failed');
+  });
 });
