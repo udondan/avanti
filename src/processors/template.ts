@@ -7,6 +7,16 @@ import Mustache from 'mustache';
 import { Eta } from 'eta';
 import { Variables, TemplateEngine } from '../types';
 
+export const VALID_TEMPLATE_ENGINES: TemplateEngine[] = [
+  'handlebars',
+  'nunjucks',
+  'jinja2',
+  'liquidjs',
+  'ejs',
+  'mustache',
+  'eta',
+];
+
 const EXTENSION_MAP: Record<string, TemplateEngine> = {
   '.hbs': 'handlebars',
   '.handlebars': 'handlebars',
@@ -20,6 +30,9 @@ const EXTENSION_MAP: Record<string, TemplateEngine> = {
   '.mustache': 'mustache',
   '.mst': 'mustache',
 };
+
+const liquid = new Liquid();
+const eta = new Eta({ useWith: true, autoTrim: false });
 
 function resolveEngine(
   spec: TemplateEngine | true,
@@ -52,15 +65,13 @@ export async function applyTemplate(
     case 'nunjucks':
       return nunjucks.renderString(content, vars);
     case 'liquidjs':
-      return String(await new Liquid().parseAndRender(content, vars));
+      return String(await liquid.parseAndRender(content, vars));
     case 'ejs':
       return ejs.render(content, vars);
     case 'mustache':
       return Mustache.render(content, vars);
-    case 'eta': {
-      const eta = new Eta({ useWith: true, autoTrim: false });
+    case 'eta':
       return String(await eta.renderStringAsync(content, vars));
-    }
     default:
       throw new Error(`Unsupported template engine: ${engine as string}`);
   }

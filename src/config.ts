@@ -30,6 +30,7 @@ import {
   VariableSpec,
   Via,
 } from './types';
+import { VALID_TEMPLATE_ENGINES } from './processors/template';
 import { validateVariables } from './variables';
 import { fetchHttp } from './sources/http';
 import { fetchGitHub } from './sources/github';
@@ -294,21 +295,12 @@ export function parseConfigContent(content: string): AvantiConfig {
       if (rawTemplate === true) {
         fileEntry.template = true;
       } else {
-        const validEngines: TemplateEngine[] = [
-          'handlebars',
-          'nunjucks',
-          'jinja2',
-          'liquidjs',
-          'ejs',
-          'mustache',
-          'eta',
-        ];
         if (
           typeof rawTemplate !== 'string' ||
-          !validEngines.includes(rawTemplate as TemplateEngine)
+          !VALID_TEMPLATE_ENGINES.includes(rawTemplate as TemplateEngine)
         ) {
           throw new Error(
-            `files["${target}"].template: must be true or one of ${validEngines.join(', ')}`,
+            `files["${target}"].template: must be true or one of ${VALID_TEMPLATE_ENGINES.join(', ')}`,
           );
         }
         fileEntry.template = rawTemplate as TemplateEngine;
