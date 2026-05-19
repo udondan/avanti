@@ -866,6 +866,7 @@ function parseMergeOptions<
   conflictValues: C[],
   arrayValues: A[],
   objectValues: O[],
+  extraKnownKeys: string[] = [],
 ): { conflicts?: C; arrays?: A; objects?: O } {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
     throw new Error(`${loc}: "${kind}" must be an object`);
@@ -900,6 +901,18 @@ function parseMergeOptions<
     opts.objects = obj['objects'] as O;
   }
 
+  const knownKeys = new Set([
+    'conflicts',
+    'arrays',
+    'objects',
+    ...extraKnownKeys,
+  ]);
+  for (const key of Object.keys(obj)) {
+    if (!knownKeys.has(key)) {
+      throw new Error(`${loc}.${kind}.${key}: unknown option`);
+    }
+  }
+
   return opts;
 }
 
@@ -915,6 +928,7 @@ function parseJsonMergeOptions(raw: unknown, loc: string): JsonMergeOptions {
     ['abort', 'first_wins', 'last_wins'],
     ['replace', 'concat'],
     ['replace', 'merge'],
+    ['indent', 'trailing_commas', 'sort_keys', 'minify', 'strip_comments'],
   );
 
   const r = raw as Record<string, unknown>;

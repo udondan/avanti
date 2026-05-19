@@ -1037,6 +1037,45 @@ files:
     await expect(loadConfig(f)).rejects.toThrow('json.objects');
   });
 
+  it('throws on unknown json option key', async () => {
+    const f = writeTmp(`
+files:
+  foo.json:
+    src: https://example.com/foo.json
+    json:
+      array: concat
+`);
+    await expect(loadConfig(f)).rejects.toThrow('json.array: unknown option');
+  });
+
+  it('throws on unknown yaml option key', async () => {
+    const f = writeTmp(`
+files:
+  foo.yaml:
+    src: https://example.com/foo.yaml
+    yaml:
+      arrays: concat
+      unknown_key: true
+`);
+    await expect(loadConfig(f)).rejects.toThrow(
+      'yaml.unknown_key: unknown option',
+    );
+  });
+
+  it('throws on unknown toml option key', async () => {
+    const f = writeTmp(`
+files:
+  foo.toml:
+    src: https://example.com/foo.toml
+    toml:
+      arrays: concat
+      unknown_key: true
+`);
+    await expect(loadConfig(f)).rejects.toThrow(
+      'toml.unknown_key: unknown option',
+    );
+  });
+
   it('accepts json: true', async () => {
     const f = writeTmp(`
 files:
