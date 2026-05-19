@@ -86,7 +86,6 @@ jobs:
         ports:
           - 8200:8200
         options: >-
-          --cap-add=IPC_LOCK
           --health-cmd "wget -qO- http://127.0.0.1:8200/v1/sys/health || exit 1"
           --health-interval 5s
           --health-timeout 3s
