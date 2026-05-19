@@ -15,7 +15,6 @@ import { sortByDependencies } from '../dependencies';
 import { applyReplace } from '../processors/replace';
 import { applyPost } from '../processors/post';
 import { applyInsertMode } from '../processors/insert';
-import { applyTemplate } from '../processors/template';
 import { isBinary } from '../binary';
 import {
   computeDiff,
@@ -135,13 +134,15 @@ async function runDiffLoop(
         if (!isBinary(content)) {
           const rawText = content.toString('utf8');
           let text = rawText;
-          if (entry.template !== undefined)
+          if (entry.template !== undefined) {
+            const { applyTemplate } = await import('../processors/template');
             text = await applyTemplate(
               text,
               entry.template,
               vars,
               relPath || undefined,
             );
+          }
           if (entry.replace?.length)
             text = applyReplace(text, entry.replace, vars);
           if (entry.post) text = applyPost(text, entry.post, vars);

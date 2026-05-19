@@ -223,15 +223,13 @@ function listTreeViaCli(
   ref: string,
   host?: string,
 ): string[] {
+  const escapedDirPath = dirPath.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
   const args = [
     'api',
     ...hostnameArgs(host),
     `repos/${repo}/git/trees/${encodeURIComponent(ref)}?recursive=1`,
-    '--arg',
-    'dirPath',
-    dirPath,
     '--jq',
-    'if .truncated then error("truncated") else .tree[] | select(.type == "blob") | select(.path | startswith($dirPath + "/")) | .path end',
+    `if .truncated then error("truncated") else .tree[] | select(.type == "blob") | select(.path | startswith("${escapedDirPath}/")) | .path end`,
   ];
   verbose(`github: gh fallback: gh ${args.join(' ')}`);
   const res = ghRun(args);
