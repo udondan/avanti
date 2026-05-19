@@ -24,10 +24,20 @@ const EXTENSION_MAP: Record<string, TemplateEngine> = {
 };
 
 let liquid: Liquid | undefined;
+let nunjucksEnv: nunjucks.Environment | undefined;
 let eta: Eta | undefined;
 
 function getLiquid(): Liquid {
-  return (liquid ??= new Liquid());
+  return (liquid ??= new Liquid({
+    strictVariables: true,
+    strictFilters: true,
+  }));
+}
+
+function getNunjucksEnv(): nunjucks.Environment {
+  return (nunjucksEnv ??= new nunjucks.Environment(null, {
+    throwOnUndefined: true,
+  }));
 }
 
 function getEta(): Eta {
@@ -61,9 +71,9 @@ export async function applyTemplate(
   const engine = resolveEngine(spec, srcPath);
   switch (engine) {
     case 'handlebars':
-      return Handlebars.compile(content)(vars);
+      return Handlebars.compile(content, { strict: true })(vars);
     case 'nunjucks':
-      return nunjucks.renderString(content, vars);
+      return getNunjucksEnv().renderString(content, vars);
     case 'liquidjs':
       return String(await getLiquid().parseAndRender(content, vars));
     case 'ejs':

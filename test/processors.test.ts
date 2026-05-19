@@ -265,4 +265,35 @@ describe('applyTemplate', () => {
       applyTemplate(fixture('app.hbs'), true, fixtureVars),
     ).rejects.toThrow('template: true requires a recognized extension');
   });
+
+  // Undefined variable behavior — consistent with resolveVars which throws on missing $var
+  it('handlebars throws on undefined variable', async () => {
+    await expect(
+      applyTemplate('{{missing}}', 'handlebars', {}),
+    ).rejects.toThrow();
+  });
+
+  it('nunjucks throws on undefined variable', async () => {
+    await expect(
+      applyTemplate('{{ missing }}', 'nunjucks', {}),
+    ).rejects.toThrow();
+  });
+
+  it('liquidjs throws on undefined variable', async () => {
+    await expect(
+      applyTemplate('{{ missing }}', 'liquidjs', {}),
+    ).rejects.toThrow();
+  });
+
+  it('ejs throws on undefined variable', async () => {
+    await expect(applyTemplate('<%= missing %>', 'ejs', {})).rejects.toThrow();
+  });
+
+  it('eta throws on undefined variable', async () => {
+    await expect(applyTemplate('<%= missing %>', 'eta', {})).rejects.toThrow();
+  });
+
+  it('mustache renders undefined variable as empty string (logic-less, no strict mode)', async () => {
+    expect(await applyTemplate('{{missing}}', 'mustache', {})).toBe('');
+  });
 });
