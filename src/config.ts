@@ -26,11 +26,11 @@ import {
   TomlObjectStrategy,
   ReplaceRule,
   TemplateEngine,
+  VALID_TEMPLATE_ENGINES,
   VariableEntry,
   VariableSpec,
   Via,
 } from './types';
-import { VALID_TEMPLATE_ENGINES } from './processors/template';
 import { validateVariables } from './variables';
 import { fetchHttp } from './sources/http';
 import { fetchGitHub } from './sources/github';

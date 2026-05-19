@@ -205,6 +205,16 @@ export type TemplateEngine =
   | 'mustache'
   | 'eta';
 
+export const VALID_TEMPLATE_ENGINES: TemplateEngine[] = [
+  'handlebars',
+  'nunjucks',
+  'jinja2',
+  'liquidjs',
+  'ejs',
+  'mustache',
+  'eta',
+];
+
 export interface FileEntry {
   src: FileSrc | FileSrc[];
   target: string;
