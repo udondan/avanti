@@ -151,6 +151,12 @@ describe('validateVariables', () => {
       '"latest" is reserved',
     );
   });
+
+  it('throws when "self" is used as a variable name', () => {
+    expect(() => validateVariables({ self: '/some/path' })).toThrow(
+      '"self" is reserved',
+    );
+  });
 });
 
 describe('resolveVariableSpec', () => {
