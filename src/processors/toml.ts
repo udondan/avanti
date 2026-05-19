@@ -12,7 +12,7 @@ type TomlValue =
 
 interface ResolvedOptions {
   conflicts: 'abort' | 'first_wins' | 'last_wins';
-  arrays: 'replace' | 'concat';
+  arrays: 'replace' | 'concat' | 'dedupe';
   objects: 'replace' | 'merge';
 }
 
@@ -47,6 +47,16 @@ function valuesEqual(a: TomlValue, b: TomlValue): boolean {
   return false;
 }
 
+function dedupeArrays(a: TomlValue[], b: TomlValue[]): TomlValue[] {
+  const result = [...a];
+  for (const item of b) {
+    if (!result.some((e) => valuesEqual(e, item))) {
+      result.push(item);
+    }
+  }
+  return result;
+}
+
 function mergeValues(
   path: string,
   a: TomlValue,
@@ -57,6 +67,7 @@ function mergeValues(
 
   if (Array.isArray(a) && Array.isArray(b)) {
     if (opts.arrays === 'concat') return [...a, ...b];
+    if (opts.arrays === 'dedupe') return dedupeArrays(a, b);
   } else if (isPlainObject(a) && isPlainObject(b)) {
     if (opts.objects === 'merge') return deepMerge(a, b, opts, path);
   }

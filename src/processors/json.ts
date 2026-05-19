@@ -11,12 +11,23 @@ type JsonValue =
 
 interface ResolvedOptions {
   conflicts: 'abort' | 'first_wins' | 'last_wins';
-  arrays: 'replace' | 'concat';
+  arrays: 'replace' | 'concat' | 'dedupe';
   objects: 'replace' | 'merge';
 }
 
 function isPlainObject(v: unknown): v is Record<string, JsonValue> {
   return v !== null && typeof v === 'object' && !Array.isArray(v);
+}
+
+function dedupeArrays(a: JsonValue[], b: JsonValue[]): JsonValue[] {
+  const result = [...a];
+  for (const item of b) {
+    const key = JSON.stringify(item);
+    if (!result.some((e) => JSON.stringify(e) === key)) {
+      result.push(item);
+    }
+  }
+  return result;
 }
 
 function mergeValues(
@@ -30,6 +41,7 @@ function mergeValues(
 
   if (Array.isArray(a) && Array.isArray(b)) {
     if (opts.arrays === 'concat') return [...a, ...b];
+    if (opts.arrays === 'dedupe') return dedupeArrays(a, b);
     // arrays: replace — fall through to conflict handling
   } else if (isPlainObject(a) && isPlainObject(b)) {
     if (opts.objects === 'merge') return deepMerge(a, b, opts, path);

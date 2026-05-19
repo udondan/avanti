@@ -162,7 +162,7 @@ export type FileSrc =
   | UrlSrc;
 
 export type JsonConflictStrategy = 'abort' | 'first_wins' | 'last_wins';
-export type JsonArrayStrategy = 'replace' | 'concat';
+export type JsonArrayStrategy = 'replace' | 'concat' | 'dedupe';
 export type JsonObjectStrategy = 'replace' | 'merge';
 
 export interface JsonMergeOptions {
@@ -177,7 +177,7 @@ export interface JsonMergeOptions {
 }
 
 export type YamlConflictStrategy = 'abort' | 'first_wins' | 'last_wins';
-export type YamlArrayStrategy = 'replace' | 'concat';
+export type YamlArrayStrategy = 'replace' | 'concat' | 'dedupe';
 export type YamlObjectStrategy = 'replace' | 'merge';
 
 export interface YamlMergeOptions {
@@ -187,7 +187,7 @@ export interface YamlMergeOptions {
 }
 
 export type TomlConflictStrategy = 'abort' | 'first_wins' | 'last_wins';
-export type TomlArrayStrategy = 'replace' | 'concat';
+export type TomlArrayStrategy = 'replace' | 'concat' | 'dedupe';
 export type TomlObjectStrategy = 'replace' | 'merge';
 
 export interface TomlMergeOptions {

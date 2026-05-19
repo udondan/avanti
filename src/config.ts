@@ -926,7 +926,7 @@ function parseJsonMergeOptions(raw: unknown, loc: string): JsonMergeOptions {
     loc,
     'json',
     ['abort', 'first_wins', 'last_wins'],
-    ['replace', 'concat'],
+    ['replace', 'concat', 'dedupe'],
     ['replace', 'merge'],
     ['indent', 'trailing_commas', 'sort_keys', 'minify', 'strip_comments'],
   );
@@ -973,7 +973,7 @@ function parseYamlMergeOptions(raw: unknown, loc: string): YamlMergeOptions {
     loc,
     'yaml',
     ['abort', 'first_wins', 'last_wins'],
-    ['replace', 'concat'],
+    ['replace', 'concat', 'dedupe'],
     ['replace', 'merge'],
   );
 }
@@ -988,7 +988,7 @@ function parseTomlMergeOptions(raw: unknown, loc: string): TomlMergeOptions {
     loc,
     'toml',
     ['abort', 'first_wins', 'last_wins'],
-    ['replace', 'concat'],
+    ['replace', 'concat', 'dedupe'],
     ['replace', 'merge'],
   );
 }
