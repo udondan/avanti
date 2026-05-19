@@ -632,7 +632,7 @@ files:
           file: overrides.json
     json:
       conflicts: last_wins # abort | first_wins | last_wins (default)
-      arrays: replace # replace (default) | concat
+      arrays: replace # replace (default) | concat | dedupe
       objects: merge # merge (default) | replace
       indent: 2 # number of spaces, or "tab"
       trailing_commas: false # add trailing comma after last item (valid JSONC)
@@ -648,6 +648,7 @@ files:
 - `arrays` — how to combine arrays at the same key:
   - `replace` _(default)_ — the later source's array replaces the earlier one
   - `concat` — arrays are concatenated (no deduplication)
+  - `dedupe` — items from the later source are appended only if not already present in the base (set-union, deep equality, order preserved)
 - `objects` — how to combine objects (maps) at the same key:
   - `merge` _(default)_ — deep merge, applying the same rules recursively to nested keys
   - `replace` — the later source's object replaces the earlier one entirely
@@ -702,7 +703,7 @@ files:
           file: overrides.yaml
     yaml:
       conflicts: last_wins # abort | first_wins | last_wins (default)
-      arrays: replace # replace (default) | concat
+      arrays: replace # replace (default) | concat | dedupe
       objects: merge # merge (default) | replace
 ```
 
@@ -715,6 +716,7 @@ The options behave identically to JSON merging:
 - `arrays` — how to combine arrays at the same key:
   - `replace` _(default)_ — the later source's array replaces the earlier one
   - `concat` — arrays are concatenated (no deduplication)
+  - `dedupe` — items from the later source are appended only if not already present in the base (set-union, deep equality, order preserved)
 - `objects` — how to combine objects (maps) at the same key:
   - `merge` _(default)_ — deep merge, applying the same rules recursively to nested keys
   - `replace` — the later source's object replaces the earlier one entirely
@@ -767,7 +769,7 @@ files:
           file: overrides.toml
     toml:
       conflicts: last_wins # abort | first_wins | last_wins (default)
-      arrays: replace # replace (default) | concat
+      arrays: replace # replace (default) | concat | dedupe
       objects: merge # merge (default) | replace
 ```
 
@@ -780,6 +782,7 @@ The options behave identically to JSON and YAML merging:
 - `arrays` — how to combine arrays at the same key:
   - `replace` _(default)_ — the later source's array replaces the earlier one
   - `concat` — arrays are concatenated (no deduplication)
+  - `dedupe` — items from the later source are appended only if not already present in the base (set-union, deep equality, order preserved)
 - `objects` — how to combine objects (tables) at the same key:
   - `merge` _(default)_ — deep merge, applying the same rules recursively to nested keys
   - `replace` — the later source's table replaces the earlier one entirely
