@@ -48,6 +48,9 @@ export function lockCommand(): Command {
         console.error(err instanceof Error ? err.message : String(err));
         process.exit(2);
       }
+      if (configPath !== undefined) {
+        vars['self'] = configPath;
+      }
       const toPin = new Map<string, string>(); // label → sha
       let hasError = false;
       let remoteSourceCount = 0;

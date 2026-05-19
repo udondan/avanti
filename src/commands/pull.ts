@@ -73,6 +73,9 @@ async function runFetchLoop(
       insertedFragments: new Map(),
     };
   }
+  if (configPath !== undefined) {
+    vars['self'] = configPath;
+  }
   const writeTargets: WriteTarget[] = [];
   const allDiffs: FileDiff[] = [];
   const shaErrors: ShaError[] = [];
