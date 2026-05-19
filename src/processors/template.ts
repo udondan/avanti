@@ -58,7 +58,7 @@ export async function applyTemplate(
     case 'mustache':
       return Mustache.render(content, vars);
     case 'eta': {
-      const eta = new Eta({ useWith: true });
+      const eta = new Eta({ useWith: true, autoTrim: false });
       return String(await eta.renderStringAsync(content, vars));
     }
     default:

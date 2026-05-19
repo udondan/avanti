@@ -1,8 +1,16 @@
+import { readFileSync } from 'fs';
+import { join } from 'path';
 import { describe, it, expect } from 'vitest';
 import { applyReplace } from '../src/processors/replace';
 import { applyPost } from '../src/processors/post';
 import { applyTemplate } from '../src/processors/template';
 import { isWindows } from '../src/shell';
+
+const FIXTURES = join(__dirname, 'fixtures/templates');
+
+function fixture(name: string): string {
+  return readFileSync(join(FIXTURES, name), 'utf8');
+}
 
 describe('applyReplace', () => {
   it('replaces plain string', () => {
@@ -116,119 +124,145 @@ describe('applyReplace with variables', () => {
 });
 
 describe('applyTemplate', () => {
-  const vars = { name: 'world', greeting: 'Hello' };
+  // Fixtures at test/fixtures/templates/app.<ext> — multi-variable templates
+  // that each produce the same output using each engine's native syntax.
+  const fixtureVars = { app: 'myapp', version: '1.2.3' };
+  const fixtureOutput =
+    'app: myapp\nversion: 1.2.3\nurl: https://example.com/myapp/1.2.3\n';
 
-  it('renders handlebars template', async () => {
-    expect(await applyTemplate('Hello {{name}}!', 'handlebars', vars)).toBe(
-      'Hello world!',
-    );
-  });
-
-  it('renders nunjucks template', async () => {
-    expect(await applyTemplate('Hello {{ name }}!', 'nunjucks', vars)).toBe(
-      'Hello world!',
-    );
-  });
-
-  it('treats jinja2 as an alias for nunjucks', async () => {
+  it('renders handlebars fixture ({{var}} syntax, variable used twice)', async () => {
     expect(
-      await applyTemplate('{{ greeting }} {{ name }}!', 'jinja2', vars),
-    ).toBe('Hello world!');
+      await applyTemplate(fixture('app.hbs'), 'handlebars', fixtureVars),
+    ).toBe(fixtureOutput);
   });
 
-  it('renders liquidjs template', async () => {
-    expect(await applyTemplate('Hello {{ name }}!', 'liquidjs', vars)).toBe(
-      'Hello world!',
+  it('renders nunjucks fixture ({{ var }} syntax)', async () => {
+    expect(
+      await applyTemplate(fixture('app.njk'), 'nunjucks', fixtureVars),
+    ).toBe(fixtureOutput);
+  });
+
+  it('treats jinja2 as alias for nunjucks (same fixture, same output)', async () => {
+    expect(await applyTemplate(fixture('app.njk'), 'jinja2', fixtureVars)).toBe(
+      fixtureOutput,
     );
   });
 
-  it('renders ejs template', async () => {
-    expect(await applyTemplate('Hello <%= name %>!', 'ejs', vars)).toBe(
-      'Hello world!',
+  it('renders liquidjs fixture ({{ var }} syntax)', async () => {
+    expect(
+      await applyTemplate(fixture('app.liquid'), 'liquidjs', fixtureVars),
+    ).toBe(fixtureOutput);
+  });
+
+  it('renders ejs fixture (<%= var %> syntax)', async () => {
+    expect(await applyTemplate(fixture('app.ejs'), 'ejs', fixtureVars)).toBe(
+      fixtureOutput,
     );
   });
 
-  it('renders mustache template', async () => {
-    expect(await applyTemplate('Hello {{name}}!', 'mustache', vars)).toBe(
-      'Hello world!',
+  it('renders mustache fixture ({{var}} syntax)', async () => {
+    expect(
+      await applyTemplate(fixture('app.mustache'), 'mustache', fixtureVars),
+    ).toBe(fixtureOutput);
+  });
+
+  it('renders eta fixture (<%= var %> syntax, no it. prefix)', async () => {
+    expect(await applyTemplate(fixture('app.eta'), 'eta', fixtureVars)).toBe(
+      fixtureOutput,
     );
   });
 
-  it('renders eta template without it. prefix', async () => {
-    expect(await applyTemplate('Hello <%= name %>!', 'eta', vars)).toBe(
-      'Hello world!',
-    );
-  });
-
+  // Auto-detection by extension
   it('auto-detects handlebars from .hbs extension', async () => {
-    expect(await applyTemplate('{{name}}', true, vars, 'template.hbs')).toBe(
-      'world',
-    );
+    expect(
+      await applyTemplate(fixture('app.hbs'), true, fixtureVars, 'app.hbs'),
+    ).toBe(fixtureOutput);
   });
 
   it('auto-detects handlebars from .handlebars extension', async () => {
     expect(
-      await applyTemplate('{{name}}', true, vars, 'template.handlebars'),
-    ).toBe('world');
+      await applyTemplate(
+        fixture('app.hbs'),
+        true,
+        fixtureVars,
+        'app.handlebars',
+      ),
+    ).toBe(fixtureOutput);
   });
 
   it('auto-detects nunjucks from .njk extension', async () => {
-    expect(await applyTemplate('{{ name }}', true, vars, 'template.njk')).toBe(
-      'world',
-    );
+    expect(
+      await applyTemplate(fixture('app.njk'), true, fixtureVars, 'app.njk'),
+    ).toBe(fixtureOutput);
   });
 
   it('auto-detects nunjucks from .j2 extension', async () => {
-    expect(await applyTemplate('{{ name }}', true, vars, 'template.j2')).toBe(
-      'world',
-    );
+    expect(
+      await applyTemplate(fixture('app.njk'), true, fixtureVars, 'app.j2'),
+    ).toBe(fixtureOutput);
   });
 
   it('auto-detects nunjucks from .jinja2 extension', async () => {
     expect(
-      await applyTemplate('{{ name }}', true, vars, 'template.jinja2'),
-    ).toBe('world');
+      await applyTemplate(fixture('app.njk'), true, fixtureVars, 'app.jinja2'),
+    ).toBe(fixtureOutput);
   });
 
   it('auto-detects liquidjs from .liquid extension', async () => {
     expect(
-      await applyTemplate('{{ name }}', true, vars, 'template.liquid'),
-    ).toBe('world');
+      await applyTemplate(
+        fixture('app.liquid'),
+        true,
+        fixtureVars,
+        'app.liquid',
+      ),
+    ).toBe(fixtureOutput);
   });
 
   it('auto-detects ejs from .ejs extension', async () => {
-    expect(await applyTemplate('<%= name %>', true, vars, 'template.ejs')).toBe(
-      'world',
-    );
+    expect(
+      await applyTemplate(fixture('app.ejs'), true, fixtureVars, 'app.ejs'),
+    ).toBe(fixtureOutput);
   });
 
   it('auto-detects eta from .eta extension', async () => {
-    expect(await applyTemplate('<%= name %>', true, vars, 'template.eta')).toBe(
-      'world',
-    );
+    expect(
+      await applyTemplate(fixture('app.eta'), true, fixtureVars, 'app.eta'),
+    ).toBe(fixtureOutput);
   });
 
   it('auto-detects mustache from .mustache extension', async () => {
     expect(
-      await applyTemplate('{{name}}', true, vars, 'template.mustache'),
-    ).toBe('world');
+      await applyTemplate(
+        fixture('app.mustache'),
+        true,
+        fixtureVars,
+        'app.mustache',
+      ),
+    ).toBe(fixtureOutput);
   });
 
   it('auto-detects mustache from .mst extension', async () => {
-    expect(await applyTemplate('{{name}}', true, vars, 'template.mst')).toBe(
-      'world',
-    );
+    expect(
+      await applyTemplate(
+        fixture('app.mustache'),
+        true,
+        fixtureVars,
+        'app.mst',
+      ),
+    ).toBe(fixtureOutput);
   });
 
+  // Error cases
   it('throws on unrecognized extension with template: true', async () => {
     await expect(
-      applyTemplate('{{name}}', true, vars, 'template.txt'),
+      applyTemplate(fixture('app.hbs'), true, fixtureVars, 'app.txt'),
     ).rejects.toThrow('template: true requires a recognized extension');
   });
 
   it('throws when template: true has no srcPath', async () => {
-    await expect(applyTemplate('{{name}}', true, vars)).rejects.toThrow(
-      'template: true requires a recognized extension',
-    );
+    await expect(
+      applyTemplate(fixture('app.hbs'), true, fixtureVars),
+    ).rejects.toThrow('template: true requires a recognized extension');
   });
 });
