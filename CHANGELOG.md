@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.22.0](https://github.com/udondan/avanti/compare/v0.21.2...v0.22.0) (2026-05-19)
+
+
+### Features
+
+* add dedupe array strategy for JSON/YAML/TOML merge processors ([#182](https://github.com/udondan/avanti/issues/182)) ([da4fdb4](https://github.com/udondan/avanti/commit/da4fdb4f7336b7f8b5946c8894f4dad7c73bb8b1))
+* add template rendering processor ([#184](https://github.com/udondan/avanti/issues/184)) ([9a0527d](https://github.com/udondan/avanti/commit/9a0527dbd8d4948dfa767f43536c8d81d327890b))
+* support $self as a variable inside file entries ([#178](https://github.com/udondan/avanti/issues/178)) ([e56bed2](https://github.com/udondan/avanti/commit/e56bed2e4d0c339008be955d2b77afc25cb58b83))
+* use pending write content when a target is also a local source ([#183](https://github.com/udondan/avanti/issues/183)) ([00f0fbb](https://github.com/udondan/avanti/commit/00f0fbb674403674d8b1372f7e5c9180f46526d4))
+
+
+### Bug Fixes
+
+* reject unknown keys in json/yaml/toml merge option blocks ([#180](https://github.com/udondan/avanti/issues/180)) ([a990a7a](https://github.com/udondan/avanti/commit/a990a7a4082eff8c7b7245b395d6c5e70c7773ce))
+
 ## [0.21.2](https://github.com/udondan/avanti/compare/v0.21.1...v0.21.2) (2026-05-19)
 
 
