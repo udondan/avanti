@@ -82,7 +82,7 @@ describe.skipIf(!hasVaultAddr)('Vault integration — HTTP API', () => {
     });
 
     it('throws when the secret path does not exist', async () => {
-      await expect(fetchVault('secret/nonexistent/path')).rejects.toThrow(
+      await expect(fetchVault('secret/myapp/doesnotexist')).rejects.toThrow(
         'HTTP 404',
       );
     });
