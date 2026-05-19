@@ -808,6 +808,8 @@ files:
 
 Set `template` to treat the fetched content as a template. avanti renders it at deploy time using all avanti config variables as the template context, then writes the rendered output to the target file.
 
+> **Security note** — EJS and Eta templates execute arbitrary JavaScript at render time. Handlebars, Nunjucks, Liquid, and Mustache are logic-limited and do not execute raw JS. For any engine, template sources must be trusted: either authored locally, fetched from a controlled internal source, or SHA-pinned (see [`sha:`](https://github.com/udondan/avanti#sha-pinning)). Treat a compromised remote template as equivalent to a compromised `post:` script or `exec:` source.
+
 ```yaml
 variables:
   env: production
@@ -839,7 +841,7 @@ files:
 | Mustache     | `mustache`   | `{{varName}}`    | `.mustache`, `.mst`                |
 | Eta          | `eta`        | `<%= varName %>` | `.eta`                             |
 
-`template: true` infers the engine from the source file's extension. Use an explicit engine name when the source extension does not match a recognised template extension (e.g. a URL or `exec:` source).
+`template: true` infers the engine from the source file's extension (including the filename extracted from a URL). Use an explicit engine name when the extension is absent or unrecognised — e.g. `exec:` sources, `raw:` sources, or URLs whose path has no recognised template extension.
 
 **`jinja2` alias** — `template: jinja2` is equivalent to `template: nunjucks`. Nunjucks is a JavaScript implementation heavily inspired by Jinja2; most Jinja2 templates work without changes.
 
