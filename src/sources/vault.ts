@@ -8,7 +8,8 @@ export interface VaultResult {
 }
 
 function isVaultAvailable(): boolean {
-  return !spawnSync('vault', ['version'], { encoding: 'utf8' }).error;
+  const result = spawnSync('vault', ['version'], { encoding: 'utf8' });
+  return !result.error && result.status === 0;
 }
 
 function vaultRun(args: string[]): {
