@@ -845,6 +845,8 @@ All engines are configured with HTML escaping **disabled** — variable values a
 
 `template: true` infers the engine from the source file's extension (including the filename extracted from a URL). Use an explicit engine name when the extension is absent or unrecognised — e.g. `exec:` sources, `raw:` sources, or URLs whose path has no recognised template extension.
 
+For multi-source arrays (`src: [a, b, c]`) and directory-to-single-file merges, all sources are concatenated or merged into a single buffer before rendering, and the key used for auto-detection is `path.basename(entry.target)`. In those cases, use an explicit engine name unless the target filename itself has a recognised template extension.
+
 **`jinja2` alias** — `template: jinja2` is equivalent to `template: nunjucks`. Nunjucks is a JavaScript implementation heavily inspired by Jinja2; most Jinja2 templates work without changes.
 
 **Pipeline order** — template rendering runs first, before `replace` and `post`. Subsequent processors receive the already-rendered content.
