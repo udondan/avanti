@@ -808,7 +808,7 @@ files:
 
 Set `template` to treat the fetched content as a template. avanti renders it at deploy time using all avanti config variables as the template context, then writes the rendered output to the target file.
 
-> **Security note** — EJS and Eta templates execute arbitrary JavaScript at render time. Handlebars, Nunjucks, Liquid, and Mustache are logic-limited and do not execute raw JS. For any engine, template sources must be trusted: either authored locally, fetched from a controlled internal source, or SHA-pinned (see [`sha:`](https://github.com/udondan/avanti#sha-pinning)). Treat a compromised remote template as equivalent to a compromised `post:` script or `exec:` source.
+> **Security note** — EJS and Eta templates execute arbitrary JavaScript at render time. Handlebars, Nunjucks, Liquid, and Mustache are logic-limited and do not execute raw JS. For any engine, template sources must be trusted: either authored locally, fetched from a controlled internal source, or SHA-pinned (see [`sha:`](#sha-pinning)). Treat a compromised remote template as equivalent to a compromised `post:` script or `exec:` source.
 
 ```yaml
 variables:
