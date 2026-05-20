@@ -364,6 +364,39 @@ export class HistoryManager {
     return fs.existsSync(this.pullsLogPath);
   }
 
+  static findByWorkingDir(workingDir: string): HistoryManager[] {
+    const baseDir =
+      process.env.AVANTI_HISTORY_DIR ??
+      path.join(os.homedir(), '.config', 'avanti');
+    const projectsDir = path.join(baseDir, 'projects');
+    if (!fs.existsSync(projectsDir)) return [];
+
+    let slugs: string[];
+    try {
+      slugs = fs.readdirSync(projectsDir);
+    } catch {
+      return [];
+    }
+
+    const results: HistoryManager[] = [];
+    for (const slug of slugs) {
+      const metaPath = path.join(projectsDir, slug, 'meta.json');
+      if (!fs.existsSync(metaPath)) continue;
+      try {
+        const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8')) as {
+          configFile: string;
+          workingDir: string;
+        };
+        if (meta.workingDir === workingDir) {
+          results.push(new HistoryManager(meta.configFile, meta.workingDir));
+        }
+      } catch {
+        // skip corrupt meta
+      }
+    }
+    return results;
+  }
+
   getInsertedFragment(
     targetPath: string,
   ): { raw: string; processed: string } | null {

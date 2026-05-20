@@ -48,6 +48,25 @@ function run(
   }
 }
 
+function runFromDir(dir: string, subcommand: string): RunResult {
+  try {
+    const stdout = execSync(`bunx tsx "${CLI}" ${subcommand}`, {
+      encoding: 'utf8',
+      cwd: dir,
+      env: { ...process.env, AVANTI_HISTORY_DIR: historyDir },
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    return { stdout, stderr: '', exitCode: 0 };
+  } catch (e: unknown) {
+    const err = e as { stdout?: string; stderr?: string; status?: number };
+    return {
+      stdout: err.stdout ?? '',
+      stderr: err.stderr ?? '',
+      exitCode: err.status ?? 2,
+    };
+  }
+}
+
 function writeConfig(content: string): void {
   writeFileSync(join(tmpDir, 'avanti.yml'), content);
 }
@@ -479,4 +498,42 @@ describe('history integration', () => {
       expect(stdout).toContain('No history recorded yet.');
     });
   });
+});
+
+describe('auto-detection — no --config / --working-dir flags', () => {
+  it(
+    'pull then log shows history when run from project dir without explicit flags',
+    { timeout: 15_000 },
+    () => {
+      const src = writeSource('src.txt', 'hello');
+      writeConfig(`files:\n  ./out.txt:\n    src: ${src}\n`);
+
+      runFromDir(tmpDir, 'pull --yes');
+      const { stdout } = runFromDir(tmpDir, 'log');
+
+      expect(stdout).toMatch(/pull [0-9a-f]{8}/);
+    },
+  );
+
+  it(
+    'log without --config finds history recorded by pull with explicit --config',
+    { timeout: 15_000 },
+    () => {
+      // Simulates the user running: avanti --config gitlab:... pull -y
+      // then: avanti log  (no --config)
+      // The two commands compute different hash keys unless log falls back to
+      // a workingDir scan.
+      const src = writeSource('src.txt', 'hello');
+      const configPath = join(tmpDir, 'my-remote.yml');
+      writeFileSync(configPath, `files:\n  ./out.txt:\n    src: ${src}\n`);
+
+      // Pull with an explicit config path that log would never auto-detect
+      runFromDir(tmpDir, `pull --yes --config "${configPath}"`);
+
+      // Log without --config — auto-detection picks a different path
+      const { stdout } = runFromDir(tmpDir, 'log');
+
+      expect(stdout).toMatch(/pull [0-9a-f]{8}/);
+    },
+  );
 });
