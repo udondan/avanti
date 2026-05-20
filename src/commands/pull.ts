@@ -17,19 +17,16 @@ import { applyReplace } from '../processors/replace';
 import { applyPost } from '../processors/post';
 import { applyInsertMode } from '../processors/insert';
 import { isBinary } from '../binary';
-import {
-  computeDiff,
-  computeDeleteDiff,
-  printDiffs,
-  resolveTargetPath,
-} from '../diff';
+import { computeDiff, computeDeleteDiff, printDiffs } from '../diff';
 import { atomicWrite, WriteTarget } from '../writer';
 import { FileDiff } from '../diff';
-import { AvantiConfig, FileEntry } from '../types';
+import { buildEntryPreVars, resolveTargetPath } from '../paths';
+import { AvantiConfig, FileEntry, Variables } from '../types';
 import { HistoryManager, PullLogFileRef, SourceShaRecord } from '../history';
 import { confirm } from '../prompt';
 import { applyUpdatedShas, writeUpdatedShas } from '../config-writeback';
 import { resolveVariableSpec } from '../variables-remote';
+import { buildDateVars, buildFileVars, resolveBackupPath } from '../variables';
 
 interface ShaError {
   sourceLabel: string;
@@ -54,6 +51,7 @@ interface FetchLoopResult {
 async function runFetchLoop(
   config: AvantiConfig,
   workingDir: string,
+  dateVars: Variables,
   cache?: FetchCache,
   configPath?: string,
   history?: HistoryManager,
@@ -77,6 +75,7 @@ async function runFetchLoop(
   if (configPath !== undefined) {
     vars['self'] = configPath;
   }
+  Object.assign(vars, dateVars);
   const writeTargets: WriteTarget[] = [];
   const allDiffs: FileDiff[] = [];
   const shaErrors: ShaError[] = [];
@@ -160,6 +159,7 @@ async function runFetchLoop(
     const isSelf = key === SELF_KEY;
     if (hasSelf !== isSelf) continue;
     try {
+      const preVars = buildEntryPreVars(entry, isSelf, workingDir, vars);
       if (
         !isSelf &&
         !evaluateConditions(
@@ -167,7 +167,7 @@ async function runFetchLoop(
           entry.ifAny,
           () => resolveTargetPath(entry, '', workingDir, vars),
           workingDir,
-          vars,
+          preVars,
         )
       ) {
         try {
@@ -183,7 +183,7 @@ async function runFetchLoop(
       const result = await fetchSource(
         entry,
         workingDir,
-        vars,
+        preVars,
         cache,
         isSelf && configPath !== undefined ? () => configPath : undefined,
         pendingWrites,
@@ -223,6 +223,22 @@ async function runFetchLoop(
           ? (await import('../processors/template')).applyTemplate
           : undefined;
       for (const [relPath, rawContent] of result.files) {
+        // Compute the target path early so per-file vars ($path, $filename,
+        // $basename, $ext, $dirname, $basedir) are available in processors.
+        // For $self the path resolution would fail (config path is absolute),
+        // so we skip it and fall back to the base vars.
+        const targetPath = isSelf
+          ? undefined
+          : resolveTargetPath(entry, relPath, workingDir, vars);
+        const entryVars =
+          targetPath !== undefined
+            ? Object.assign(
+                Object.create(null) as typeof vars,
+                vars,
+                buildFileVars(targetPath),
+              )
+            : vars;
+
         let content = rawContent;
         if (!isBinary(content)) {
           // Processors only operate on text; binary files are passed through unchanged.
@@ -232,29 +248,23 @@ async function runFetchLoop(
             text = await applyTemplate(
               text,
               entry.template!,
-              vars,
+              entryVars,
               relPath || undefined,
             );
           }
           if (entry.replace?.length)
-            text = applyReplace(text, entry.replace, vars);
-          if (entry.post) text = applyPost(text, entry.post, vars);
+            text = applyReplace(text, entry.replace, entryVars);
+          if (entry.post) text = applyPost(text, entry.post, entryVars);
           if (entry.strategy === 'insert' && !isSelf) {
-            const targetPath = resolveTargetPath(
-              entry,
-              relPath,
-              workingDir,
-              vars,
-            );
             const lastInserted =
-              history?.getInsertedFragment(targetPath) ?? null;
+              history?.getInsertedFragment(targetPath!) ?? null;
             if (
               lastInserted !== null &&
               rawText === lastInserted.raw &&
               text === lastInserted.processed &&
-              fs.existsSync(targetPath)
+              fs.existsSync(targetPath!)
             ) {
-              skippedPaths.add(targetPath); // keep stale detection from treating this as missing
+              skippedPaths.add(targetPath!); // keep stale detection from treating this as missing
               continue; // source and processed output unchanged — skip write entirely (no-op)
             }
             const processedText = text;
@@ -262,9 +272,9 @@ async function runFetchLoop(
               entry,
               processedText,
               lastInserted?.processed ?? null,
-              targetPath,
+              targetPath!,
             );
-            insertedFragments.set(targetPath, {
+            insertedFragments.set(targetPath!, {
               raw: rawText,
               processed: processedText,
             });
@@ -278,12 +288,27 @@ async function runFetchLoop(
             selfSourceRecords = result.sourceRecords;
           continue;
         }
-        const targetPath = resolveTargetPath(entry, relPath, workingDir, vars);
-        allDiffs.push(computeDiff(targetPath, content));
-        writeTargets.push({ targetPath, content, mode: entry.mode });
-        pendingWrites.set(targetPath, content);
+        const diff = computeDiff(targetPath!, content);
+        allDiffs.push(diff);
+        const backupPath =
+          entry.backup && diff.hasChanges && !diff.isNew
+            ? resolveBackupPath(
+                entry.backup,
+                targetPath!,
+                workingDir,
+                vars,
+                config.backup_roots ?? [],
+              )
+            : undefined;
+        writeTargets.push({
+          targetPath: targetPath!,
+          content,
+          mode: entry.mode,
+          backupPath,
+        });
+        pendingWrites.set(targetPath!, content);
         if (result.sourceRecords.length > 0) {
-          sourceRecordsByTarget.set(targetPath, result.sourceRecords);
+          sourceRecordsByTarget.set(targetPath!, result.sourceRecords);
         }
       }
     } catch (err: unknown) {
@@ -357,9 +382,11 @@ export function pullCommand(): Command {
       const pullId = historyAvailable ? history.openPullSession() : null;
 
       const fetchCache: FetchCache = new Map();
+      const dateVars = buildDateVars();
       const firstPass = await runFetchLoop(
         config,
         workingDir,
+        dateVars,
         fetchCache,
         configPath,
         history,
@@ -419,6 +446,7 @@ export function pullCommand(): Command {
           const next = await runFetchLoop(
             currentConfig,
             workingDir,
+            dateVars,
             fetchCache,
             configPath,
             history,
@@ -469,6 +497,7 @@ export function pullCommand(): Command {
             const second = await runFetchLoop(
               { ...stableConfig, files: filesWithoutSelf },
               workingDir,
+              dateVars,
               fetchCache,
               configPath,
               history,

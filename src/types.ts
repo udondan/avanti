@@ -221,6 +221,7 @@ export interface FileEntry {
   if?: Condition | Condition[];
   ifAny?: Condition[];
   mode?: string;
+  backup?: string;
   replace?: ReplaceRule[];
   post?: string;
   template?: TemplateEngine | true;
@@ -242,5 +243,6 @@ export type VariableSpec = Record<string, string | VariableEntry>;
 
 export interface AvantiConfig {
   variables?: VariableSpec;
+  backup_roots?: string[];
   files: Record<string, FileEntry>;
 }

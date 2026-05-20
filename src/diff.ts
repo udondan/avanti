@@ -1,10 +1,6 @@
 import * as fs from 'fs';
-import * as os from 'os';
-import * as path from 'path';
 import { createTwoFilesPatch } from 'diff';
 import chalk from 'chalk';
-import { Variables } from './types';
-import { resolveVars } from './variables';
 import { isBinary } from './binary';
 
 export interface FileDiff {
@@ -108,68 +104,5 @@ export function printDiffs(diffs: FileDiff[]): void {
   }
   for (const d of changed) {
     console.log(formatDiff(d));
-  }
-}
-
-export function resolveTargetPath(
-  entry: { target?: string },
-  relPath: string,
-  workingDir: string,
-  vars: Variables = {},
-): string {
-  let resolved: string;
-  const target = entry.target ? resolveVars(entry.target, vars) : undefined;
-
-  if (target) {
-    if (target.startsWith('~/')) {
-      const home = os.homedir();
-      const expanded = path.resolve(home, target.slice(2));
-      const homePrefix = home.endsWith(path.sep) ? home : home + path.sep;
-      if (expanded !== home && !expanded.startsWith(homePrefix)) {
-        throw new Error(
-          `Target path "${expanded}" escapes home directory "${home}".`,
-        );
-      }
-      if (target.endsWith('/') || target.endsWith(path.sep)) {
-        return path.resolve(expanded, relPath);
-      }
-      return expanded;
-    }
-    if (path.isAbsolute(target)) {
-      const fsRoot = path.parse(workingDir).root;
-      if (workingDir !== fsRoot) {
-        throw new Error(
-          `Absolute target path "${target}" is not allowed unless the working directory is the filesystem root. Use a relative path or run with -w ${fsRoot}.`,
-        );
-      }
-      if (target.endsWith('/') || target.endsWith(path.sep)) {
-        return path.resolve(target, relPath);
-      }
-      return target;
-    }
-    if (target.endsWith('/') || target.endsWith(path.sep)) {
-      resolved = path.resolve(workingDir, target, relPath);
-    } else {
-      resolved = path.resolve(workingDir, target);
-    }
-  } else {
-    resolved = path.resolve(workingDir, relPath);
-  }
-
-  assertWithinWorkingDir(resolved, workingDir);
-  return resolved;
-}
-
-function assertWithinWorkingDir(
-  resolvedPath: string,
-  workingDir: string,
-): void {
-  const prefix = workingDir.endsWith(path.sep)
-    ? workingDir
-    : workingDir + path.sep;
-  if (resolvedPath !== workingDir && !resolvedPath.startsWith(prefix)) {
-    throw new Error(
-      `Target path "${resolvedPath}" escapes working directory "${workingDir}".`,
-    );
   }
 }

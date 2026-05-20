@@ -1,3 +1,4 @@
+import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -5,6 +6,7 @@ export interface WriteTarget {
   targetPath: string;
   content: Buffer;
   mode?: string;
+  backupPath?: string;
 }
 
 export function atomicWrite(
@@ -15,7 +17,11 @@ export function atomicWrite(
   // destination so that renameSync (rename(2)) is atomic on POSIX.
   const staged: Array<{ tmp: string; dest: string; effectiveMode?: number }> =
     [];
+  const backupTemps: string[] = [];
   try {
+    // Phase 1: write all temp files. No backups yet — if any write fails we
+    // don't want orphaned backup files for targets whose destinations haven't
+    // changed yet.
     for (const t of targets) {
       const dir = path.dirname(t.targetPath);
       if (!fs.existsSync(dir)) {
@@ -45,7 +51,41 @@ export function atomicWrite(
       staged.push({ tmp: tmpFile, dest: t.targetPath, effectiveMode });
     }
 
-    // All staging succeeded — atomically rename each temp file into place
+    // Phase 2: all staging succeeded — now create backups.
+    // Phase 2a: copy each source file to a uniquely-named temp in the backup
+    // dir. If any copy fails, no backup destination has been touched yet.
+    const backupRenames: Array<{ tmp: string; dest: string }> = [];
+    for (const t of targets) {
+      if (
+        t.backupPath &&
+        fs.lstatSync(t.targetPath, { throwIfNoEntry: false })?.isFile()
+      ) {
+        const backupDir = path.dirname(t.backupPath);
+        if (!fs.existsSync(backupDir)) {
+          fs.mkdirSync(backupDir, { recursive: true });
+        }
+        // Copy via a uniquely-named temp file then rename so that:
+        // (a) a symlink at backupPath is replaced, not followed, and
+        // (b) a predictable temp path cannot be pre-created as a symlink.
+        const backupTmp = path.join(
+          backupDir,
+          '.' +
+            path.basename(t.backupPath) +
+            '.' +
+            crypto.randomBytes(8).toString('hex') +
+            '.avanti-tmp',
+        );
+        backupTemps.push(backupTmp);
+        fs.copyFileSync(t.targetPath, backupTmp);
+        backupRenames.push({ tmp: backupTmp, dest: t.backupPath });
+      }
+    }
+    // Phase 2b: all copies succeeded — rename each backup temp into place.
+    for (const { tmp, dest } of backupRenames) {
+      fs.renameSync(tmp, dest);
+    }
+
+    // Phase 3: atomically rename each temp file into place
     for (const s of staged) {
       fs.renameSync(s.tmp, s.dest);
       if (s.effectiveMode !== undefined) {
@@ -53,6 +93,13 @@ export function atomicWrite(
       }
     }
   } finally {
+    for (const tmp of backupTemps) {
+      try {
+        fs.rmSync(tmp, { force: true });
+      } catch {
+        // already renamed into place or never created
+      }
+    }
     for (const s of staged) {
       try {
         fs.rmSync(s.tmp, { force: true });

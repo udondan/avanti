@@ -8,9 +8,10 @@ import {
 } from '../config';
 import { evaluateConditions } from '../condition';
 import { fetchSource } from '../sources';
-import { resolveTargetPath } from '../diff';
+import { buildEntryPreVars, resolveTargetPath } from '../paths';
 import { writeUpdatedShas } from '../config-writeback';
 import { resolveVariableSpec } from '../variables-remote';
+import { buildDateVars } from '../variables';
 
 export function lockCommand(): Command {
   return new Command('lock')
@@ -51,31 +52,34 @@ export function lockCommand(): Command {
       if (configPath !== undefined) {
         vars['self'] = configPath;
       }
+      Object.assign(vars, buildDateVars());
       const toPin = new Map<string, string>(); // label → sha
       let hasError = false;
       let remoteSourceCount = 0;
 
       for (const [key, entry] of Object.entries(config.files)) {
         try {
+          const isSelf = key === SELF_KEY;
+          const preVars = buildEntryPreVars(entry, isSelf, workingDir, vars);
           if (
             !evaluateConditions(
               entry['if'],
               entry.ifAny,
               () =>
-                key === SELF_KEY
+                isSelf
                   ? configPath
                   : resolveTargetPath(entry, '', workingDir, vars),
               workingDir,
-              vars,
+              preVars,
             )
           )
             continue;
           const result = await fetchSource(
             entry,
             workingDir,
-            vars,
+            preVars,
             undefined,
-            key === SELF_KEY ? () => configPath : undefined,
+            isSelf ? () => configPath : undefined,
           );
           remoteSourceCount += result.sourceRecords.length;
           for (const rec of result.sourceRecords) {

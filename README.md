@@ -35,6 +35,7 @@ atomic rollbacks, and diff-before-apply safety.
   - [Insert Mode](#insert-mode)
   - [Conditions](#conditions)
   - [Scaffold Pattern](#scaffold-pattern)
+  - [Backup](#backup)
   - [Variables](#variables)
   - [$self — Self-managing Config](#self--self-managing-config)
   - [Authentication](#authentication)
@@ -1010,6 +1011,80 @@ On **subsequent runs**: `team.md` already exists, so the `target_exists: false` 
 
 **Cycle detection** — if two entries form a cycle (A sources from B and B sources from A), avanti exits with an error listing the cycle before writing any files.
 
+### Backup
+
+> **Note:** avanti already maintains an internal pull history under `~/.config/avanti/` and you can restore any file with `avanti revert`. The `backup:` field is for additional, fine-grained control — for example, keeping a copy on an external drive, in a dedicated folder, or with a custom naming scheme.
+
+Add `backup:` to a file entry to copy the current file to a backup location before overwriting it:
+
+```yaml
+files:
+  config.yaml:
+    src: github:org/repo/config.yaml
+    backup: $dirname/$filename.bkp
+```
+
+Backup only happens when the target is a regular file (not a symlink or directory). If the backup path already exists it is overwritten — use the [counter pattern](#counter-pattern) or `$datetime` when you want to keep every backup.
+
+#### Path variables
+
+All [system-injected variables](#system-injected-variables) — per-file path variables (`$path`, `$filename`, `$basename`, `$ext`, `$dirname`, `$basedir`) and pull-time variables (`$date`, `$datetime`) — are available in `backup:` patterns.
+
+#### Counter pattern
+
+Use `%d+` in the backup path to auto-increment to the lowest unused slot. The number of `d` characters sets the zero-padding width and maximum slot:
+
+| Token  | Slots       |
+| ------ | ----------- |
+| `%d`   | `1`–`9`     |
+| `%dd`  | `01`–`99`   |
+| `%ddd` | `001`–`999` |
+
+Only one counter token per backup path is allowed. If all slots are taken, avanti exits with an error.
+
+```yaml
+files:
+  config.yaml:
+    src: github:org/repo/config.yaml
+    backup: $dirname/$basename.%dd.$ext # config.01.yaml → config.02.yaml → …
+```
+
+#### Security: backup_roots
+
+By default, backup paths are restricted to the working directory — the same constraint applied to target paths. To back up outside the working directory, declare the allowed roots at the top level:
+
+```yaml
+backup_roots:
+  - ~/backups
+  - /mnt/nas/backups
+
+files:
+  config.yaml:
+    src: github:org/repo/config.yaml
+    backup: ~/backups/$filename
+```
+
+Each entry in `backup_roots` supports `~/` expansion. Paths not covered by the working directory or a declared root are rejected with an error before any file is written.
+
+#### Backup examples
+
+```yaml
+# Same directory, .bkp extension appended
+backup: $dirname/$filename.bkp         # /project/config.yaml.bkp
+
+# Separate backup folder within the working directory
+backup: backups/$filename              # <workingDir>/backups/config.yaml
+
+# Timestamped — one file per pull
+backup: $dirname/$filename.$datetime   # config.yaml.2026-05-20-14-30-00
+
+# Auto-increment — keeps up to 99 rotating backups
+backup: $dirname/$basename.%dd.$ext   # config.01.yaml, config.02.yaml, …
+
+# Separate directory outside the working directory (requires backup_roots)
+backup: ~/backups/$filename
+```
+
 ### Variables
 
 Define reusable values at the top level under `variables:`:
@@ -1148,6 +1223,72 @@ files:
 ```
 
 When the config is specified as a remote spec (e.g. `--config github:org/repo:.avanti.yml`), `$self` expands to that spec string. In an `exists:` condition this will always evaluate to false since the remote spec is not a local path.
+
+#### System-injected variables
+
+In addition to `$self` and `$latest`, avanti injects several variables automatically at the start of every run. These names are reserved and cannot be used in `variables:`.
+
+**Per-file path variables** — avanti derives the following variables from each file entry's resolved target path. They can be used in source URLs, `ref:`, conditions, `replace:`, `post:`, template rendering, and `backup:` patterns.
+
+Example with working directory `/home/user/project` and map key `configs/app.yaml`:
+
+| Variable    | Value                                 |
+| ----------- | ------------------------------------- |
+| `$path`     | `/home/user/project/configs/app.yaml` |
+| `$filename` | `app.yaml`                            |
+| `$basename` | `app`                                 |
+| `$ext`      | `yaml` (no leading dot)               |
+| `$dirname`  | `/home/user/project/configs`          |
+| `$basedir`  | `configs`                             |
+
+> **Availability in source URLs and conditions:** per-file path variables are only resolved before the fetch when the map key is a fixed (non-directory) path. They are always available in processors (`replace:`, `post:`, template rendering) and `backup:`.
+
+```yaml
+variables:
+  env: production
+
+files:
+  # $filename in source URL — fetches each file by its own target name
+  configs/nginx.conf:
+    src: github:org/config-store/$env/$filename # → …/production/nginx.conf
+
+  # $basename strips the extension — useful when the remote has no extension
+  services/auth.yaml:
+    src: https://config-api.example.com/v1/$basename # → …/v1/auth
+
+  # $path in a condition — only overwrite if the local file already exists
+  generated/report.json:
+    src:
+      exec: generate-report.sh
+    if:
+      exists: $path
+
+  # $dirname in a processor — log which directory was updated
+  app/config.yaml:
+    src: github:org/repo/app/config.yaml
+    post: echo updated $dirname >> pull.log
+```
+
+**Pull-time variables** — injected once at the start of every run and available everywhere (source URLs, conditions, `replace:`, `post:`, template rendering, `backup:`):
+
+| Variable    | Value                                   | Example               |
+| ----------- | --------------------------------------- | --------------------- |
+| `$date`     | Current date `YYYY-MM-DD`               | `2026-05-20`          |
+| `$datetime` | Current date+time `YYYY-MM-DD-HH-mm-ss` | `2026-05-20-14-30-00` |
+
+```yaml
+files:
+  # Fetch today's report by date
+  reports/daily.json:
+    src: https://reports.example.com/$date/summary.json
+
+  # Stamp the pull time into fetched content
+  version.txt:
+    src: github:org/repo/version.txt
+    replace:
+      - from: GENERATED_AT
+        to: $datetime
+```
 
 ### $self — Self-managing Config
 

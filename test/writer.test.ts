@@ -101,4 +101,89 @@ describe('atomicWrite', () => {
     atomicWrite([{ targetPath: dest, content: binary }]);
     expect(fs.readFileSync(dest)).toEqual(binary);
   });
+
+  describe('backup', () => {
+    it('copies the existing file to backupPath before writing new content', () => {
+      const dest = path.join(tmpDir, 'config.yaml');
+      const backup = path.join(tmpDir, 'config.yaml.bkp');
+      fs.writeFileSync(dest, 'old content', 'utf8');
+
+      atomicWrite([
+        { targetPath: dest, content: buf('new content'), backupPath: backup },
+      ]);
+
+      expect(fs.readFileSync(backup, 'utf8')).toBe('old content');
+      expect(fs.readFileSync(dest, 'utf8')).toBe('new content');
+    });
+
+    it('creates the backup directory recursively if it does not exist', () => {
+      const dest = path.join(tmpDir, 'file.txt');
+      const backup = path.join(tmpDir, 'bkp', 'nested', 'file.txt.bkp');
+      fs.writeFileSync(dest, 'original', 'utf8');
+
+      atomicWrite([
+        { targetPath: dest, content: buf('updated'), backupPath: backup },
+      ]);
+
+      expect(fs.readFileSync(backup, 'utf8')).toBe('original');
+    });
+
+    it('does not create a backup when the target file does not yet exist', () => {
+      const dest = path.join(tmpDir, 'new.txt');
+      const backup = path.join(tmpDir, 'new.txt.bkp');
+
+      atomicWrite([
+        { targetPath: dest, content: buf('first write'), backupPath: backup },
+      ]);
+
+      expect(fs.existsSync(backup)).toBe(false);
+      expect(fs.readFileSync(dest, 'utf8')).toBe('first write');
+    });
+
+    it('overwrites an existing backup file', () => {
+      const dest = path.join(tmpDir, 'data.txt');
+      const backup = path.join(tmpDir, 'data.txt.bkp');
+      fs.writeFileSync(dest, 'v2', 'utf8');
+      fs.writeFileSync(backup, 'v1', 'utf8');
+
+      atomicWrite([
+        { targetPath: dest, content: buf('v3'), backupPath: backup },
+      ]);
+
+      expect(fs.readFileSync(backup, 'utf8')).toBe('v2');
+      expect(fs.readFileSync(dest, 'utf8')).toBe('v3');
+    });
+
+    it('writes normally when no backupPath is set', () => {
+      const dest = path.join(tmpDir, 'plain.txt');
+      fs.writeFileSync(dest, 'old', 'utf8');
+
+      atomicWrite([{ targetPath: dest, content: buf('new') }]);
+
+      expect(fs.readFileSync(dest, 'utf8')).toBe('new');
+    });
+
+    it.skipIf(isWindows)(
+      'replaces a symlink at backupPath rather than following it',
+      () => {
+        const dest = path.join(tmpDir, 'source.txt');
+        const outside = path.join(tmpDir, 'outside.txt');
+        const backup = path.join(tmpDir, 'source.txt.bkp');
+        fs.writeFileSync(dest, 'old content', 'utf8');
+        fs.writeFileSync(outside, 'should not be touched', 'utf8');
+        fs.symlinkSync(outside, backup);
+
+        atomicWrite([
+          { targetPath: dest, content: buf('new content'), backupPath: backup },
+        ]);
+
+        // The symlink must be replaced — outside.txt must not be modified.
+        expect(fs.readFileSync(outside, 'utf8')).toBe('should not be touched');
+        // The backup path must now be a regular file containing the old content.
+        expect(fs.lstatSync(backup).isSymbolicLink()).toBe(false);
+        expect(fs.readFileSync(backup, 'utf8')).toBe('old content');
+        expect(fs.readFileSync(dest, 'utf8')).toBe('new content');
+      },
+    );
+  });
 });
