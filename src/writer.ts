@@ -16,6 +16,7 @@ export function atomicWrite(
   // destination so that renameSync (rename(2)) is atomic on POSIX.
   const staged: Array<{ tmp: string; dest: string; effectiveMode?: number }> =
     [];
+  const backupTemps: string[] = [];
   try {
     for (const t of targets) {
       if (t.backupPath && fs.existsSync(t.targetPath)) {
@@ -23,7 +24,15 @@ export function atomicWrite(
         if (!fs.existsSync(backupDir)) {
           fs.mkdirSync(backupDir, { recursive: true });
         }
-        fs.copyFileSync(t.targetPath, t.backupPath);
+        // Copy via a temp file then rename so that a symlink at backupPath is
+        // replaced (not followed), preventing writes outside allowed roots.
+        const backupTmp = path.join(
+          backupDir,
+          '.' + path.basename(t.backupPath) + '.avanti-tmp',
+        );
+        backupTemps.push(backupTmp);
+        fs.copyFileSync(t.targetPath, backupTmp);
+        fs.renameSync(backupTmp, t.backupPath);
       }
 
       const dir = path.dirname(t.targetPath);
@@ -62,6 +71,13 @@ export function atomicWrite(
       }
     }
   } finally {
+    for (const tmp of backupTemps) {
+      try {
+        fs.rmSync(tmp, { force: true });
+      } catch {
+        // already renamed into place or never created
+      }
+    }
     for (const s of staged) {
       try {
         fs.rmSync(s.tmp, { force: true });

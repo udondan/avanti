@@ -25,7 +25,7 @@ import {
 } from '../diff';
 import { atomicWrite, WriteTarget } from '../writer';
 import { FileDiff } from '../diff';
-import { AvantiConfig, FileEntry } from '../types';
+import { AvantiConfig, FileEntry, Variables } from '../types';
 import { HistoryManager, PullLogFileRef, SourceShaRecord } from '../history';
 import { confirm } from '../prompt';
 import { applyUpdatedShas, writeUpdatedShas } from '../config-writeback';
@@ -55,6 +55,7 @@ interface FetchLoopResult {
 async function runFetchLoop(
   config: AvantiConfig,
   workingDir: string,
+  dateVars: Variables,
   cache?: FetchCache,
   configPath?: string,
   history?: HistoryManager,
@@ -78,7 +79,7 @@ async function runFetchLoop(
   if (configPath !== undefined) {
     vars['self'] = configPath;
   }
-  Object.assign(vars, buildDateVars());
+  Object.assign(vars, dateVars);
   const writeTargets: WriteTarget[] = [];
   const allDiffs: FileDiff[] = [];
   const shaErrors: ShaError[] = [];
@@ -382,9 +383,11 @@ export function pullCommand(): Command {
       const pullId = historyAvailable ? history.openPullSession() : null;
 
       const fetchCache: FetchCache = new Map();
+      const dateVars = buildDateVars();
       const firstPass = await runFetchLoop(
         config,
         workingDir,
+        dateVars,
         fetchCache,
         configPath,
         history,
@@ -444,6 +447,7 @@ export function pullCommand(): Command {
           const next = await runFetchLoop(
             currentConfig,
             workingDir,
+            dateVars,
             fetchCache,
             configPath,
             history,
@@ -494,6 +498,7 @@ export function pullCommand(): Command {
             const second = await runFetchLoop(
               { ...stableConfig, files: filesWithoutSelf },
               workingDir,
+              dateVars,
               fetchCache,
               configPath,
               history,

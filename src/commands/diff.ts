@@ -23,7 +23,7 @@ import {
   resolveTargetPath,
 } from '../diff';
 import { FileDiff } from '../diff';
-import { AvantiConfig, FileEntry } from '../types';
+import { AvantiConfig, FileEntry, Variables } from '../types';
 import { HistoryManager } from '../history';
 import { resolveVariableSpec } from '../variables-remote';
 import { evaluateConditions } from '../condition';
@@ -38,6 +38,7 @@ interface DiffLoopResult {
 async function runDiffLoop(
   config: AvantiConfig,
   workingDir: string,
+  dateVars: Variables,
   cache?: FetchCache,
   configPath?: string,
   history?: HistoryManager,
@@ -52,7 +53,7 @@ async function runDiffLoop(
   if (configPath !== undefined) {
     vars['self'] = configPath;
   }
-  Object.assign(vars, buildDateVars());
+  Object.assign(vars, dateVars);
   const allDiffs: FileDiff[] = [];
   const pendingWrites = new Map<string, Buffer>();
   let hasError = false;
@@ -244,6 +245,7 @@ export function diffCommand(): Command {
         }
 
         const fetchCache: FetchCache = new Map();
+        const dateVars = buildDateVars();
         const history = new HistoryManager(
           normalizeConfigKey(configPath),
           workingDir,
@@ -251,6 +253,7 @@ export function diffCommand(): Command {
         const firstPass = await runDiffLoop(
           config,
           workingDir,
+          dateVars,
           fetchCache,
           configPath,
           history,
@@ -289,6 +292,7 @@ export function diffCommand(): Command {
             const next = await runDiffLoop(
               currentConfig,
               workingDir,
+              dateVars,
               fetchCache,
               configPath,
               history,
@@ -321,6 +325,7 @@ export function diffCommand(): Command {
               const second = await runDiffLoop(
                 { ...stableConfig, files: filesWithoutSelf },
                 workingDir,
+                dateVars,
                 fetchCache,
                 configPath,
                 history,

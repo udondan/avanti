@@ -161,12 +161,12 @@ export function resolveBackupCounter(pattern: string): string {
   );
 }
 
-// Expand a backup root entry: resolve ~/ and return the absolute path.
+// Expand a backup root entry: resolve ~/ and canonicalize the path.
 function expandRoot(root: string): string {
   if (root.startsWith('~/')) {
     return path.resolve(os.homedir(), root.slice(2));
   }
-  return root;
+  return path.resolve(root);
 }
 
 // Assert that a resolved backup path is allowed given the security model:
@@ -223,9 +223,13 @@ export function resolveBackupPath(
     resolved = path.resolve(os.homedir(), resolved.slice(2));
   } else if (!path.isAbsolute(resolved)) {
     resolved = path.resolve(workingDir, resolved);
+  } else {
+    // Already absolute — canonicalize to remove any .. components so that
+    // paths like /workdir/../etc/passwd don't bypass assertBackupPathAllowed.
+    resolved = path.resolve(resolved);
   }
 
-  if (path.resolve(resolved) === path.resolve(targetPath)) {
+  if (resolved === path.resolve(targetPath)) {
     throw new Error(
       `backup path resolves to the target file itself: "${resolved}"`,
     );
