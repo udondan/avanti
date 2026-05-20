@@ -1066,7 +1066,7 @@ files:
 
 #### Security: backup_roots
 
-By default, backup paths are restricted to the working directory — the same constraint applied to `target:`. To back up outside the working directory, declare the allowed roots at the top level:
+By default, backup paths are restricted to the working directory — the same constraint applied to target paths. To back up outside the working directory, declare the allowed roots at the top level:
 
 ```yaml
 backup_roots:

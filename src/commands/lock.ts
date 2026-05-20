@@ -11,7 +11,7 @@ import { fetchSource } from '../sources';
 import { resolveTargetPath } from '../diff';
 import { writeUpdatedShas } from '../config-writeback';
 import { resolveVariableSpec } from '../variables-remote';
-import { buildDateVars, buildFileVars } from '../variables';
+import { buildDateVars, buildFileVars, resolveVars } from '../variables';
 import { Variables } from '../types';
 
 export function lockCommand(): Command {
@@ -62,24 +62,25 @@ export function lockCommand(): Command {
         try {
           const isSelf = key === SELF_KEY;
           let preVars: Variables = vars;
-          if (
-            !isSelf &&
-            entry.target &&
-            !entry.target.endsWith('/') &&
-            !entry.target.endsWith(path.sep)
-          ) {
+          if (!isSelf && entry.target) {
             try {
-              const fixedTarget = resolveTargetPath(
-                entry,
-                '',
-                workingDir,
-                vars,
-              );
-              preVars = Object.assign(
-                Object.create(null) as Variables,
-                vars,
-                buildFileVars(fixedTarget),
-              );
+              const resolvedTargetStr = resolveVars(entry.target, vars);
+              if (
+                !resolvedTargetStr.endsWith('/') &&
+                !resolvedTargetStr.endsWith(path.sep)
+              ) {
+                const fixedTarget = resolveTargetPath(
+                  entry,
+                  '',
+                  workingDir,
+                  vars,
+                );
+                preVars = Object.assign(
+                  Object.create(null) as Variables,
+                  vars,
+                  buildFileVars(fixedTarget),
+                );
+              }
             } catch {
               // target unresolvable — leave preVars as global vars
             }

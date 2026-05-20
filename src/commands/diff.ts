@@ -27,7 +27,7 @@ import { AvantiConfig, FileEntry, Variables } from '../types';
 import { HistoryManager } from '../history';
 import { resolveVariableSpec } from '../variables-remote';
 import { evaluateConditions } from '../condition';
-import { buildDateVars, buildFileVars } from '../variables';
+import { buildDateVars, buildFileVars, resolveVars } from '../variables';
 
 interface DiffLoopResult {
   allDiffs: FileDiff[];
@@ -102,19 +102,20 @@ async function runDiffLoop(
       // that $path/$filename/$basename/$ext/$dirname/$basedir are available in
       // source URLs and conditions (not just in processors post-fetch).
       let preVars = vars;
-      if (
-        !isSelf &&
-        entry.target &&
-        !entry.target.endsWith('/') &&
-        !entry.target.endsWith(path.sep)
-      ) {
+      if (!isSelf && entry.target) {
         try {
-          const fixedTarget = resolveTargetPath(entry, '', workingDir, vars);
-          preVars = Object.assign(
-            Object.create(null) as typeof vars,
-            vars,
-            buildFileVars(fixedTarget),
-          );
+          const resolvedTargetStr = resolveVars(entry.target, vars);
+          if (
+            !resolvedTargetStr.endsWith('/') &&
+            !resolvedTargetStr.endsWith(path.sep)
+          ) {
+            const fixedTarget = resolveTargetPath(entry, '', workingDir, vars);
+            preVars = Object.assign(
+              Object.create(null) as typeof vars,
+              vars,
+              buildFileVars(fixedTarget),
+            );
+          }
         } catch {
           // target unresolvable — leave preVars as global vars
         }
