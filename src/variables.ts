@@ -162,9 +162,16 @@ export function resolveBackupCounter(pattern: string): string {
 }
 
 // Expand a backup root entry: resolve ~/ and canonicalize the path.
+// Relative paths are rejected — they would resolve against process.cwd(),
+// not workingDir, making the security boundary invocation-dependent.
 function expandRoot(root: string): string {
   if (root.startsWith('~/')) {
     return path.resolve(os.homedir(), root.slice(2));
+  }
+  if (!path.isAbsolute(root)) {
+    throw new Error(
+      `backup_roots entry "${root}" is a relative path. Use an absolute path or ~/`,
+    );
   }
   return path.resolve(root);
 }

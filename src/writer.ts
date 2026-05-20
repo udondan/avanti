@@ -1,3 +1,4 @@
+import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -24,11 +25,16 @@ export function atomicWrite(
         if (!fs.existsSync(backupDir)) {
           fs.mkdirSync(backupDir, { recursive: true });
         }
-        // Copy via a temp file then rename so that a symlink at backupPath is
-        // replaced (not followed), preventing writes outside allowed roots.
+        // Copy via a uniquely-named temp file then rename so that:
+        // (a) a symlink at backupPath is replaced, not followed, and
+        // (b) a predictable temp path cannot be pre-created as a symlink.
         const backupTmp = path.join(
           backupDir,
-          '.' + path.basename(t.backupPath) + '.avanti-tmp',
+          '.' +
+            path.basename(t.backupPath) +
+            '.' +
+            crypto.randomBytes(8).toString('hex') +
+            '.avanti-tmp',
         );
         backupTemps.push(backupTmp);
         fs.copyFileSync(t.targetPath, backupTmp);
