@@ -105,6 +105,9 @@ export function expandBraces(pattern: string, limit = 100): string[] {
     const prefix = p.slice(0, match.index);
     const suffix = p.slice(match.index + match[0].length);
     const alts = match[1].split(',');
+    if (results.length + stack.length + alts.length > limit) {
+      throw new Error(`brace expansion exceeds ${limit} entries`);
+    }
     for (let i = alts.length - 1; i >= 0; i--) {
       stack.push(prefix + alts[i] + suffix);
     }
