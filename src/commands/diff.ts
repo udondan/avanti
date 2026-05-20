@@ -98,6 +98,22 @@ async function runDiffLoop(
     const isSelf = key === SELF_KEY;
     if (hasSelf !== isSelf) continue;
     try {
+      // Pre-compute per-file vars when target is a fixed non-directory path so
+      // that $path/$filename/$basename/$ext/$dirname/$basedir are available in
+      // source URLs and conditions (not just in processors post-fetch).
+      let preVars = vars;
+      if (!isSelf && entry.target && !entry.target.endsWith('/')) {
+        try {
+          const fixedTarget = resolveTargetPath(entry, '', workingDir, vars);
+          preVars = Object.assign(
+            Object.create(null) as typeof vars,
+            vars,
+            buildFileVars(fixedTarget),
+          );
+        } catch {
+          // target unresolvable — leave preVars as global vars
+        }
+      }
       if (
         !isSelf &&
         !evaluateConditions(
@@ -105,14 +121,14 @@ async function runDiffLoop(
           entry.ifAny,
           () => resolveTargetPath(entry, '', workingDir, vars),
           workingDir,
-          vars,
+          preVars,
         )
       )
         continue;
       const result = await fetchSource(
         entry,
         workingDir,
-        vars,
+        preVars,
         cache,
         isSelf && configPath !== undefined ? () => configPath : undefined,
         pendingWrites,

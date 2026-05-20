@@ -1043,7 +1043,7 @@ Given `target: /home/user/project/config.yaml`:
 | `$date`     | `2026-05-20` (pull time)          |
 | `$datetime` | `2026-05-20-14-30-00` (pull time) |
 
-`$date` and `$datetime` are injected once at pull start and available everywhere — source URLs, conditions, `replace:`, `post:`, template rendering, and `backup:`. Per-file path variables (`$path`–`$basedir`) are resolved after sources are fetched and are available only in `replace:`, `post:`, template rendering, and `backup:` — not in source URLs or conditions.
+`$date` and `$datetime` are injected once at pull start and available everywhere — source URLs, conditions, `replace:`, `post:`, template rendering, and `backup:`. Per-file path variables (`$path`–`$basedir`) are also available in source URLs and conditions, but only when the file entry has an explicit fixed `target:` path (not a trailing-slash directory). They are always available in `replace:`, `post:`, template rendering, and `backup:`.
 
 #### Counter pattern
 
@@ -1250,7 +1250,7 @@ In addition to `$self` and `$latest`, avanti injects several variables automatic
 | `$date`     | Current date `YYYY-MM-DD`               | `2026-05-20`          |
 | `$datetime` | Current date+time `YYYY-MM-DD-HH-mm-ss` | `2026-05-20-14-30-00` |
 
-**Per-file path variables** — derived from each file entry's resolved target path. Available in `replace:`, `post:`, template rendering, and `backup:`. They are resolved after sources are fetched so they are **not** available in source URLs or conditions.
+**Per-file path variables** — derived from each file entry's resolved target path. Available in `replace:`, `post:`, template rendering, and `backup:`. Also available in source URLs and conditions when the entry has an explicit fixed `target:` path.
 
 Given `target: /home/user/project/config.yaml`:
 
@@ -1266,7 +1266,8 @@ Given `target: /home/user/project/config.yaml`:
 ```yaml
 files:
   config.yaml:
-    src: https://api.example.com/config?ts=$datetime # $datetime available in source URLs
+    target: /home/user/project/config.yaml
+    src: https://api.example.com/$filename?ts=$datetime # per-file vars + $datetime in source URLs
     replace:
       - from: GENERATED_AT
         to: $date # $date available in processors
