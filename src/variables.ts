@@ -177,9 +177,12 @@ function expandRoot(root: string): string {
 }
 
 // Normalize a path for containment checks: on Windows paths are
-// case-insensitive, so fold to lowercase before comparing.
+// case-insensitive and may use either slash; fold both to canonical form.
 function normalizePath(p: string): string {
-  return process.platform === 'win32' ? p.toLowerCase() : p;
+  if (process.platform === 'win32') {
+    return p.replace(/\//g, '\\').toLowerCase();
+  }
+  return p;
 }
 
 // Assert that a resolved backup path is allowed given the security model:

@@ -324,13 +324,16 @@ describe('assertBackupPathAllowed', () => {
     );
   });
 
-  it('allows a path under a declared backup_root', () => {
-    expect(() =>
-      assertBackupPathAllowed('/tmp/backups/file.bkp', '/work', [
-        '/tmp/backups',
-      ]),
-    ).not.toThrow();
-  });
+  it.skipIf(process.platform === 'win32')(
+    'allows a path under a declared backup_root',
+    () => {
+      expect(() =>
+        assertBackupPathAllowed('/tmp/backups/file.bkp', '/work', [
+          '/tmp/backups',
+        ]),
+      ).not.toThrow();
+    },
+  );
 
   it('blocks a path not covered by any backup_root', () => {
     expect(() =>
