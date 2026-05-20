@@ -32,6 +32,7 @@ import {
   Via,
 } from './types';
 import { validateVariables } from './variables';
+import { expandBraces } from './paths';
 import { fetchHttp } from './sources/http';
 import { fetchGitHub } from './sources/github';
 import { fetchGitLab } from './sources/gitlab';
@@ -220,6 +221,10 @@ export function parseConfigContent(content: string): AvantiConfig {
     string,
     FileEntry
   >;
+  const fileOrigins: Record<string, string> = Object.create(null) as Record<
+    string,
+    string
+  >;
 
   for (const [target, entry] of Object.entries(filesRaw)) {
     if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
@@ -308,7 +313,35 @@ export function parseConfigContent(content: string): AvantiConfig {
       }
     }
 
-    files[target] = fileEntry;
+    let expandedTargets: string[];
+    try {
+      expandedTargets = expandBraces(target);
+    } catch (err) {
+      throw new Error(
+        `files["${target}"]: ${err instanceof Error ? err.message : String(err)}`,
+        { cause: err },
+      );
+    }
+    for (const expandedTarget of expandedTargets) {
+      if (expandedTarget in files) {
+        const parts: string[] = [];
+        if (expandedTarget !== target) {
+          parts.push(`expanded from "${target}"`);
+        }
+        const existingOrigin = fileOrigins[expandedTarget];
+        if (existingOrigin !== undefined && existingOrigin !== target) {
+          parts.push(`existing entry expanded from "${existingOrigin}"`);
+        }
+        const suffix = parts.length > 0 ? ` (${parts.join('; ')})` : '';
+        throw new Error(
+          `files["${expandedTarget}"]: duplicate target${suffix}`,
+        );
+      }
+      files[expandedTarget] = { ...fileEntry, target: expandedTarget };
+      if (expandedTarget !== target) {
+        fileOrigins[expandedTarget] = target;
+      }
+    }
   }
 
   let backup_roots: string[] | undefined;

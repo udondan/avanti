@@ -2176,3 +2176,110 @@ files:
     );
   });
 });
+
+describe('brace expansion in files keys', () => {
+  it('expands a brace group into multiple entries', () => {
+    const f = writeTmp(`
+files:
+  some/path/{foo,bar}:
+    src: https://example.com/file
+`);
+    const config = parseConfigContent(fs.readFileSync(f, 'utf8'));
+    expect(Object.keys(config.files).sort()).toEqual([
+      'some/path/bar',
+      'some/path/foo',
+    ]);
+  });
+
+  it('sets the target field to the expanded path on each entry', () => {
+    const f = writeTmp(`
+files:
+  'configs/{a,b}.yml':
+    src: https://example.com/file
+`);
+    const config = parseConfigContent(fs.readFileSync(f, 'utf8'));
+    expect(config.files['configs/a.yml'].target).toBe('configs/a.yml');
+    expect(config.files['configs/b.yml'].target).toBe('configs/b.yml');
+  });
+
+  it('preserves src and other fields on each expanded entry', () => {
+    const f = writeTmp(`
+files:
+  cfg/{dev,prod}.yml:
+    src: https://example.com/file
+    mode: '0600'
+`);
+    const config = parseConfigContent(fs.readFileSync(f, 'utf8'));
+    expect(config.files['cfg/dev.yml'].mode).toBe('0600');
+    expect(config.files['cfg/prod.yml'].mode).toBe('0600');
+  });
+
+  it('throws on duplicate: explicit key first, brace key second — shows expanded-from', () => {
+    const f = writeTmp(`
+files:
+  path/foo:
+    src: https://example.com/one
+  path/{foo,bar}:
+    src: https://example.com/two
+`);
+    expect(() => parseConfigContent(fs.readFileSync(f, 'utf8'))).toThrow(
+      'files["path/foo"]: duplicate target (expanded from "path/{foo,bar}")',
+    );
+  });
+
+  it('throws on duplicate: brace key first, explicit key second — shows existing-entry origin', () => {
+    const f = writeTmp(`
+files:
+  path/{foo,bar}:
+    src: https://example.com/one
+  path/foo:
+    src: https://example.com/two
+`);
+    expect(() => parseConfigContent(fs.readFileSync(f, 'utf8'))).toThrow(
+      'files["path/foo"]: duplicate target (existing entry expanded from "path/{foo,bar}")',
+    );
+  });
+
+  it('throws on duplicate within the same brace expansion and includes origin key', () => {
+    const f = writeTmp(`
+files:
+  'path/{foo,foo}':
+    src: https://example.com/file
+`);
+    expect(() => parseConfigContent(fs.readFileSync(f, 'utf8'))).toThrow(
+      'files["path/foo"]: duplicate target (expanded from "path/{foo,foo}")',
+    );
+  });
+
+  it('leaves keys without braces unchanged', () => {
+    const f = writeTmp(`
+files:
+  plain/path.yml:
+    src: https://example.com/file
+`);
+    const config = parseConfigContent(fs.readFileSync(f, 'utf8'));
+    expect(Object.keys(config.files)).toEqual(['plain/path.yml']);
+  });
+
+  it('leaves single-alternative brace groups (no comma) as literal keys', () => {
+    const f = writeTmp(`
+files:
+  'path/{id}':
+    src: https://example.com/file
+`);
+    const config = parseConfigContent(fs.readFileSync(f, 'utf8'));
+    expect(Object.keys(config.files)).toEqual(['path/{id}']);
+  });
+
+  it('throws when brace expansion exceeds 100 entries', () => {
+    const alts = Array.from({ length: 101 }, (_, i) => `e${i}`).join(',');
+    const f = writeTmp(`
+files:
+  'path/{${alts}}':
+    src: https://example.com/file
+`);
+    expect(() => parseConfigContent(fs.readFileSync(f, 'utf8'))).toThrow(
+      'brace expansion exceeds 100 entries',
+    );
+  });
+});
