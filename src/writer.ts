@@ -19,28 +19,10 @@ export function atomicWrite(
     [];
   const backupTemps: string[] = [];
   try {
+    // Phase 1: write all temp files. No backups yet — if any write fails we
+    // don't want orphaned backup files for targets whose destinations haven't
+    // changed yet.
     for (const t of targets) {
-      if (t.backupPath && fs.existsSync(t.targetPath)) {
-        const backupDir = path.dirname(t.backupPath);
-        if (!fs.existsSync(backupDir)) {
-          fs.mkdirSync(backupDir, { recursive: true });
-        }
-        // Copy via a uniquely-named temp file then rename so that:
-        // (a) a symlink at backupPath is replaced, not followed, and
-        // (b) a predictable temp path cannot be pre-created as a symlink.
-        const backupTmp = path.join(
-          backupDir,
-          '.' +
-            path.basename(t.backupPath) +
-            '.' +
-            crypto.randomBytes(8).toString('hex') +
-            '.avanti-tmp',
-        );
-        backupTemps.push(backupTmp);
-        fs.copyFileSync(t.targetPath, backupTmp);
-        fs.renameSync(backupTmp, t.backupPath);
-      }
-
       const dir = path.dirname(t.targetPath);
       if (!fs.existsSync(dir)) {
         fs.mkdirSync(dir, { recursive: true });
@@ -69,7 +51,32 @@ export function atomicWrite(
       staged.push({ tmp: tmpFile, dest: t.targetPath, effectiveMode });
     }
 
-    // All staging succeeded — atomically rename each temp file into place
+    // Phase 2: all staging succeeded — now create backups. Any failure here
+    // aborts before any destination file is touched.
+    for (const t of targets) {
+      if (t.backupPath && fs.existsSync(t.targetPath)) {
+        const backupDir = path.dirname(t.backupPath);
+        if (!fs.existsSync(backupDir)) {
+          fs.mkdirSync(backupDir, { recursive: true });
+        }
+        // Copy via a uniquely-named temp file then rename so that:
+        // (a) a symlink at backupPath is replaced, not followed, and
+        // (b) a predictable temp path cannot be pre-created as a symlink.
+        const backupTmp = path.join(
+          backupDir,
+          '.' +
+            path.basename(t.backupPath) +
+            '.' +
+            crypto.randomBytes(8).toString('hex') +
+            '.avanti-tmp',
+        );
+        backupTemps.push(backupTmp);
+        fs.copyFileSync(t.targetPath, backupTmp);
+        fs.renameSync(backupTmp, t.backupPath);
+      }
+    }
+
+    // Phase 3: atomically rename each temp file into place
     for (const s of staged) {
       fs.renameSync(s.tmp, s.dest);
       if (s.effectiveMode !== undefined) {

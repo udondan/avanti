@@ -312,16 +312,18 @@ async function runFetchLoop(
             selfSourceRecords = result.sourceRecords;
           continue;
         }
-        allDiffs.push(computeDiff(targetPath!, content));
-        const backupPath = entry.backup
-          ? resolveBackupPath(
-              entry.backup,
-              targetPath!,
-              workingDir,
-              vars,
-              config.backup_roots ?? [],
-            )
-          : undefined;
+        const diff = computeDiff(targetPath!, content);
+        allDiffs.push(diff);
+        const backupPath =
+          entry.backup && diff.hasChanges
+            ? resolveBackupPath(
+                entry.backup,
+                targetPath!,
+                workingDir,
+                vars,
+                config.backup_roots ?? [],
+              )
+            : undefined;
         writeTargets.push({
           targetPath: targetPath!,
           content,

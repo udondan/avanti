@@ -1030,7 +1030,7 @@ Backup only happens when the target file already exists. If the backup path alre
 
 The following variables are available in `backup:` patterns and in all processors (`replace:`, `post:`, template rendering).
 
-Given `target: /home/user/project/config.yaml`:
+Given target path `/home/user/project/config.yaml`:
 
 | Variable    | Value                             |
 | ----------- | --------------------------------- |
@@ -1043,7 +1043,7 @@ Given `target: /home/user/project/config.yaml`:
 | `$date`     | `2026-05-20` (pull time)          |
 | `$datetime` | `2026-05-20-14-30-00` (pull time) |
 
-`$date` and `$datetime` are injected once at pull start and available everywhere — source URLs, conditions, `replace:`, `post:`, template rendering, and `backup:`. Per-file path variables (`$path`–`$basedir`) are also available in source URLs and conditions, but only when the file entry has an explicit fixed `target:` path (not a trailing-slash directory). They are always available in `replace:`, `post:`, template rendering, and `backup:`.
+`$date` and `$datetime` are injected once at pull start and available everywhere — source URLs, conditions, `replace:`, `post:`, template rendering, and `backup:`. Per-file path variables (`$path`–`$basedir`) are also available in source URLs and conditions, but only when the file entry's map key is a fixed (non-directory) path. They are always available in `replace:`, `post:`, template rendering, and `backup:`.
 
 #### Counter pattern
 
