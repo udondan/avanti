@@ -22,10 +22,12 @@ export function resolveTargetPath(
           `Target path "${expanded}" escapes home directory "${home}".`,
         );
       }
-      if (target.endsWith('/') || target.endsWith(path.sep)) {
-        return path.resolve(expanded, relPath);
-      }
-      return expanded;
+      const homeResolved =
+        target.endsWith('/') || target.endsWith(path.sep)
+          ? path.resolve(expanded, relPath)
+          : expanded;
+      assertWithinWorkingDir(homeResolved, workingDir);
+      return homeResolved;
     }
     if (path.isAbsolute(target)) {
       const fsRoot = path.parse(workingDir).root;

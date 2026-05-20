@@ -323,6 +323,7 @@ Avanti enforces that target paths cannot escape the working directory:
 
 - **Relative targets** are resolved under the working directory. A path like `../../etc/passwd` is rejected.
 - **Absolute targets** (e.g. `/etc/hosts`) are only permitted when the working directory is `/`. If your working directory is any other path, absolute targets are an error.
+- **Home-directory targets** (`~/…`) are expanded to the home directory and then subject to the same working-directory constraint. They are only valid when the working directory is the home directory or a subdirectory of it (e.g. run `avanti` from `~` to manage dotfiles).
 
 These rules apply to `target` values in your config. Source (`src`) paths are reads-only and are not restricted.
 
