@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.23.0](https://github.com/udondan/avanti/compare/v0.22.0...v0.23.0) (2026-05-20)
+
+
+### Features
+
+* add backup field with per-file path variables and counter pattern ([#188](https://github.com/udondan/avanti/issues/188)) ([a2b53f3](https://github.com/udondan/avanti/commit/a2b53f31457f7a7656f5cb0f96e93fb2feb968b5))
+* allow target_exists: false as direct condition ([#185](https://github.com/udondan/avanti/issues/185)) ([944efc4](https://github.com/udondan/avanti/commit/944efc4af71c6e07245849396e7ed1adfe8e16ea))
+* support brace expansion in files target keys ([#189](https://github.com/udondan/avanti/issues/189)) ([010c982](https://github.com/udondan/avanti/commit/010c982112388a9e7ff991ddf40adb41e2fb2737))
+
 ## [0.22.0](https://github.com/udondan/avanti/compare/v0.21.2...v0.22.0) (2026-05-19)
 
 
