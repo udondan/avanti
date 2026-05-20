@@ -86,23 +86,29 @@ export function expandBraces(pattern: string, limit = 100): string[] {
   // Require a comma inside the braces — {foo} without a comma is left literal,
   // matching bash behaviour and avoiding accidental expansion of filenames like
   // {param} that some frameworks use.
+  //
+  // Iterative DFS (explicit stack) avoids call-stack overflow for patterns
+  // with many brace groups. Alternatives are pushed in reverse so that
+  // pop() processes them left-to-right, preserving natural ordering.
   const results: string[] = [];
-  function expand(p: string): void {
+  const stack = [pattern];
+  while (stack.length > 0) {
+    const p = stack.pop()!;
     const match = /\{([^{}]*,[^{}]*)\}/.exec(p);
     if (!match) {
       results.push(p);
       if (results.length > limit) {
         throw new Error(`brace expansion exceeds ${limit} entries`);
       }
-      return;
+      continue;
     }
     const prefix = p.slice(0, match.index);
     const suffix = p.slice(match.index + match[0].length);
-    for (const alt of match[1].split(',')) {
-      expand(prefix + alt + suffix);
+    const alts = match[1].split(',');
+    for (let i = alts.length - 1; i >= 0; i--) {
+      stack.push(prefix + alts[i] + suffix);
     }
   }
-  expand(pattern);
   return results;
 }
 
