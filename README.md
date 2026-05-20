@@ -1024,7 +1024,7 @@ files:
     backup: $dirname/$filename.bkp
 ```
 
-Backup only happens when the target file already exists. If the backup path already exists it is overwritten — use the [counter pattern](#counter-pattern) or `$datetime` when you want to keep every backup.
+Backup only happens when the target is a regular file (not a symlink or directory). If the backup path already exists it is overwritten — use the [counter pattern](#counter-pattern) or `$datetime` when you want to keep every backup.
 
 #### Path variables
 
@@ -1270,7 +1270,7 @@ files:
     replace:
       - from: GENERATED_AT
         to: $date # $date available in processors
-    post: echo "wrote $filename" >> $dirname/avanti.log # per-file vars available in post
+    post: echo wrote $filename >> $dirname/avanti.log # per-file vars available in post
     backup: $dirname/$basename.%dd.$ext # per-file vars available in backup
 ```
 
