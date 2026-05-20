@@ -32,6 +32,7 @@ import {
   Via,
 } from './types';
 import { validateVariables } from './variables';
+import { expandBraces } from './paths';
 import { fetchHttp } from './sources/http';
 import { fetchGitHub } from './sources/github';
 import { fetchGitLab } from './sources/gitlab';
@@ -308,7 +309,14 @@ export function parseConfigContent(content: string): AvantiConfig {
       }
     }
 
-    files[target] = fileEntry;
+    for (const expandedTarget of expandBraces(target)) {
+      if (expandedTarget in files) {
+        throw new Error(
+          `files["${expandedTarget}"]: duplicate target (expanded from "${target}")`,
+        );
+      }
+      files[expandedTarget] = { ...fileEntry, target: expandedTarget };
+    }
   }
 
   let backup_roots: string[] | undefined;

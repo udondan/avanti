@@ -82,6 +82,16 @@ export function buildEntryPreVars(
   return vars;
 }
 
+export function expandBraces(pattern: string): string[] {
+  const match = /\{([^{}]+)\}/.exec(pattern);
+  if (!match) return [pattern];
+  const prefix = pattern.slice(0, match.index);
+  const suffix = pattern.slice(match.index + match[0].length);
+  return match[1]
+    .split(',')
+    .flatMap((alt) => expandBraces(prefix + alt + suffix));
+}
+
 function assertWithinWorkingDir(
   resolvedPath: string,
   workingDir: string,

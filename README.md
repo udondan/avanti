@@ -387,6 +387,19 @@ files:
 
 End the target path with `/` to write a directory source as a mirror; omit the trailing slash to merge all files from the directory into a single output file (YAML/JSON auto-detected by extension, or forced with `yaml:`/`json:`).
 
+**Brace expansion** — use `{a,b,c}` in the target key to declare multiple entries from a single block. The config is equivalent to repeating the block for each alternative:
+
+```yaml
+files:
+  config/{dev,staging,prod}.yml:
+    src:
+      github:
+        repo: my-org/configs
+        file: $filename
+```
+
+This is identical to three separate entries for `config/dev.yml`, `config/staging.yml`, and `config/prod.yml`. Per-entry variables like `$filename`, `$basename`, and `$dirname` are derived from each expanded path, so they can be used directly in source fields (as above). Multiple brace groups in a single key are expanded as a cross-product: `{a,b}/{x,y}` produces four entries.
+
 | Field      | Required | Description                                                                                                                                                                                                                             |
 | ---------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `src`      | Yes      | Source (see below). May be a single source or a **list** of sources to concatenate.                                                                                                                                                     |
