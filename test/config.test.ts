@@ -2061,7 +2061,7 @@ files:
   out.txt:
     src: https://example.com/out.txt
     if:
-      target_exists: yes
+      target_exists: 1
 `);
     expect(() => parseConfigContent(fs.readFileSync(f, 'utf8'))).toThrow(
       'target_exists: must be a boolean',
