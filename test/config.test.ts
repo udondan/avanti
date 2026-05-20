@@ -2260,4 +2260,26 @@ files:
     const config = parseConfigContent(fs.readFileSync(f, 'utf8'));
     expect(Object.keys(config.files)).toEqual(['plain/path.yml']);
   });
+
+  it('leaves single-alternative brace groups (no comma) as literal keys', () => {
+    const f = writeTmp(`
+files:
+  'path/{id}':
+    src: https://example.com/file
+`);
+    const config = parseConfigContent(fs.readFileSync(f, 'utf8'));
+    expect(Object.keys(config.files)).toEqual(['path/{id}']);
+  });
+
+  it('throws when brace expansion exceeds 100 entries', () => {
+    const alts = Array.from({ length: 101 }, (_, i) => `e${i}`).join(',');
+    const f = writeTmp(`
+files:
+  'path/{${alts}}':
+    src: https://example.com/file
+`);
+    expect(() => parseConfigContent(fs.readFileSync(f, 'utf8'))).toThrow(
+      'brace expansion produces 101 entries (max 100)',
+    );
+  });
 });

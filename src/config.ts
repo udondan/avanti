@@ -313,7 +313,13 @@ export function parseConfigContent(content: string): AvantiConfig {
       }
     }
 
-    for (const expandedTarget of expandBraces(target)) {
+    const expandedTargets = expandBraces(target);
+    if (expandedTargets.length > 100) {
+      throw new Error(
+        `files["${target}"]: brace expansion produces ${expandedTargets.length} entries (max 100)`,
+      );
+    }
+    for (const expandedTarget of expandedTargets) {
       if (expandedTarget in files) {
         const parts: string[] = [];
         if (expandedTarget !== target) {

@@ -83,7 +83,10 @@ export function buildEntryPreVars(
 }
 
 export function expandBraces(pattern: string): string[] {
-  const match = /\{([^{}]+)\}/.exec(pattern);
+  // Require a comma inside the braces — {foo} without a comma is left literal,
+  // matching bash behaviour and avoiding accidental expansion of filenames like
+  // {param} that some frameworks use.
+  const match = /\{([^{}]*,[^{}]*)\}/.exec(pattern);
   if (!match) return [pattern];
   const prefix = pattern.slice(0, match.index);
   const suffix = pattern.slice(match.index + match[0].length);

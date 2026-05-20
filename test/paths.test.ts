@@ -13,8 +13,8 @@ describe('expandBraces', () => {
     ]);
   });
 
-  it('expands a single-alternative brace group', () => {
-    expect(expandBraces('some/{foo}')).toEqual(['some/foo']);
+  it('leaves a single-alternative brace group (no comma) unexpanded', () => {
+    expect(expandBraces('some/{foo}')).toEqual(['some/{foo}']);
   });
 
   it('expands multiple brace groups', () => {
