@@ -162,5 +162,28 @@ describe('atomicWrite', () => {
 
       expect(fs.readFileSync(dest, 'utf8')).toBe('new');
     });
+
+    it.skipIf(isWindows)(
+      'replaces a symlink at backupPath rather than following it',
+      () => {
+        const dest = path.join(tmpDir, 'source.txt');
+        const outside = path.join(tmpDir, 'outside.txt');
+        const backup = path.join(tmpDir, 'source.txt.bkp');
+        fs.writeFileSync(dest, 'old content', 'utf8');
+        fs.writeFileSync(outside, 'should not be touched', 'utf8');
+        fs.symlinkSync(outside, backup);
+
+        atomicWrite([
+          { targetPath: dest, content: buf('new content'), backupPath: backup },
+        ]);
+
+        // The symlink must be replaced — outside.txt must not be modified.
+        expect(fs.readFileSync(outside, 'utf8')).toBe('should not be touched');
+        // The backup path must now be a regular file containing the old content.
+        expect(fs.lstatSync(backup).isSymbolicLink()).toBe(false);
+        expect(fs.readFileSync(backup, 'utf8')).toBe('old content');
+        expect(fs.readFileSync(dest, 'utf8')).toBe('new content');
+      },
+    );
   });
 });

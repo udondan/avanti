@@ -7,7 +7,7 @@ export function resolveTargetPath(
   entry: { target?: string },
   relPath: string,
   workingDir: string,
-  vars: Variables = {},
+  vars: Variables = Object.create(null) as Variables,
 ): string {
   let resolved: string;
   const target = entry.target ? resolveVars(entry.target, vars) : undefined;
