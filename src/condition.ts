@@ -30,8 +30,8 @@ export function evaluateCondition(
     result =
       spawnSync(shell, args, { cwd: workingDir, stdio: 'ignore' }).status === 0;
   }
-  if (result && cond.target_exists === true) {
-    result = existsSync(getTargetPath());
+  if (result && cond.target_exists !== undefined) {
+    result = existsSync(getTargetPath()) === cond.target_exists;
   }
 
   return cond.not === true ? !result : result;

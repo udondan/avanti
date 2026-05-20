@@ -2031,6 +2031,43 @@ files:
     );
   });
 
+  it('parses target_exists: true in a condition', () => {
+    const f = writeTmp(`
+files:
+  out.txt:
+    src: https://example.com/out.txt
+    if:
+      target_exists: true
+`);
+    const cfg = parseConfigContent(fs.readFileSync(f, 'utf8'));
+    expect(cfg.files['out.txt']['if']).toEqual({ target_exists: true });
+  });
+
+  it('parses target_exists: false in a condition', () => {
+    const f = writeTmp(`
+files:
+  out.txt:
+    src: https://example.com/out.txt
+    if:
+      target_exists: false
+`);
+    const cfg = parseConfigContent(fs.readFileSync(f, 'utf8'));
+    expect(cfg.files['out.txt']['if']).toEqual({ target_exists: false });
+  });
+
+  it('throws on non-boolean target_exists', () => {
+    const f = writeTmp(`
+files:
+  out.txt:
+    src: https://example.com/out.txt
+    if:
+      target_exists: 1
+`);
+    expect(() => parseConfigContent(fs.readFileSync(f, 'utf8'))).toThrow(
+      'target_exists: must be a boolean',
+    );
+  });
+
   it('throws when ifAny is not an array', () => {
     const f = writeTmp(`
 files:

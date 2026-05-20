@@ -904,13 +904,13 @@ When both are present, both must pass. Each condition object may also include `n
 
 #### Condition fields
 
-| Field           | Type           | Description                                                                 |
-| --------------- | -------------- | --------------------------------------------------------------------------- |
-| `os`            | string or list | Platform must match. Values: `linux`, `mac`, `windows`. List = any matches. |
-| `exists`        | string         | Path (file or directory) must exist. Variables are resolved.                |
-| `exec`          | string         | Shell command must exit with code `0`.                                      |
-| `target_exists` | `true`         | Skip entry if the target path does not already exist (update-only guard).   |
-| `not`           | boolean        | `true` — invert the result of all checks in this condition object.          |
+| Field           | Type           | Description                                                                        |
+| --------------- | -------------- | ---------------------------------------------------------------------------------- |
+| `os`            | string or list | Platform must match. Values: `linux`, `mac`, `windows`. List = any matches.        |
+| `exists`        | string         | Path (file or directory) must exist. Variables are resolved.                       |
+| `exec`          | string         | Shell command must exit with code `0`.                                             |
+| `target_exists` | boolean        | `true` — pass only if target exists. `false` — pass only if target does not exist. |
+| `not`           | boolean        | `true` — invert the result of all checks in this condition object.                 |
 
 #### Examples
 
@@ -989,8 +989,7 @@ files:
         # Team Configuration
         Edit this file to customize your team settings.
     if:
-      target_exists: true
-      not: true
+      target_exists: false
 
   # Always rebuilt. On first run it picks up the default template above.
   # After the user edits team.md, it picks up their version.
@@ -1005,7 +1004,7 @@ files:
 
 On **first run**: `team.md` does not exist, so the `raw:` entry creates it. `handbook.md` sources from `team.md` and picks up the default template content — even though `team.md` has not been written to disk yet.
 
-On **subsequent runs**: `team.md` already exists, so the `target_exists: true / not: true` condition skips it. `handbook.md` reads `team.md` from disk and picks up any changes the user made.
+On **subsequent runs**: `team.md` already exists, so the `target_exists: false` condition skips it. `handbook.md` reads `team.md` from disk and picks up any changes the user made.
 
 **Automatic ordering** — avanti resolves dependencies between entries and processes them in the correct order automatically. You can define entries in any order in the config; if entry B sources from entry A's target path, A is always processed before B.
 
@@ -1594,8 +1593,7 @@ files:
           "semi": false
         }
     if:
-      target_exists: true
-      not: true
+      target_exists: false
 
   # Always rebuilt. Sources org defaults from GitHub, then merges in local overrides.
   ./.prettierrc.json:
