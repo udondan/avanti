@@ -315,7 +315,7 @@ async function runFetchLoop(
         const diff = computeDiff(targetPath!, content);
         allDiffs.push(diff);
         const backupPath =
-          entry.backup && diff.hasChanges
+          entry.backup && diff.hasChanges && !diff.isNew
             ? resolveBackupPath(
                 entry.backup,
                 targetPath!,

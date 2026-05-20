@@ -54,7 +54,10 @@ export function atomicWrite(
     // Phase 2: all staging succeeded — now create backups. Any failure here
     // aborts before any destination file is touched.
     for (const t of targets) {
-      if (t.backupPath && fs.existsSync(t.targetPath)) {
+      if (
+        t.backupPath &&
+        fs.lstatSync(t.targetPath, { throwIfNoEntry: false })?.isFile()
+      ) {
         const backupDir = path.dirname(t.backupPath);
         if (!fs.existsSync(backupDir)) {
           fs.mkdirSync(backupDir, { recursive: true });
