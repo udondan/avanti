@@ -1028,22 +1028,7 @@ Backup only happens when the target is a regular file (not a symlink or director
 
 #### Path variables
 
-The following variables are available in `backup:` patterns and in all processors (`replace:`, `post:`, template rendering).
-
-Given target path `/home/user/project/config.yaml`:
-
-| Variable    | Value                             |
-| ----------- | --------------------------------- |
-| `$path`     | `/home/user/project/config.yaml`  |
-| `$filename` | `config.yaml`                     |
-| `$basename` | `config`                          |
-| `$ext`      | `yaml` (no leading dot)           |
-| `$dirname`  | `/home/user/project`              |
-| `$basedir`  | `project`                         |
-| `$date`     | `2026-05-20` (pull time)          |
-| `$datetime` | `2026-05-20-14-30-00` (pull time) |
-
-`$date` and `$datetime` are injected once at pull start and available everywhere — source URLs, conditions, `replace:`, `post:`, template rendering, and `backup:`. Per-file path variables (`$path`–`$basedir`) are also available in source URLs and conditions, but only when the file entry's map key is a fixed (non-directory) path. They are always available in `replace:`, `post:`, template rendering, and `backup:`.
+All [system-injected variables](#system-injected-variables) — per-file path variables (`$path`, `$filename`, `$basename`, `$ext`, `$dirname`, `$basedir`) and pull-time variables (`$date`, `$datetime`) — are available in `backup:` patterns.
 
 #### Counter pattern
 
@@ -1243,35 +1228,66 @@ When the config is specified as a remote spec (e.g. `--config github:org/repo:.a
 
 In addition to `$self` and `$latest`, avanti injects several variables automatically at the start of every run. These names are reserved and cannot be used in `variables:`.
 
-**Pull-time variables** — available everywhere (source URLs, conditions, `replace:`, `post:`, template rendering, `backup:`):
+**Per-file path variables** — avanti derives the following variables from each file entry's resolved target path. They can be used in source URLs, `ref:`, conditions, `replace:`, `post:`, template rendering, and `backup:` patterns.
+
+Example with working directory `/home/user/project` and map key `configs/app.yaml`:
+
+| Variable    | Value                                 |
+| ----------- | ------------------------------------- |
+| `$path`     | `/home/user/project/configs/app.yaml` |
+| `$filename` | `app.yaml`                            |
+| `$basename` | `app`                                 |
+| `$ext`      | `yaml` (no leading dot)               |
+| `$dirname`  | `/home/user/project/configs`          |
+| `$basedir`  | `configs`                             |
+
+> **Availability in source URLs and conditions:** per-file path variables are only resolved before the fetch when the map key is a fixed (non-directory) path. They are always available in processors (`replace:`, `post:`, template rendering) and `backup:`.
+
+```yaml
+variables:
+  env: production
+
+files:
+  # $filename in source URL — fetches each file by its own target name
+  configs/nginx.conf:
+    src: github:org/config-store/$env/$filename # → …/production/nginx.conf
+
+  # $basename strips the extension — useful when the remote has no extension
+  services/auth.yaml:
+    src: https://config-api.example.com/v1/$basename # → …/v1/auth
+
+  # $path in a condition — only overwrite if the local file already exists
+  generated/report.json:
+    src:
+      exec: generate-report.sh
+    if:
+      exists: $path
+
+  # $dirname in a processor — log which directory was updated
+  app/config.yaml:
+    src: github:org/repo/app/config.yaml
+    post: echo updated $dirname >> pull.log
+```
+
+**Pull-time variables** — injected once at the start of every run and available everywhere (source URLs, conditions, `replace:`, `post:`, template rendering, `backup:`):
 
 | Variable    | Value                                   | Example               |
 | ----------- | --------------------------------------- | --------------------- |
 | `$date`     | Current date `YYYY-MM-DD`               | `2026-05-20`          |
 | `$datetime` | Current date+time `YYYY-MM-DD-HH-mm-ss` | `2026-05-20-14-30-00` |
 
-**Per-file path variables** — derived from each file entry's resolved target path. Available in `replace:`, `post:`, template rendering, and `backup:`. Also available in source URLs and conditions when the entry has a fixed (non-directory) map key as its target path.
-
-Example with working directory `/home/user/project` and map key `config.yaml`:
-
-| Variable    | Value                            |
-| ----------- | -------------------------------- |
-| `$path`     | `/home/user/project/config.yaml` |
-| `$filename` | `config.yaml`                    |
-| `$basename` | `config`                         |
-| `$ext`      | `yaml` (no leading dot)          |
-| `$dirname`  | `/home/user/project`             |
-| `$basedir`  | `project`                        |
-
 ```yaml
 files:
-  config.yaml: # map key is the target path, resolved against workingDir
-    src: https://api.example.com/$filename?ts=$datetime # per-file vars + $datetime in source URLs
+  # Fetch today's report by date
+  reports/daily.json:
+    src: https://reports.example.com/$date/summary.json
+
+  # Stamp the pull time into fetched content
+  version.txt:
+    src: github:org/repo/version.txt
     replace:
       - from: GENERATED_AT
-        to: $date # $date available in processors
-    post: echo wrote $filename >> $dirname/avanti.log # per-file vars available in post
-    backup: $dirname/$basename.%dd.$ext # per-file vars available in backup
+        to: $datetime
 ```
 
 ### $self — Self-managing Config
