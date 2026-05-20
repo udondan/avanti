@@ -8,7 +8,7 @@ export interface Condition {
   os?: OsPlatform | OsPlatform[];
   exists?: string;
   exec?: string;
-  target_exists?: true;
+  target_exists?: boolean;
   not?: boolean;
 }
 

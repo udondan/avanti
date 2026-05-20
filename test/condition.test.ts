@@ -150,6 +150,28 @@ describe('evaluateCondition', () => {
         ),
       ).toBe(false);
     });
+
+    it('passes when target does not exist and target_exists is false', () => {
+      expect(
+        evaluateCondition(
+          { target_exists: false },
+          () => missingPath,
+          tmpDir,
+          {},
+        ),
+      ).toBe(true);
+    });
+
+    it('fails when target exists and target_exists is false', () => {
+      expect(
+        evaluateCondition(
+          { target_exists: false },
+          () => existingFile,
+          tmpDir,
+          {},
+        ),
+      ).toBe(false);
+    });
   });
 
   describe('not', () => {
