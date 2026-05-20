@@ -153,7 +153,7 @@ export function resolveBackupCounter(pattern: string): string {
   for (let i = 1; i <= max; i++) {
     const padded = String(i).padStart(width, '0');
     const candidate = pattern.replace(token, padded);
-    if (!fs.existsSync(candidate)) return candidate;
+    if (!fs.lstatSync(candidate, { throwIfNoEntry: false })) return candidate;
   }
 
   throw new Error(

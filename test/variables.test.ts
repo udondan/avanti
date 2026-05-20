@@ -195,13 +195,14 @@ describe('validateVariables', () => {
 
 describe('buildFileVars', () => {
   it('derives all path variables from a target path', () => {
-    const p = '/home/user/project/config.yaml';
+    const dir = path.join(os.tmpdir(), 'project');
+    const p = path.join(dir, 'config.yaml');
     const v = buildFileVars(p);
     expect(v.path).toBe(p);
     expect(v.filename).toBe('config.yaml');
     expect(v.basename).toBe('config');
     expect(v.ext).toBe('yaml');
-    expect(v.dirname).toBe('/home/user/project');
+    expect(v.dirname).toBe(dir);
     expect(v.basedir).toBe('project');
   });
 
