@@ -95,14 +95,14 @@ export function buildFileVars(targetPath: string): Variables {
   const ext = path.extname(targetPath).replace(/^\./, '');
   const basename = ext ? filename.slice(0, -(ext.length + 1)) : filename;
   const dirname = path.dirname(targetPath);
-  return {
+  return Object.assign(Object.create(null) as Variables, {
     path: targetPath,
     filename,
     basename,
     ext,
     dirname,
     basedir: path.basename(dirname),
-  };
+  });
 }
 
 // Build date/datetime variables from a given Date (defaults to now).
@@ -119,7 +119,7 @@ export function buildDateVars(now: Date = new Date()): Variables {
     pad(now.getMinutes()),
     pad(now.getSeconds()),
   ].join('-');
-  return { date, datetime };
+  return Object.assign(Object.create(null) as Variables, { date, datetime });
 }
 
 // Counter token pattern: one or more 'd' characters preceded by '%'.
@@ -176,6 +176,12 @@ function expandRoot(root: string): string {
   return path.resolve(root);
 }
 
+// Normalize a path for containment checks: on Windows paths are
+// case-insensitive, so fold to lowercase before comparing.
+function normalizePath(p: string): string {
+  return process.platform === 'win32' ? p.toLowerCase() : p;
+}
+
 // Assert that a resolved backup path is allowed given the security model:
 // - Paths within workingDir are always allowed.
 // - All other paths must fall under a declared backup_roots entry.
@@ -184,17 +190,17 @@ export function assertBackupPathAllowed(
   workingDir: string,
   backupRoots: string[],
 ): void {
-  const wdPrefix = workingDir.endsWith(path.sep)
-    ? workingDir
-    : workingDir + path.sep;
-  if (backupPath === workingDir || backupPath.startsWith(wdPrefix)) return;
+  const bp = normalizePath(backupPath);
+  const wd = normalizePath(workingDir);
+  const wdPrefix = wd.endsWith(path.sep) ? wd : wd + path.sep;
+  if (bp === wd || bp.startsWith(wdPrefix)) return;
 
   for (const root of backupRoots) {
-    const expanded = expandRoot(root);
+    const expanded = normalizePath(expandRoot(root));
     const rootPrefix = expanded.endsWith(path.sep)
       ? expanded
       : expanded + path.sep;
-    if (backupPath === expanded || backupPath.startsWith(rootPrefix)) return;
+    if (bp === expanded || bp.startsWith(rootPrefix)) return;
   }
 
   throw new Error(
