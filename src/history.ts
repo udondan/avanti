@@ -59,6 +59,11 @@ function defaultBaseDir(): string {
   );
 }
 
+function normalizeDir(p: string): string {
+  const norm = path.normalize(p);
+  return process.platform === 'win32' ? norm.toLowerCase() : norm;
+}
+
 function sha256(input: string): string {
   return computeContentSha256(input);
 }
@@ -362,6 +367,36 @@ export class HistoryManager {
 
   hasHistory(): boolean {
     return fs.existsSync(this.pullsLogPath);
+  }
+
+  static findByWorkingDir(workingDir: string): HistoryManager[] {
+    const projectsDir = path.join(defaultBaseDir(), 'projects');
+    if (!fs.existsSync(projectsDir)) return [];
+
+    let slugs: string[];
+    try {
+      slugs = fs.readdirSync(projectsDir);
+    } catch {
+      return [];
+    }
+
+    const results: HistoryManager[] = [];
+    for (const slug of slugs) {
+      const metaPath = path.join(projectsDir, slug, 'meta.json');
+      if (!fs.existsSync(metaPath)) continue;
+      try {
+        const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8')) as {
+          configFile: string;
+          workingDir: string;
+        };
+        if (normalizeDir(meta.workingDir) === normalizeDir(workingDir)) {
+          results.push(new HistoryManager(meta.configFile, meta.workingDir));
+        }
+      } catch {
+        // skip corrupt meta
+      }
+    }
+    return results;
   }
 
   getInsertedFragment(

@@ -8,29 +8,43 @@ export function logCommand(): Command {
     .description('Show pull history for the current project')
     .argument('[file]', 'show version history for a specific file')
     .action((file: string | undefined, _options: unknown, cmd: Command) => {
-      const configPath = resolveConfigPath(
-        cmd.parent?.opts().config as string | undefined,
-      );
+      const rawConfig = cmd.parent?.opts().config as string | undefined;
       const rawWorkingDir = cmd.parent?.opts().workingDir as string | undefined;
       const workingDir = rawWorkingDir
         ? path.resolve(rawWorkingDir)
         : process.cwd();
 
-      const history = new HistoryManager(
-        normalizeConfigKey(configPath),
-        workingDir,
-      );
+      let managers: HistoryManager[];
+      if (rawConfig !== undefined) {
+        const configPath = resolveConfigPath(rawConfig);
+        managers = [
+          new HistoryManager(normalizeConfigKey(configPath), workingDir),
+        ];
+      } else {
+        managers = HistoryManager.findByWorkingDir(workingDir);
+        if (managers.length === 0) {
+          // No history found for this workingDir; create an empty manager so
+          // the "No history recorded yet." message is shown consistently.
+          const configPath = resolveConfigPath(undefined);
+          managers = [
+            new HistoryManager(normalizeConfigKey(configPath), workingDir),
+          ];
+        }
+      }
 
       if (file !== undefined) {
-        showFileHistory(history, file, workingDir);
+        showFileHistory(managers, file, workingDir);
       } else {
-        showPullHistory(history);
+        showPullHistory(managers);
       }
     });
 }
 
-function showPullHistory(history: HistoryManager): void {
-  const pulls = history.listPulls();
+function showPullHistory(managers: HistoryManager[]): void {
+  const pulls = managers
+    .flatMap((m) => m.listPulls())
+    .sort((a, b) => b.timestamp.localeCompare(a.timestamp));
+
   if (pulls.length === 0) {
     console.log('No history recorded yet.');
     return;
@@ -63,7 +77,7 @@ function showPullHistory(history: HistoryManager): void {
 }
 
 function showFileHistory(
-  history: HistoryManager,
+  managers: HistoryManager[],
   filePath: string,
   workingDir: string,
 ): void {
@@ -71,51 +85,59 @@ function showFileHistory(
     ? filePath
     : path.resolve(workingDir, filePath);
 
-  const fileHistory = history.getFileHistory(absolutePath);
-  if (!fileHistory) {
-    console.log(`No history for ${absolutePath}.`);
-    return;
-  }
+  const sortedManagers = [...managers].sort((a, b) => {
+    const aTs = a.listPulls()[0]?.timestamp ?? '';
+    const bTs = b.listPulls()[0]?.timestamp ?? '';
+    return bTs.localeCompare(aTs);
+  });
 
-  console.log(`${absolutePath}\n`);
+  for (const history of sortedManagers) {
+    const fileHistory = history.getFileHistory(absolutePath);
+    if (!fileHistory) continue;
 
-  const pulls = history.listPulls();
-  const pullsById = new Map<string, PullLogEntry>(
-    pulls.map((p) => [p.pullId, p]),
-  );
+    console.log(`${absolutePath}\n`);
 
-  const versions = [...fileHistory.versions].reverse();
-  for (const v of versions) {
-    const vLabel = `v${v.version}`;
-    const ts = v.pulledAt
-      ? formatTimestamp(v.pulledAt)
-      : '—                         ';
-    const pullRef = v.pullId ? `pull ${v.pullId.slice(0, 8)}` : '—        ';
-    let suffix = '';
-    if (v.version === fileHistory.currentVersion) suffix = '  (current)';
-    if (v.isOriginal) suffix = '  (original, before avanti)';
-    console.log(`  ${vLabel.padEnd(4)}  ${ts}  ${pullRef}${suffix}`);
+    const pulls = history.listPulls();
+    const pullsById = new Map<string, PullLogEntry>(
+      pulls.map((p) => [p.pullId, p]),
+    );
 
-    if (v.pullId) {
-      const pullEntry = pullsById.get(v.pullId);
-      const fileRef = pullEntry?.files.find(
-        (f) => f.absolutePath === absolutePath && f.version === v.version,
-      );
-      if (fileRef?.sources && fileRef.sources.length > 0) {
-        for (const s of fileRef.sources) {
-          const shaShort = s.observedSha.slice(0, 16);
-          if (s.accepted && s.expectedSha) {
-            const prevShort = s.expectedSha.slice(0, 16);
-            console.log(
-              `         ${s.label}  sha:${shaShort}  ⚠ accepted (was: ${prevShort})`,
-            );
-          } else {
-            console.log(`         ${s.label}  sha:${shaShort}`);
+    const versions = [...fileHistory.versions].reverse();
+    for (const v of versions) {
+      const vLabel = `v${v.version}`;
+      const ts = v.pulledAt
+        ? formatTimestamp(v.pulledAt)
+        : '—                         ';
+      const pullRef = v.pullId ? `pull ${v.pullId.slice(0, 8)}` : '—        ';
+      let suffix = '';
+      if (v.version === fileHistory.currentVersion) suffix = '  (current)';
+      if (v.isOriginal) suffix = '  (original, before avanti)';
+      console.log(`  ${vLabel.padEnd(4)}  ${ts}  ${pullRef}${suffix}`);
+
+      if (v.pullId) {
+        const pullEntry = pullsById.get(v.pullId);
+        const fileRef = pullEntry?.files.find(
+          (f) => f.absolutePath === absolutePath && f.version === v.version,
+        );
+        if (fileRef?.sources && fileRef.sources.length > 0) {
+          for (const s of fileRef.sources) {
+            const shaShort = s.observedSha.slice(0, 16);
+            if (s.accepted && s.expectedSha) {
+              const prevShort = s.expectedSha.slice(0, 16);
+              console.log(
+                `         ${s.label}  sha:${shaShort}  ⚠ accepted (was: ${prevShort})`,
+              );
+            } else {
+              console.log(`         ${s.label}  sha:${shaShort}`);
+            }
           }
         }
       }
     }
+    return;
   }
+
+  console.log(`No history for ${absolutePath}.`);
 }
 
 function formatTimestamp(iso: string): string {
