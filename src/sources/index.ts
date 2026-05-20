@@ -12,7 +12,7 @@ import {
   Variables,
 } from '../types';
 import { evaluateConditions } from '../condition';
-import { resolveTargetPath } from '../diff';
+import { resolveTargetPath } from '../paths';
 import { resolveVars, resolveVarsShellSafe } from '../variables';
 import { fetchHttp, inferFilenameFromUrl } from './http';
 import { fetchLocal } from './local';

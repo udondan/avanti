@@ -2,12 +2,8 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { beforeEach, afterEach, describe, it, expect } from 'vitest';
-import {
-  computeDiff,
-  computeDeleteDiff,
-  formatDiff,
-  resolveTargetPath,
-} from '../src/diff';
+import { computeDiff, computeDeleteDiff, formatDiff } from '../src/diff';
+import { resolveTargetPath } from '../src/paths';
 
 // Platform-agnostic working directory and root for tests.
 // os.tmpdir() is a valid absolute path on every OS.

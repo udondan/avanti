@@ -16,14 +16,9 @@ import { applyReplace } from '../processors/replace';
 import { applyPost } from '../processors/post';
 import { applyInsertMode } from '../processors/insert';
 import { isBinary } from '../binary';
-import {
-  buildEntryPreVars,
-  computeDiff,
-  computeDeleteDiff,
-  printDiffs,
-  resolveTargetPath,
-} from '../diff';
+import { computeDiff, computeDeleteDiff, printDiffs } from '../diff';
 import { FileDiff } from '../diff';
+import { buildEntryPreVars, resolveTargetPath } from '../paths';
 import { AvantiConfig, FileEntry, Variables } from '../types';
 import { HistoryManager } from '../history';
 import { resolveVariableSpec } from '../variables-remote';

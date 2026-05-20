@@ -8,7 +8,7 @@ import {
 } from '../config';
 import { evaluateConditions } from '../condition';
 import { fetchSource } from '../sources';
-import { buildEntryPreVars, resolveTargetPath } from '../diff';
+import { buildEntryPreVars, resolveTargetPath } from '../paths';
 import { writeUpdatedShas } from '../config-writeback';
 import { resolveVariableSpec } from '../variables-remote';
 import { buildDateVars } from '../variables';
