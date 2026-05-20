@@ -81,16 +81,30 @@ describe('resolveTargetPath', () => {
     ).toThrow('Undefined variable: $missing');
   });
 
-  it('expands ~/ target to home directory', () => {
-    expect(
+  it('throws when ~/ target is outside workingDir', () => {
+    expect(() =>
       resolveTargetPath({ target: '~/.opencode/AGENTS.md' }, 'ignored', wdir),
-    ).toBe(path.join(os.homedir(), '.opencode', 'AGENTS.md'));
+    ).toThrow('escapes working directory');
   });
 
-  it('expands ~/ directory target with relPath', () => {
-    expect(
+  it('throws when ~/ directory target is outside workingDir', () => {
+    expect(() =>
       resolveTargetPath({ target: '~/.config/avanti/' }, 'foo.yml', wdir),
-    ).toBe(path.join(os.homedir(), '.config', 'avanti', 'foo.yml'));
+    ).toThrow('escapes working directory');
+  });
+
+  it('allows ~/ target when workingDir is home directory', () => {
+    const home = os.homedir();
+    expect(
+      resolveTargetPath({ target: '~/.opencode/AGENTS.md' }, 'ignored', home),
+    ).toBe(path.join(home, '.opencode', 'AGENTS.md'));
+  });
+
+  it('allows ~/ directory target when workingDir is home directory', () => {
+    const home = os.homedir();
+    expect(
+      resolveTargetPath({ target: '~/.config/avanti/' }, 'foo.yml', home),
+    ).toBe(path.join(home, '.config', 'avanti', 'foo.yml'));
   });
 
   it('throws when ~/ target escapes home directory via ..', () => {
