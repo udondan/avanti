@@ -2214,16 +2214,27 @@ files:
     expect(config.files['cfg/prod.yml'].mode).toBe('0600');
   });
 
-  it('throws on duplicate targets caused by expansion', () => {
+  it('throws on duplicate targets caused by expansion and includes origin key', () => {
     const f = writeTmp(`
 files:
-  path/{foo,bar}:
-    src: https://example.com/one
   path/foo:
+    src: https://example.com/one
+  path/{foo,bar}:
     src: https://example.com/two
 `);
     expect(() => parseConfigContent(fs.readFileSync(f, 'utf8'))).toThrow(
-      'files["path/foo"]: duplicate target',
+      'files["path/foo"]: duplicate target (expanded from "path/{foo,bar}")',
+    );
+  });
+
+  it('throws on duplicate within the same brace expansion and includes origin key', () => {
+    const f = writeTmp(`
+files:
+  'path/{foo,foo}':
+    src: https://example.com/file
+`);
+    expect(() => parseConfigContent(fs.readFileSync(f, 'utf8'))).toThrow(
+      'files["path/foo"]: duplicate target (expanded from "path/{foo,foo}")',
     );
   });
 

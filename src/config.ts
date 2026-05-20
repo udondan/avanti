@@ -311,8 +311,10 @@ export function parseConfigContent(content: string): AvantiConfig {
 
     for (const expandedTarget of expandBraces(target)) {
       if (expandedTarget in files) {
+        const suffix =
+          expandedTarget !== target ? ` (expanded from "${target}")` : '';
         throw new Error(
-          `files["${expandedTarget}"]: duplicate target (expanded from "${target}")`,
+          `files["${expandedTarget}"]: duplicate target${suffix}`,
         );
       }
       files[expandedTarget] = { ...fileEntry, target: expandedTarget };
