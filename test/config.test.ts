@@ -2214,7 +2214,7 @@ files:
     expect(config.files['cfg/prod.yml'].mode).toBe('0600');
   });
 
-  it('throws on duplicate targets caused by expansion and includes origin key', () => {
+  it('throws on duplicate: explicit key first, brace key second — shows expanded-from', () => {
     const f = writeTmp(`
 files:
   path/foo:
@@ -2224,6 +2224,19 @@ files:
 `);
     expect(() => parseConfigContent(fs.readFileSync(f, 'utf8'))).toThrow(
       'files["path/foo"]: duplicate target (expanded from "path/{foo,bar}")',
+    );
+  });
+
+  it('throws on duplicate: brace key first, explicit key second — shows existing-entry origin', () => {
+    const f = writeTmp(`
+files:
+  path/{foo,bar}:
+    src: https://example.com/one
+  path/foo:
+    src: https://example.com/two
+`);
+    expect(() => parseConfigContent(fs.readFileSync(f, 'utf8'))).toThrow(
+      'files["path/foo"]: duplicate target (existing entry expanded from "path/{foo,bar}")',
     );
   });
 

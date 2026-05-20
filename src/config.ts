@@ -221,6 +221,10 @@ export function parseConfigContent(content: string): AvantiConfig {
     string,
     FileEntry
   >;
+  const fileOrigins: Record<string, string> = Object.create(null) as Record<
+    string,
+    string
+  >;
 
   for (const [target, entry] of Object.entries(filesRaw)) {
     if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
@@ -311,13 +315,23 @@ export function parseConfigContent(content: string): AvantiConfig {
 
     for (const expandedTarget of expandBraces(target)) {
       if (expandedTarget in files) {
-        const suffix =
-          expandedTarget !== target ? ` (expanded from "${target}")` : '';
+        const parts: string[] = [];
+        if (expandedTarget !== target) {
+          parts.push(`expanded from "${target}"`);
+        }
+        const existingOrigin = fileOrigins[expandedTarget];
+        if (existingOrigin !== undefined && existingOrigin !== target) {
+          parts.push(`existing entry expanded from "${existingOrigin}"`);
+        }
+        const suffix = parts.length > 0 ? ` (${parts.join('; ')})` : '';
         throw new Error(
           `files["${expandedTarget}"]: duplicate target${suffix}`,
         );
       }
       files[expandedTarget] = { ...fileEntry, target: expandedTarget };
+      if (expandedTarget !== target) {
+        fileOrigins[expandedTarget] = target;
+      }
     }
   }
 
