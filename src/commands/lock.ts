@@ -8,11 +8,10 @@ import {
 } from '../config';
 import { evaluateConditions } from '../condition';
 import { fetchSource } from '../sources';
-import { resolveTargetPath } from '../diff';
+import { buildEntryPreVars, resolveTargetPath } from '../diff';
 import { writeUpdatedShas } from '../config-writeback';
 import { resolveVariableSpec } from '../variables-remote';
-import { buildDateVars, buildFileVars, resolveVars } from '../variables';
-import { Variables } from '../types';
+import { buildDateVars } from '../variables';
 
 export function lockCommand(): Command {
   return new Command('lock')
@@ -61,30 +60,7 @@ export function lockCommand(): Command {
       for (const [key, entry] of Object.entries(config.files)) {
         try {
           const isSelf = key === SELF_KEY;
-          let preVars: Variables = vars;
-          if (!isSelf && entry.target) {
-            try {
-              const resolvedTargetStr = resolveVars(entry.target, vars);
-              if (
-                !resolvedTargetStr.endsWith('/') &&
-                !resolvedTargetStr.endsWith(path.sep)
-              ) {
-                const fixedTarget = resolveTargetPath(
-                  entry,
-                  '',
-                  workingDir,
-                  vars,
-                );
-                preVars = Object.assign(
-                  Object.create(null) as Variables,
-                  vars,
-                  buildFileVars(fixedTarget),
-                );
-              }
-            } catch {
-              // target unresolvable — leave preVars as global vars
-            }
-          }
+          const preVars = buildEntryPreVars(entry, isSelf, workingDir, vars);
           if (
             !evaluateConditions(
               entry['if'],

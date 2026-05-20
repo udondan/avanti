@@ -3,8 +3,8 @@ import * as os from 'os';
 import * as path from 'path';
 import { createTwoFilesPatch } from 'diff';
 import chalk from 'chalk';
-import { Variables } from './types';
-import { resolveVars } from './variables';
+import { FileEntry, Variables } from './types';
+import { buildFileVars, resolveVars } from './variables';
 import { isBinary } from './binary';
 
 export interface FileDiff {
@@ -158,6 +158,36 @@ export function resolveTargetPath(
 
   assertWithinWorkingDir(resolved, workingDir);
   return resolved;
+}
+
+// Build pre-fetch vars for a file entry: merges per-file path vars into the
+// global vars when the entry has a fixed (non-directory) target path. Used by
+// pull, diff, and lock so that $path/$filename/etc. are available in source
+// URLs and conditions before the fetch happens.
+export function buildEntryPreVars(
+  entry: FileEntry,
+  isSelf: boolean,
+  workingDir: string,
+  vars: Variables,
+): Variables {
+  if (isSelf || !entry.target) return vars;
+  try {
+    const resolvedTargetStr = resolveVars(entry.target, vars);
+    if (
+      !resolvedTargetStr.endsWith('/') &&
+      !resolvedTargetStr.endsWith(path.sep)
+    ) {
+      const fixedTarget = resolveTargetPath(entry, '', workingDir, vars);
+      return Object.assign(
+        Object.create(null) as Variables,
+        vars,
+        buildFileVars(fixedTarget),
+      );
+    }
+  } catch {
+    // target unresolvable — leave preVars as global vars
+  }
+  return vars;
 }
 
 function assertWithinWorkingDir(
