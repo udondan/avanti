@@ -11,7 +11,8 @@ import { fetchSource } from '../sources';
 import { resolveTargetPath } from '../diff';
 import { writeUpdatedShas } from '../config-writeback';
 import { resolveVariableSpec } from '../variables-remote';
-import { buildDateVars } from '../variables';
+import { buildDateVars, buildFileVars } from '../variables';
+import { Variables } from '../types';
 
 export function lockCommand(): Command {
   return new Command('lock')
@@ -59,25 +60,44 @@ export function lockCommand(): Command {
 
       for (const [key, entry] of Object.entries(config.files)) {
         try {
+          const isSelf = key === SELF_KEY;
+          let preVars: Variables = vars;
+          if (!isSelf && entry.target && !entry.target.endsWith('/')) {
+            try {
+              const fixedTarget = resolveTargetPath(
+                entry,
+                '',
+                workingDir,
+                vars,
+              );
+              preVars = Object.assign(
+                Object.create(null) as Variables,
+                vars,
+                buildFileVars(fixedTarget),
+              );
+            } catch {
+              // target unresolvable — leave preVars as global vars
+            }
+          }
           if (
             !evaluateConditions(
               entry['if'],
               entry.ifAny,
               () =>
-                key === SELF_KEY
+                isSelf
                   ? configPath
                   : resolveTargetPath(entry, '', workingDir, vars),
               workingDir,
-              vars,
+              preVars,
             )
           )
             continue;
           const result = await fetchSource(
             entry,
             workingDir,
-            vars,
+            preVars,
             undefined,
-            key === SELF_KEY ? () => configPath : undefined,
+            isSelf ? () => configPath : undefined,
           );
           remoteSourceCount += result.sourceRecords.length;
           for (const rec of result.sourceRecords) {

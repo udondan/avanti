@@ -245,7 +245,7 @@ export function resolveBackupPath(
     resolved = path.resolve(resolved);
   }
 
-  if (resolved === path.resolve(targetPath)) {
+  if (normalizePath(resolved) === normalizePath(path.resolve(targetPath))) {
     throw new Error(
       `backup path resolves to the target file itself: "${resolved}"`,
     );
