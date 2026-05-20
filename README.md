@@ -1028,7 +1028,7 @@ Backup only happens when the target file already exists. If the backup path alre
 
 #### Path variables
 
-The following variables are available in `backup:` patterns and in all processors (`replace:`, `post:`, template rendering). Per-file path variables (`$path`–`$basedir`) require a deterministic `target:` when used in source URLs or conditions (i.e. an explicit path, not a trailing-slash directory).
+The following variables are available in `backup:` patterns and in all processors (`replace:`, `post:`, template rendering).
 
 Given `target: /home/user/project/config.yaml`:
 
@@ -1043,7 +1043,7 @@ Given `target: /home/user/project/config.yaml`:
 | `$date`     | `2026-05-20` (pull time)          |
 | `$datetime` | `2026-05-20-14-30-00` (pull time) |
 
-`$date` and `$datetime` are injected once at pull start and available everywhere — source URLs, conditions, `replace:`, `post:`, template rendering, and `backup:`.
+`$date` and `$datetime` are injected once at pull start and available everywhere — source URLs, conditions, `replace:`, `post:`, template rendering, and `backup:`. Per-file path variables (`$path`–`$basedir`) are resolved after sources are fetched and are available only in `replace:`, `post:`, template rendering, and `backup:` — not in source URLs or conditions.
 
 #### Counter pattern
 
@@ -1250,7 +1250,7 @@ In addition to `$self` and `$latest`, avanti injects several variables automatic
 | `$date`     | Current date `YYYY-MM-DD`               | `2026-05-20`          |
 | `$datetime` | Current date+time `YYYY-MM-DD-HH-mm-ss` | `2026-05-20-14-30-00` |
 
-**Per-file path variables** — derived from each file entry's resolved target path. Available in `replace:`, `post:`, template rendering, and `backup:`. Also available in source URLs and conditions when `target:` is set to an explicit path (not a trailing-slash directory).
+**Per-file path variables** — derived from each file entry's resolved target path. Available in `replace:`, `post:`, template rendering, and `backup:`. They are resolved after sources are fetched so they are **not** available in source URLs or conditions.
 
 Given `target: /home/user/project/config.yaml`:
 
@@ -1266,12 +1266,12 @@ Given `target: /home/user/project/config.yaml`:
 ```yaml
 files:
   config.yaml:
-    src: https://api.example.com/config?name=$filename&ts=$datetime
+    src: https://api.example.com/config?ts=$datetime # $datetime available in source URLs
     replace:
       - from: GENERATED_AT
-        to: $date
-    post: echo "wrote $filename" >> $dirname/avanti.log
-    backup: $dirname/$basename.%dd.$ext
+        to: $date # $date available in processors
+    post: echo "wrote $filename" >> $dirname/avanti.log # per-file vars available in post
+    backup: $dirname/$basename.%dd.$ext # per-file vars available in backup
 ```
 
 ### $self — Self-managing Config

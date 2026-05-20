@@ -299,6 +299,12 @@ describe('resolveBackupCounter', () => {
       'at most one counter token',
     );
   });
+
+  it('throws when counter width exceeds maximum (> 3)', () => {
+    expect(() =>
+      resolveBackupCounter(path.join(tmpDir, 'f.%dddd.bkp')),
+    ).toThrow('exceeds maximum');
+  });
 });
 
 describe('assertBackupPathAllowed', () => {
@@ -397,6 +403,13 @@ describe('resolveBackupPath', () => {
     expect(() =>
       resolveBackupPath('/etc/cfg.bkp', targetPath, tmpDir, {}, []),
     ).toThrow('outside the working directory');
+  });
+
+  it('throws when backup path resolves to the target file itself', () => {
+    const targetPath = path.join(tmpDir, 'cfg.yaml');
+    expect(() =>
+      resolveBackupPath('$path', targetPath, tmpDir, {}, []),
+    ).toThrow('resolves to the target file itself');
   });
 
   it('allows an absolute path under a declared backup_root', () => {

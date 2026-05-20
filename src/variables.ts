@@ -123,13 +123,15 @@ export function buildDateVars(now: Date = new Date()): Variables {
 }
 
 // Counter token pattern: one or more 'd' characters preceded by '%'.
+// Width is validated separately (max 3) to give a clear error on oversized tokens.
 const COUNTER_TOKEN = /%d+/g;
+const MAX_COUNTER_WIDTH = 3;
 
 // Resolve the auto-increment counter in a backup path pattern.
-// The pattern must contain at most one %d+ token. The number of 'd's
-// determines the zero-padding width and the maximum slot (10^width - 1).
-// Scans the filesystem to find the lowest slot that does not yet exist.
-// Throws if all slots are taken.
+// The pattern must contain at most one %d/%dd/%ddd token. Width > 3 is
+// rejected to prevent unbounded filesystem scanning. Scans from slot 1
+// upward to find the lowest path that does not yet exist on disk.
+// Throws if all slots are taken or if the token width exceeds the maximum.
 export function resolveBackupCounter(pattern: string): string {
   const tokens = [...pattern.matchAll(COUNTER_TOKEN)];
   if (tokens.length === 0) return pattern;
@@ -141,6 +143,11 @@ export function resolveBackupCounter(pattern: string): string {
 
   const token = tokens[0][0];
   const width = token.length - 1; // number of 'd' characters
+  if (width > MAX_COUNTER_WIDTH) {
+    throw new Error(
+      `backup counter width ${width} exceeds maximum ${MAX_COUNTER_WIDTH} — use %d, %dd, or %ddd`,
+    );
+  }
   const max = Math.pow(10, width) - 1;
 
   for (let i = 1; i <= max; i++) {
@@ -204,7 +211,11 @@ export function resolveBackupPath(
   backupRoots: string[],
 ): string {
   const fileVars = buildFileVars(targetPath);
-  const merged = { ...vars, ...fileVars };
+  const merged = Object.assign(
+    Object.create(null) as Variables,
+    vars,
+    fileVars,
+  );
 
   let resolved = resolveVars(pattern, merged);
 
@@ -212,6 +223,12 @@ export function resolveBackupPath(
     resolved = path.resolve(os.homedir(), resolved.slice(2));
   } else if (!path.isAbsolute(resolved)) {
     resolved = path.resolve(workingDir, resolved);
+  }
+
+  if (path.resolve(resolved) === path.resolve(targetPath)) {
+    throw new Error(
+      `backup path resolves to the target file itself: "${resolved}"`,
+    );
   }
 
   assertBackupPathAllowed(resolved, workingDir, backupRoots);

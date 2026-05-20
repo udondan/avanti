@@ -141,7 +141,11 @@ async function runDiffLoop(
           : resolveTargetPath(entry, relPath, workingDir, vars);
         const entryVars =
           targetPath !== undefined
-            ? { ...vars, ...buildFileVars(targetPath) }
+            ? Object.assign(
+                Object.create(null) as typeof vars,
+                vars,
+                buildFileVars(targetPath),
+              )
             : vars;
 
         let content = rawContent;
