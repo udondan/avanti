@@ -51,8 +51,10 @@ export function atomicWrite(
       staged.push({ tmp: tmpFile, dest: t.targetPath, effectiveMode });
     }
 
-    // Phase 2: all staging succeeded — now create backups. Any failure here
-    // aborts before any destination file is touched.
+    // Phase 2: all staging succeeded — now create backups.
+    // Phase 2a: copy each source file to a uniquely-named temp in the backup
+    // dir. If any copy fails, no backup destination has been touched yet.
+    const backupRenames: Array<{ tmp: string; dest: string }> = [];
     for (const t of targets) {
       if (
         t.backupPath &&
@@ -75,8 +77,12 @@ export function atomicWrite(
         );
         backupTemps.push(backupTmp);
         fs.copyFileSync(t.targetPath, backupTmp);
-        fs.renameSync(backupTmp, t.backupPath);
+        backupRenames.push({ tmp: backupTmp, dest: t.backupPath });
       }
+    }
+    // Phase 2b: all copies succeeded — rename each backup temp into place.
+    for (const { tmp, dest } of backupRenames) {
+      fs.renameSync(tmp, dest);
     }
 
     // Phase 3: atomically rename each temp file into place
