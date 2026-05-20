@@ -2279,7 +2279,7 @@ files:
     src: https://example.com/file
 `);
     expect(() => parseConfigContent(fs.readFileSync(f, 'utf8'))).toThrow(
-      'brace expansion produces 101 entries (max 100)',
+      'brace expansion exceeds 100 entries',
     );
   });
 });

@@ -82,17 +82,28 @@ export function buildEntryPreVars(
   return vars;
 }
 
-export function expandBraces(pattern: string): string[] {
+export function expandBraces(pattern: string, limit = 100): string[] {
   // Require a comma inside the braces — {foo} without a comma is left literal,
   // matching bash behaviour and avoiding accidental expansion of filenames like
   // {param} that some frameworks use.
-  const match = /\{([^{}]*,[^{}]*)\}/.exec(pattern);
-  if (!match) return [pattern];
-  const prefix = pattern.slice(0, match.index);
-  const suffix = pattern.slice(match.index + match[0].length);
-  return match[1]
-    .split(',')
-    .flatMap((alt) => expandBraces(prefix + alt + suffix));
+  const results: string[] = [];
+  function expand(p: string): void {
+    const match = /\{([^{}]*,[^{}]*)\}/.exec(p);
+    if (!match) {
+      results.push(p);
+      if (results.length > limit) {
+        throw new Error(`brace expansion exceeds ${limit} entries`);
+      }
+      return;
+    }
+    const prefix = p.slice(0, match.index);
+    const suffix = p.slice(match.index + match[0].length);
+    for (const alt of match[1].split(',')) {
+      expand(prefix + alt + suffix);
+    }
+  }
+  expand(pattern);
+  return results;
 }
 
 function assertWithinWorkingDir(
