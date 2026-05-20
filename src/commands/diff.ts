@@ -27,6 +27,7 @@ import { AvantiConfig, FileEntry } from '../types';
 import { HistoryManager } from '../history';
 import { resolveVariableSpec } from '../variables-remote';
 import { evaluateConditions } from '../condition';
+import { buildDateVars, buildFileVars } from '../variables';
 
 interface DiffLoopResult {
   allDiffs: FileDiff[];
@@ -51,6 +52,7 @@ async function runDiffLoop(
   if (configPath !== undefined) {
     vars['self'] = configPath;
   }
+  Object.assign(vars, buildDateVars());
   const allDiffs: FileDiff[] = [];
   const pendingWrites = new Map<string, Buffer>();
   let hasError = false;
@@ -134,6 +136,14 @@ async function runDiffLoop(
           ? (await import('../processors/template')).applyTemplate
           : undefined;
       for (const [relPath, rawContent] of result.files) {
+        const targetPath = isSelf
+          ? undefined
+          : resolveTargetPath(entry, relPath, workingDir, vars);
+        const entryVars =
+          targetPath !== undefined
+            ? { ...vars, ...buildFileVars(targetPath) }
+            : vars;
+
         let content = rawContent;
         if (!isBinary(content)) {
           const rawText = content.toString('utf8');
@@ -142,27 +152,21 @@ async function runDiffLoop(
             text = await applyTemplate(
               text,
               entry.template!,
-              vars,
+              entryVars,
               relPath || undefined,
             );
           }
           if (entry.replace?.length)
-            text = applyReplace(text, entry.replace, vars);
-          if (entry.post) text = applyPost(text, entry.post, vars);
+            text = applyReplace(text, entry.replace, entryVars);
+          if (entry.post) text = applyPost(text, entry.post, entryVars);
           if (entry.strategy === 'insert' && !isSelf) {
-            const targetPath = resolveTargetPath(
-              entry,
-              relPath,
-              workingDir,
-              vars,
-            );
             const lastInserted =
-              history?.getInsertedFragment(targetPath) ?? null;
+              history?.getInsertedFragment(targetPath!) ?? null;
             if (
               lastInserted !== null &&
               rawText === lastInserted.raw &&
               text === lastInserted.processed &&
-              fs.existsSync(targetPath)
+              fs.existsSync(targetPath!)
             ) {
               continue; // source and processed output unchanged — would be a no-op write, skip diff
             }
@@ -170,7 +174,7 @@ async function runDiffLoop(
               entry,
               text,
               lastInserted?.processed ?? null,
-              targetPath,
+              targetPath!,
             );
           }
           content = Buffer.from(text, 'utf8');
@@ -179,9 +183,8 @@ async function runDiffLoop(
           selfContent = content.toString('utf8');
           continue;
         }
-        const targetPath = resolveTargetPath(entry, relPath, workingDir, vars);
-        allDiffs.push(computeDiff(targetPath, content));
-        pendingWrites.set(targetPath, content);
+        allDiffs.push(computeDiff(targetPath!, content));
+        pendingWrites.set(targetPath!, content);
       }
     } catch (err: unknown) {
       console.error(

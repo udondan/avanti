@@ -2102,3 +2102,77 @@ files:
     expect(srcs[1]['if']).toEqual({ os: 'mac' });
   });
 });
+
+describe('backup field parsing', () => {
+  it('parses a backup string on a file entry', () => {
+    const f = writeTmp(`
+files:
+  config.yaml:
+    src: https://example.com/config.yaml
+    backup: $dirname/$filename.bkp
+`);
+    const cfg = parseConfigContent(fs.readFileSync(f, 'utf8'));
+    expect(cfg.files['config.yaml'].backup).toBe('$dirname/$filename.bkp');
+  });
+
+  it('leaves backup undefined when not set', () => {
+    const f = writeTmp(`
+files:
+  config.yaml:
+    src: https://example.com/config.yaml
+`);
+    const cfg = parseConfigContent(fs.readFileSync(f, 'utf8'));
+    expect(cfg.files['config.yaml'].backup).toBeUndefined();
+  });
+});
+
+describe('backup_roots parsing', () => {
+  it('parses a list of backup_roots strings', () => {
+    const f = writeTmp(`
+backup_roots:
+  - ~/backups
+  - /mnt/nas/backups
+files:
+  config.yaml:
+    src: https://example.com/config.yaml
+`);
+    const cfg = parseConfigContent(fs.readFileSync(f, 'utf8'));
+    expect(cfg.backup_roots).toEqual(['~/backups', '/mnt/nas/backups']);
+  });
+
+  it('leaves backup_roots undefined when not set', () => {
+    const f = writeTmp(`
+files:
+  config.yaml:
+    src: https://example.com/config.yaml
+`);
+    const cfg = parseConfigContent(fs.readFileSync(f, 'utf8'));
+    expect(cfg.backup_roots).toBeUndefined();
+  });
+
+  it('throws when backup_roots is not a list', () => {
+    const f = writeTmp(`
+backup_roots: ~/backups
+files:
+  config.yaml:
+    src: https://example.com/config.yaml
+`);
+    expect(() => parseConfigContent(fs.readFileSync(f, 'utf8'))).toThrow(
+      '"backup_roots" must be a list of strings',
+    );
+  });
+
+  it('throws when backup_roots contains a non-string entry', () => {
+    const f = writeTmp(`
+backup_roots:
+  - ~/backups
+  - 42
+files:
+  config.yaml:
+    src: https://example.com/config.yaml
+`);
+    expect(() => parseConfigContent(fs.readFileSync(f, 'utf8'))).toThrow(
+      '"backup_roots" must be a list of strings',
+    );
+  });
+});

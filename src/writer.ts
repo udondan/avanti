@@ -5,6 +5,7 @@ export interface WriteTarget {
   targetPath: string;
   content: Buffer;
   mode?: string;
+  backupPath?: string;
 }
 
 export function atomicWrite(
@@ -17,6 +18,14 @@ export function atomicWrite(
     [];
   try {
     for (const t of targets) {
+      if (t.backupPath && fs.existsSync(t.targetPath)) {
+        const backupDir = path.dirname(t.backupPath);
+        if (!fs.existsSync(backupDir)) {
+          fs.mkdirSync(backupDir, { recursive: true });
+        }
+        fs.copyFileSync(t.targetPath, t.backupPath);
+      }
+
       const dir = path.dirname(t.targetPath);
       if (!fs.existsSync(dir)) {
         fs.mkdirSync(dir, { recursive: true });

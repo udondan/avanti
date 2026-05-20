@@ -11,6 +11,7 @@ import { fetchSource } from '../sources';
 import { resolveTargetPath } from '../diff';
 import { writeUpdatedShas } from '../config-writeback';
 import { resolveVariableSpec } from '../variables-remote';
+import { buildDateVars } from '../variables';
 
 export function lockCommand(): Command {
   return new Command('lock')
@@ -51,6 +52,7 @@ export function lockCommand(): Command {
       if (configPath !== undefined) {
         vars['self'] = configPath;
       }
+      Object.assign(vars, buildDateVars());
       const toPin = new Map<string, string>(); // label → sha
       let hasError = false;
       let remoteSourceCount = 0;

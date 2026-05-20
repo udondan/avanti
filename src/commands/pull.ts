@@ -30,6 +30,7 @@ import { HistoryManager, PullLogFileRef, SourceShaRecord } from '../history';
 import { confirm } from '../prompt';
 import { applyUpdatedShas, writeUpdatedShas } from '../config-writeback';
 import { resolveVariableSpec } from '../variables-remote';
+import { buildDateVars, buildFileVars, resolveBackupPath } from '../variables';
 
 interface ShaError {
   sourceLabel: string;
@@ -77,6 +78,7 @@ async function runFetchLoop(
   if (configPath !== undefined) {
     vars['self'] = configPath;
   }
+  Object.assign(vars, buildDateVars());
   const writeTargets: WriteTarget[] = [];
   const allDiffs: FileDiff[] = [];
   const shaErrors: ShaError[] = [];
@@ -223,6 +225,18 @@ async function runFetchLoop(
           ? (await import('../processors/template')).applyTemplate
           : undefined;
       for (const [relPath, rawContent] of result.files) {
+        // Compute the target path early so per-file vars ($path, $filename,
+        // $basename, $ext, $dirname, $basedir) are available in processors.
+        // For $self the path resolution would fail (config path is absolute),
+        // so we skip it and fall back to the base vars.
+        const targetPath = isSelf
+          ? undefined
+          : resolveTargetPath(entry, relPath, workingDir, vars);
+        const entryVars =
+          targetPath !== undefined
+            ? { ...vars, ...buildFileVars(targetPath) }
+            : vars;
+
         let content = rawContent;
         if (!isBinary(content)) {
           // Processors only operate on text; binary files are passed through unchanged.
@@ -232,29 +246,23 @@ async function runFetchLoop(
             text = await applyTemplate(
               text,
               entry.template!,
-              vars,
+              entryVars,
               relPath || undefined,
             );
           }
           if (entry.replace?.length)
-            text = applyReplace(text, entry.replace, vars);
-          if (entry.post) text = applyPost(text, entry.post, vars);
+            text = applyReplace(text, entry.replace, entryVars);
+          if (entry.post) text = applyPost(text, entry.post, entryVars);
           if (entry.strategy === 'insert' && !isSelf) {
-            const targetPath = resolveTargetPath(
-              entry,
-              relPath,
-              workingDir,
-              vars,
-            );
             const lastInserted =
-              history?.getInsertedFragment(targetPath) ?? null;
+              history?.getInsertedFragment(targetPath!) ?? null;
             if (
               lastInserted !== null &&
               rawText === lastInserted.raw &&
               text === lastInserted.processed &&
-              fs.existsSync(targetPath)
+              fs.existsSync(targetPath!)
             ) {
-              skippedPaths.add(targetPath); // keep stale detection from treating this as missing
+              skippedPaths.add(targetPath!); // keep stale detection from treating this as missing
               continue; // source and processed output unchanged — skip write entirely (no-op)
             }
             const processedText = text;
@@ -262,9 +270,9 @@ async function runFetchLoop(
               entry,
               processedText,
               lastInserted?.processed ?? null,
-              targetPath,
+              targetPath!,
             );
-            insertedFragments.set(targetPath, {
+            insertedFragments.set(targetPath!, {
               raw: rawText,
               processed: processedText,
             });
@@ -278,12 +286,25 @@ async function runFetchLoop(
             selfSourceRecords = result.sourceRecords;
           continue;
         }
-        const targetPath = resolveTargetPath(entry, relPath, workingDir, vars);
-        allDiffs.push(computeDiff(targetPath, content));
-        writeTargets.push({ targetPath, content, mode: entry.mode });
-        pendingWrites.set(targetPath, content);
+        allDiffs.push(computeDiff(targetPath!, content));
+        const backupPath = entry.backup
+          ? resolveBackupPath(
+              entry.backup,
+              targetPath!,
+              workingDir,
+              vars,
+              config.backup_roots ?? [],
+            )
+          : undefined;
+        writeTargets.push({
+          targetPath: targetPath!,
+          content,
+          mode: entry.mode,
+          backupPath,
+        });
+        pendingWrites.set(targetPath!, content);
         if (result.sourceRecords.length > 0) {
-          sourceRecordsByTarget.set(targetPath, result.sourceRecords);
+          sourceRecordsByTarget.set(targetPath!, result.sourceRecords);
         }
       }
     } catch (err: unknown) {

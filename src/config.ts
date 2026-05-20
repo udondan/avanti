@@ -244,6 +244,7 @@ export function parseConfigContent(content: string): AvantiConfig {
     if (fileConds.ifAny !== undefined) fileEntry.ifAny = fileConds.ifAny;
 
     if (typeof e['mode'] === 'string') fileEntry.mode = e['mode'];
+    if (typeof e['backup'] === 'string') fileEntry.backup = e['backup'];
     if (typeof e['post'] === 'string') fileEntry.post = e['post'];
     if (e['strategy'] !== undefined) {
       if (e['strategy'] !== 'replace' && e['strategy'] !== 'insert') {
@@ -310,7 +311,18 @@ export function parseConfigContent(content: string): AvantiConfig {
     files[target] = fileEntry;
   }
 
-  return { variables, files };
+  let backup_roots: string[] | undefined;
+  if (obj['backup_roots'] !== undefined) {
+    if (
+      !Array.isArray(obj['backup_roots']) ||
+      !(obj['backup_roots'] as unknown[]).every((r) => typeof r === 'string')
+    ) {
+      throw new Error('"backup_roots" must be a list of strings');
+    }
+    backup_roots = obj['backup_roots'] as string[];
+  }
+
+  return { variables, backup_roots, files };
 }
 
 export async function loadConfig(

@@ -35,6 +35,7 @@ atomic rollbacks, and diff-before-apply safety.
   - [Insert Mode](#insert-mode)
   - [Conditions](#conditions)
   - [Scaffold Pattern](#scaffold-pattern)
+  - [Backup](#backup)
   - [Variables](#variables)
   - [$self — Self-managing Config](#self--self-managing-config)
   - [Authentication](#authentication)
@@ -1009,6 +1010,95 @@ On **subsequent runs**: `team.md` already exists, so the `target_exists: false` 
 **Automatic ordering** — avanti resolves dependencies between entries and processes them in the correct order automatically. You can define entries in any order in the config; if entry B sources from entry A's target path, A is always processed before B.
 
 **Cycle detection** — if two entries form a cycle (A sources from B and B sources from A), avanti exits with an error listing the cycle before writing any files.
+
+### Backup
+
+> **Note:** avanti already maintains an internal pull history under `~/.config/avanti/` and you can restore any file with `avanti revert`. The `backup:` field is for additional, fine-grained control — for example, keeping a copy on an external drive, in a dedicated folder, or with a custom naming scheme.
+
+Add `backup:` to a file entry to copy the current file to a backup location before overwriting it:
+
+```yaml
+files:
+  config.yaml:
+    src: github:org/repo/config.yaml
+    backup: $dirname/$filename.bkp
+```
+
+Backup only happens when the target file already exists. If the backup path already exists it is overwritten — use the [counter pattern](#counter-pattern) or `$datetime` when you want to keep every backup.
+
+#### Path variables
+
+The following variables are available in `backup:` patterns and in all processors (`replace:`, `post:`, template rendering). Per-file path variables (`$path`–`$basedir`) require a deterministic `target:` when used in source URLs or conditions (i.e. an explicit path, not a trailing-slash directory).
+
+Given `target: /home/user/project/config.yaml`:
+
+| Variable    | Value                             |
+| ----------- | --------------------------------- |
+| `$path`     | `/home/user/project/config.yaml`  |
+| `$filename` | `config.yaml`                     |
+| `$basename` | `config`                          |
+| `$ext`      | `yaml` (no leading dot)           |
+| `$dirname`  | `/home/user/project`              |
+| `$basedir`  | `project`                         |
+| `$date`     | `2026-05-20` (pull time)          |
+| `$datetime` | `2026-05-20-14-30-00` (pull time) |
+
+`$date` and `$datetime` are injected once at pull start and available everywhere — source URLs, conditions, `replace:`, `post:`, template rendering, and `backup:`.
+
+#### Counter pattern
+
+Use `%d+` in the backup path to auto-increment to the lowest unused slot. The number of `d` characters sets the zero-padding width and maximum slot:
+
+| Token  | Slots       |
+| ------ | ----------- |
+| `%d`   | `1`–`9`     |
+| `%dd`  | `01`–`99`   |
+| `%ddd` | `001`–`999` |
+
+Only one counter token per backup path is allowed. If all slots are taken, avanti exits with an error.
+
+```yaml
+files:
+  config.yaml:
+    src: github:org/repo/config.yaml
+    backup: $dirname/$basename.%dd.$ext # config.01.yaml → config.02.yaml → …
+```
+
+#### Security: backup_roots
+
+By default, backup paths are restricted to the working directory — the same constraint applied to `target:`. To back up outside the working directory, declare the allowed roots at the top level:
+
+```yaml
+backup_roots:
+  - ~/backups
+  - /mnt/nas/backups
+
+files:
+  config.yaml:
+    src: github:org/repo/config.yaml
+    backup: ~/backups/$filename
+```
+
+Each entry in `backup_roots` supports `~/` expansion. Paths not covered by the working directory or a declared root are rejected with an error before any file is written.
+
+#### Backup examples
+
+```yaml
+# Same directory, .bkp extension appended
+backup: $dirname/$filename.bkp         # /project/config.yaml.bkp
+
+# Separate backup folder within the working directory
+backup: backups/$filename              # <workingDir>/backups/config.yaml
+
+# Timestamped — one file per pull
+backup: $dirname/$filename.$datetime   # config.yaml.2026-05-20-14-30-00
+
+# Auto-increment — keeps up to 99 rotating backups
+backup: $dirname/$basename.%dd.$ext   # config.01.yaml, config.02.yaml, …
+
+# Separate directory outside the working directory (requires backup_roots)
+backup: ~/backups/$filename
+```
 
 ### Variables
 
