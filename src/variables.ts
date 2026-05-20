@@ -253,5 +253,11 @@ export function resolveBackupPath(
 
   assertBackupPathAllowed(resolved, workingDir, backupRoots);
 
-  return resolveBackupCounter(resolved);
+  const finalPath = resolveBackupCounter(resolved);
+  if (fs.existsSync(finalPath) && fs.statSync(finalPath).isDirectory()) {
+    throw new Error(
+      `backup path "${finalPath}" is a directory — specify a file path`,
+    );
+  }
+  return finalPath;
 }

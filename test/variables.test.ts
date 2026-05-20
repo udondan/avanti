@@ -401,6 +401,13 @@ describe('resolveBackupPath', () => {
     expect(result).toBe(path.join(tmpDir, 'cfg.01.yaml'));
   });
 
+  it('throws when backup path resolves to an existing directory', () => {
+    const targetPath = path.join(tmpDir, 'cfg.yaml');
+    expect(() => resolveBackupPath(tmpDir, targetPath, tmpDir, {}, [])).toThrow(
+      'is a directory',
+    );
+  });
+
   it('throws when backup path escapes workingDir without a root', () => {
     const targetPath = path.join(tmpDir, 'cfg.yaml');
     expect(() =>
