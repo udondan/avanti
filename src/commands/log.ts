@@ -85,7 +85,13 @@ function showFileHistory(
     ? filePath
     : path.resolve(workingDir, filePath);
 
-  for (const history of managers) {
+  const sortedManagers = [...managers].sort((a, b) => {
+    const aTs = a.listPulls()[0]?.timestamp ?? '';
+    const bTs = b.listPulls()[0]?.timestamp ?? '';
+    return bTs.localeCompare(aTs);
+  });
+
+  for (const history of sortedManagers) {
     const fileHistory = history.getFileHistory(absolutePath);
     if (!fileHistory) continue;
 
