@@ -1239,6 +1239,41 @@ files:
 
 When the config is specified as a remote spec (e.g. `--config github:org/repo:.avanti.yml`), `$self` expands to that spec string. In an `exists:` condition this will always evaluate to false since the remote spec is not a local path.
 
+#### System-injected variables
+
+In addition to `$self` and `$latest`, avanti injects several variables automatically at the start of every run. These names are reserved and cannot be used in `variables:`.
+
+**Pull-time variables** — available everywhere (source URLs, conditions, `replace:`, `post:`, template rendering, `backup:`):
+
+| Variable    | Value                                   | Example               |
+| ----------- | --------------------------------------- | --------------------- |
+| `$date`     | Current date `YYYY-MM-DD`               | `2026-05-20`          |
+| `$datetime` | Current date+time `YYYY-MM-DD-HH-mm-ss` | `2026-05-20-14-30-00` |
+
+**Per-file path variables** — derived from each file entry's resolved target path. Available in `replace:`, `post:`, template rendering, and `backup:`. Also available in source URLs and conditions when `target:` is set to an explicit path (not a trailing-slash directory).
+
+Given `target: /home/user/project/config.yaml`:
+
+| Variable    | Value                            |
+| ----------- | -------------------------------- |
+| `$path`     | `/home/user/project/config.yaml` |
+| `$filename` | `config.yaml`                    |
+| `$basename` | `config`                         |
+| `$ext`      | `yaml` (no leading dot)          |
+| `$dirname`  | `/home/user/project`             |
+| `$basedir`  | `project`                        |
+
+```yaml
+files:
+  config.yaml:
+    src: https://api.example.com/config?name=$filename&ts=$datetime
+    replace:
+      - from: GENERATED_AT
+        to: $date
+    post: echo "wrote $filename" >> $dirname/avanti.log
+    backup: $dirname/$basename.%dd.$ext
+```
+
 ### $self — Self-managing Config
 
 The special `$self` key in the `files:` map tells avanti to manage its own config file. When `$self` is present, avanti fetches the listed sources and uses the result as the active config for the rest of the run — all in a single invocation.
