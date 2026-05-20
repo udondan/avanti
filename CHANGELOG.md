@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.23.1](https://github.com/udondan/avanti/compare/v0.23.0...v0.23.1) (2026-05-20)
+
+
+### Bug Fixes
+
+* avanti log finds history when pull used a remote --config ([#192](https://github.com/udondan/avanti/issues/192)) ([8b8ee21](https://github.com/udondan/avanti/commit/8b8ee2122ab9c0e961ee50ad922120fe75b187ca))
+* enforce working-directory boundary for ~/ target paths ([#190](https://github.com/udondan/avanti/issues/190)) ([f4cca4d](https://github.com/udondan/avanti/commit/f4cca4d762bff4746d3ae055da0d0b6de39a4be0))
+
 ## [0.23.0](https://github.com/udondan/avanti/compare/v0.22.0...v0.23.0) (2026-05-20)
 
 
