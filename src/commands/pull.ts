@@ -167,7 +167,12 @@ async function runFetchLoop(
       // that $path/$filename/$basename/$ext/$dirname/$basedir are available in
       // source URLs and conditions (not just in processors post-fetch).
       let preVars = vars;
-      if (!isSelf && entry.target && !entry.target.endsWith('/')) {
+      if (
+        !isSelf &&
+        entry.target &&
+        !entry.target.endsWith('/') &&
+        !entry.target.endsWith(path.sep)
+      ) {
         try {
           const fixedTarget = resolveTargetPath(entry, '', workingDir, vars);
           preVars = Object.assign(

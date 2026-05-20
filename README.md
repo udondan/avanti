@@ -1250,9 +1250,9 @@ In addition to `$self` and `$latest`, avanti injects several variables automatic
 | `$date`     | Current date `YYYY-MM-DD`               | `2026-05-20`          |
 | `$datetime` | Current date+time `YYYY-MM-DD-HH-mm-ss` | `2026-05-20-14-30-00` |
 
-**Per-file path variables** — derived from each file entry's resolved target path. Available in `replace:`, `post:`, template rendering, and `backup:`. Also available in source URLs and conditions when the entry has an explicit fixed `target:` path.
+**Per-file path variables** — derived from each file entry's resolved target path. Available in `replace:`, `post:`, template rendering, and `backup:`. Also available in source URLs and conditions when the entry has a fixed (non-directory) map key as its target path.
 
-Given `target: /home/user/project/config.yaml`:
+Example with working directory `/home/user/project` and map key `config.yaml`:
 
 | Variable    | Value                            |
 | ----------- | -------------------------------- |
@@ -1265,8 +1265,7 @@ Given `target: /home/user/project/config.yaml`:
 
 ```yaml
 files:
-  config.yaml:
-    target: /home/user/project/config.yaml
+  config.yaml: # map key is the target path, resolved against workingDir
     src: https://api.example.com/$filename?ts=$datetime # per-file vars + $datetime in source URLs
     replace:
       - from: GENERATED_AT

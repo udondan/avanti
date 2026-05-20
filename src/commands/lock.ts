@@ -62,7 +62,12 @@ export function lockCommand(): Command {
         try {
           const isSelf = key === SELF_KEY;
           let preVars: Variables = vars;
-          if (!isSelf && entry.target && !entry.target.endsWith('/')) {
+          if (
+            !isSelf &&
+            entry.target &&
+            !entry.target.endsWith('/') &&
+            !entry.target.endsWith(path.sep)
+          ) {
             try {
               const fixedTarget = resolveTargetPath(
                 entry,
