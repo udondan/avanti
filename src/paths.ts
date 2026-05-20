@@ -117,14 +117,24 @@ export function expandBraces(pattern: string, limit = 100): string[] {
   return results;
 }
 
+// Windows paths are case-insensitive and may use either slash style.
+function normalizePath(p: string): string {
+  if (process.platform === 'win32') {
+    return p.replace(/\//g, '\\').toLowerCase();
+  }
+  return p;
+}
+
 function assertWithinWorkingDir(
   resolvedPath: string,
   workingDir: string,
 ): void {
-  const prefix = workingDir.endsWith(path.sep)
-    ? workingDir
-    : workingDir + path.sep;
-  if (resolvedPath !== workingDir && !resolvedPath.startsWith(prefix)) {
+  const normResolved = normalizePath(resolvedPath);
+  const normWorkingDir = normalizePath(workingDir);
+  const prefix = normWorkingDir.endsWith(path.sep)
+    ? normWorkingDir
+    : normWorkingDir + path.sep;
+  if (normResolved !== normWorkingDir && !normResolved.startsWith(prefix)) {
     throw new Error(
       `Target path "${resolvedPath}" escapes working directory "${workingDir}".`,
     );
