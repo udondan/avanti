@@ -607,7 +607,7 @@ async function fetchReleaseLinksViaApi(
           `Failed to download release asset "${link.name}" from ${project}@${tag}: HTTP ${dlRes.status}`,
         );
       }
-      return [link.name, Buffer.from(await dlRes.arrayBuffer())];
+      return [path.basename(link.name), Buffer.from(await dlRes.arrayBuffer())];
     }),
   );
   return new Map(entries);

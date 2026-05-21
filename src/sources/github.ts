@@ -395,7 +395,10 @@ async function fetchReleaseAssetsViaApi(
           `Failed to download release asset "${asset.name}" from ${repo}@${tag}: HTTP ${dlRes.status}`,
         );
       }
-      return [asset.name, Buffer.from(await dlRes.arrayBuffer())];
+      return [
+        path.basename(asset.name),
+        Buffer.from(await dlRes.arrayBuffer()),
+      ];
     }),
   );
   return new Map(entries);
