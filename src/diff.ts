@@ -114,13 +114,14 @@ export function formatDiff(diff: FileDiff): string {
   if (diff.modeChange) {
     const from = diff.modeChange.from.toString(8).padStart(6, '0');
     const to = diff.modeChange.to.toString(8).padStart(6, '0');
-    out +=
-      chalk.bold(`--- ${diff.targetPath}\n+++ ${diff.targetPath}`) +
-      '\n' +
-      chalk.red(`-old mode ${from}`) +
-      '\n' +
-      chalk.green(`+new mode ${to}`) +
-      '\n';
+    if (!diff.contentChanged) {
+      // Mode-only: emit a file header since there is no content patch to own it.
+      out +=
+        chalk.bold(`--- ${diff.targetPath}\n+++ ${diff.targetPath}`) + '\n';
+    }
+    // Mode lines precede the content diff (mirrors git's format).
+    out += chalk.red(`-old mode ${from}`) + '\n';
+    out += chalk.green(`+new mode ${to}`) + '\n';
   }
 
   if (diff.isBinary) {

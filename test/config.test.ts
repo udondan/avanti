@@ -223,18 +223,7 @@ files:
     expect(cfg.files['file.sh'].mode).toBe('0777');
   });
 
-  it('accepts a bare numeric mode (755 → "0755")', async () => {
-    const f = writeTmp(`
-files:
-  file.sh:
-    src: ~/some/file.sh
-    mode: 755
-`);
-    const cfg = await loadConfig(f);
-    expect(cfg.files['file.sh'].mode).toBe('0755');
-  });
-
-  it('accepts a numeric mode from YAML 0o-notation (493 → "0755")', async () => {
+  it('accepts a numeric mode from YAML 0o-notation 0o755 (493 → "0755")', async () => {
     const f = writeTmp(`
 files:
   file.sh:
@@ -243,6 +232,17 @@ files:
 `);
     const cfg = await loadConfig(f);
     expect(cfg.files['file.sh'].mode).toBe('0755');
+  });
+
+  it('accepts a numeric mode from YAML 0o-notation 0o644 (420 → "0644")', async () => {
+    const f = writeTmp(`
+files:
+  file.sh:
+    src: ~/some/file.sh
+    mode: 0o644
+`);
+    const cfg = await loadConfig(f);
+    expect(cfg.files['file.sh'].mode).toBe('0644');
   });
 
   it('loads an exec src map', async () => {

@@ -256,12 +256,7 @@ export function parseConfigContent(content: string): AvantiConfig {
           `files["${target}"].mode: ${n} is not a valid mode (expected an integer in range 0–0o7777)`,
         );
       }
-      const dec = n.toString();
-      // All decimal digits 0–7: user wrote bare octal notation (e.g. 755 → "0755").
-      // Otherwise (e.g. 493 from YAML 0o755): convert actual value to octal string.
-      fileEntry.mode = /^[0-7]+$/.test(dec)
-        ? dec.padStart(4, '0')
-        : n.toString(8).padStart(4, '0');
+      fileEntry.mode = n.toString(8).padStart(4, '0');
     } else if (typeof e['mode'] === 'string') {
       fileEntry.mode = e['mode'];
     }
