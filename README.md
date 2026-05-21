@@ -1436,22 +1436,18 @@ files:
 `$arch` uses GNU-triple / Rust naming (`x86_64`). `$arch_go` uses Go / Docker / Kubernetes naming (`amd64`). The `arm64` value is identical in both. Unknown `process.platform` or `process.arch` values are passed through unchanged.
 
 ```yaml
+variables:
+  rg_version: '14.1.1'
+  kubectl_version: '1.32.0'
+
 files:
-  # Download the ripgrep binary for the current system (Rust naming)
-  bin/rg:
-    src:
-      github:
-        repo: BurntSushi/ripgrep
-        release: $latest
-        asset: ripgrep-$latest-$arch-unknown-$os.tar.gz
+  # Download the ripgrep tarball for the current system (Rust/GNU naming)
+  releases/ripgrep.tar.gz:
+    src: https://github.com/BurntSushi/ripgrep/releases/download/$rg_version/ripgrep-$rg_version-$arch-unknown-$os.tar.gz
 
   # Download kubectl for the current system (Go naming)
   bin/kubectl:
-    src:
-      github:
-        repo: kubernetes/kubectl
-        release: $latest
-        asset: kubectl_$latest_${os}_$arch_go
+    src: https://dl.k8s.io/release/v$kubectl_version/bin/$os/$arch_go/kubectl
 ```
 
 ### $self — Self-managing Config
