@@ -1,6 +1,7 @@
 import { Command } from 'commander';
 import * as path from 'path';
 import { normalizeConfigKey, resolveConfigPath } from '../config';
+import { expandTilde } from '../paths';
 import { HistoryManager } from '../history';
 import { computeDiff, computeDeleteDiff, printDiffs } from '../diff';
 import { atomicWrite, WriteTarget } from '../writer';
@@ -27,7 +28,7 @@ export function revertCommand(): Command {
           | string
           | undefined;
         const workingDir = rawWorkingDir
-          ? path.resolve(rawWorkingDir)
+          ? path.resolve(expandTilde(rawWorkingDir))
           : process.cwd();
 
         const history = new HistoryManager(
