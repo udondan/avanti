@@ -622,6 +622,54 @@ describe('resolveVariableSpec', () => {
     ).rejects.toThrow('variables.bad: unsupported value type "bigint"');
   });
 
+  it('throws when a nested value inside an array is an unsupported type', async () => {
+    await expect(
+      resolveVariableSpec({ arr: [1, 42n] } as never, cwd),
+    ).rejects.toThrow('variables.arr:');
+    await expect(
+      resolveVariableSpec({ arr: [1, 42n] } as never, cwd),
+    ).rejects.toThrow('unsupported type "bigint" at [1]');
+  });
+
+  it('throws when a nested value inside an object is an unsupported type', async () => {
+    await expect(
+      resolveVariableSpec({ cfg: { key: Symbol('x') } } as never, cwd),
+    ).rejects.toThrow('variables.cfg:');
+    await expect(
+      resolveVariableSpec({ cfg: { key: Symbol('x') } } as never, cwd),
+    ).rejects.toThrow('unsupported type "symbol" at .key');
+  });
+
+  it('throws on circular object references', async () => {
+    const obj: Record<string, unknown> = { a: 1 };
+    obj['self'] = obj;
+    await expect(
+      resolveVariableSpec({ bad: obj } as never, cwd),
+    ).rejects.toThrow('circular reference at .self');
+  });
+
+  it('throws on circular array references', async () => {
+    const arr: unknown[] = [1, 2];
+    arr.push(arr);
+    await expect(
+      resolveVariableSpec({ bad: arr } as never, cwd),
+    ).rejects.toThrow('circular reference at [2]');
+  });
+
+  it('does not false-positive on shared non-circular references', async () => {
+    const shared = { host: 'pg.internal' };
+    const result = await resolveVariableSpec(
+      { cfg: { primary: shared, replica: shared } },
+      cwd,
+    );
+    expect((result.cfg as Record<string, unknown>).primary).toEqual({
+      host: 'pg.internal',
+    });
+    expect((result.cfg as Record<string, unknown>).replica).toEqual({
+      host: 'pg.internal',
+    });
+  });
+
   it('resolves $var references in string leaves of an object variable', async () => {
     const result = await resolveVariableSpec(
       { host: 'pg.internal', db: { url: 'postgres://$host/mydb' } },

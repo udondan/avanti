@@ -11,16 +11,48 @@ import { fetchSource, FetchCache, FetchResult } from './sources';
 import { isBinary } from './binary';
 
 // Recursively resolve $var references in all string leaves of a JsonValue.
+// `seen` tracks the current DFS path for cycle detection; it is backtracked
+// after each object/array so shared (non-circular) references are not flagged.
 function deepResolveVars(
   value: JsonValue,
   vars: Variables,
   path = '',
+  seen = new WeakSet<object>(),
 ): JsonValue {
   if (typeof value === 'string') return resolveVars(value, vars);
-  if (Array.isArray(value)) {
-    return value.map((v, i) => deepResolveVars(v, vars, `${path}[${i}]`));
+
+  // Reject non-JSON-compatible primitives that can reach here from programmatic
+  // callers who bypass TypeScript (e.g. via `as any`).
+  if (
+    typeof value === 'undefined' ||
+    typeof value === 'bigint' ||
+    typeof value === 'symbol' ||
+    typeof value === 'function'
+  ) {
+    const at = path ? ` at ${path}` : '';
+    throw new Error(
+      `Variable value has unsupported type "${typeof value}"${at} — only string, number, boolean, null, array, and plain object are allowed`,
+    );
   }
+
+  if (Array.isArray(value)) {
+    if (seen.has(value)) {
+      const at = path ? ` at ${path}` : '';
+      throw new Error(`Variable value contains a circular reference${at}`);
+    }
+    seen.add(value);
+    const result = value.map((v, i) =>
+      deepResolveVars(v, vars, `${path}[${i}]`, seen),
+    );
+    seen.delete(value);
+    return result;
+  }
+
   if (typeof value === 'object' && value !== null) {
+    if (seen.has(value)) {
+      const at = path ? ` at ${path}` : '';
+      throw new Error(`Variable value contains a circular reference${at}`);
+    }
     const proto = Object.getPrototypeOf(value) as unknown;
     if (proto !== Object.prototype && proto !== null) {
       const typeName =
@@ -31,15 +63,18 @@ function deepResolveVars(
         `Variable value contains a non-plain object (${typeName})${at} — only plain objects and arrays are supported as variable values. If loading from YAML, quote timestamps and other auto-typed values.`,
       );
     }
+    seen.add(value);
     const out = Object.create(null) as { [key: string]: JsonValue };
     for (const [k, v] of Object.entries(value)) {
       const keyPart = /[.[\]"']/.test(k)
         ? `["${k.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"]`
         : `.${k}`;
-      out[k] = deepResolveVars(v, vars, `${path}${keyPart}`);
+      out[k] = deepResolveVars(v, vars, `${path}${keyPart}`, seen);
     }
+    seen.delete(value);
     return out;
   }
+
   return value;
 }
 
