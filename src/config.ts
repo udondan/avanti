@@ -249,7 +249,22 @@ export function parseConfigContent(content: string): AvantiConfig {
     if (fileConds['if'] !== undefined) fileEntry['if'] = fileConds['if'];
     if (fileConds.ifAny !== undefined) fileEntry.ifAny = fileConds.ifAny;
 
-    if (typeof e['mode'] === 'string') fileEntry.mode = e['mode'];
+    if (typeof e['mode'] === 'number') {
+      const n = e['mode'];
+      if (n < 0 || n > 0o7777) {
+        throw new Error(
+          `files["${target}"].mode: ${n} is out of range (0–0o7777)`,
+        );
+      }
+      const dec = n.toString();
+      // All decimal digits 0–7: user wrote bare octal notation (e.g. 755 → "0755").
+      // Otherwise (e.g. 493 from YAML 0o755): convert actual value to octal string.
+      fileEntry.mode = /^[0-7]+$/.test(dec)
+        ? dec.padStart(4, '0')
+        : n.toString(8).padStart(4, '0');
+    } else if (typeof e['mode'] === 'string') {
+      fileEntry.mode = e['mode'];
+    }
     if (typeof e['backup'] === 'string') fileEntry.backup = e['backup'];
     if (typeof e['post'] === 'string') fileEntry.post = e['post'];
     if (typeof e['writeInPlace'] === 'boolean')

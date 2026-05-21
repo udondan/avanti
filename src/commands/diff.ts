@@ -185,7 +185,7 @@ async function runDiffLoop(
           selfContent = content.toString('utf8');
           continue;
         }
-        allDiffs.push(computeDiff(targetPath!, content));
+        allDiffs.push(computeDiff(targetPath!, content, entry.mode));
         pendingWrites.set(targetPath!, content);
       }
     } catch (err: unknown) {

@@ -288,7 +288,7 @@ async function runFetchLoop(
             selfSourceRecords = result.sourceRecords;
           continue;
         }
-        const diff = computeDiff(targetPath!, content);
+        const diff = computeDiff(targetPath!, content, entry.mode);
         allDiffs.push(diff);
         const backupPath =
           entry.backup && diff.hasChanges && !diff.isNew
@@ -543,14 +543,20 @@ export function pullCommand(): Command {
                 content: selfBuf,
                 mode: currentSelfMode,
               });
-              allDiffs.push(computeDiff(configPath, selfBuf));
+              allDiffs.push(computeDiff(configPath, selfBuf, currentSelfMode));
             } else {
+              const resolvedSelfMode =
+                currentSelfMode ?? writeTargets[existingIdx].mode;
               writeTargets[existingIdx] = {
                 ...writeTargets[existingIdx],
                 content: selfBuf,
-                mode: currentSelfMode ?? writeTargets[existingIdx].mode,
+                mode: resolvedSelfMode,
               };
-              allDiffs[existingIdx] = computeDiff(configPath, selfBuf);
+              allDiffs[existingIdx] = computeDiff(
+                configPath,
+                selfBuf,
+                resolvedSelfMode,
+              );
             }
             // Content comes from $self — attribute the config file write to the
             // $self sources so history reflects the actual origin.
