@@ -105,10 +105,12 @@ function walkPath(
 }
 
 // Evaluate a braced path expression like "servers[1].host" against vars.
-// Primitive leaf values are coerced to string; objects/arrays are JSON-serialised.
-function evaluatePath(vars: Variables, expr: string): string {
+// Returns null to signal reserved-var passthrough (caller should return the
+// original match token unchanged). Primitive leaf values are coerced to
+// string; objects/arrays are JSON-serialised.
+function evaluatePath(vars: Variables, expr: string): string | null {
   const { name, segments } = parsePath(expr.trim());
-  if (RESERVED_VARS.has(name)) return `\${${expr}}`;
+  if (RESERVED_VARS.has(name)) return null;
   if (!Object.hasOwn(vars, name))
     throw new Error(`Undefined variable: \${${expr}}`);
   const leaf = walkPath(vars[name], segments, expr);
@@ -143,7 +145,8 @@ export function resolveVars(value: string, vars: Variables): string {
         return val;
       }
       if (bracedExpr !== undefined) {
-        return evaluatePath(vars, bracedExpr);
+        const result = evaluatePath(vars, bracedExpr);
+        return result !== null ? result : match;
       }
       if (RESERVED_VARS.has(varName!)) return match;
       if (!Object.hasOwn(vars, varName!)) {
@@ -186,8 +189,8 @@ export function resolveVarsShellSafe(value: string, vars: Variables): string {
         return shellQuote(val);
       }
       if (bracedExpr !== undefined) {
-        if (RESERVED_VARS.has(parsePath(bracedExpr.trim()).name)) return match;
-        return shellQuote(evaluatePath(vars, bracedExpr));
+        const result = evaluatePath(vars, bracedExpr);
+        return result !== null ? shellQuote(result) : match;
       }
       if (RESERVED_VARS.has(varName!)) return match;
       if (!Object.hasOwn(vars, varName!)) {
