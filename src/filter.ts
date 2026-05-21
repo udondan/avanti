@@ -26,7 +26,8 @@ export function applyFilter(
   const compiled = patterns.map(compilePattern);
   const result = new Map<string, Buffer>();
   for (const [key, value] of files) {
-    if (compiled.some((p) => matchesCompiled(key, p))) {
+    const normalizedKey = key.replace(/\\/g, '/');
+    if (compiled.some((p) => matchesCompiled(normalizedKey, p))) {
       result.set(key, value);
     }
   }

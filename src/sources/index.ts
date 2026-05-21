@@ -309,7 +309,7 @@ function cacheKeyForSrc(src: FileSrc, vars: Variables): string {
   } else {
     return JSON.stringify(src);
   }
-  const filter = filterForSrc(src);
+  const filter = filterForSrc(src)?.map((p) => resolveVars(p, vars));
   if (filter && filter.length > 0)
     return `${base}|filter:${JSON.stringify(filter)}`;
   return base;
@@ -622,7 +622,8 @@ async function fetchOneSrc(
 
   if (skipped) return { files: new Map(), record: null, skipped: true };
 
-  const filterPatterns = filterForSrc(src);
+  const rawFilter = filterForSrc(src);
+  const filterPatterns = rawFilter?.map((p) => resolveVars(p, vars));
   if (filterPatterns && filterPatterns.length > 0) {
     files = applyFilter(files, filterPatterns);
   }

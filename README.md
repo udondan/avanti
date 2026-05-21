@@ -579,7 +579,7 @@ files:
         - /^some.*\.jpg/
 ```
 
-An error is raised if the filter matches zero files, preventing silent misconfiguration. The `sha` fingerprint (if present) is computed over the filtered set.
+Variables are resolved in filter patterns before matching, so patterns like `$env:ARCH.tar.gz` or `{$platform}-release.zip` work as expected. An error is raised if the filter matches zero files, preventing silent misconfiguration. The `sha` fingerprint (if present) is computed over the filtered set.
 
 ### Directory Sources
 
@@ -1208,7 +1208,7 @@ files:
         to: $email # resolved to "you@example.com"
 ```
 
-Variables are resolved in every string field: target keys, `ref`, `exec` commands, HTTP URLs, local paths, `raw` content, `replace` rules (`from` and `to`), and `post` scripts.
+Variables are resolved in every string field: target keys, `ref`, `exec` commands, HTTP URLs, local paths, `raw` content, `filter` patterns, `replace` rules (`from` and `to`), and `post` scripts.
 
 For `raw:` sources, variables are resolved in the content itself. For all other source types (`http`, `local`, `github`, `gitlab`, `exec`), variables are only resolved in the fields that locate the source (URL, path, command) — not in the fetched content. Use a `replace:` rule if you need to substitute values in fetched content.
 
