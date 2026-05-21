@@ -582,7 +582,7 @@ describe('resolveVariableSpec', () => {
     );
   });
 
-  it('stores a plain object variable as-is', async () => {
+  it('resolves a plain object variable to its structural equivalent', async () => {
     const result = await resolveVariableSpec(
       { db: { host: 'pg.internal', port: 5432 } },
       cwd,
@@ -590,12 +590,20 @@ describe('resolveVariableSpec', () => {
     expect(result.db).toEqual({ host: 'pg.internal', port: 5432 });
   });
 
-  it('stores a plain array variable as-is', async () => {
+  it('resolves a plain array variable to its structural equivalent', async () => {
     const result = await resolveVariableSpec(
       { envs: ['staging', 'prod'] },
       cwd,
     );
     expect(result.envs).toEqual(['staging', 'prod']);
+  });
+
+  it('throws when a variable value is null (programmatic call)', async () => {
+    // parseVariables rejects null, but resolveVariableSpec is a public API
+    // that can be called directly from JS — must defend at its own boundary.
+    await expect(
+      resolveVariableSpec({ bad: null } as never, cwd),
+    ).rejects.toThrow('variables.bad:');
   });
 
   it('resolves $var references in string leaves of an object variable', async () => {

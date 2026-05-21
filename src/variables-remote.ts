@@ -50,17 +50,18 @@ export async function resolveVariableSpec(
         const msg = err instanceof Error ? err.message : String(err);
         throw new Error(`variables.${name}: ${msg}`, { cause: err });
       }
+    } else if (value === null) {
+      throw new Error(`variables.${name}: value must not be null`);
     } else if (
       typeof value !== 'object' ||
-      value === null ||
       Array.isArray(value) ||
       !('src' in value)
     ) {
       // Non-string, non-VariableEntry value (number, boolean, list, or plain
       // object) — resolve $vars in any string leaves.
       try {
-        // deepResolveVars returns JsonValue (handles nested nulls), but value
-        // was validated as non-null by parseVariables so the result is safe.
+        // deepResolveVars returns JsonValue (handles nested nulls), but null
+        // is rejected above so the cast to VariableValue is sound.
         resolved[name] = deepResolveVars(value, resolved) as VariableValue;
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
