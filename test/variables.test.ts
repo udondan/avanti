@@ -732,6 +732,14 @@ describe('resolveVars — braced ${expr} syntax', () => {
     expect(resolveVars('${latest}', {})).toBe('${latest}');
   });
 
+  it('throws on empty braced expression ${}', () => {
+    expect(() => resolveVars('${}', {})).toThrow('Invalid path expression');
+  });
+
+  it('throws on whitespace-only braced expression ${ }', () => {
+    expect(() => resolveVars('${ }', {})).toThrow('Invalid path expression');
+  });
+
   it('throws on unclosed [ in path expression', () => {
     expect(() => resolveVars('${arr[}', { arr: ['a'] })).toThrow(
       'Invalid path expression',
