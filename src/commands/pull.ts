@@ -741,6 +741,12 @@ export function pullCommand(): Command {
       }
 
       try {
+        const changedTargets = writeTargets.filter(
+          (_, i) => allDiffs[i].hasChanges && allDiffs[i].contentChanged,
+        );
+        // Content writes go first so that if atomicWrite throws, no permissions
+        // have been changed yet (minimises partial-apply surface).
+        atomicWrite([...changedTargets, ...staleToRestore], staleToDelete);
         // Mode-only changes don't need a full rewrite — apply chmod directly.
         let modeOnlyCount = 0;
         for (let i = 0; i < writeTargets.length; i++) {
@@ -750,10 +756,6 @@ export function pullCommand(): Command {
             modeOnlyCount++;
           }
         }
-        const changedTargets = writeTargets.filter(
-          (_, i) => allDiffs[i].hasChanges && allDiffs[i].contentChanged,
-        );
-        atomicWrite([...changedTargets, ...staleToRestore], staleToDelete);
         const written =
           changedTargets.length +
           staleToRestore.length +

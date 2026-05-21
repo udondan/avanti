@@ -156,11 +156,15 @@ export function formatDiff(diff: FileDiff): string {
   if (diff.contentChanged) {
     const lines = diff.patch.split('\n');
     if (diff.modeChange) {
-      // Inject mode lines after the ---/+++ header so the file header comes first
-      // (git-style: header → mode change → hunks).
-      const header = lines.slice(0, 2).map(colorLine);
-      const hunks = lines.slice(2).map(colorLine);
-      return [...header, modeFrom, modeTo, ...hunks].join('\n');
+      // Inject mode lines after the +++ header line (git-style: header → mode
+      // change → hunks). Find +++ by scan rather than fixed index because
+      // createTwoFilesPatch may prepend Index:/=== lines before the header.
+      const plusPlusIdx = lines.findIndex((l) => l.startsWith('+++'));
+      if (plusPlusIdx >= 0) {
+        const before = lines.slice(0, plusPlusIdx + 1).map(colorLine);
+        const after = lines.slice(plusPlusIdx + 1).map(colorLine);
+        return [...before, modeFrom, modeTo, ...after].join('\n');
+      }
     }
     return lines.map(colorLine).join('\n');
   }

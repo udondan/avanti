@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as yaml from 'js-yaml';
+import { parseDocument, isMap, isScalar } from 'yaml';
 import {
   AvantiConfig,
   AwsS3Src,
@@ -193,13 +194,47 @@ async function fetchConfigContent(
 }
 
 export function parseConfigContent(content: string): AvantiConfig {
-  // Normalize YAML octal literals for mode fields before js-yaml converts them
-  // to integers and loses the 0o prefix (e.g. mode: 0o644 → mode: "0644").
-  content = content.replace(
-    /^(\s+mode:\s+)0o([0-7]+)([ \t]*(#.*)?)$/gm,
-    (_: string, prefix: string, digits: string, trailing: string) =>
-      `${prefix}"${digits.padStart(4, '0')}"${trailing}`,
-  );
+  // Normalize YAML 0o-prefixed octal literals in files[*].mode before js-yaml
+  // parses the content. js-yaml discards the 0o prefix, turning e.g. 0o644
+  // into integer 420. We use the yaml package's AST to locate only actual
+  // files[*].mode scalar values (never block-scalar content or other fields),
+  // then do a targeted string replacement at the exact character range.
+  try {
+    const doc = parseDocument(content);
+    const filesNode = doc.get('files', true);
+    if (isMap(filesNode)) {
+      const replacements: Array<{ start: number; end: number; text: string }> =
+        [];
+      for (const pair of filesNode.items) {
+        const entryNode = (pair as { value?: unknown }).value;
+        if (!isMap(entryNode)) continue;
+        const modeNode = entryNode.get('mode', true);
+        if (
+          isScalar(modeNode) &&
+          typeof modeNode.value === 'number' &&
+          Number.isInteger(modeNode.value) &&
+          modeNode.range
+        ) {
+          const raw = content.slice(modeNode.range[0], modeNode.range[1]);
+          if (raw.startsWith('0o')) {
+            const digits = raw.slice(2);
+            replacements.push({
+              start: modeNode.range[0],
+              end: modeNode.range[1],
+              text: `"${digits.padStart(4, '0')}"`,
+            });
+          }
+        }
+      }
+      // Apply in reverse order so earlier offsets stay valid.
+      for (const r of replacements.reverse()) {
+        content = content.slice(0, r.start) + r.text + content.slice(r.end);
+      }
+    }
+  } catch {
+    // If AST parse fails, fall through to js-yaml which will produce its own
+    // error with better context.
+  }
 
   let raw: unknown;
   try {
