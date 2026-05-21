@@ -63,7 +63,7 @@ export function computeDiff(
   const oldBuf = isNew ? Buffer.alloc(0) : fs.readFileSync(targetPath);
 
   let modeChange: { from: number; to: number } | undefined;
-  if (!isNew && desiredMode) {
+  if (!isNew && desiredMode && process.platform !== 'win32') {
     const desired = parseInt(desiredMode, 8);
     if (!isNaN(desired)) {
       const current = fs.statSync(targetPath).mode & 0o7777;

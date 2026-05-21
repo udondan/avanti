@@ -747,13 +747,16 @@ export function pullCommand(): Command {
         // Content writes go first so that if atomicWrite throws, no permissions
         // have been changed yet (minimises partial-apply surface).
         atomicWrite([...changedTargets, ...staleToRestore], staleToDelete);
-        // Mode-only changes don't need a full rewrite — apply chmod directly.
+        // Mode-only changes: apply chmod directly (POSIX only — mode bits are
+        // not meaningful on Windows so modeChange is never set there).
         let modeOnlyCount = 0;
-        for (let i = 0; i < writeTargets.length; i++) {
-          const d = allDiffs[i];
-          if (d.modeChange && !d.contentChanged) {
-            fs.chmodSync(writeTargets[i].targetPath, d.modeChange.to);
-            modeOnlyCount++;
+        if (process.platform !== 'win32') {
+          for (let i = 0; i < writeTargets.length; i++) {
+            const d = allDiffs[i];
+            if (d.modeChange && !d.contentChanged) {
+              fs.chmodSync(writeTargets[i].targetPath, d.modeChange.to);
+              modeOnlyCount++;
+            }
           }
         }
         const written =
