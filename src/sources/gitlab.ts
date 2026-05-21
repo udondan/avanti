@@ -586,7 +586,7 @@ async function fetchReleaseLinksViaApi(
   }
   const entries = await Promise.all(
     links.map(async (link): Promise<[string, Buffer]> => {
-      const linkHost = new URL(link.url).hostname;
+      const linkHost = new URL(link.url).host;
       const headers =
         linkHost === gitlabHost ? apiHeaders() : { 'User-Agent': 'avanti' };
       const dlRes = await fetchWithRetry(link.url, { headers });
