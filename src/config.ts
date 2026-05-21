@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as yaml from 'js-yaml';
+import { parseDocument, isMap, isScalar } from 'yaml';
 import {
   AvantiConfig,
   AwsS3Src,
@@ -193,6 +194,48 @@ async function fetchConfigContent(
 }
 
 export function parseConfigContent(content: string): AvantiConfig {
+  // Normalize YAML 0o-prefixed octal literals in files[*].mode before js-yaml
+  // parses the content. js-yaml discards the 0o prefix, turning e.g. 0o644
+  // into integer 420. We use the yaml package's AST to locate only actual
+  // files[*].mode scalar values (never block-scalar content or other fields),
+  // then do a targeted string replacement at the exact character range.
+  try {
+    const doc = parseDocument(content);
+    const filesNode = doc.get('files', true);
+    if (isMap(filesNode)) {
+      const replacements: Array<{ start: number; end: number; text: string }> =
+        [];
+      for (const pair of filesNode.items) {
+        const entryNode = (pair as { value?: unknown }).value;
+        if (!isMap(entryNode)) continue;
+        const modeNode = entryNode.get('mode', true);
+        if (
+          isScalar(modeNode) &&
+          typeof modeNode.value === 'number' &&
+          Number.isInteger(modeNode.value) &&
+          modeNode.range
+        ) {
+          const raw = content.slice(modeNode.range[0], modeNode.range[1]);
+          if (raw.startsWith('0o')) {
+            const digits = raw.slice(2);
+            replacements.push({
+              start: modeNode.range[0],
+              end: modeNode.range[1],
+              text: `"${digits.padStart(4, '0')}"`,
+            });
+          }
+        }
+      }
+      // Apply in reverse order so earlier offsets stay valid.
+      for (const r of replacements.reverse()) {
+        content = content.slice(0, r.start) + r.text + content.slice(r.end);
+      }
+    }
+  } catch {
+    // If AST parse fails, fall through to js-yaml which will produce its own
+    // error with better context.
+  }
+
   let raw: unknown;
   try {
     raw = yaml.load(content);
@@ -249,7 +292,21 @@ export function parseConfigContent(content: string): AvantiConfig {
     if (fileConds['if'] !== undefined) fileEntry['if'] = fileConds['if'];
     if (fileConds.ifAny !== undefined) fileEntry.ifAny = fileConds.ifAny;
 
-    if (typeof e['mode'] === 'string') fileEntry.mode = e['mode'];
+    if (typeof e['mode'] === 'number') {
+      // 0o-prefixed YAML literals are normalized to quoted strings before parsing
+      // (see preprocessing above), so any remaining number is a bare decimal like
+      // mode: 755, which is ambiguous and rejected.
+      throw new Error(
+        `files["${target}"].mode: ${e['mode']} is a bare decimal — use a quoted string like "0755" or YAML 0o notation (e.g. 0o755)`,
+      );
+    } else if (typeof e['mode'] === 'string') {
+      if (!/^[0-7]{1,4}$/.test(e['mode'])) {
+        throw new Error(
+          `files["${target}"].mode: "${e['mode']}" is not a valid octal string (expected 1–4 octal digits, e.g. "0755")`,
+        );
+      }
+      fileEntry.mode = e['mode'];
+    }
     if (typeof e['backup'] === 'string') fileEntry.backup = e['backup'];
     if (typeof e['post'] === 'string') fileEntry.post = e['post'];
     if (typeof e['writeInPlace'] === 'boolean')

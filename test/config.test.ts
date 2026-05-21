@@ -223,6 +223,58 @@ files:
     expect(cfg.files['file.sh'].mode).toBe('0777');
   });
 
+  it('accepts a numeric mode from YAML 0o-notation 0o755 (493 → "0755")', async () => {
+    const f = writeTmp(`
+files:
+  file.sh:
+    src: ~/some/file.sh
+    mode: 0o755
+`);
+    const cfg = await loadConfig(f);
+    expect(cfg.files['file.sh'].mode).toBe('0755');
+  });
+
+  it('accepts a numeric mode from YAML 0o-notation 0o644 (→ "0644")', async () => {
+    const f = writeTmp(`
+files:
+  file.sh:
+    src: ~/some/file.sh
+    mode: 0o644
+`);
+    const cfg = await loadConfig(f);
+    expect(cfg.files['file.sh'].mode).toBe('0644');
+  });
+
+  it('rejects a bare decimal like 755', async () => {
+    const f = writeTmp(`
+files:
+  file.sh:
+    src: ~/some/file.sh
+    mode: 755
+`);
+    await expect(loadConfig(f)).rejects.toThrow(/bare decimal/);
+  });
+
+  it('rejects an invalid string mode', async () => {
+    const f = writeTmp(`
+files:
+  file.sh:
+    src: ~/some/file.sh
+    mode: garbage
+`);
+    await expect(loadConfig(f)).rejects.toThrow(/not a valid octal string/);
+  });
+
+  it('rejects a string mode with non-octal digits', async () => {
+    const f = writeTmp(`
+files:
+  file.sh:
+    src: ~/some/file.sh
+    mode: "0o755"
+`);
+    await expect(loadConfig(f)).rejects.toThrow(/not a valid octal string/);
+  });
+
   it('loads an exec src map', async () => {
     const f = writeTmp(`
 files:

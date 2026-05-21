@@ -8,13 +8,21 @@ export interface FileDiff {
   isNew: boolean;
   isDelete?: boolean;
   hasChanges: boolean;
+  contentChanged: boolean;
   patch: string;
   isBinary?: boolean;
+  modeChange?: { from: number; to: number };
 }
 
 export function computeDeleteDiff(targetPath: string): FileDiff {
   if (!fs.existsSync(targetPath)) {
-    return { targetPath, isNew: false, hasChanges: false, patch: '' };
+    return {
+      targetPath,
+      isNew: false,
+      hasChanges: false,
+      contentChanged: false,
+      patch: '',
+    };
   }
   const oldBuf = fs.readFileSync(targetPath);
   if (isBinary(oldBuf)) {
@@ -23,6 +31,7 @@ export function computeDeleteDiff(targetPath: string): FileDiff {
       isNew: false,
       isDelete: true,
       hasChanges: true,
+      contentChanged: true,
       patch: '',
       isBinary: true,
     };
@@ -36,64 +45,145 @@ export function computeDeleteDiff(targetPath: string): FileDiff {
     undefined,
     'deleted',
   );
-  return { targetPath, isNew: false, hasChanges: true, patch };
+  return {
+    targetPath,
+    isNew: false,
+    hasChanges: true,
+    contentChanged: true,
+    patch,
+  };
 }
 
-export function computeDiff(targetPath: string, newContent: Buffer): FileDiff {
+export function computeDiff(
+  targetPath: string,
+  newContent: Buffer,
+  desiredMode?: string,
+): FileDiff {
   const isNew = !fs.existsSync(targetPath);
   const oldBuf = isNew ? Buffer.alloc(0) : fs.readFileSync(targetPath);
+
+  let modeChange: { from: number; to: number } | undefined;
+  if (!isNew && desiredMode && process.platform !== 'win32') {
+    const desired = parseInt(desiredMode, 8);
+    if (!isNaN(desired)) {
+      const stat = fs.lstatSync(targetPath, { throwIfNoEntry: false });
+      if (stat !== undefined && !stat.isSymbolicLink()) {
+        const current = stat.mode & 0o7777;
+        if (desired !== current) {
+          modeChange = { from: current, to: desired };
+        }
+      }
+    }
+  }
 
   const binary = isBinary(newContent) || isBinary(oldBuf);
 
   if (binary) {
-    const hasChanges = isNew || !newContent.equals(oldBuf);
-    return { targetPath, isNew, hasChanges, patch: '', isBinary: true };
+    const contentChanged = isNew || !newContent.equals(oldBuf);
+    const hasChanges = contentChanged || modeChange !== undefined;
+    return {
+      targetPath,
+      isNew,
+      hasChanges,
+      contentChanged,
+      patch: '',
+      isBinary: true,
+      modeChange,
+    };
   }
 
   const oldContent = oldBuf.toString('utf8');
   const newText = newContent.toString('utf8');
-  const hasChanges = oldContent !== newText;
+  const contentChanged = oldContent !== newText;
+  const hasChanges = contentChanged || modeChange !== undefined;
 
-  const patch = createTwoFilesPatch(
-    isNew ? '/dev/null' : targetPath,
-    targetPath,
-    oldContent,
-    newText,
-    isNew ? '' : undefined,
-    isNew ? 'new file' : undefined,
-  );
+  const patch = contentChanged
+    ? createTwoFilesPatch(
+        isNew ? '/dev/null' : targetPath,
+        targetPath,
+        oldContent,
+        newText,
+        isNew ? '' : undefined,
+        isNew ? 'new file' : undefined,
+      )
+    : '';
 
-  return { targetPath, isNew, hasChanges, patch };
+  return { targetPath, isNew, hasChanges, contentChanged, patch, modeChange };
 }
 
 export function formatDiff(diff: FileDiff): string {
   if (!diff.hasChanges) return '';
 
-  if (diff.isBinary) {
-    const label = diff.isNew
-      ? 'new binary file'
-      : diff.isDelete
-        ? 'binary file deleted'
-        : 'binary file changed';
-    const oldPath = diff.isNew ? '/dev/null' : diff.targetPath;
-    const newPath = diff.isDelete ? '/dev/null' : diff.targetPath;
-    return (
-      chalk.bold(`--- ${oldPath}\n+++ ${newPath}`) +
-      '\n' +
-      chalk.cyan(`@@ ${label} @@`)
-    );
-  }
-
-  const lines = diff.patch.split('\n');
-  const colored = lines.map((line) => {
+  const colorLine = (line: string): string => {
     if (line.startsWith('+++') || line.startsWith('---'))
       return chalk.bold(line);
     if (line.startsWith('@@')) return chalk.cyan(line);
     if (line.startsWith('+')) return chalk.green(line);
     if (line.startsWith('-')) return chalk.red(line);
     return line;
-  });
-  return colored.join('\n');
+  };
+
+  let modeFrom = '';
+  let modeTo = '';
+  if (diff.modeChange) {
+    modeFrom = chalk.red(
+      `-old mode ${diff.modeChange.from.toString(8).padStart(6, '0')}`,
+    );
+    modeTo = chalk.green(
+      `+new mode ${diff.modeChange.to.toString(8).padStart(6, '0')}`,
+    );
+  }
+
+  if (diff.isBinary) {
+    let out = '';
+    if (diff.contentChanged) {
+      const label = diff.isNew
+        ? 'new binary file'
+        : diff.isDelete
+          ? 'binary file deleted'
+          : 'binary file changed';
+      const oldPath = diff.isNew ? '/dev/null' : diff.targetPath;
+      const newPath = diff.isDelete ? '/dev/null' : diff.targetPath;
+      out += chalk.bold(`--- ${oldPath}\n+++ ${newPath}`) + '\n';
+      if (diff.modeChange) out += modeFrom + '\n' + modeTo + '\n';
+      out += chalk.cyan(`@@ ${label} @@`);
+    } else if (diff.modeChange) {
+      // Mode-only binary: emit file header + mode lines.
+      out +=
+        chalk.bold(`--- ${diff.targetPath}\n+++ ${diff.targetPath}`) + '\n';
+      out += modeFrom + '\n' + modeTo;
+    }
+    return out;
+  }
+
+  if (diff.contentChanged) {
+    const lines = diff.patch.split('\n');
+    if (diff.modeChange) {
+      // Inject mode lines after the +++ header line (git-style: header → mode
+      // change → hunks). Find +++ by scan rather than fixed index because
+      // createTwoFilesPatch may prepend Index:/=== lines before the header.
+      const plusPlusIdx = lines.findIndex((l) => l.startsWith('+++'));
+      if (plusPlusIdx >= 0) {
+        const before = lines.slice(0, plusPlusIdx + 1).map(colorLine);
+        const after = lines.slice(plusPlusIdx + 1).map(colorLine);
+        return [...before, modeFrom, modeTo, ...after].join('\n');
+      }
+    }
+    return lines.map(colorLine).join('\n');
+  }
+
+  // Mode-only text file.
+  if (diff.modeChange) {
+    return (
+      chalk.bold(`--- ${diff.targetPath}\n+++ ${diff.targetPath}`) +
+      '\n' +
+      modeFrom +
+      '\n' +
+      modeTo
+    );
+  }
+
+  return '';
 }
 
 export function printDiffs(diffs: FileDiff[]): void {
