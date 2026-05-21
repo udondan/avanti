@@ -2126,6 +2126,40 @@ files:
   });
 });
 
+describe('writeInPlace field parsing', () => {
+  it('parses writeInPlace: true', () => {
+    const f = writeTmp(`
+files:
+  config.yaml:
+    src: https://example.com/config.yaml
+    writeInPlace: true
+`);
+    const cfg = parseConfigContent(fs.readFileSync(f, 'utf8'));
+    expect(cfg.files['config.yaml'].writeInPlace).toBe(true);
+  });
+
+  it('parses writeInPlace: false', () => {
+    const f = writeTmp(`
+files:
+  config.yaml:
+    src: https://example.com/config.yaml
+    writeInPlace: false
+`);
+    const cfg = parseConfigContent(fs.readFileSync(f, 'utf8'));
+    expect(cfg.files['config.yaml'].writeInPlace).toBe(false);
+  });
+
+  it('leaves writeInPlace undefined when not set', () => {
+    const f = writeTmp(`
+files:
+  config.yaml:
+    src: https://example.com/config.yaml
+`);
+    const cfg = parseConfigContent(fs.readFileSync(f, 'utf8'));
+    expect(cfg.files['config.yaml'].writeInPlace).toBeUndefined();
+  });
+});
+
 describe('backup_roots parsing', () => {
   it('parses a list of backup_roots strings', () => {
     const f = writeTmp(`

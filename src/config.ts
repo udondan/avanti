@@ -251,6 +251,8 @@ export function parseConfigContent(content: string): AvantiConfig {
     if (typeof e['mode'] === 'string') fileEntry.mode = e['mode'];
     if (typeof e['backup'] === 'string') fileEntry.backup = e['backup'];
     if (typeof e['post'] === 'string') fileEntry.post = e['post'];
+    if (typeof e['writeInPlace'] === 'boolean')
+      fileEntry.writeInPlace = e['writeInPlace'];
     if (e['strategy'] !== undefined) {
       if (e['strategy'] !== 'replace' && e['strategy'] !== 'insert') {
         throw new Error(

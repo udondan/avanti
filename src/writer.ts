@@ -7,6 +7,7 @@ export interface WriteTarget {
   content: Buffer;
   mode?: string;
   backupPath?: string;
+  writeInPlace?: boolean;
 }
 
 export function atomicWrite(
@@ -15,6 +16,8 @@ export function atomicWrite(
 ): void {
   // Stage each file as a sibling temp file on the same filesystem as the
   // destination so that renameSync (rename(2)) is atomic on POSIX.
+  const mvTargets = targets.filter((t) => !t.writeInPlace);
+  const inPlaceTargets = targets.filter((t) => t.writeInPlace);
   const staged: Array<{ tmp: string; dest: string; effectiveMode?: number }> =
     [];
   const backupTemps: string[] = [];
@@ -22,7 +25,7 @@ export function atomicWrite(
     // Phase 1: write all temp files. No backups yet — if any write fails we
     // don't want orphaned backup files for targets whose destinations haven't
     // changed yet.
-    for (const t of targets) {
+    for (const t of mvTargets) {
       const dir = path.dirname(t.targetPath);
       if (!fs.existsSync(dir)) {
         fs.mkdirSync(dir, { recursive: true });
@@ -90,6 +93,28 @@ export function atomicWrite(
       fs.renameSync(s.tmp, s.dest);
       if (s.effectiveMode !== undefined) {
         fs.chmodSync(s.dest, s.effectiveMode);
+      }
+    }
+
+    // Phase 4: in-place writes — preserve inode, not atomic
+    for (const t of inPlaceTargets) {
+      const dir = path.dirname(t.targetPath);
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
+      let effectiveMode: number | undefined;
+      if (t.mode) {
+        effectiveMode = parseInt(t.mode, 8);
+      } else {
+        try {
+          effectiveMode = fs.statSync(t.targetPath).mode & 0o7777;
+        } catch {
+          // new file — umask default
+        }
+      }
+      fs.writeFileSync(t.targetPath, t.content);
+      if (effectiveMode !== undefined) {
+        fs.chmodSync(t.targetPath, effectiveMode);
       }
     }
   } finally {

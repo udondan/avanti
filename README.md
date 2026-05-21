@@ -36,6 +36,7 @@ atomic rollbacks, and diff-before-apply safety.
   - [Conditions](#conditions)
   - [Scaffold Pattern](#scaffold-pattern)
   - [Backup](#backup)
+  - [Write in Place](#write-in-place)
   - [Variables](#variables)
   - [$self — Self-managing Config](#self--self-managing-config)
   - [Authentication](#authentication)
@@ -405,18 +406,19 @@ A brace group is only expanded when it contains **at least one comma** (e.g. `{f
 
 > **YAML quoting:** YAML treats `{` at the start of a plain key as a flow mapping. If the brace group is the first character of a key, quote it: `'{dev,prod}.yml':` or `"{dev,prod}.yml":`. Keys where the brace group appears after a path prefix (e.g. `config/{dev,prod}.yml`) do not need quoting.
 
-| Field      | Required | Description                                                                                                                                                                                                                             |
-| ---------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `src`      | Yes      | Source (see below). May be a single source or a **list** of sources to concatenate.                                                                                                                                                     |
-| `if`       | No       | Condition object (or list of objects). All must pass for the entry to be processed. See [Conditions](#conditions).                                                                                                                      |
-| `ifAny`    | No       | List of condition objects. At least one must pass. See [Conditions](#conditions).                                                                                                                                                       |
-| `mode`     | No       | File permission mode, e.g. `"0755"`                                                                                                                                                                                                     |
-| `replace`  | No       | List of `{from, to}` replacement rules. `from` may be a plain string or `/pattern/flags` regex.                                                                                                                                         |
-| `post`     | No       | Shell script. Content is piped via stdin; stdout is used as the result. Runs after `replace`.                                                                                                                                           |
-| `template` | No       | Treat the fetched content as a template and render it with avanti config variables as context. See [Template Rendering](#template-rendering).                                                                                           |
-| `json`     | No       | JSON merge/format options (see below). When omitted, merging is auto-enabled if all sources have a `.json` or `.jsonc` extension. Use `true`/`false` to force on or off regardless of extension.                                        |
-| `yaml`     | No       | YAML merge/format options (see below). When omitted, merging is auto-enabled if all sources have a `.yaml` or `.yml` extension. Use `true`/`false` to force on or off regardless of extension. Comments are preserved in merged output. |
-| `strategy` | No       | Write strategy: `replace` _(default)_ — overwrite the target file entirely; `insert` — merge content into the existing file without clobbering unrelated content. See [Insert Mode](#insert-mode).                                      |
+| Field          | Required | Description                                                                                                                                                                                                                             |
+| -------------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src`          | Yes      | Source (see below). May be a single source or a **list** of sources to concatenate.                                                                                                                                                     |
+| `if`           | No       | Condition object (or list of objects). All must pass for the entry to be processed. See [Conditions](#conditions).                                                                                                                      |
+| `ifAny`        | No       | List of condition objects. At least one must pass. See [Conditions](#conditions).                                                                                                                                                       |
+| `mode`         | No       | File permission mode, e.g. `"0755"`                                                                                                                                                                                                     |
+| `replace`      | No       | List of `{from, to}` replacement rules. `from` may be a plain string or `/pattern/flags` regex.                                                                                                                                         |
+| `post`         | No       | Shell script. Content is piped via stdin; stdout is used as the result. Runs after `replace`.                                                                                                                                           |
+| `template`     | No       | Treat the fetched content as a template and render it with avanti config variables as context. See [Template Rendering](#template-rendering).                                                                                           |
+| `json`         | No       | JSON merge/format options (see below). When omitted, merging is auto-enabled if all sources have a `.json` or `.jsonc` extension. Use `true`/`false` to force on or off regardless of extension.                                        |
+| `yaml`         | No       | YAML merge/format options (see below). When omitted, merging is auto-enabled if all sources have a `.yaml` or `.yml` extension. Use `true`/`false` to force on or off regardless of extension. Comments are preserved in merged output. |
+| `strategy`     | No       | Write strategy: `replace` _(default)_ — overwrite the target file entirely; `insert` — merge content into the existing file without clobbering unrelated content. See [Insert Mode](#insert-mode).                                      |
+| `writeInPlace` | No       | If `true`, replaces file content in-place instead of using an atomic rename. Preserves the existing inode. **Not atomic** — use only when inode stability is required. See [Write in Place](#write-in-place).                           |
 
 ### Source Types
 
@@ -1102,6 +1104,28 @@ backup: $dirname/$basename.%dd.$ext   # config.01.yaml, config.02.yaml, …
 # Separate directory outside the working directory (requires backup_roots)
 backup: ~/backups/$filename
 ```
+
+### Write in Place
+
+By default avanti writes files using an atomic rename: content is staged to a temporary file in the same directory, then `rename(2)` replaces the target atomically. This creates a new inode on every pull.
+
+Some environments track files by inode — file watchers (`inotifywait IN_CLOSE_WRITE`), Docker bind-mount hot-reload, certain editors. When the inode changes those watchers lose the file. Set `writeInPlace: true` to replace the file's content in-place instead:
+
+```yaml
+files:
+  docker/config.json:
+    src: github:org/repo:docker/config.json
+    writeInPlace: true
+```
+
+|                  | default           | `writeInPlace: true`         |
+| ---------------- | ----------------- | ---------------------------- |
+| Atomic?          | Yes — `rename(2)` | **No** — truncate then write |
+| Inode preserved? | No                | Yes                          |
+| New file         | Created normally  | Created normally             |
+| Backup           | Yes               | Yes                          |
+
+> **Warning:** `writeInPlace: true` is **not atomic**. Between the truncate and the completed write, a concurrent reader will see empty or partial content. Use the default atomic rename when correctness under concurrent reads matters more than inode stability.
 
 ### Variables
 

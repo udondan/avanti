@@ -187,3 +187,100 @@ describe('atomicWrite', () => {
     );
   });
 });
+
+describe('writeInPlace', () => {
+  it('writes correct content', () => {
+    const dest = path.join(tmpDir, 'output.txt');
+    atomicWrite([
+      { targetPath: dest, content: buf('hello'), writeInPlace: true },
+    ]);
+    expect(fs.readFileSync(dest, 'utf8')).toBe('hello');
+  });
+
+  it.skipIf(isWindows)('preserves the inode of an existing file', () => {
+    const dest = path.join(tmpDir, 'file.txt');
+    fs.writeFileSync(dest, 'old', 'utf8');
+    const inodeBefore = fs.statSync(dest).ino;
+    atomicWrite([
+      { targetPath: dest, content: buf('new'), writeInPlace: true },
+    ]);
+    expect(fs.statSync(dest).ino).toBe(inodeBefore);
+    expect(fs.readFileSync(dest, 'utf8')).toBe('new');
+  });
+
+  it.skipIf(isWindows)('default (mv) mode changes the inode', () => {
+    const dest = path.join(tmpDir, 'file.txt');
+    fs.writeFileSync(dest, 'old', 'utf8');
+    const inodeBefore = fs.statSync(dest).ino;
+    atomicWrite([{ targetPath: dest, content: buf('new') }]);
+    expect(fs.statSync(dest).ino).not.toBe(inodeBefore);
+  });
+
+  it('creates a new file when the target does not exist', () => {
+    const dest = path.join(tmpDir, 'new.txt');
+    atomicWrite([
+      { targetPath: dest, content: buf('created'), writeInPlace: true },
+    ]);
+    expect(fs.readFileSync(dest, 'utf8')).toBe('created');
+  });
+
+  it('creates parent directories if they do not exist', () => {
+    const dest = path.join(tmpDir, 'nested', 'dir', 'output.txt');
+    atomicWrite([
+      { targetPath: dest, content: buf('deep'), writeInPlace: true },
+    ]);
+    expect(fs.readFileSync(dest, 'utf8')).toBe('deep');
+  });
+
+  it('takes a backup of the old content before writing', () => {
+    const dest = path.join(tmpDir, 'config.yaml');
+    const backup = path.join(tmpDir, 'config.yaml.bkp');
+    fs.writeFileSync(dest, 'old content', 'utf8');
+    atomicWrite([
+      {
+        targetPath: dest,
+        content: buf('new content'),
+        backupPath: backup,
+        writeInPlace: true,
+      },
+    ]);
+    expect(fs.readFileSync(backup, 'utf8')).toBe('old content');
+    expect(fs.readFileSync(dest, 'utf8')).toBe('new content');
+  });
+
+  it.skipIf(isWindows)(
+    'preserves existing file permissions when no mode is specified',
+    () => {
+      const dest = path.join(tmpDir, 'secret.txt');
+      fs.writeFileSync(dest, 'original', 'utf8');
+      fs.chmodSync(dest, 0o600);
+      atomicWrite([
+        { targetPath: dest, content: buf('updated'), writeInPlace: true },
+      ]);
+      expect(fs.statSync(dest).mode & 0o777).toBe(0o600);
+    },
+  );
+
+  it.skipIf(isWindows)('applies an explicit mode after writing', () => {
+    const dest = path.join(tmpDir, 'script.sh');
+    fs.writeFileSync(dest, 'old', 'utf8');
+    atomicWrite([
+      {
+        targetPath: dest,
+        content: buf('new'),
+        mode: '0755',
+        writeInPlace: true,
+      },
+    ]);
+    expect(fs.statSync(dest).mode & 0o111).not.toBe(0);
+  });
+
+  it('does not create a temp file', () => {
+    const dest = path.join(tmpDir, 'output.txt');
+    const tmpFile = path.join(tmpDir, '.output.txt.avanti-tmp');
+    atomicWrite([
+      { targetPath: dest, content: buf('data'), writeInPlace: true },
+    ]);
+    expect(fs.existsSync(tmpFile)).toBe(false);
+  });
+});
