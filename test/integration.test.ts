@@ -1685,7 +1685,7 @@ files:
           {
             encoding: 'utf8',
             cwd: PROJECT_ROOT,
-            env: { ...process.env, HOME: fakeHome },
+            env: { ...process.env, HOME: fakeHome, USERPROFILE: fakeHome },
             stdio: ['pipe', 'pipe', 'pipe'],
           },
         );
