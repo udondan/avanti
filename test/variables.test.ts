@@ -610,6 +610,18 @@ describe('resolveVariableSpec', () => {
     ).rejects.toThrow('variables.bad:');
   });
 
+  it('throws when a variable value is undefined (programmatic call)', async () => {
+    await expect(
+      resolveVariableSpec({ bad: undefined } as never, cwd),
+    ).rejects.toThrow('variables.bad: unsupported value type "undefined"');
+  });
+
+  it('throws when a variable value is a bigint (programmatic call)', async () => {
+    await expect(
+      resolveVariableSpec({ bad: 42n } as never, cwd),
+    ).rejects.toThrow('variables.bad: unsupported value type "bigint"');
+  });
+
   it('resolves $var references in string leaves of an object variable', async () => {
     const result = await resolveVariableSpec(
       { host: 'pg.internal', db: { url: 'postgres://$host/mydb' } },

@@ -63,6 +63,15 @@ export async function resolveVariableSpec(
     } else if (value === null) {
       throw new Error(`variables.${name}: value must not be null`);
     } else if (
+      typeof value === 'undefined' ||
+      typeof value === 'bigint' ||
+      typeof value === 'symbol' ||
+      typeof value === 'function'
+    ) {
+      throw new Error(
+        `variables.${name}: unsupported value type "${typeof value}" — value must be a string, number, boolean, list, or plain object`,
+      );
+    } else if (
       typeof value !== 'object' ||
       Array.isArray(value) ||
       // Use `in` for TypeScript narrowing; Object.hasOwn guards against
