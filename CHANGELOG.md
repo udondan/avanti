@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.24.0](https://github.com/udondan/avanti/compare/v0.23.1...v0.24.0) (2026-05-21)
+
+
+### Features
+
+* add list/object variable values and ${expr} nested access syntax ([#195](https://github.com/udondan/avanti/issues/195)) ([74efb6f](https://github.com/udondan/avanti/commit/74efb6f7853a6c38259455743471f87295e55741))
+* add release artifact downloading for GitHub and GitLab ([#198](https://github.com/udondan/avanti/issues/198)) ([bb5c48f](https://github.com/udondan/avanti/commit/bb5c48f84b80a0abb28efe1b61d90602af33f491))
+* add writeInPlace option to preserve inode on pull ([#193](https://github.com/udondan/avanti/issues/193)) ([f472dfa](https://github.com/udondan/avanti/commit/f472dfa644e1ea31f642ba0a7ba6397cb2d7a480))
+
+
+### Bug Fixes
+
+* **deps:** update dependency @aws-sdk/client-s3 to v3.1049.0 ([#201](https://github.com/udondan/avanti/issues/201)) ([713866f](https://github.com/udondan/avanti/commit/713866f3b0d8b82419898a5b4cecf82468865e9e))
+* detect and apply mode-only changes; accept numeric mode in config ([#197](https://github.com/udondan/avanti/issues/197)) ([b8d77be](https://github.com/udondan/avanti/commit/b8d77beefb6555ec6d0c9b13ce20d723c9def412))
+
 ## [0.23.1](https://github.com/udondan/avanti/compare/v0.23.0...v0.23.1) (2026-05-20)
 
 
