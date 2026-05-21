@@ -826,6 +826,12 @@ function parseSingleSrc(raw: unknown, loc: string): FileSrc {
     if (typeof g['project'] !== 'string' || !g['project']) {
       throw new Error(`${loc}.gitlab.project: required string`);
     }
+    if (g['file'] !== undefined && typeof g['file'] !== 'string') {
+      throw new Error(`${loc}.gitlab.file: must be a string`);
+    }
+    if (g['release'] !== undefined && typeof g['release'] !== 'string') {
+      throw new Error(`${loc}.gitlab.release: must be a string`);
+    }
     const hasFile = typeof g['file'] === 'string' && !!g['file'];
     const hasRelease = typeof g['release'] === 'string' && !!g['release'];
     if (hasFile && hasRelease) {
@@ -835,6 +841,9 @@ function parseSingleSrc(raw: unknown, loc: string): FileSrc {
     }
     if (!hasFile && !hasRelease) {
       throw new Error(`${loc}.gitlab: one of "file" or "release" is required`);
+    }
+    if (hasRelease && g['ref'] !== undefined) {
+      throw new Error(`${loc}.gitlab: "ref" is not valid when using "release"`);
     }
     if (
       g['host'] !== undefined &&
@@ -885,6 +894,12 @@ function parseSingleSrc(raw: unknown, loc: string): FileSrc {
     if (typeof g['repo'] !== 'string' || !g['repo']) {
       throw new Error(`${loc}.github.repo: required string`);
     }
+    if (g['file'] !== undefined && typeof g['file'] !== 'string') {
+      throw new Error(`${loc}.github.file: must be a string`);
+    }
+    if (g['release'] !== undefined && typeof g['release'] !== 'string') {
+      throw new Error(`${loc}.github.release: must be a string`);
+    }
     const hasFile = typeof g['file'] === 'string' && !!g['file'];
     const hasRelease = typeof g['release'] === 'string' && !!g['release'];
     if (hasFile && hasRelease) {
@@ -894,6 +909,9 @@ function parseSingleSrc(raw: unknown, loc: string): FileSrc {
     }
     if (!hasFile && !hasRelease) {
       throw new Error(`${loc}.github: one of "file" or "release" is required`);
+    }
+    if (hasRelease && g['ref'] !== undefined) {
+      throw new Error(`${loc}.github: "ref" is not valid when using "release"`);
     }
     if (
       g['host'] !== undefined &&
