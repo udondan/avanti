@@ -66,9 +66,12 @@ export function computeDiff(
   if (!isNew && desiredMode && process.platform !== 'win32') {
     const desired = parseInt(desiredMode, 8);
     if (!isNaN(desired)) {
-      const current = fs.statSync(targetPath).mode & 0o7777;
-      if (desired !== current) {
-        modeChange = { from: current, to: desired };
+      const stat = fs.statSync(targetPath, { throwIfNoEntry: false });
+      if (stat !== undefined) {
+        const current = stat.mode & 0o7777;
+        if (desired !== current) {
+          modeChange = { from: current, to: desired };
+        }
       }
     }
   }
