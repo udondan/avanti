@@ -36,9 +36,39 @@ export function atomicWrite(
       }
       const tmpFile = path.join(
         dir,
-        '.' + path.basename(t.targetPath) + '.avanti-tmp',
+        '.' +
+          path.basename(t.targetPath) +
+          '.' +
+          crypto.randomBytes(8).toString('hex') +
+          '.avanti-tmp',
       );
-      fs.writeFileSync(tmpFile, t.content);
+      // O_CREAT|O_EXCL rejects any pre-existing entry at this path (including
+      // symlinks — POSIX guarantees EEXIST when O_EXCL is set and the path
+      // resolves to a symlink). O_NOFOLLOW is belt-and-suspenders on POSIX.
+      // The random suffix makes pre-creation attacks impractical regardless.
+      const oNoFollow: number =
+        (fs.constants as Record<string, number>)['O_NOFOLLOW'] ?? 0;
+      const tmpFd = fs.openSync(
+        tmpFile,
+        fs.constants.O_WRONLY |
+          fs.constants.O_CREAT |
+          fs.constants.O_EXCL |
+          oNoFollow,
+        0o666,
+      );
+      try {
+        let written = 0;
+        while (written < t.content.length) {
+          written += fs.writeSync(
+            tmpFd,
+            t.content,
+            written,
+            t.content.length - written,
+          );
+        }
+      } finally {
+        fs.closeSync(tmpFd);
+      }
 
       // Resolve the effective mode: explicit config value wins; otherwise
       // preserve the existing file's full permission bits (0o7777) so rename(2)

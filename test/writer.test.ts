@@ -72,10 +72,31 @@ describe('atomicWrite', () => {
 
   it('cleans up the temp file after successful write', () => {
     const dest = path.join(tmpDir, 'clean.txt');
-    const tmpFile = path.join(tmpDir, '.clean.txt.avanti-tmp');
     atomicWrite([{ targetPath: dest, content: buf('ok') }]);
-    expect(fs.existsSync(tmpFile)).toBe(false);
+    const leftover = fs
+      .readdirSync(tmpDir)
+      .filter((f) => f.endsWith('.avanti-tmp'));
+    expect(leftover).toHaveLength(0);
   });
+
+  it.skipIf(isWindows)(
+    'does not follow a symlink pre-created at a predictable temp path',
+    () => {
+      const dest = path.join(tmpDir, 'output.txt');
+      // An attacker plants a symlink at the old predictable name.
+      const predictableTmp = path.join(tmpDir, '.output.txt.avanti-tmp');
+      const outside = path.join(tmpDir, 'outside.txt');
+      fs.writeFileSync(outside, 'should not be touched', 'utf8');
+      fs.symlinkSync(outside, predictableTmp);
+
+      atomicWrite([{ targetPath: dest, content: buf('hello') }]);
+
+      // The symlink at the predictable path must never have been touched.
+      expect(fs.readFileSync(outside, 'utf8')).toBe('should not be touched');
+      expect(fs.lstatSync(predictableTmp).isSymbolicLink()).toBe(true);
+      expect(fs.readFileSync(dest, 'utf8')).toBe('hello');
+    },
+  );
 
   it('overwrites existing file content', () => {
     const dest = path.join(tmpDir, 'existing.txt');
