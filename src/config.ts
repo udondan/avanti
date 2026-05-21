@@ -395,13 +395,15 @@ function parseVariables(raw: unknown): VariableSpec {
       spec[key] = parseVariableEntry(val, key);
     } else if (
       Array.isArray(val) ||
-      (typeof val === 'object' && val !== null)
+      (typeof val === 'object' && val !== null) ||
+      typeof val === 'number' ||
+      typeof val === 'boolean'
     ) {
-      // Plain list or plain object variable (no "src" key).
+      // Plain list, object, number, or boolean variable.
       spec[key] = val as import('./types').JsonValue;
     } else {
       throw new Error(
-        `variables.${key}: value must be a string, a source object with "src", a list, or a plain object`,
+        `variables.${key}: value must be a string, number, boolean, list, or source object with "src"`,
       );
     }
   }

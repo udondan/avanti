@@ -38,42 +38,30 @@ type PathSegment =
   | { type: 'prop'; key: string }
   | { type: 'index'; index: number };
 
+// Strict grammar: name ( '.' propKey | '[' integer ']' )*
+// Each segment must be explicitly separated — missing dots (arr[0]key) and
+// consecutive dots (a..b) are rejected rather than silently accepted.
+const PATH_GRAMMAR =
+  /^([A-Za-z_][A-Za-z0-9_]*)((?:\.[A-Za-z_][A-Za-z0-9_]*|\[\d+\])*)$/;
+const PATH_SEG = /\.([A-Za-z_][A-Za-z0-9_]*)|\[(\d+)\]/g;
+
 // Parse an expression like "servers[1].host" into a variable name + segments.
 function parsePath(expr: string): { name: string; segments: PathSegment[] } {
-  // Split on . and [] boundaries while keeping delimiters
-  const parts = expr.split(/(\[|\]\.?|\.)/);
-  let name = '';
+  const m = PATH_GRAMMAR.exec(expr.trim());
+  if (!m) {
+    throw new Error(`Invalid path expression "\${${expr}}"`);
+  }
+  const name = m[1];
   const segments: PathSegment[] = [];
-  let expectingIndex = false;
-
-  for (const part of parts) {
-    if (part === '' || part === ']' || part === '].' || part === '.') continue;
-    if (part === '[') {
-      expectingIndex = true;
-      continue;
-    }
-    if (expectingIndex) {
-      const idx = Number(part);
-      if (!Number.isInteger(idx) || idx < 0) {
-        throw new Error(
-          `Invalid array index "${part}" in expression "\${${expr}}"`,
-        );
-      }
-      segments.push({ type: 'index', index: idx });
-      expectingIndex = false;
-    } else if (name === '') {
-      name = part;
+  PATH_SEG.lastIndex = 0;
+  let seg: RegExpExecArray | null;
+  while ((seg = PATH_SEG.exec(m[2])) !== null) {
+    if (seg[1] !== undefined) {
+      segments.push({ type: 'prop', key: seg[1] });
     } else {
-      segments.push({ type: 'prop', key: part });
+      segments.push({ type: 'index', index: Number(seg[2]) });
     }
   }
-
-  if (expectingIndex) {
-    throw new Error(
-      `Unclosed "[" in expression "\${${expr}}" — expected a number followed by "]"`,
-    );
-  }
-  if (!name) throw new Error(`Empty variable expression "\${${expr}}"`);
   return { name, segments };
 }
 
@@ -121,7 +109,8 @@ function walkPath(
 function evaluatePath(vars: Variables, expr: string): string {
   const { name, segments } = parsePath(expr.trim());
   if (RESERVED_VARS.has(name)) return `\${${expr}}`;
-  if (!(name in vars)) throw new Error(`Undefined variable: \${${expr}}`);
+  if (!Object.hasOwn(vars, name))
+    throw new Error(`Undefined variable: \${${expr}}`);
   const leaf = walkPath(vars[name], segments, expr);
   if (leaf === null) return 'null';
   if (typeof leaf !== 'object') return String(leaf);
@@ -157,7 +146,7 @@ export function resolveVars(value: string, vars: Variables): string {
         return evaluatePath(vars, bracedExpr);
       }
       if (RESERVED_VARS.has(varName!)) return match;
-      if (!(varName! in vars)) {
+      if (!Object.hasOwn(vars, varName!)) {
         throw new Error(`Undefined variable: $${varName}`);
       }
       return stringifyValue(vars[varName!]);
@@ -200,7 +189,7 @@ export function resolveVarsShellSafe(value: string, vars: Variables): string {
         return shellQuote(evaluatePath(vars, bracedExpr));
       }
       if (RESERVED_VARS.has(varName!)) return match;
-      if (!(varName! in vars)) {
+      if (!Object.hasOwn(vars, varName!)) {
         throw new Error(`Undefined variable: $${varName}`);
       }
       return shellQuote(stringifyValue(vars[varName!]));

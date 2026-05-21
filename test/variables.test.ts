@@ -722,7 +722,19 @@ describe('resolveVars — braced ${expr} syntax', () => {
 
   it('throws on unclosed [ in path expression', () => {
     expect(() => resolveVars('${arr[}', { arr: ['a'] })).toThrow(
-      'Unclosed "["',
+      'Invalid path expression',
+    );
+  });
+
+  it('throws on missing dot between ] and next key (arr[0]host)', () => {
+    expect(() =>
+      resolveVars('${arr[0]host}', { arr: [{ host: 'x' }] }),
+    ).toThrow('Invalid path expression');
+  });
+
+  it('throws on double dot (a..b)', () => {
+    expect(() => resolveVars('${a..b}', { a: { b: 'x' } })).toThrow(
+      'Invalid path expression',
     );
   });
 

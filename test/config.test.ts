@@ -1027,17 +1027,15 @@ files:
     await expect(loadConfig(f)).rejects.toThrow('"variables" must be a map');
   });
 
-  it('throws when a variable value is not a string', async () => {
+  it('throws when a variable value is null', async () => {
     const f = writeTmp(`
 variables:
-  count: 42
+  count: ~
 files:
   foo.txt:
     src: https://example.com/foo.txt
 `);
-    await expect(loadConfig(f)).rejects.toThrow(
-      'variables.count: value must be a string',
-    );
+    await expect(loadConfig(f)).rejects.toThrow('variables.count:');
   });
 
   it('throws when a reserved variable name is used', async () => {
@@ -1880,6 +1878,30 @@ files:
       host: 'pg.internal',
       creds: { user: 'admin' },
     });
+  });
+
+  it('parses a number variable', async () => {
+    const f = writeTmp(`
+variables:
+  port: 5432
+files:
+  out.txt:
+    src: https://example.com/out.txt
+`);
+    const cfg = await loadConfig(f);
+    expect(cfg.variables?.['port']).toBe(5432);
+  });
+
+  it('parses a boolean variable', async () => {
+    const f = writeTmp(`
+variables:
+  tls: true
+files:
+  out.txt:
+    src: https://example.com/out.txt
+`);
+    const cfg = await loadConfig(f);
+    expect(cfg.variables?.['tls']).toBe(true);
   });
 
   it('throws when a variable value is null', async () => {
