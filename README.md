@@ -1206,6 +1206,8 @@ variables:
 
 Any `$var` references inside string leaves are resolved against previously defined variables, just like plain string variables.
 
+> **Note:** `src` is a reserved key name at the top level of an object variable. An object whose top-level key is `src` is interpreted as a source-backed variable (fetched from a URL, file, `exec:`, etc.), not as a plain data object. If you need to pass an object that has a `src` property, nest it one level deeper (e.g. `data: {src: "..."}`).
+
 #### Accessing nested values with `${expr}`
 
 Use the braced `${expr}` syntax to access a specific element from a list or object variable in any string field. The expression supports dot notation for object properties, bracket notation for array indices, and combinations of both:

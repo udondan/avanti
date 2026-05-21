@@ -4,6 +4,7 @@ import {
   Variables,
   VariableEntry,
   VariableSpec,
+  VariableValue,
 } from './types';
 import { resolveVars } from './variables';
 import { fetchSource, FetchCache, FetchResult } from './sources';
@@ -58,7 +59,9 @@ export async function resolveVariableSpec(
       // Non-string, non-VariableEntry value (number, boolean, list, or plain
       // object) — resolve $vars in any string leaves.
       try {
-        resolved[name] = deepResolveVars(value, resolved);
+        // deepResolveVars returns JsonValue (handles nested nulls), but value
+        // was validated as non-null by parseVariables so the result is safe.
+        resolved[name] = deepResolveVars(value, resolved) as VariableValue;
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         throw new Error(`variables.${name}: ${msg}`, { cause: err });

@@ -6,7 +6,11 @@ export type JsonValue =
   | JsonValue[]
   | { [key: string]: JsonValue };
 
-export type Variables = Record<string, JsonValue>;
+// Top-level variable values may not be null (null is rejected by config parsing).
+// Nested values within lists/objects may still be null via JsonValue.
+export type VariableValue = Exclude<JsonValue, null>;
+
+export type Variables = Record<string, VariableValue>;
 
 export type Via = 'api' | 'cli';
 
@@ -248,7 +252,7 @@ export interface VariableEntry {
   template?: TemplateEngine | true;
 }
 
-export type VariableSpec = Record<string, JsonValue | VariableEntry>;
+export type VariableSpec = Record<string, VariableValue | VariableEntry>;
 
 export interface AvantiConfig {
   variables?: VariableSpec;

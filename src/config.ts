@@ -29,6 +29,7 @@ import {
   VALID_TEMPLATE_ENGINES,
   VariableEntry,
   VariableSpec,
+  VariableValue,
   Via,
 } from './types';
 import { validateVariables } from './variables';
@@ -416,6 +417,8 @@ function parseVariables(raw: unknown): VariableSpec {
       !Array.isArray(val) &&
       'src' in val
     ) {
+      // `src` is a reserved key: any object with a top-level `src` key is
+      // treated as a source-backed VariableEntry, not a plain data object.
       spec[key] = parseVariableEntry(val, key);
     } else if (
       Array.isArray(val) ||
@@ -423,10 +426,10 @@ function parseVariables(raw: unknown): VariableSpec {
       typeof val === 'boolean'
     ) {
       assertPlainJsonValue(val, `variables.${key}`);
-      spec[key] = val as import('./types').JsonValue;
+      spec[key] = val as VariableValue;
     } else if (typeof val === 'object' && val !== null) {
       assertPlainJsonValue(val, `variables.${key}`);
-      spec[key] = val as import('./types').JsonValue;
+      spec[key] = val as VariableValue;
     } else {
       throw new Error(
         `variables.${key}: value must be a string, number, boolean, list, object, or source object with "src"`,
