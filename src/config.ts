@@ -429,7 +429,7 @@ function parseVariables(raw: unknown): VariableSpec {
       spec[key] = val as import('./types').JsonValue;
     } else {
       throw new Error(
-        `variables.${key}: value must be a string, number, boolean, list, or source object with "src"`,
+        `variables.${key}: value must be a string, number, boolean, list, object, or source object with "src"`,
       );
     }
   }

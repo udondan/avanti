@@ -1210,14 +1210,14 @@ Any `$var` references inside string leaves are resolved against previously defin
 
 Use the braced `${expr}` syntax to access a specific element from a list or object variable in any string field. The expression supports dot notation for object properties, bracket notation for array indices, and combinations of both:
 
-| Syntax            | Description                        | Example result                     |
-| ----------------- | ---------------------------------- | ---------------------------------- |
-| `$name`           | Plain string variable (short form) | `$version` → `1.2.3`               |
-| `${name}`         | Braced form of the above           | `${version}` → `1.2.3`             |
-| `${name.prop}`    | Object property access             | `${db.host}` → `postgres.internal` |
-| `${name[n]}`      | Array index access (zero-based)    | `${envs[0]}` → `staging`           |
-| `${name[n].prop}` | Array element property             | `${servers[1].host}` → `web2`      |
-| `${name.a.b.c}`   | Deeply nested property             | `${db.creds.user}` → `admin`       |
+| Syntax            | Description                             | Example result                     |
+| ----------------- | --------------------------------------- | ---------------------------------- |
+| `$name`           | Variable value (stringified if complex) | `$version` → `1.2.3`               |
+| `${name}`         | Braced form of the above                | `${version}` → `1.2.3`             |
+| `${name.prop}`    | Object property access                  | `${db.host}` → `postgres.internal` |
+| `${name[n]}`      | Array index access (zero-based)         | `${envs[0]}` → `staging`           |
+| `${name[n].prop}` | Array element property                  | `${servers[1].host}` → `web2`      |
+| `${name.a.b.c}`   | Deeply nested property                  | `${db.creds.user}` → `admin`       |
 
 When a leaf value is a number or boolean it is coerced to a string. When the expression resolves to an object or array it is JSON-serialised. Using a plain `$name` reference where `name` holds a list or object also JSON-serialises the value.
 
