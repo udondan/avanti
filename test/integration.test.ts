@@ -8,8 +8,8 @@ import {
   rmSync,
   writeFileSync,
 } from 'fs';
-import { homedir, tmpdir } from 'os';
-import { join, relative, resolve } from 'path';
+import { tmpdir } from 'os';
+import { join, resolve } from 'path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { parseDocument } from 'yaml';
 import { isWindows } from '../src/shell';
@@ -1662,30 +1662,44 @@ files:
     });
 
     it('expands tilde in --working-dir to the home directory', () => {
-      const tildeDir = mkdtempSync(join(homedir(), '.avanti-test-'));
-      try {
-        const sourceFile = join(tildeDir, 'source.txt');
-        writeFileSync(sourceFile, 'tilde expansion test');
+      // Use a fake home dir inside tmpDir so we never touch the real home
+      const fakeHome = join(tmpDir, 'fake-home');
+      const workDir = join(fakeHome, 'project');
+      mkdirSync(workDir, { recursive: true });
 
-        const config = writeConfig(
-          tildeDir,
-          `files:
+      const sourceFile = join(workDir, 'source.txt');
+      writeFileSync(sourceFile, 'tilde expansion test');
+
+      const config = writeConfig(
+        workDir,
+        `files:
   ./output.txt:
     src: ${sourceFile}
 `,
-        );
+      );
 
-        const relPart = relative(homedir(), tildeDir);
-        const { exitCode } = runAvanti(config, `~/${relPart}`);
-
-        expect(exitCode).toBe(0);
-        expect(existsSync(join(tildeDir, 'output.txt'))).toBe(true);
-        expect(readFileSync(join(tildeDir, 'output.txt'), 'utf8')).toBe(
-          'tilde expansion test',
+      let exitCode: number;
+      try {
+        execSync(
+          `bunx tsx "${CLI}" --config "${config}" --working-dir "~/project" pull --yes`,
+          {
+            encoding: 'utf8',
+            cwd: PROJECT_ROOT,
+            env: { ...process.env, HOME: fakeHome },
+            stdio: ['pipe', 'pipe', 'pipe'],
+          },
         );
-      } finally {
-        rmSync(tildeDir, { recursive: true, force: true });
+        exitCode = 0;
+      } catch (e: unknown) {
+        const err = e as { status?: number };
+        exitCode = err.status ?? 2;
       }
+
+      expect(exitCode).toBe(0);
+      expect(existsSync(join(workDir, 'output.txt'))).toBe(true);
+      expect(readFileSync(join(workDir, 'output.txt'), 'utf8')).toBe(
+        'tilde expansion test',
+      );
     });
 
     it('applies replace rules to already-rendered template output', () => {
