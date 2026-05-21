@@ -258,6 +258,11 @@ export function parseConfigContent(content: string): AvantiConfig {
       }
       fileEntry.mode = n.toString(8).padStart(4, '0');
     } else if (typeof e['mode'] === 'string') {
+      if (!/^[0-7]{1,4}$/.test(e['mode'])) {
+        throw new Error(
+          `files["${target}"].mode: "${e['mode']}" is not a valid octal string (expected 1–4 octal digits, e.g. "0755")`,
+        );
+      }
       fileEntry.mode = e['mode'];
     }
     if (typeof e['backup'] === 'string') fileEntry.backup = e['backup'];

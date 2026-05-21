@@ -245,6 +245,26 @@ files:
     expect(cfg.files['file.sh'].mode).toBe('0644');
   });
 
+  it('rejects an invalid string mode', async () => {
+    const f = writeTmp(`
+files:
+  file.sh:
+    src: ~/some/file.sh
+    mode: garbage
+`);
+    await expect(loadConfig(f)).rejects.toThrow(/not a valid octal string/);
+  });
+
+  it('rejects a string mode with non-octal digits', async () => {
+    const f = writeTmp(`
+files:
+  file.sh:
+    src: ~/some/file.sh
+    mode: "0o755"
+`);
+    await expect(loadConfig(f)).rejects.toThrow(/not a valid octal string/);
+  });
+
   it('loads an exec src map', async () => {
     const f = writeTmp(`
 files:
