@@ -1114,7 +1114,10 @@ Some environments track files by inode — file watchers (`inotifywait IN_CLOSE_
 ```yaml
 files:
   docker/config.json:
-    src: github:org/repo:docker/config.json
+    src:
+      github:
+        repo: org/repo
+        file: docker/config.json
     writeInPlace: true
 ```
 

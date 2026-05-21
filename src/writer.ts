@@ -111,7 +111,7 @@ export function atomicWrite(
         effectiveMode = parseInt(t.mode, 8);
       } else {
         try {
-          effectiveMode = fs.statSync(t.targetPath).mode & 0o7777;
+          effectiveMode = fs.lstatSync(t.targetPath).mode & 0o7777;
         } catch {
           // new file — umask default
         }
