@@ -1223,6 +1223,8 @@ Use the braced `${expr}` syntax to access a specific element from a list or obje
 
 When a leaf value is a number or boolean it is coerced to a string. When the expression resolves to an object or array it is JSON-serialised. Using a plain `$name` reference where `name` holds a list or object also JSON-serialises the value.
 
+> **Identifier restriction:** Variable names and dot-accessed property keys must be valid identifiers (`[A-Za-z_][A-Za-z0-9_]*`). Object keys containing hyphens, spaces, or other special characters (e.g. `my-key`) cannot be accessed via `${expr}`. Use a template engine if you need to reference such keys.
+>
 > **Note:** Any `${...}` in a config string is now parsed as a path expression. Shell-style expansions such as `${HOME:-/tmp}` or external template placeholders like `${MY_VAR}` must be escaped as `$${HOME:-/tmp}` / `$${MY_VAR}` to be passed through literally.
 
 ```yaml
