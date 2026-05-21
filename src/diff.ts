@@ -151,7 +151,7 @@ export function formatDiff(diff: FileDiff): string {
       // Mode-only binary: emit file header + mode lines.
       out +=
         chalk.bold(`--- ${diff.targetPath}\n+++ ${diff.targetPath}`) + '\n';
-      out += modeFrom + '\n' + modeTo + '\n';
+      out += modeFrom + '\n' + modeTo;
     }
     return out;
   }
@@ -179,8 +179,7 @@ export function formatDiff(diff: FileDiff): string {
       '\n' +
       modeFrom +
       '\n' +
-      modeTo +
-      '\n'
+      modeTo
     );
   }
 
