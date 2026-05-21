@@ -1,6 +1,7 @@
 import { Command } from 'commander';
 import * as path from 'path';
 import { normalizeConfigKey, resolveConfigPath } from '../config';
+import { expandTilde } from '../paths';
 import { HistoryManager, PullLogEntry } from '../history';
 
 export function logCommand(): Command {
@@ -11,7 +12,7 @@ export function logCommand(): Command {
       const rawConfig = cmd.parent?.opts().config as string | undefined;
       const rawWorkingDir = cmd.parent?.opts().workingDir as string | undefined;
       const workingDir = rawWorkingDir
-        ? path.resolve(rawWorkingDir)
+        ? path.resolve(expandTilde(rawWorkingDir))
         : process.cwd();
 
       let managers: HistoryManager[];

@@ -1,5 +1,25 @@
+import * as os from 'os';
+import * as path from 'path';
 import { describe, it, expect } from 'vitest';
-import { expandBraces } from '../src/paths';
+import { expandBraces, expandTilde } from '../src/paths';
+
+describe('expandTilde', () => {
+  it('expands bare ~ to the home directory', () => {
+    expect(expandTilde('~')).toBe(os.homedir());
+  });
+
+  it('expands ~/subdir to a subdirectory of home', () => {
+    expect(expandTilde('~/subdir')).toBe(path.join(os.homedir(), 'subdir'));
+  });
+
+  it('leaves absolute paths unchanged', () => {
+    expect(expandTilde('/absolute/path')).toBe('/absolute/path');
+  });
+
+  it('leaves relative paths unchanged', () => {
+    expect(expandTilde('relative/path')).toBe('relative/path');
+  });
+});
 
 describe('expandBraces', () => {
   it('returns the pattern unchanged when there are no braces', () => {
