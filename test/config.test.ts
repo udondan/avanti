@@ -1915,6 +1915,18 @@ files:
     await expect(loadConfig(f)).rejects.toThrow('variables.bad:');
   });
 
+  it('throws when a variable value is a non-plain object (e.g. YAML timestamp)', async () => {
+    // js-yaml parses unquoted timestamps as Date objects; avanti must reject them
+    const f = writeTmp(`
+variables:
+  ts: 2024-01-15T10:30:00Z
+files:
+  out.txt:
+    src: https://example.com/out.txt
+`);
+    await expect(loadConfig(f)).rejects.toThrow('variables.ts:');
+  });
+
   it('uses variables. prefix in error messages for variable source parsing', async () => {
     const f = writeTmp(`
 variables:

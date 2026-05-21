@@ -14,6 +14,12 @@ function deepResolveVars(value: JsonValue, vars: Variables): JsonValue {
   if (typeof value === 'string') return resolveVars(value, vars);
   if (Array.isArray(value)) return value.map((v) => deepResolveVars(v, vars));
   if (typeof value === 'object' && value !== null) {
+    const proto = Object.getPrototypeOf(value) as unknown;
+    if (proto !== Object.prototype && proto !== null) {
+      // Non-plain object (e.g. Date from js-yaml) — return as-is; config
+      // validation should have rejected this before it reaches here.
+      return value;
+    }
     const out = Object.create(null) as { [key: string]: JsonValue };
     for (const [k, v] of Object.entries(value)) {
       out[k] = deepResolveVars(v, vars);

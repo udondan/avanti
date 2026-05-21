@@ -395,11 +395,19 @@ function parseVariables(raw: unknown): VariableSpec {
       spec[key] = parseVariableEntry(val, key);
     } else if (
       Array.isArray(val) ||
-      (typeof val === 'object' && val !== null) ||
       typeof val === 'number' ||
       typeof val === 'boolean'
     ) {
-      // Plain list, object, number, or boolean variable.
+      spec[key] = val as import('./types').JsonValue;
+    } else if (typeof val === 'object' && val !== null) {
+      const proto = Object.getPrototypeOf(val) as unknown;
+      if (proto !== Object.prototype && proto !== null) {
+        const name = val.constructor?.name ?? 'unknown';
+        throw new Error(
+          `variables.${key}: expected a plain object but got ${name} — quote YAML timestamps and other special values`,
+        );
+      }
+      // Plain object variable.
       spec[key] = val as import('./types').JsonValue;
     } else {
       throw new Error(
