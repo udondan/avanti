@@ -34,8 +34,8 @@ describe('expandBraces', () => {
     expect(expandBraces('{a,{b,c}}.txt')).toEqual(['a.txt', 'b.txt', 'c.txt']);
   });
 
-  it('handles single alternative', () => {
-    expect(expandBraces('{only}.txt')).toEqual(['only.txt']);
+  it('leaves single-alternative braces literal (no comma)', () => {
+    expect(expandBraces('{only}.txt')).toEqual(['{only}.txt']);
   });
 
   it('handles unclosed brace as literal', () => {

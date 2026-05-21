@@ -183,6 +183,17 @@ export function applyUpdatedShas(
         }
       }
 
+      if (label) {
+        const rawFilter = n.get('filter');
+        if (Array.isArray(rawFilter) && rawFilter.length > 0) {
+          const filterArr = (rawFilter as unknown[]).filter(
+            (f): f is string => typeof f === 'string',
+          );
+          if (filterArr.length > 0)
+            label += `\x00filter:${JSON.stringify(filterArr)}`;
+        }
+      }
+
       if (label && shaPath && updates.has(label)) {
         const newSha = updates.get(label)!;
         if ((doc.getIn(shaPath) as string | undefined) !== newSha) {

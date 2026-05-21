@@ -39,7 +39,14 @@ export function applyFilter(
   return result;
 }
 
-export function expandBraces(pattern: string): string[] {
+export function expandBraces(pattern: string, limit = 100): string[] {
+  const results = _expandBraces(pattern);
+  if (results.length > limit)
+    throw new Error(`brace expansion exceeds ${limit} entries`);
+  return results;
+}
+
+function _expandBraces(pattern: string): string[] {
   const open = pattern.indexOf('{');
   if (open === -1) return [pattern];
 
@@ -63,9 +70,14 @@ export function expandBraces(pattern: string): string[] {
   const inner = pattern.slice(open + 1, close);
 
   const alternatives = splitTopLevel(inner);
+  // Only expand when there is at least one comma — {foo} without a comma stays
+  // literal, matching bash/paths.ts behaviour and avoiding accidental expansion
+  // of {placeholder} tokens that users may intend as literal.
+  if (alternatives.length < 2) return [pattern];
+
   const results: string[] = [];
   for (const alt of alternatives) {
-    for (const expanded of expandBraces(prefix + alt + suffix)) {
+    for (const expanded of _expandBraces(prefix + alt + suffix)) {
       results.push(expanded);
     }
   }
