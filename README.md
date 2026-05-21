@@ -579,7 +579,7 @@ files:
         - /^some.*\.jpg/
 ```
 
-Variables are resolved in filter patterns before matching, so patterns like `$env:ARCH.tar.gz` or `{$platform}-release.zip` work as expected. An error is raised if the filter matches zero files, preventing silent misconfiguration. The `sha` fingerprint (if present) is computed over the filtered set.
+Variables are resolved in filter patterns before matching, so patterns like `$env:ARCH.tar.gz` or `$platform-release.zip` work as expected. An error is raised if the filter matches zero files, preventing silent misconfiguration. The `sha` fingerprint (if present) is computed over the filtered set.
 
 ### Directory Sources
 

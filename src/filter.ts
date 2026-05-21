@@ -71,7 +71,7 @@ function _expandBraces(pattern: string): string[] {
 
   const alternatives = splitTopLevel(inner);
   // Only expand when there is at least one comma — {foo} without a comma stays
-  // literal, matching bash/paths.ts behaviour and avoiding accidental expansion
+  // literal, matching src/paths.ts behaviour and avoiding accidental expansion
   // of {placeholder} tokens that users may intend as literal.
   if (alternatives.length < 2) return [pattern];
 
