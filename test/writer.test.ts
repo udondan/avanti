@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 
 const isWindows = process.platform === 'win32';
+import { execSync } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -296,5 +297,15 @@ describe('writeInPlace', () => {
     ).toThrow('is a symlink');
     // real file must be untouched
     expect(fs.readFileSync(real, 'utf8')).toBe('original');
+  });
+
+  it.skipIf(isWindows)('throws when targetPath is a FIFO', () => {
+    const fifo = path.join(tmpDir, 'test.fifo');
+    execSync(`mkfifo ${fifo}`);
+    expect(() =>
+      atomicWrite([
+        { targetPath: fifo, content: buf('data'), writeInPlace: true },
+      ]),
+    ).toThrow('is not a regular file');
   });
 });

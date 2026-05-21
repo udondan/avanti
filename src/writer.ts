@@ -106,15 +106,25 @@ export function atomicWrite(
       if (!fs.existsSync(dir)) {
         fs.mkdirSync(dir, { recursive: true });
       }
+      const existingEntry = fs.lstatSync(t.targetPath, {
+        throwIfNoEntry: false,
+      });
+      // Reject non-regular, non-symlink entries (FIFOs, sockets, devices):
+      // O_TRUNC on a FIFO blocks indefinitely; device/socket writes are unsafe.
+      if (
+        existingEntry &&
+        !existingEntry.isFile() &&
+        !existingEntry.isSymbolicLink()
+      ) {
+        throw new Error(
+          `writeInPlace: ${t.targetPath} is not a regular file; refusing to write`,
+        );
+      }
       let effectiveMode: number | undefined;
       if (t.mode) {
         effectiveMode = parseInt(t.mode, 8);
-      } else {
-        try {
-          effectiveMode = fs.lstatSync(t.targetPath).mode & 0o7777;
-        } catch {
-          // new file — umask default
-        }
+      } else if (existingEntry?.isFile()) {
+        effectiveMode = existingEntry.mode & 0o7777;
       }
       // Refuse to follow a symlink — unlike renameSync, which replaces the
       // symlink itself, writeFileSync would write through it to the target.
@@ -158,11 +168,7 @@ export function atomicWrite(
           fs.closeSync(fd);
         }
       } else {
-        if (
-          fs
-            .lstatSync(t.targetPath, { throwIfNoEntry: false })
-            ?.isSymbolicLink()
-        ) {
+        if (existingEntry?.isSymbolicLink()) {
           throw new Error(
             `writeInPlace: ${t.targetPath} is a symlink; refusing to follow`,
           );
