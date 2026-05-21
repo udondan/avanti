@@ -18,6 +18,9 @@ export const RESERVED_VAR_NAMES = new Set([
   'basedir',
   'date',
   'datetime',
+  'os',
+  'arch',
+  'arch_go',
 ]);
 
 export function validateVariables(vars: Variables | VariableSpec): void {
@@ -232,6 +235,38 @@ export function buildDateVars(now: Date = new Date()): Variables {
     pad(now.getSeconds()),
   ].join('-');
   return Object.assign(Object.create(null) as Variables, { date, datetime });
+}
+
+// Build system variables reflecting the machine running avanti.
+// $os      — linux | darwin | windows (win32 is normalised to windows)
+// $arch    — x86_64 | arm64 | i686 | arm  (GNU-triple / Rust tool naming)
+// $arch_go — amd64  | arm64 | 386   | arm  (Go / Docker / Kubernetes naming)
+// Unknown platform/arch values are passed through as-is.
+export function buildSystemVars(): Variables {
+  const osMap: Record<string, string> = {
+    linux: 'linux',
+    darwin: 'darwin',
+    win32: 'windows',
+  };
+  const archMap: Record<string, string> = {
+    x64: 'x86_64',
+    arm64: 'arm64',
+    ia32: 'i686',
+    arm: 'arm',
+  };
+  const archGoMap: Record<string, string> = {
+    x64: 'amd64',
+    arm64: 'arm64',
+    ia32: '386',
+    arm: 'arm',
+  };
+  const platform = process.platform as string;
+  const nodeArch = process.arch as string;
+  return Object.assign(Object.create(null) as Variables, {
+    os: osMap[platform] ?? platform,
+    arch: archMap[nodeArch] ?? nodeArch,
+    arch_go: archGoMap[nodeArch] ?? nodeArch,
+  });
 }
 
 // Counter token pattern: one or more 'd' characters preceded by '%'.

@@ -1067,7 +1067,7 @@ Backup only happens when the target is a regular file (not a symlink or director
 
 #### Path variables
 
-All [system-injected variables](#system-injected-variables) — per-file path variables (`$path`, `$filename`, `$basename`, `$ext`, `$dirname`, `$basedir`) and pull-time variables (`$date`, `$datetime`) — are available in `backup:` patterns.
+All [system-injected variables](#system-injected-variables) — per-file path variables (`$path`, `$filename`, `$basename`, `$ext`, `$dirname`, `$basedir`), pull-time variables (`$date`, `$datetime`), and system variables (`$os`, `$arch`, `$arch_go`) — are available in `backup:` patterns.
 
 #### Counter pattern
 
@@ -1358,7 +1358,9 @@ When the config is specified as a remote spec (e.g. `--config github:org/repo:.a
 
 In addition to `$self` and `$latest`, avanti injects several variables automatically at the start of every run. These names are reserved and cannot be used in `variables:`.
 
-**Per-file path variables** — avanti derives the following variables from each file entry's resolved target path. They can be used in source URLs, `ref:`, conditions, `replace:`, `post:`, template rendering, and `backup:` patterns.
+**Per-file path variables**, **pull-time variables**, and **system variables** are all available everywhere variables are resolved: source URLs, `ref:`, conditions, `replace:`, `post:`, template rendering, and `backup:` patterns.
+
+**Per-file path variables** — avanti derives the following variables from each file entry's resolved target path.
 
 Example with working directory `/home/user/project` and map key `configs/app.yaml`:
 
@@ -1418,6 +1420,38 @@ files:
     replace:
       - from: GENERATED_AT
         to: $datetime
+```
+
+**System variables** — injected once per run and reflect the machine running avanti. Useful for downloading the correct release artifact for the current OS and CPU architecture:
+
+| Variable | `linux` | `darwin` | `win32`   |
+| -------- | ------- | -------- | --------- |
+| `$os`    | `linux` | `darwin` | `windows` |
+
+| Variable   | `x64`    | `arm64` | `ia32` | `arm` |
+| ---------- | -------- | ------- | ------ | ----- |
+| `$arch`    | `x86_64` | `arm64` | `i686` | `arm` |
+| `$arch_go` | `amd64`  | `arm64` | `386`  | `arm` |
+
+`$arch` uses GNU-triple / Rust naming (`x86_64`). `$arch_go` uses Go / Docker / Kubernetes naming (`amd64`). The `arm64` value is identical in both. Unknown `process.platform` or `process.arch` values are passed through unchanged.
+
+```yaml
+files:
+  # Download the ripgrep binary for the current system (Rust naming)
+  bin/rg:
+    src:
+      github:
+        repo: BurntSushi/ripgrep
+        release: $latest
+        asset: ripgrep-$latest-$arch-unknown-$os.tar.gz
+
+  # Download kubectl for the current system (Go naming)
+  bin/kubectl:
+    src:
+      github:
+        repo: kubernetes/kubectl
+        release: $latest
+        asset: kubectl_$latest_${os}_$arch_go
 ```
 
 ### $self — Self-managing Config
