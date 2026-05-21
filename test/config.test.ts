@@ -234,15 +234,24 @@ files:
     expect(cfg.files['file.sh'].mode).toBe('0755');
   });
 
-  it('accepts a numeric mode from YAML 0o-notation 0o644 (420 → "0644")', async () => {
+  it('rejects an ambiguous numeric mode with all-octal-digit decimal representation (0o644 → 420)', async () => {
     const f = writeTmp(`
 files:
   file.sh:
     src: ~/some/file.sh
     mode: 0o644
 `);
-    const cfg = await loadConfig(f);
-    expect(cfg.files['file.sh'].mode).toBe('0644');
+    await expect(loadConfig(f)).rejects.toThrow(/ambiguous/);
+  });
+
+  it('rejects a bare decimal like 755 as ambiguous', async () => {
+    const f = writeTmp(`
+files:
+  file.sh:
+    src: ~/some/file.sh
+    mode: 755
+`);
+    await expect(loadConfig(f)).rejects.toThrow(/ambiguous/);
   });
 
   it('rejects an invalid string mode', async () => {

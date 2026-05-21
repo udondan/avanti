@@ -65,9 +65,11 @@ export function computeDiff(
   let modeChange: { from: number; to: number } | undefined;
   if (!isNew && desiredMode) {
     const desired = parseInt(desiredMode, 8);
-    const current = fs.statSync(targetPath).mode & 0o7777;
-    if (desired !== current) {
-      modeChange = { from: current, to: desired };
+    if (!isNaN(desired)) {
+      const current = fs.statSync(targetPath).mode & 0o7777;
+      if (desired !== current) {
+        modeChange = { from: current, to: desired };
+      }
     }
   }
 

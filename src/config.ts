@@ -256,6 +256,17 @@ export function parseConfigContent(content: string): AvantiConfig {
           `files["${target}"].mode: ${n} is not a valid mode (expected an integer in range 0–0o7777)`,
         );
       }
+      // Numbers whose decimal digits are all 0–7 are ambiguous: mode: 755 (decimal 755,
+      // which as octal would be "1363") vs mode: 0o644 (420 decimal, digits 4,2,0).
+      // Both cases would silently apply wrong permissions, so we reject them.
+      // Use a quoted string like "0755" or YAML 0o notation for unambiguous values.
+      if (/^[0-7]+$/.test(n.toString())) {
+        throw new Error(
+          `files["${target}"].mode: bare number ${n} is ambiguous ` +
+            `(decimal ${n} ≠ octal ${n}); use a quoted string like "${n.toString().padStart(4, '0')}" or YAML 0o notation`,
+        );
+      }
+      // Decimal digits include 8 or 9 → value can only come from YAML 0o notation.
       fileEntry.mode = n.toString(8).padStart(4, '0');
     } else if (typeof e['mode'] === 'string') {
       if (!/^[0-7]{1,4}$/.test(e['mode'])) {
