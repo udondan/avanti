@@ -127,6 +127,10 @@ describe('resolveVarsShellSafe', () => {
     expect(resolveVarsShellSafe('ref: $latest', {})).toBe('ref: $latest');
   });
 
+  it('passes ${latest} through unquoted (braced reserved var)', () => {
+    expect(resolveVarsShellSafe('ref: ${latest}', {})).toBe('ref: ${latest}');
+  });
+
   it('throws on undefined variable', () => {
     expect(() => resolveVarsShellSafe('$missing', {})).toThrow(
       'Undefined variable: $missing',
