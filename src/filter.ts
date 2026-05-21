@@ -1,10 +1,32 @@
+type CompiledPattern =
+  | { kind: 'exact'; value: string }
+  | { kind: 'regex'; re: RegExp }
+  | { kind: 'brace'; expanded: Set<string> };
+
+function compilePattern(pattern: string): CompiledPattern {
+  if (pattern.length > 2 && pattern.startsWith('/') && pattern.endsWith('/')) {
+    return { kind: 'regex', re: new RegExp(pattern.slice(1, -1)) };
+  }
+  if (pattern.includes('{')) {
+    return { kind: 'brace', expanded: new Set(expandBraces(pattern)) };
+  }
+  return { kind: 'exact', value: pattern };
+}
+
+function matchesCompiled(key: string, compiled: CompiledPattern): boolean {
+  if (compiled.kind === 'regex') return compiled.re.test(key);
+  if (compiled.kind === 'brace') return compiled.expanded.has(key);
+  return compiled.value === key;
+}
+
 export function applyFilter(
   files: Map<string, Buffer>,
   patterns: string[],
 ): Map<string, Buffer> {
+  const compiled = patterns.map(compilePattern);
   const result = new Map<string, Buffer>();
   for (const [key, value] of files) {
-    if (matchesAny(key, patterns)) {
+    if (compiled.some((p) => matchesCompiled(key, p))) {
       result.set(key, value);
     }
   }
@@ -14,21 +36,6 @@ export function applyFilter(
     );
   }
   return result;
-}
-
-function matchesAny(key: string, patterns: string[]): boolean {
-  return patterns.some((p) => matchesPattern(key, p));
-}
-
-function matchesPattern(key: string, pattern: string): boolean {
-  if (pattern.length > 2 && pattern.startsWith('/') && pattern.endsWith('/')) {
-    const re = new RegExp(pattern.slice(1, -1));
-    return re.test(key);
-  }
-  if (pattern.includes('{')) {
-    return expandBraces(pattern).some((expanded) => expanded === key);
-  }
-  return pattern === key;
 }
 
 export function expandBraces(pattern: string): string[] {

@@ -721,7 +721,7 @@ describe('fetchSource — filter on local directory', () => {
   it('keeps files matching a brace-expanded pattern', async () => {
     const result = await fetchSource(
       {
-        src: { path: tmpDir, filter: ['keep.txt', 'also-keep.yml'] },
+        src: { path: tmpDir, filter: ['{keep,also-keep}.{txt,yml}'] },
         target: 'out/',
       },
       tmpDir,
