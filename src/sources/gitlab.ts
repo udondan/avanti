@@ -576,7 +576,8 @@ async function fetchReleaseLinksViaApi(
   tag: string,
   host?: string,
 ): Promise<Map<string, Buffer>> {
-  const gitlabHost = getHost(host);
+  const rawHost = getHost(host);
+  const gitlabHost = new URL(`https://${rawHost}`).host;
   const res = await fetchWithRetry(
     `https://${gitlabHost}/api/v4/projects/${encodeURIComponent(project)}/releases/${encodeURIComponent(tag)}`,
     { headers: apiHeaders() },
