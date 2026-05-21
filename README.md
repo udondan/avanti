@@ -107,6 +107,7 @@ avanti revert  # roll back instantly if something breaks
 - **TOML merging** — deep-merge multiple TOML sources with configurable conflict, array, and table strategies
 - **Variables** — define reusable values in a `variables:` block and reference them anywhere with `$name`; variables can be plain strings, `$env:NAME` environment variable references, or fetched from any remote/local source (the same source types as `files:`)
 - **Post-processing** — apply text replacements (string or regex) and/or pipe content through a shell script
+- **Release artifacts** — download all binary assets attached to a GitHub or GitLab release by tag, or use `$latest` for the newest release
 - **Directory sync** — recursively sync directories from GitLab/GitHub/Bitbucket/git/S3/local sources
 - **SHA pinning** — pin any remote source to a content fingerprint with `sha:`; use `avanti lock` to compute and write SHAs automatically; `avanti pull --accept-changes` reviews a mismatch and updates the pin
 - **`$self`** — avanti can manage its own config file; declare `$self` in `files:` and the fetched content becomes the active config for the rest of the run, including YAML/JSON merge from multiple sources
@@ -459,8 +460,17 @@ src:
 src:
   gitlab:
     project: group/repo          # GitLab project path
-    file: path/to/file.txt       # file or directory in repo
+    file: path/to/file.txt       # file or directory in repo (mutually exclusive with release)
     ref: main                    # branch, tag, or $latest (optional)
+    sha: abc123...               # optional SHA-256 fingerprint
+    host: gitlab.mycompany.com   # override default gitlab.com (optional)
+    via: cli                     # api, cli, or list (default: [api, cli])
+
+# GitLab release artifacts — downloads all assets attached to a release
+src:
+  gitlab:
+    project: group/repo          # GitLab project path
+    release: v1.2.3              # release tag, or $latest (mutually exclusive with file)
     sha: abc123...               # optional SHA-256 fingerprint
     host: gitlab.mycompany.com   # override default gitlab.com (optional)
     via: cli                     # api, cli, or list (default: [api, cli])
@@ -468,8 +478,17 @@ src:
 src:
   github:
     repo: owner/repo             # GitHub owner/repo
-    file: path/to/file.txt       # file or directory in repo
+    file: path/to/file.txt       # file or directory in repo (mutually exclusive with release)
     ref: main                    # branch, tag, or $latest (optional)
+    sha: abc123...               # optional SHA-256 fingerprint
+    host: github.mycompany.com   # GitHub Enterprise Server hostname (optional)
+    via: cli                     # api, cli, or list (default: [api, cli])
+
+# GitHub release artifacts — downloads all assets attached to a release
+src:
+  github:
+    repo: owner/repo             # GitHub owner/repo
+    release: v1.2.3              # release tag, or $latest (mutually exclusive with file)
     sha: abc123...               # optional SHA-256 fingerprint
     host: github.mycompany.com   # GitHub Enterprise Server hostname (optional)
     via: cli                     # api, cli, or list (default: [api, cli])
@@ -1307,7 +1326,7 @@ variables:
   registry_line: //$host/:_authToken=$token # both $host and $token are available
 ```
 
-`$latest` is a reserved keyword that resolves to the latest published version and cannot be used as a variable name. For GitLab it resolves to the latest tag sorted by semantic version. For GitHub it resolves to the tag of the latest release; if the repository has no releases, it falls back to the most recently created tag. For Bitbucket it resolves to the latest tag sorted by name; if no tags exist, it falls back to the repository's default branch.
+`$latest` is a reserved keyword that resolves to the latest published version and cannot be used as a variable name. For GitLab it resolves to the latest tag sorted by semantic version (for `file:` sources) or the latest release (for `release:` sources, falling back to tags on older instances). For GitHub it resolves to the tag of the latest release (for both `file:` and `release:` sources); if the repository has no releases, it falls back to the most recently created tag. For Bitbucket it resolves to the latest tag sorted by name; if no tags exist, it falls back to the repository's default branch.
 
 When `ref` is omitted, all source types (GitHub, GitLab, Bitbucket, git) resolve to the repository's default branch.
 
