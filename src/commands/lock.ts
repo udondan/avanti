@@ -8,7 +8,7 @@ import {
 } from '../config';
 import { evaluateConditions } from '../condition';
 import { fetchSource } from '../sources';
-import { buildEntryPreVars, resolveTargetPath } from '../paths';
+import { buildEntryPreVars, expandTilde, resolveTargetPath } from '../paths';
 import { writeUpdatedShas } from '../config-writeback';
 import { resolveVariableSpec } from '../variables-remote';
 import { buildDateVars, buildSystemVars } from '../variables';
@@ -26,7 +26,7 @@ export function lockCommand(): Command {
       );
       const rawWorkingDir = cmd.parent?.opts().workingDir as string | undefined;
       const workingDir = rawWorkingDir
-        ? path.resolve(rawWorkingDir)
+        ? path.resolve(expandTilde(rawWorkingDir))
         : process.cwd();
 
       if (isRemoteConfigSpec(configPath)) {

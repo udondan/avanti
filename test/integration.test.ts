@@ -1661,6 +1661,47 @@ files:
       );
     });
 
+    it('expands tilde in --working-dir to the home directory', () => {
+      // Use a fake home dir inside tmpDir so we never touch the real home
+      const fakeHome = join(tmpDir, 'fake-home');
+      const workDir = join(fakeHome, 'project');
+      mkdirSync(workDir, { recursive: true });
+
+      const sourceFile = join(workDir, 'source.txt');
+      writeFileSync(sourceFile, 'tilde expansion test');
+
+      const config = writeConfig(
+        workDir,
+        `files:
+  ./output.txt:
+    src: ${sourceFile}
+`,
+      );
+
+      let exitCode: number;
+      try {
+        execSync(
+          `bunx tsx "${CLI}" --config "${config}" --working-dir "~/project" pull --yes`,
+          {
+            encoding: 'utf8',
+            cwd: PROJECT_ROOT,
+            env: { ...process.env, HOME: fakeHome, USERPROFILE: fakeHome },
+            stdio: ['pipe', 'pipe', 'pipe'],
+          },
+        );
+        exitCode = 0;
+      } catch (e: unknown) {
+        const err = e as { status?: number };
+        exitCode = err.status ?? 2;
+      }
+
+      expect(exitCode).toBe(0);
+      expect(existsSync(join(workDir, 'output.txt'))).toBe(true);
+      expect(readFileSync(join(workDir, 'output.txt'), 'utf8')).toBe(
+        'tilde expansion test',
+      );
+    });
+
     it('applies replace rules to already-rendered template output', () => {
       const sourceFile = join(tmpDir, 'tmpl.hbs');
       writeFileSync(sourceFile, 'Hello {{name}}!');

@@ -20,7 +20,7 @@ import { isBinary } from '../binary';
 import { computeDiff, computeDeleteDiff, printDiffs } from '../diff';
 import { atomicWrite, WriteTarget } from '../writer';
 import { FileDiff } from '../diff';
-import { buildEntryPreVars, resolveTargetPath } from '../paths';
+import { buildEntryPreVars, expandTilde, resolveTargetPath } from '../paths';
 import { AvantiConfig, FileEntry, Variables } from '../types';
 import { HistoryManager, PullLogFileRef, SourceShaRecord } from '../history';
 import { confirm } from '../prompt';
@@ -366,7 +366,7 @@ export function pullCommand(): Command {
       );
       const rawWorkingDir = cmd.parent?.opts().workingDir as string | undefined;
       const workingDir = rawWorkingDir
-        ? path.resolve(rawWorkingDir)
+        ? path.resolve(expandTilde(rawWorkingDir))
         : process.cwd();
       const via = parseVia(
         cmd.parent?.opts().via as string | undefined,
