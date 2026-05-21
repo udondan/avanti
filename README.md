@@ -312,6 +312,13 @@ All relative `src` and `target` paths are resolved relative to the **working dir
 
 This is independent of where the config file lives. A config loaded from another directory with `-c /shared/avanti.yml` still resolves all paths from your working directory (or the one you specify with `-w`).
 
+The path given to `-w` supports tilde expansion: `~` resolves to the home directory and `~/some/path` resolves to a subdirectory of it:
+
+```sh
+avanti -w ~ pull              # home directory as working dir
+avanti -w ~/projects/foo pull # subdirectory of home
+```
+
 Use `-w` to deploy the same config to multiple locations without `cd`-ing there first:
 
 ```sh

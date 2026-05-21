@@ -3,6 +3,12 @@ import * as path from 'path';
 import { FileEntry, Variables } from './types';
 import { buildFileVars, resolveVars } from './variables';
 
+export function expandTilde(p: string): string {
+  if (p === '~') return os.homedir();
+  if (p.startsWith('~/')) return path.join(os.homedir(), p.slice(2));
+  return p;
+}
+
 export function resolveTargetPath(
   entry: { target?: string },
   relPath: string,

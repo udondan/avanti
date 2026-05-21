@@ -18,7 +18,7 @@ import { applyInsertMode } from '../processors/insert';
 import { isBinary } from '../binary';
 import { computeDiff, computeDeleteDiff, printDiffs } from '../diff';
 import { FileDiff } from '../diff';
-import { buildEntryPreVars, resolveTargetPath } from '../paths';
+import { buildEntryPreVars, expandTilde, resolveTargetPath } from '../paths';
 import { AvantiConfig, FileEntry, Variables } from '../types';
 import { HistoryManager } from '../history';
 import { resolveVariableSpec } from '../variables-remote';
@@ -220,7 +220,7 @@ export function diffCommand(): Command {
           | string
           | undefined;
         const workingDir = rawWorkingDir
-          ? path.resolve(rawWorkingDir)
+          ? path.resolve(expandTilde(rawWorkingDir))
           : process.cwd();
         const via = parseVia(
           cmd.parent?.opts().via as string | undefined,
