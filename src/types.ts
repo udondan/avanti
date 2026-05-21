@@ -229,6 +229,7 @@ export interface FileEntry {
   yaml?: YamlMergeOptions | boolean;
   toml?: TomlMergeOptions | boolean;
   strategy?: 'replace' | 'insert';
+  writeInPlace?: boolean;
 }
 
 export interface VariableEntry {

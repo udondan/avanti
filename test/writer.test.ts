@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 
 const isWindows = process.platform === 'win32';
+import { execFileSync } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -71,10 +72,31 @@ describe('atomicWrite', () => {
 
   it('cleans up the temp file after successful write', () => {
     const dest = path.join(tmpDir, 'clean.txt');
-    const tmpFile = path.join(tmpDir, '.clean.txt.avanti-tmp');
     atomicWrite([{ targetPath: dest, content: buf('ok') }]);
-    expect(fs.existsSync(tmpFile)).toBe(false);
+    const leftover = fs
+      .readdirSync(tmpDir)
+      .filter((f) => f.endsWith('.avanti-tmp'));
+    expect(leftover).toHaveLength(0);
   });
+
+  it.skipIf(isWindows)(
+    'does not follow a symlink pre-created at a predictable temp path',
+    () => {
+      const dest = path.join(tmpDir, 'output.txt');
+      // An attacker plants a symlink at the old predictable name.
+      const predictableTmp = path.join(tmpDir, '.output.txt.avanti-tmp');
+      const outside = path.join(tmpDir, 'outside.txt');
+      fs.writeFileSync(outside, 'should not be touched', 'utf8');
+      fs.symlinkSync(outside, predictableTmp);
+
+      atomicWrite([{ targetPath: dest, content: buf('hello') }]);
+
+      // The symlink at the predictable path must never have been touched.
+      expect(fs.readFileSync(outside, 'utf8')).toBe('should not be touched');
+      expect(fs.lstatSync(predictableTmp).isSymbolicLink()).toBe(true);
+      expect(fs.readFileSync(dest, 'utf8')).toBe('hello');
+    },
+  );
 
   it('overwrites existing file content', () => {
     const dest = path.join(tmpDir, 'existing.txt');
@@ -185,5 +207,128 @@ describe('atomicWrite', () => {
         expect(fs.readFileSync(dest, 'utf8')).toBe('new content');
       },
     );
+  });
+});
+
+describe('writeInPlace', () => {
+  it('writes correct content', () => {
+    const dest = path.join(tmpDir, 'output.txt');
+    atomicWrite([
+      { targetPath: dest, content: buf('hello'), writeInPlace: true },
+    ]);
+    expect(fs.readFileSync(dest, 'utf8')).toBe('hello');
+  });
+
+  it.skipIf(isWindows)('preserves the inode of an existing file', () => {
+    const dest = path.join(tmpDir, 'file.txt');
+    fs.writeFileSync(dest, 'old', 'utf8');
+    const inodeBefore = fs.statSync(dest).ino;
+    atomicWrite([
+      { targetPath: dest, content: buf('new'), writeInPlace: true },
+    ]);
+    expect(fs.statSync(dest).ino).toBe(inodeBefore);
+    expect(fs.readFileSync(dest, 'utf8')).toBe('new');
+  });
+
+  it.skipIf(isWindows)('default (mv) mode changes the inode', () => {
+    const dest = path.join(tmpDir, 'file.txt');
+    fs.writeFileSync(dest, 'old', 'utf8');
+    const inodeBefore = fs.statSync(dest).ino;
+    atomicWrite([{ targetPath: dest, content: buf('new') }]);
+    expect(fs.statSync(dest).ino).not.toBe(inodeBefore);
+  });
+
+  it('creates a new file when the target does not exist', () => {
+    const dest = path.join(tmpDir, 'new.txt');
+    atomicWrite([
+      { targetPath: dest, content: buf('created'), writeInPlace: true },
+    ]);
+    expect(fs.readFileSync(dest, 'utf8')).toBe('created');
+  });
+
+  it('creates parent directories if they do not exist', () => {
+    const dest = path.join(tmpDir, 'nested', 'dir', 'output.txt');
+    atomicWrite([
+      { targetPath: dest, content: buf('deep'), writeInPlace: true },
+    ]);
+    expect(fs.readFileSync(dest, 'utf8')).toBe('deep');
+  });
+
+  it('takes a backup of the old content before writing', () => {
+    const dest = path.join(tmpDir, 'config.yaml');
+    const backup = path.join(tmpDir, 'config.yaml.bkp');
+    fs.writeFileSync(dest, 'old content', 'utf8');
+    atomicWrite([
+      {
+        targetPath: dest,
+        content: buf('new content'),
+        backupPath: backup,
+        writeInPlace: true,
+      },
+    ]);
+    expect(fs.readFileSync(backup, 'utf8')).toBe('old content');
+    expect(fs.readFileSync(dest, 'utf8')).toBe('new content');
+  });
+
+  it.skipIf(isWindows)(
+    'preserves existing file permissions when no mode is specified',
+    () => {
+      const dest = path.join(tmpDir, 'secret.txt');
+      fs.writeFileSync(dest, 'original', 'utf8');
+      fs.chmodSync(dest, 0o600);
+      atomicWrite([
+        { targetPath: dest, content: buf('updated'), writeInPlace: true },
+      ]);
+      expect(fs.statSync(dest).mode & 0o777).toBe(0o600);
+    },
+  );
+
+  it.skipIf(isWindows)('applies an explicit mode after writing', () => {
+    const dest = path.join(tmpDir, 'script.sh');
+    fs.writeFileSync(dest, 'old', 'utf8');
+    atomicWrite([
+      {
+        targetPath: dest,
+        content: buf('new'),
+        mode: '0755',
+        writeInPlace: true,
+      },
+    ]);
+    expect(fs.statSync(dest).mode & 0o111).not.toBe(0);
+  });
+
+  it('does not create a temp file', () => {
+    const dest = path.join(tmpDir, 'output.txt');
+    atomicWrite([
+      { targetPath: dest, content: buf('data'), writeInPlace: true },
+    ]);
+    const leftover = fs
+      .readdirSync(tmpDir)
+      .filter((f) => f.endsWith('.avanti-tmp'));
+    expect(leftover).toHaveLength(0);
+  });
+
+  it.skipIf(isWindows)('throws when targetPath is a symlink', () => {
+    const real = path.join(tmpDir, 'real.txt');
+    const link = path.join(tmpDir, 'link.txt');
+    fs.writeFileSync(real, 'original', 'utf8');
+    fs.symlinkSync(real, link);
+    expect(() =>
+      atomicWrite([
+        { targetPath: link, content: buf('new'), writeInPlace: true },
+      ]),
+    ).toThrow('is a symlink');
+    // real file must be untouched
+    expect(fs.readFileSync(real, 'utf8')).toBe('original');
+  });
+
+  it.skipIf(isWindows)('throws when targetPath is a FIFO', () => {
+    const fifo = path.join(tmpDir, 'test.fifo');
+    execFileSync('mkfifo', [fifo]);
+    expect(() =>
+      atomicWrite([
+        { targetPath: fifo, content: buf('data'), writeInPlace: true },
+      ]),
+    ).toThrow('is not a regular file');
   });
 });

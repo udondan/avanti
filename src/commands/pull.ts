@@ -305,6 +305,7 @@ async function runFetchLoop(
           content,
           mode: entry.mode,
           backupPath,
+          writeInPlace: entry.writeInPlace,
         });
         pendingWrites.set(targetPath!, content);
         if (result.sourceRecords.length > 0) {
