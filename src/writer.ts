@@ -133,6 +133,7 @@ export function atomicWrite(
               fs.constants.O_CREAT |
               fs.constants.O_TRUNC |
               oNoFollow,
+            effectiveMode ?? 0o666,
           );
         } catch (err) {
           if ((err as NodeJS.ErrnoException).code === 'ELOOP') {
@@ -166,7 +167,9 @@ export function atomicWrite(
             `writeInPlace: ${t.targetPath} is a symlink; refusing to follow`,
           );
         }
-        fs.writeFileSync(t.targetPath, t.content);
+        fs.writeFileSync(t.targetPath, t.content, {
+          mode: effectiveMode ?? 0o666,
+        });
       }
       if (effectiveMode !== undefined) {
         fs.chmodSync(t.targetPath, effectiveMode);
