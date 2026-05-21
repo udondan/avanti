@@ -741,12 +741,24 @@ export function pullCommand(): Command {
       }
 
       try {
+        // Mode-only changes don't need a full rewrite — apply chmod directly.
+        let modeOnlyCount = 0;
+        for (let i = 0; i < writeTargets.length; i++) {
+          const d = allDiffs[i];
+          if (d.modeChange && !d.contentChanged) {
+            fs.chmodSync(writeTargets[i].targetPath, d.modeChange.to);
+            modeOnlyCount++;
+          }
+        }
         const changedTargets = writeTargets.filter(
-          (_, i) => allDiffs[i].hasChanges,
+          (_, i) => allDiffs[i].hasChanges && allDiffs[i].contentChanged,
         );
         atomicWrite([...changedTargets, ...staleToRestore], staleToDelete);
         const written =
-          changedTargets.length + staleToRestore.length + staleToDelete.length;
+          changedTargets.length +
+          staleToRestore.length +
+          staleToDelete.length +
+          modeOnlyCount;
         console.log(`Wrote ${written} file(s).`);
       } catch (err: unknown) {
         console.error(

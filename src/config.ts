@@ -196,8 +196,9 @@ export function parseConfigContent(content: string): AvantiConfig {
   // Normalize YAML octal literals for mode fields before js-yaml converts them
   // to integers and loses the 0o prefix (e.g. mode: 0o644 → mode: "0644").
   content = content.replace(
-    /^(\s+mode:\s+)0o([0-7]+)\s*$/gm,
-    (_, prefix, digits) => `${prefix}"0${digits}"`,
+    /^(\s+mode:\s+)0o([0-7]+)([ \t]*(#.*)?)$/gm,
+    (_: string, prefix: string, digits: string, trailing: string) =>
+      `${prefix}"${digits.padStart(4, '0')}"${trailing}`,
   );
 
   let raw: unknown;
