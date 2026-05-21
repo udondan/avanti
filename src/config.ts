@@ -415,11 +415,14 @@ function parseVariables(raw: unknown): VariableSpec {
       val &&
       typeof val === 'object' &&
       !Array.isArray(val) &&
-      'src' in val
+      Object.hasOwn(val, 'src')
     ) {
       // `src` is a reserved key: any object with a top-level `src` key is
       // treated as a source-backed VariableEntry, not a plain data object.
-      spec[key] = parseVariableEntry(val, key);
+      spec[key] = parseVariableEntry(
+        val as unknown as Record<string, unknown>,
+        key,
+      );
     } else if (
       Array.isArray(val) ||
       typeof val === 'number' ||

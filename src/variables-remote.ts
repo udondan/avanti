@@ -55,14 +55,22 @@ export async function resolveVariableSpec(
     } else if (
       typeof value !== 'object' ||
       Array.isArray(value) ||
-      !('src' in value)
+      // Use `in` for TypeScript narrowing; Object.hasOwn guards against
+      // inherited `src` properties from programmatic callers.
+      !('src' in value) ||
+      !Object.hasOwn(value, 'src')
     ) {
       // Non-string, non-VariableEntry value (number, boolean, list, or plain
       // object) — resolve $vars in any string leaves.
       try {
         // deepResolveVars returns JsonValue (handles nested nulls), but null
         // is rejected above so the cast to VariableValue is sound.
-        resolved[name] = deepResolveVars(value, resolved) as VariableValue;
+        // TS can't narrow VariableEntry away via Object.hasOwn; the cast is
+        // safe — only values without an own `src` reach this branch.
+        resolved[name] = deepResolveVars(
+          value as JsonValue,
+          resolved,
+        ) as VariableValue;
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         throw new Error(`variables.${name}: ${msg}`, { cause: err });
