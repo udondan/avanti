@@ -193,6 +193,13 @@ async function fetchConfigContent(
 }
 
 export function parseConfigContent(content: string): AvantiConfig {
+  // Normalize YAML octal literals for mode fields before js-yaml converts them
+  // to integers and loses the 0o prefix (e.g. mode: 0o644 → mode: "0644").
+  content = content.replace(
+    /^(\s+mode:\s+)0o([0-7]+)\s*$/gm,
+    (_, prefix, digits) => `${prefix}"0${digits}"`,
+  );
+
   let raw: unknown;
   try {
     raw = yaml.load(content);
@@ -250,24 +257,12 @@ export function parseConfigContent(content: string): AvantiConfig {
     if (fileConds.ifAny !== undefined) fileEntry.ifAny = fileConds.ifAny;
 
     if (typeof e['mode'] === 'number') {
-      const n = e['mode'];
-      if (!Number.isInteger(n) || n < 0 || n > 0o7777) {
-        throw new Error(
-          `files["${target}"].mode: ${n} is not a valid mode (expected an integer in range 0–0o7777)`,
-        );
-      }
-      // Numbers whose decimal digits are all 0–7 are ambiguous: mode: 755 (decimal 755,
-      // which as octal would be "1363") vs mode: 0o644 (420 decimal, digits 4,2,0).
-      // Both cases would silently apply wrong permissions, so we reject them.
-      // Use a quoted string like "0755" or YAML 0o notation for unambiguous values.
-      if (/^[0-7]+$/.test(n.toString())) {
-        throw new Error(
-          `files["${target}"].mode: bare number ${n} is ambiguous ` +
-            `(decimal ${n} ≠ octal ${n}); use a quoted string like "${n.toString().padStart(4, '0')}" or YAML 0o notation`,
-        );
-      }
-      // Decimal digits include 8 or 9 → value can only come from YAML 0o notation.
-      fileEntry.mode = n.toString(8).padStart(4, '0');
+      // 0o-prefixed YAML literals are normalized to quoted strings before parsing
+      // (see preprocessing above), so any remaining number is a bare decimal like
+      // mode: 755, which is ambiguous and rejected.
+      throw new Error(
+        `files["${target}"].mode: ${e['mode']} is a bare decimal — use a quoted string like "0755" or YAML 0o notation (e.g. 0o755)`,
+      );
     } else if (typeof e['mode'] === 'string') {
       if (!/^[0-7]{1,4}$/.test(e['mode'])) {
         throw new Error(
