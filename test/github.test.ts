@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { fetchGitHub } from '../src/sources/github';
+import { fetchGitHub, fetchGitHubRelease } from '../src/sources/github';
 import { _testable } from '../src/fetch';
 
 vi.mock('child_process', () => ({
@@ -187,4 +187,63 @@ describe('fetchGitHub — network-error fallback to gh', () => {
       'latest content',
     );
   });
+});
+
+describe('fetchGitHubRelease', () => {
+  it('fetches all assets for a specific tag via API', async () => {
+    vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            assets: [
+              { id: 1, name: 'app.tar.gz' },
+              { id: 2, name: 'checksums.txt' },
+            ],
+          }),
+          { status: 200 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(Buffer.from('binary data'), { status: 200 }),
+      )
+      .mockResolvedValueOnce(
+        new Response(Buffer.from('sha256 ...'), { status: 200 }),
+      );
+
+    const result = await fetchGitHubRelease('owner/repo', 'v1.0.0');
+    expect(result.files.size).toBe(2);
+    expect(result.files.get('app.tar.gz')?.toString()).toBe('binary data');
+    expect(result.files.get('checksums.txt')?.toString()).toBe('sha256 ...');
+  });
+
+  it('resolves $latest before fetching assets', async () => {
+    vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ tag_name: 'v2.0.0' }), { status: 200 }),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ assets: [{ id: 10, name: 'release.zip' }] }),
+          { status: 200 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(Buffer.from('zip content'), { status: 200 }),
+      );
+
+    const result = await fetchGitHubRelease('owner/repo', '$latest');
+    expect(result.files.get('release.zip')?.toString()).toBe('zip content');
+  });
+
+  it('throws when release has no assets', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response(JSON.stringify({ assets: [] }), { status: 200 }),
+    );
+
+    await expect(fetchGitHubRelease('owner/repo', 'v1.0.0')).rejects.toThrow(
+      'No release assets found for owner/repo@v1.0.0',
+    );
+  });
+
+  // CLI fallback tests live in test/github-release-cli.test.ts (need vi.mock('fs'))
 });

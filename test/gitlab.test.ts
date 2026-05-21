@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { fetchGitLab } from '../src/sources/gitlab';
+import { fetchGitLab, fetchGitLabRelease } from '../src/sources/gitlab';
 import { _testable } from '../src/fetch';
 
 vi.mock('child_process', () => ({
@@ -302,4 +302,105 @@ describe('fetchGitLab — network-error fallback to glab', () => {
       'tagged content',
     );
   });
+});
+
+describe('fetchGitLabRelease', () => {
+  it('fetches package-type links for a specific tag via API', async () => {
+    vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            assets: {
+              links: [
+                {
+                  name: 'app.tar.gz',
+                  url: 'https://example.com/app.tar.gz',
+                  link_type: 'package',
+                },
+                {
+                  name: 'docs.pdf',
+                  url: 'https://example.com/docs.pdf',
+                  link_type: 'other',
+                },
+              ],
+            },
+          }),
+          { status: 200 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(Buffer.from('binary data'), { status: 200 }),
+      );
+
+    const result = await fetchGitLabRelease('group/project', 'v1.0.0');
+    expect(result.files.size).toBe(1);
+    expect(result.files.get('app.tar.gz')?.toString()).toBe('binary data');
+  });
+
+  it('falls back to all links when no package-type links exist', async () => {
+    vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            assets: {
+              links: [
+                {
+                  name: 'report.pdf',
+                  url: 'https://example.com/report.pdf',
+                  link_type: 'other',
+                },
+              ],
+            },
+          }),
+          { status: 200 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(Buffer.from('report content'), { status: 200 }),
+      );
+
+    const result = await fetchGitLabRelease('group/project', 'v1.0.0');
+    expect(result.files.get('report.pdf')?.toString()).toBe('report content');
+  });
+
+  it('throws when release has no links', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response(JSON.stringify({ assets: { links: [] } }), { status: 200 }),
+    );
+
+    await expect(fetchGitLabRelease('group/project', 'v1.0.0')).rejects.toThrow(
+      'No release assets found for group/project@v1.0.0',
+    );
+  });
+
+  it('resolves $latest via releases/latest endpoint', async () => {
+    vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ tag_name: 'v3.0.0' }), { status: 200 }),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            assets: {
+              links: [
+                {
+                  name: 'release.bin',
+                  url: 'https://example.com/release.bin',
+                  link_type: 'package',
+                },
+              ],
+            },
+          }),
+          { status: 200 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(Buffer.from('v3 content'), { status: 200 }),
+      );
+
+    const result = await fetchGitLabRelease('group/project', '$latest');
+    expect(result.files.get('release.bin')?.toString()).toBe('v3 content');
+  });
+
+  // CLI fallback tests live in test/gitlab-release-cli.test.ts (need vi.mock('fs'))
 });

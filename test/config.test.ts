@@ -2474,3 +2474,111 @@ files:
     );
   });
 });
+
+describe('release source parsing', () => {
+  it('loads a github release src', async () => {
+    const f = writeTmp(`
+files:
+  downloads/:
+    src:
+      github:
+        repo: owner/repo
+        release: v1.0.0
+`);
+    const cfg = await loadConfig(f);
+    const src = cfg.files['downloads/'].src as {
+      github: { repo: string; release: string };
+    };
+    expect(src.github.repo).toBe('owner/repo');
+    expect(src.github.release).toBe('v1.0.0');
+  });
+
+  it('loads a github release src with $latest', async () => {
+    const f = writeTmp(`
+files:
+  downloads/:
+    src:
+      github:
+        repo: owner/repo
+        release: $latest
+`);
+    const cfg = await loadConfig(f);
+    const src = cfg.files['downloads/'].src as {
+      github: { repo: string; release: string };
+    };
+    expect(src.github.release).toBe('$latest');
+  });
+
+  it('throws when github src has both file and release', async () => {
+    const f = writeTmp(`
+files:
+  downloads/:
+    src:
+      github:
+        repo: owner/repo
+        file: path/to/file.txt
+        release: v1.0.0
+`);
+    await expect(loadConfig(f)).rejects.toThrow(
+      'github: "file" and "release" are mutually exclusive',
+    );
+  });
+
+  it('throws when github src has neither file nor release', async () => {
+    const f = writeTmp(`
+files:
+  downloads/:
+    src:
+      github:
+        repo: owner/repo
+`);
+    await expect(loadConfig(f)).rejects.toThrow(
+      'github: one of "file" or "release" is required',
+    );
+  });
+
+  it('loads a gitlab release src', async () => {
+    const f = writeTmp(`
+files:
+  downloads/:
+    src:
+      gitlab:
+        project: group/project
+        release: v2.0.0
+`);
+    const cfg = await loadConfig(f);
+    const src = cfg.files['downloads/'].src as {
+      gitlab: { project: string; release: string };
+    };
+    expect(src.gitlab.project).toBe('group/project');
+    expect(src.gitlab.release).toBe('v2.0.0');
+  });
+
+  it('throws when gitlab src has both file and release', async () => {
+    const f = writeTmp(`
+files:
+  downloads/:
+    src:
+      gitlab:
+        project: group/project
+        file: path/to/file.txt
+        release: v2.0.0
+`);
+    await expect(loadConfig(f)).rejects.toThrow(
+      'gitlab: "file" and "release" are mutually exclusive',
+    );
+  });
+
+  it('throws when gitlab src has neither file nor release', async () => {
+    const f = writeTmp(`
+files:
+  downloads/:
+    src:
+      gitlab:
+        project: group/project
+`);
+    await expect(loadConfig(f)).rejects.toThrow(
+      'gitlab: one of "file" or "release" is required',
+    );
+  });
+});

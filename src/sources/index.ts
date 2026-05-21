@@ -17,8 +17,8 @@ import { resolveVars, resolveVarsShellSafe } from '../variables';
 import { fetchHttp, inferFilenameFromUrl } from './http';
 import { fetchLocal } from './local';
 import { fetchExec } from './exec';
-import { fetchGitLab } from './gitlab';
-import { fetchGitHub } from './github';
+import { fetchGitLab, fetchGitLabRelease } from './gitlab';
+import { fetchGitHub, fetchGitHubRelease } from './github';
 import { fetchBitbucket } from './bitbucket';
 import { fetchGit, isGitRemoteUrl, parseGitRemoteSpec } from './git';
 import { fetchS3 } from './s3';
@@ -52,8 +52,8 @@ function srcFilename(src: FileSrc): string | null {
     }
     return src;
   }
-  if ('gitlab' in src) return src.gitlab.file;
-  if ('github' in src) return src.github.file;
+  if ('gitlab' in src) return 'file' in src.gitlab ? src.gitlab.file : null;
+  if ('github' in src) return 'file' in src.github ? src.github.file : null;
   if ('bitbucket' in src) return src.bitbucket.file;
   if ('git' in src) return src.git.file;
   if ('aws_s3' in src) return src.aws_s3;
@@ -168,13 +168,19 @@ export type FetchCache = Map<string, { files: Map<string, Buffer> }>;
 function labelForSrc(src: FileSrc, vars: Variables): string {
   if (typeof src === 'string') return resolveVars(src, vars);
   if ('github' in src) {
-    const ref = src.github.ref ? `@${src.github.ref}` : '';
     const host = src.github.host ? `[${src.github.host}]` : '';
+    if ('release' in src.github) {
+      return `github${host}:${src.github.repo}:release:${src.github.release}`;
+    }
+    const ref = src.github.ref ? `@${src.github.ref}` : '';
     return `github${host}:${src.github.repo}:${src.github.file}${ref}`;
   }
   if ('gitlab' in src) {
-    const ref = src.gitlab.ref ? `@${src.gitlab.ref}` : '';
     const host = src.gitlab.host ? `[${src.gitlab.host}]` : '';
+    if ('release' in src.gitlab) {
+      return `gitlab${host}:${src.gitlab.project}:release:${src.gitlab.release}`;
+    }
+    const ref = src.gitlab.ref ? `@${src.gitlab.ref}` : '';
     return `gitlab${host}:${src.gitlab.project}:${src.gitlab.file}${ref}`;
   }
   if ('bitbucket' in src) {
@@ -223,7 +229,6 @@ function labelForSrc(src: FileSrc, vars: Variables): string {
 function cacheKeyForSrc(src: FileSrc, vars: Variables): string {
   if (typeof src === 'string') return resolveVars(src, vars);
   if ('github' in src) {
-    const ref = src.github.ref ? `@${resolveVars(src.github.ref, vars)}` : '';
     const resolvedHost = src.github.host
       ? resolveVars(src.github.host, vars).trim()
       : '';
@@ -232,10 +237,13 @@ function cacheKeyForSrc(src: FileSrc, vars: Variables): string {
       ? src.github.via.join(',')
       : (src.github.via ?? 'api,cli');
     const via = viaStr === 'api,cli' ? '' : `(${viaStr})`;
+    if ('release' in src.github) {
+      return `github${host}:${resolveVars(src.github.repo, vars)}:release:${resolveVars(src.github.release, vars)}${via}`;
+    }
+    const ref = src.github.ref ? `@${resolveVars(src.github.ref, vars)}` : '';
     return `github${host}:${resolveVars(src.github.repo, vars)}:${resolveVars(src.github.file, vars)}${ref}${via}`;
   }
   if ('gitlab' in src) {
-    const ref = src.gitlab.ref ? `@${resolveVars(src.gitlab.ref, vars)}` : '';
     const resolvedHost = src.gitlab.host
       ? resolveVars(src.gitlab.host, vars).trim()
       : '';
@@ -244,6 +252,10 @@ function cacheKeyForSrc(src: FileSrc, vars: Variables): string {
       ? src.gitlab.via.join(',')
       : (src.gitlab.via ?? 'api,cli');
     const via = viaStr === 'api,cli' ? '' : `(${viaStr})`;
+    if ('release' in src.gitlab) {
+      return `gitlab${host}:${resolveVars(src.gitlab.project, vars)}:release:${resolveVars(src.gitlab.release, vars)}${via}`;
+    }
+    const ref = src.gitlab.ref ? `@${resolveVars(src.gitlab.ref, vars)}` : '';
     return `gitlab${host}:${resolveVars(src.gitlab.project, vars)}:${resolveVars(src.gitlab.file, vars)}${ref}${via}`;
   }
   if ('bitbucket' in src) {
@@ -420,30 +432,54 @@ async function _fetchOneSrcRaw(
       ['output', fetchExec(resolveVarsShellSafe(src.exec, vars))],
     ]);
   } else if ('gitlab' in src) {
-    const result = await fetchGitLab(
-      resolveVars(src.gitlab.project, vars),
-      resolveVars(src.gitlab.file, vars),
-      src.gitlab.ref !== undefined
-        ? resolveVars(src.gitlab.ref, vars)
-        : undefined,
+    const host =
       src.gitlab.host !== undefined
         ? resolveVars(src.gitlab.host, vars)
-        : undefined,
-      src.gitlab.via,
-    );
+        : undefined;
+    let result: { files: Map<string, Buffer> };
+    if ('release' in src.gitlab) {
+      result = await fetchGitLabRelease(
+        resolveVars(src.gitlab.project, vars),
+        resolveVars(src.gitlab.release, vars),
+        host,
+        src.gitlab.via,
+      );
+    } else {
+      result = await fetchGitLab(
+        resolveVars(src.gitlab.project, vars),
+        resolveVars(src.gitlab.file, vars),
+        src.gitlab.ref !== undefined
+          ? resolveVars(src.gitlab.ref, vars)
+          : undefined,
+        host,
+        src.gitlab.via,
+      );
+    }
     files = result.files;
   } else if ('github' in src) {
-    const result = await fetchGitHub(
-      resolveVars(src.github.repo, vars),
-      resolveVars(src.github.file, vars),
-      src.github.ref !== undefined
-        ? resolveVars(src.github.ref, vars)
-        : undefined,
+    const host =
       src.github.host !== undefined
         ? resolveVars(src.github.host, vars)
-        : undefined,
-      src.github.via,
-    );
+        : undefined;
+    let result: { files: Map<string, Buffer> };
+    if ('release' in src.github) {
+      result = await fetchGitHubRelease(
+        resolveVars(src.github.repo, vars),
+        resolveVars(src.github.release, vars),
+        host,
+        src.github.via,
+      );
+    } else {
+      result = await fetchGitHub(
+        resolveVars(src.github.repo, vars),
+        resolveVars(src.github.file, vars),
+        src.github.ref !== undefined
+          ? resolveVars(src.github.ref, vars)
+          : undefined,
+        host,
+        src.github.via,
+      );
+    }
     files = result.files;
   } else if ('bitbucket' in src) {
     const result = await fetchBitbucket(

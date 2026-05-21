@@ -1,4 +1,6 @@
 import { spawnSync } from 'child_process';
+import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 import { fetchWithRetry } from '../fetch';
 import { verbose } from '../logger';
@@ -35,6 +37,16 @@ function apiHeaders(): Record<string, string> {
 
 function shouldFallback(status: number): boolean {
   return status === 401 || status === 403 || status === 404;
+}
+
+class HttpError extends Error {
+  constructor(
+    readonly status: number,
+    message: string,
+  ) {
+    super(message);
+    this.name = 'HttpError';
+  }
 }
 
 function isNetworkError(e: unknown): boolean {
@@ -343,6 +355,131 @@ function resolveRefViaCli(repo: string, host?: string): string {
     throw new Error(`No releases or tags found for ${repo}`);
   }
   return tagRes.stdout.trim();
+}
+
+interface GitHubAsset {
+  id: number;
+  name: string;
+}
+
+async function fetchReleaseAssetsViaApi(
+  repo: string,
+  tag: string,
+  host?: string,
+): Promise<Map<string, Buffer>> {
+  const res = await fetchWithRetry(
+    `${getApiBase(host)}/repos/${repo}/releases/tags/${encodeURIComponent(tag)}`,
+    { headers: apiHeaders() },
+  );
+  if (!res.ok) {
+    throw new HttpError(
+      res.status,
+      `Failed to fetch release ${tag} from ${repo}: HTTP ${res.status}`,
+    );
+  }
+  const rel = (await res.json()) as { assets: GitHubAsset[] };
+  if (!rel.assets.length) {
+    throw new Error(`No release assets found for ${repo}@${tag}`);
+  }
+  const entries = await Promise.all(
+    rel.assets.map(async (asset): Promise<[string, Buffer]> => {
+      const dlRes = await fetchWithRetry(
+        `${getApiBase(host)}/repos/${repo}/releases/assets/${asset.id}`,
+        {
+          headers: { ...apiHeaders(), Accept: 'application/octet-stream' },
+          redirect: 'follow',
+        },
+      );
+      if (!dlRes.ok) {
+        throw new Error(
+          `Failed to download release asset "${asset.name}" from ${repo}@${tag}: HTTP ${dlRes.status}`,
+        );
+      }
+      return [
+        path.basename(asset.name),
+        Buffer.from(await dlRes.arrayBuffer()),
+      ];
+    }),
+  );
+  return new Map(entries);
+}
+
+function fetchReleaseAssetsViaCli(
+  repo: string,
+  tag: string,
+  host?: string,
+): Map<string, Buffer> {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'avanti-gh-rel-'));
+  try {
+    const args = [
+      'release',
+      'download',
+      tag,
+      '--repo',
+      repo,
+      '--dir',
+      tmpDir,
+      ...hostnameArgs(host),
+    ];
+    verbose(`github: gh release download: gh ${args.join(' ')}`);
+    const result = ghRun(args);
+    if (result.status !== 0) {
+      throw new Error(
+        `Failed to download release ${tag} from ${repo}: ${result.stderr}`,
+      );
+    }
+    const files = new Map<string, Buffer>();
+    for (const entry of fs.readdirSync(tmpDir, { withFileTypes: true })) {
+      if (entry.isFile()) {
+        files.set(entry.name, fs.readFileSync(path.join(tmpDir, entry.name)));
+      }
+    }
+    if (!files.size) {
+      throw new Error(`No release assets found for ${repo}@${tag}`);
+    }
+    return files;
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+}
+
+export async function fetchGitHubRelease(
+  repo: string,
+  release: string,
+  host?: string,
+  via?: Via | Via[],
+): Promise<GitHubResult> {
+  const transports = normalizeVia(via);
+  const tag = await resolveRef(repo, release, host, transports);
+  verbose(`github: fetching release assets for ${repo}@${tag}`);
+
+  if (transports[0] === 'cli') {
+    try {
+      return { files: fetchReleaseAssetsViaCli(repo, tag, host) };
+    } catch (e) {
+      if (!transports.includes('api')) throw e;
+    }
+  }
+
+  const withCliFallback = transports[0] === 'api' && transports.includes('cli');
+  try {
+    return { files: await fetchReleaseAssetsViaApi(repo, tag, host) };
+  } catch (e) {
+    if (isNetworkError(e) && withCliFallback && isGhAvailable()) {
+      verbose(`github: HTTP fetch failed, falling back to gh`);
+      return { files: fetchReleaseAssetsViaCli(repo, tag, host) };
+    }
+    if (
+      e instanceof HttpError &&
+      shouldFallback(e.status) &&
+      withCliFallback &&
+      isGhAvailable()
+    ) {
+      verbose(`github: API returned ${e.status}, falling back to gh`);
+      return { files: fetchReleaseAssetsViaCli(repo, tag, host) };
+    }
+    throw e;
+  }
 }
 
 export async function fetchGitHub(

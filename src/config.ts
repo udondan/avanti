@@ -826,8 +826,30 @@ function parseSingleSrc(raw: unknown, loc: string): FileSrc {
     if (typeof g['project'] !== 'string' || !g['project']) {
       throw new Error(`${loc}.gitlab.project: required string`);
     }
-    if (typeof g['file'] !== 'string' || !g['file']) {
-      throw new Error(`${loc}.gitlab.file: required string`);
+    if (
+      g['file'] !== undefined &&
+      (typeof g['file'] !== 'string' || !g['file'])
+    ) {
+      throw new Error(`${loc}.gitlab.file: must be a non-empty string`);
+    }
+    if (
+      g['release'] !== undefined &&
+      (typeof g['release'] !== 'string' || !g['release'])
+    ) {
+      throw new Error(`${loc}.gitlab.release: must be a non-empty string`);
+    }
+    const hasFile = typeof g['file'] === 'string' && !!g['file'];
+    const hasRelease = typeof g['release'] === 'string' && !!g['release'];
+    if (hasFile && hasRelease) {
+      throw new Error(
+        `${loc}.gitlab: "file" and "release" are mutually exclusive`,
+      );
+    }
+    if (!hasFile && !hasRelease) {
+      throw new Error(`${loc}.gitlab: one of "file" or "release" is required`);
+    }
+    if (hasRelease && g['ref'] !== undefined) {
+      throw new Error(`${loc}.gitlab: "ref" is not valid when using "release"`);
     }
     if (
       g['host'] !== undefined &&
@@ -836,10 +858,22 @@ function parseSingleSrc(raw: unknown, loc: string): FileSrc {
       throw new Error(`${loc}.gitlab.host: must be a non-empty string`);
     }
     const gitlabConds = parseConditionField(obj, loc);
+    if (hasRelease) {
+      return {
+        gitlab: {
+          project: g['project'],
+          release: g['release'] as string,
+          sha: parseSha(g['sha'], `${loc}.gitlab`),
+          host: typeof g['host'] === 'string' ? g['host'] : undefined,
+          via: parseVia(g['via'], `${loc}.gitlab`),
+        },
+        ...gitlabConds,
+      };
+    }
     return {
       gitlab: {
         project: g['project'],
-        file: g['file'],
+        file: g['file'] as string,
         ref: typeof g['ref'] === 'string' ? g['ref'] : undefined,
         sha: parseSha(g['sha'], `${loc}.gitlab`),
         host: typeof g['host'] === 'string' ? g['host'] : undefined,
@@ -866,8 +900,30 @@ function parseSingleSrc(raw: unknown, loc: string): FileSrc {
     if (typeof g['repo'] !== 'string' || !g['repo']) {
       throw new Error(`${loc}.github.repo: required string`);
     }
-    if (typeof g['file'] !== 'string' || !g['file']) {
-      throw new Error(`${loc}.github.file: required string`);
+    if (
+      g['file'] !== undefined &&
+      (typeof g['file'] !== 'string' || !g['file'])
+    ) {
+      throw new Error(`${loc}.github.file: must be a non-empty string`);
+    }
+    if (
+      g['release'] !== undefined &&
+      (typeof g['release'] !== 'string' || !g['release'])
+    ) {
+      throw new Error(`${loc}.github.release: must be a non-empty string`);
+    }
+    const hasFile = typeof g['file'] === 'string' && !!g['file'];
+    const hasRelease = typeof g['release'] === 'string' && !!g['release'];
+    if (hasFile && hasRelease) {
+      throw new Error(
+        `${loc}.github: "file" and "release" are mutually exclusive`,
+      );
+    }
+    if (!hasFile && !hasRelease) {
+      throw new Error(`${loc}.github: one of "file" or "release" is required`);
+    }
+    if (hasRelease && g['ref'] !== undefined) {
+      throw new Error(`${loc}.github: "ref" is not valid when using "release"`);
     }
     if (
       g['host'] !== undefined &&
@@ -876,10 +932,22 @@ function parseSingleSrc(raw: unknown, loc: string): FileSrc {
       throw new Error(`${loc}.github.host: must be a non-empty string`);
     }
     const githubConds = parseConditionField(obj, loc);
+    if (hasRelease) {
+      return {
+        github: {
+          repo: g['repo'],
+          release: g['release'] as string,
+          sha: parseSha(g['sha'], `${loc}.github`),
+          host: typeof g['host'] === 'string' ? g['host'] : undefined,
+          via: parseVia(g['via'], `${loc}.github`),
+        },
+        ...githubConds,
+      };
+    }
     return {
       github: {
         repo: g['repo'],
-        file: g['file'],
+        file: g['file'] as string,
         ref: typeof g['ref'] === 'string' ? g['ref'] : undefined,
         sha: parseSha(g['sha'], `${loc}.github`),
         host: typeof g['host'] === 'string' ? g['host'] : undefined,

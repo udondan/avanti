@@ -35,6 +35,16 @@ function shouldFallback(status: number): boolean {
   return status === 401 || status === 403 || status === 404;
 }
 
+class HttpError extends Error {
+  constructor(
+    readonly status: number,
+    message: string,
+  ) {
+    super(message);
+    this.name = 'HttpError';
+  }
+}
+
 function isNetworkError(e: unknown): boolean {
   return e instanceof TypeError && e.message === 'fetch failed';
 }
@@ -474,6 +484,206 @@ function fetchDirectoryViaArchiveViaCli(
   }
   if (res.status !== 0 || !res.stdout.length) return null;
   return extractArchive(res.stdout, dirPath);
+}
+
+interface GitLabReleaseLink {
+  name: string;
+  url: string;
+  link_type: string;
+}
+
+async function resolveReleaseTag(
+  project: string,
+  release: string,
+  host?: string,
+  transports: Via[] = ['api', 'cli'],
+): Promise<string> {
+  if (release !== '$latest') return release;
+
+  verbose(`gitlab: resolving $latest release for ${project}`);
+
+  if (transports[0] === 'cli') {
+    try {
+      return resolveReleaseTagViaCli(project, host);
+    } catch (e) {
+      if (!transports.includes('api')) throw e;
+    }
+  }
+
+  const withCliFallback = transports[0] === 'api' && transports.includes('cli');
+  let res: Response;
+  try {
+    res = await fetchWithRetry(
+      `https://${getHost(host)}/api/v4/projects/${encodeURIComponent(project)}/releases/latest`,
+      { headers: apiHeaders() },
+    );
+  } catch (e) {
+    if (isNetworkError(e) && withCliFallback && isGlabAvailable()) {
+      verbose(`gitlab: HTTP fetch failed, falling back to glab`);
+      return resolveReleaseTagViaCli(project, host);
+    }
+    throw e;
+  }
+  if (res.ok) {
+    const rel = (await res.json()) as { tag_name: string };
+    return rel.tag_name;
+  }
+  // Releases endpoint unavailable (older GitLab) — fall back to tags
+  if (res.status === 404 || res.status === 403) {
+    if (withCliFallback && isGlabAvailable()) {
+      return resolveReleaseTagViaCli(project, host);
+    }
+    return resolveRef(project, '$latest', host, transports);
+  }
+  if (shouldFallback(res.status) && withCliFallback && isGlabAvailable()) {
+    return resolveReleaseTagViaCli(project, host);
+  }
+  throw new Error(
+    `Failed to resolve $latest release for ${project}: HTTP ${res.status}`,
+  );
+}
+
+function resolveReleaseTagViaCli(project: string, host?: string): string {
+  const endpoint = `projects/${encodeURIComponent(project)}/releases/latest`;
+  const res = glabApi(endpoint, host);
+  if (res.status === 0 && res.stdout.trim()) {
+    try {
+      const rel = JSON.parse(res.stdout) as { tag_name: string };
+      if (rel.tag_name) return rel.tag_name;
+    } catch {
+      // fall through to tags
+    }
+  }
+  // Fall back to tags
+  const tagsEndpoint = `projects/${encodeURIComponent(project)}/repository/tags?order_by=version&sort=desc&per_page=1`;
+  const tagRes = glabApi(tagsEndpoint, host);
+  if (tagRes.status !== 0) {
+    throw new Error(
+      `Failed to resolve $latest release for ${project}: ${tagRes.stderr}`,
+    );
+  }
+  const tags = JSON.parse(tagRes.stdout) as Array<{ name: string }>;
+  if (!tags.length) {
+    throw new Error(
+      `No releases or tags found for ${project} (needed to resolve $latest)`,
+    );
+  }
+  return tags[0].name;
+}
+
+async function fetchReleaseLinksViaApi(
+  project: string,
+  tag: string,
+  host?: string,
+): Promise<Map<string, Buffer>> {
+  const rawHost = getHost(host);
+  const gitlabHost = new URL(`https://${rawHost}`).host;
+  const res = await fetchWithRetry(
+    `https://${gitlabHost}/api/v4/projects/${encodeURIComponent(project)}/releases/${encodeURIComponent(tag)}`,
+    { headers: apiHeaders() },
+  );
+  if (!res.ok) {
+    throw new HttpError(
+      res.status,
+      `Failed to fetch release ${tag} from ${project}: HTTP ${res.status}`,
+    );
+  }
+  const rel = (await res.json()) as {
+    assets: { links: GitLabReleaseLink[] };
+  };
+  let links = rel.assets.links.filter((l) => l.link_type === 'package');
+  if (!links.length) links = rel.assets.links;
+  if (!links.length) {
+    throw new Error(`No release assets found for ${project}@${tag}`);
+  }
+  const entries = await Promise.all(
+    links.map(async (link): Promise<[string, Buffer]> => {
+      const linkHost = new URL(link.url).host;
+      const headers =
+        linkHost === gitlabHost ? apiHeaders() : { 'User-Agent': 'avanti' };
+      const dlRes = await fetchWithRetry(link.url, { headers });
+      if (!dlRes.ok) {
+        throw new Error(
+          `Failed to download release asset "${link.name}" from ${project}@${tag}: HTTP ${dlRes.status}`,
+        );
+      }
+      return [path.basename(link.name), Buffer.from(await dlRes.arrayBuffer())];
+    }),
+  );
+  return new Map(entries);
+}
+
+function fetchReleaseLinksViaCli(
+  project: string,
+  tag: string,
+  host?: string,
+): Map<string, Buffer> {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'avanti-gl-rel-'));
+  try {
+    const args = [
+      'release',
+      'download',
+      tag,
+      '--repo',
+      project,
+      ...hostnameArgs(host),
+    ];
+    verbose(`gitlab: glab release download: glab ${args.join(' ')}`);
+    const result = spawnSync('glab', args, { encoding: 'utf8', cwd: tmpDir });
+    if (result.error) throw new Error(`glab error: ${result.error.message}`);
+    if (result.status !== 0) {
+      throw new Error(
+        `Failed to download release ${tag} from ${project}: ${result.stderr ?? ''}`,
+      );
+    }
+    const files = new Map<string, Buffer>();
+    collectFiles(tmpDir, tmpDir, files);
+    if (!files.size) {
+      throw new Error(`No release assets found for ${project}@${tag}`);
+    }
+    return files;
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+}
+
+export async function fetchGitLabRelease(
+  project: string,
+  release: string,
+  host?: string,
+  via?: Via | Via[],
+): Promise<GitLabResult> {
+  const transports = normalizeVia(via);
+  const tag = await resolveReleaseTag(project, release, host, transports);
+  verbose(`gitlab: fetching release assets for ${project}@${tag}`);
+
+  if (transports[0] === 'cli') {
+    try {
+      return { files: fetchReleaseLinksViaCli(project, tag, host) };
+    } catch (e) {
+      if (!transports.includes('api')) throw e;
+    }
+  }
+
+  const withCliFallback = transports[0] === 'api' && transports.includes('cli');
+  try {
+    return { files: await fetchReleaseLinksViaApi(project, tag, host) };
+  } catch (e) {
+    if (isNetworkError(e) && withCliFallback && isGlabAvailable()) {
+      verbose(`gitlab: HTTP fetch failed, falling back to glab`);
+      return { files: fetchReleaseLinksViaCli(project, tag, host) };
+    }
+    if (
+      e instanceof HttpError &&
+      shouldFallback(e.status) &&
+      withCliFallback &&
+      isGlabAvailable()
+    ) {
+      verbose(`gitlab: API returned ${e.status}, falling back to glab`);
+      return { files: fetchReleaseLinksViaCli(project, tag, host) };
+    }
+    throw e;
+  }
 }
 
 export async function fetchGitLab(
