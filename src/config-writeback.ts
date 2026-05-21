@@ -58,11 +58,16 @@ export function applyUpdatedShas(
         if (gh?.get) {
           const repo = gh.get('repo') as string | null;
           const file = gh.get('file') as string | null;
+          const release = gh.get('release') as string | null;
           const ref = gh.get('ref') as string | null;
           const host = gh.get('host') as string | null;
-          if (repo && file) {
+          if (repo && (file || release)) {
             const hostPart = host ? `[${host}]` : '';
-            label = `github${hostPart}:${repo}:${file}${ref ? `@${ref}` : ''}`;
+            if (release) {
+              label = `github${hostPart}:${repo}:release:${release}`;
+            } else {
+              label = `github${hostPart}:${repo}:${file}${ref ? `@${ref}` : ''}`;
+            }
             shaPath = [...srcBase, 'github', 'sha'];
           }
         }
@@ -71,11 +76,16 @@ export function applyUpdatedShas(
         if (gl?.get) {
           const project = gl.get('project') as string | null;
           const file = gl.get('file') as string | null;
+          const release = gl.get('release') as string | null;
           const ref = gl.get('ref') as string | null;
           const host = gl.get('host') as string | null;
-          if (project && file) {
+          if (project && (file || release)) {
             const hostPart = host ? `[${host}]` : '';
-            label = `gitlab${hostPart}:${project}:${file}${ref ? `@${ref}` : ''}`;
+            if (release) {
+              label = `gitlab${hostPart}:${project}:release:${release}`;
+            } else {
+              label = `gitlab${hostPart}:${project}:${file}${ref ? `@${ref}` : ''}`;
+            }
             shaPath = [...srcBase, 'gitlab', 'sha'];
           }
         }

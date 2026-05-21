@@ -29,7 +29,7 @@ export interface ReplaceRule {
   to: string;
 }
 
-export interface GitLabSrc {
+export interface GitLabFileSrc {
   gitlab: {
     project: string;
     file: string;
@@ -42,7 +42,21 @@ export interface GitLabSrc {
   ifAny?: Condition[];
 }
 
-export interface GitHubSrc {
+export interface GitLabReleaseSrc {
+  gitlab: {
+    project: string;
+    release: string;
+    sha?: string;
+    host?: string;
+    via?: Via | Via[];
+  };
+  if?: Condition | Condition[];
+  ifAny?: Condition[];
+}
+
+export type GitLabSrc = GitLabFileSrc | GitLabReleaseSrc;
+
+export interface GitHubFileSrc {
   github: {
     repo: string;
     file: string;
@@ -54,6 +68,20 @@ export interface GitHubSrc {
   if?: Condition | Condition[];
   ifAny?: Condition[];
 }
+
+export interface GitHubReleaseSrc {
+  github: {
+    repo: string;
+    release: string;
+    sha?: string;
+    host?: string;
+    via?: Via | Via[];
+  };
+  if?: Condition | Condition[];
+  ifAny?: Condition[];
+}
+
+export type GitHubSrc = GitHubFileSrc | GitHubReleaseSrc;
 
 export interface ExecSrc {
   exec: string;
