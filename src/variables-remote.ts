@@ -55,7 +55,8 @@ export async function resolveVariableSpec(
       Array.isArray(value) ||
       !('src' in value)
     ) {
-      // Plain list or object variable — resolve $vars in any string leaves.
+      // Non-string, non-VariableEntry value (number, boolean, list, or plain
+      // object) — resolve $vars in any string leaves.
       try {
         resolved[name] = deepResolveVars(value, resolved);
       } catch (err) {

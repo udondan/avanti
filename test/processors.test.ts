@@ -349,14 +349,16 @@ describe('applyTemplate', () => {
     }
   });
 
-  // Complex variables: lists and objects (including nested) passed as template context
-  const complexVars = {
-    servers: [
-      { host: 'web1', port: 8080 },
-      { host: 'web2', port: 9090 },
-    ],
-    db: { host: 'pg.internal', creds: { user: 'admin' } },
-  };
+  // Build a null-prototype object — mirrors what deepResolveVars produces at runtime.
+  const o = <T extends object>(props: T): T =>
+    Object.assign(Object.create(null) as T, props);
+
+  // Complex variables: lists and objects (including nested) passed as template context.
+  // Using null-prototype nested objects to match the shape produced by deepResolveVars.
+  const complexVars = o({
+    servers: [o({ host: 'web1', port: 8080 }), o({ host: 'web2', port: 9090 })],
+    db: o({ host: 'pg.internal', creds: o({ user: 'admin' }) }),
+  });
 
   describe('handlebars — complex variables', () => {
     it('accesses an object property', async () => {
