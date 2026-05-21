@@ -373,6 +373,30 @@ export async function loadConfig(
   }
 }
 
+// Recursively assert that a value is a valid JsonValue — no class instances
+// (e.g. Date from js-yaml timestamp parsing) anywhere in the tree.
+function assertPlainJsonValue(val: unknown, path: string): void {
+  if (val === null || typeof val !== 'object') return;
+  if (Array.isArray(val)) {
+    for (let i = 0; i < val.length; i++) {
+      assertPlainJsonValue(val[i], `${path}[${i}]`);
+    }
+    return;
+  }
+  const proto = Object.getPrototypeOf(val) as unknown;
+  if (proto !== Object.prototype && proto !== null) {
+    const name =
+      (val as { constructor?: { name?: string } }).constructor?.name ??
+      'unknown';
+    throw new Error(
+      `${path}: expected a plain object but got ${name} — quote YAML timestamps and other special values`,
+    );
+  }
+  for (const [k, v] of Object.entries(val as Record<string, unknown>)) {
+    assertPlainJsonValue(v, `${path}.${k}`);
+  }
+}
+
 function parseVariables(raw: unknown): VariableSpec {
   if (raw === undefined || raw === null)
     return Object.create(null) as VariableSpec;
@@ -398,16 +422,10 @@ function parseVariables(raw: unknown): VariableSpec {
       typeof val === 'number' ||
       typeof val === 'boolean'
     ) {
+      assertPlainJsonValue(val, `variables.${key}`);
       spec[key] = val as import('./types').JsonValue;
     } else if (typeof val === 'object' && val !== null) {
-      const proto = Object.getPrototypeOf(val) as unknown;
-      if (proto !== Object.prototype && proto !== null) {
-        const name = val.constructor?.name ?? 'unknown';
-        throw new Error(
-          `variables.${key}: expected a plain object but got ${name} — quote YAML timestamps and other special values`,
-        );
-      }
-      // Plain object variable.
+      assertPlainJsonValue(val, `variables.${key}`);
       spec[key] = val as import('./types').JsonValue;
     } else {
       throw new Error(

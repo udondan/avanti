@@ -16,9 +16,12 @@ function deepResolveVars(value: JsonValue, vars: Variables): JsonValue {
   if (typeof value === 'object' && value !== null) {
     const proto = Object.getPrototypeOf(value) as unknown;
     if (proto !== Object.prototype && proto !== null) {
-      // Non-plain object (e.g. Date from js-yaml) — return as-is; config
-      // validation should have rejected this before it reaches here.
-      return value;
+      const name =
+        (value as { constructor?: { name?: string } }).constructor?.name ??
+        'unknown';
+      throw new Error(
+        `Variable value contains a non-plain object (${name}) — quote YAML timestamps and other special values`,
+      );
     }
     const out = Object.create(null) as { [key: string]: JsonValue };
     for (const [k, v] of Object.entries(value)) {

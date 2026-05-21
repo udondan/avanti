@@ -1927,6 +1927,31 @@ files:
     await expect(loadConfig(f)).rejects.toThrow('variables.ts:');
   });
 
+  it('throws when a nested value inside a list variable is a non-plain object', async () => {
+    const f = writeTmp(`
+variables:
+  items:
+    - value: 2024-01-15T10:30:00Z
+files:
+  out.txt:
+    src: https://example.com/out.txt
+`);
+    await expect(loadConfig(f)).rejects.toThrow('variables.items[0].value:');
+  });
+
+  it('throws when a nested value inside an object variable is a non-plain object', async () => {
+    const f = writeTmp(`
+variables:
+  db:
+    host: pg.internal
+    updated_at: 2024-01-15T10:30:00Z
+files:
+  out.txt:
+    src: https://example.com/out.txt
+`);
+    await expect(loadConfig(f)).rejects.toThrow('variables.db.updated_at:');
+  });
+
   it('uses variables. prefix in error messages for variable source parsing', async () => {
     const f = writeTmp(`
 variables:
