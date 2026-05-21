@@ -186,11 +186,8 @@ export function resolveVarsShellSafe(value: string, vars: Variables): string {
         return shellQuote(val);
       }
       if (bracedExpr !== undefined) {
-        const resolved = evaluatePath(vars, bracedExpr);
-        // evaluatePath returns the original ${expr} form for reserved vars;
-        // pass through unchanged rather than shell-quoting the literal.
-        if (resolved === match) return match;
-        return shellQuote(resolved);
+        if (RESERVED_VARS.has(parsePath(bracedExpr.trim()).name)) return match;
+        return shellQuote(evaluatePath(vars, bracedExpr));
       }
       if (RESERVED_VARS.has(varName!)) return match;
       if (!Object.hasOwn(vars, varName!)) {
