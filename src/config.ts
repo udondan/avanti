@@ -29,6 +29,7 @@ import {
   VALID_TEMPLATE_ENGINES,
   VariableEntry,
   VariableSpec,
+  VariableValue,
   Via,
 } from './types';
 import { validateVariables } from './variables';
@@ -373,6 +374,33 @@ export async function loadConfig(
   }
 }
 
+// Recursively assert that a value is a valid JsonValue — no class instances
+// (e.g. Date from js-yaml timestamp parsing) anywhere in the tree.
+function assertPlainJsonValue(val: unknown, path: string): void {
+  if (val === null || typeof val !== 'object') return;
+  if (Array.isArray(val)) {
+    for (let i = 0; i < val.length; i++) {
+      assertPlainJsonValue(val[i], `${path}[${i}]`);
+    }
+    return;
+  }
+  const proto = Object.getPrototypeOf(val) as unknown;
+  if (proto !== Object.prototype && proto !== null) {
+    const name =
+      (val as { constructor?: { name?: string } }).constructor?.name ??
+      'unknown';
+    throw new Error(
+      `${path}: expected a plain object but got ${name} — quote YAML timestamps and other special values`,
+    );
+  }
+  for (const [k, v] of Object.entries(val as Record<string, unknown>)) {
+    const keyPart = /[.[\]"']/.test(k)
+      ? `["${k.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"]`
+      : `.${k}`;
+    assertPlainJsonValue(v, `${path}${keyPart}`);
+  }
+}
+
 function parseVariables(raw: unknown): VariableSpec {
   if (raw === undefined || raw === null)
     return Object.create(null) as VariableSpec;
@@ -390,12 +418,27 @@ function parseVariables(raw: unknown): VariableSpec {
       val &&
       typeof val === 'object' &&
       !Array.isArray(val) &&
-      'src' in val
+      Object.hasOwn(val, 'src')
     ) {
-      spec[key] = parseVariableEntry(val, key);
+      // `src` is a reserved key: any object with a top-level `src` key is
+      // treated as a source-backed VariableEntry, not a plain data object.
+      spec[key] = parseVariableEntry(
+        val as unknown as Record<string, unknown>,
+        key,
+      );
+    } else if (
+      Array.isArray(val) ||
+      typeof val === 'number' ||
+      typeof val === 'boolean'
+    ) {
+      assertPlainJsonValue(val, `variables.${key}`);
+      spec[key] = val as VariableValue;
+    } else if (typeof val === 'object' && val !== null) {
+      assertPlainJsonValue(val, `variables.${key}`);
+      spec[key] = val as VariableValue;
     } else {
       throw new Error(
-        `variables.${key}: value must be a string or a source object with "src"`,
+        `variables.${key}: value must be a string, number, boolean, list, object, or source object with "src"`,
       );
     }
   }

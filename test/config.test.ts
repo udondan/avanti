@@ -1027,17 +1027,15 @@ files:
     await expect(loadConfig(f)).rejects.toThrow('"variables" must be a map');
   });
 
-  it('throws when a variable value is not a string', async () => {
+  it('throws when a variable value is null', async () => {
     const f = writeTmp(`
 variables:
-  count: 42
+  count: ~
 files:
   foo.txt:
     src: https://example.com/foo.txt
 `);
-    await expect(loadConfig(f)).rejects.toThrow(
-      'variables.count: value must be a string',
-    );
+    await expect(loadConfig(f)).rejects.toThrow('variables.count:');
   });
 
   it('throws when a reserved variable name is used', async () => {
@@ -1833,18 +1831,125 @@ files:
     expect(typeof cfg.variables?.['sourced']).toBe('object');
   });
 
-  it('throws when a variable value is an object without src', async () => {
+  it('parses a plain object variable (no src)', async () => {
     const f = writeTmp(`
 variables:
-  bad:
-    something: else
+  server:
+    host: pg.internal
+    port: 5432
 files:
   out.txt:
     src: https://example.com/out.txt
 `);
-    await expect(loadConfig(f)).rejects.toThrow(
-      'variables.bad: value must be a string or a source object with "src"',
-    );
+    const cfg = await loadConfig(f);
+    expect(cfg.variables?.['server']).toEqual({
+      host: 'pg.internal',
+      port: 5432,
+    });
+  });
+
+  it('parses a plain list variable', async () => {
+    const f = writeTmp(`
+variables:
+  envs:
+    - staging
+    - production
+files:
+  out.txt:
+    src: https://example.com/out.txt
+`);
+    const cfg = await loadConfig(f);
+    expect(cfg.variables?.['envs']).toEqual(['staging', 'production']);
+  });
+
+  it('parses a nested object variable', async () => {
+    const f = writeTmp(`
+variables:
+  db:
+    host: pg.internal
+    creds:
+      user: admin
+files:
+  out.txt:
+    src: https://example.com/out.txt
+`);
+    const cfg = await loadConfig(f);
+    expect(cfg.variables?.['db']).toEqual({
+      host: 'pg.internal',
+      creds: { user: 'admin' },
+    });
+  });
+
+  it('parses a number variable', async () => {
+    const f = writeTmp(`
+variables:
+  port: 5432
+files:
+  out.txt:
+    src: https://example.com/out.txt
+`);
+    const cfg = await loadConfig(f);
+    expect(cfg.variables?.['port']).toBe(5432);
+  });
+
+  it('parses a boolean variable', async () => {
+    const f = writeTmp(`
+variables:
+  tls: true
+files:
+  out.txt:
+    src: https://example.com/out.txt
+`);
+    const cfg = await loadConfig(f);
+    expect(cfg.variables?.['tls']).toBe(true);
+  });
+
+  it('throws when a variable value is null', async () => {
+    const f = writeTmp(`
+variables:
+  bad: ~
+files:
+  out.txt:
+    src: https://example.com/out.txt
+`);
+    await expect(loadConfig(f)).rejects.toThrow('variables.bad:');
+  });
+
+  it('throws when a variable value is a non-plain object (e.g. YAML timestamp)', async () => {
+    // js-yaml parses unquoted timestamps as Date objects; avanti must reject them
+    const f = writeTmp(`
+variables:
+  ts: 2024-01-15T10:30:00Z
+files:
+  out.txt:
+    src: https://example.com/out.txt
+`);
+    await expect(loadConfig(f)).rejects.toThrow('variables.ts:');
+  });
+
+  it('throws when a nested value inside a list variable is a non-plain object', async () => {
+    const f = writeTmp(`
+variables:
+  items:
+    - value: 2024-01-15T10:30:00Z
+files:
+  out.txt:
+    src: https://example.com/out.txt
+`);
+    await expect(loadConfig(f)).rejects.toThrow('variables.items[0].value:');
+  });
+
+  it('throws when a nested value inside an object variable is a non-plain object', async () => {
+    const f = writeTmp(`
+variables:
+  db:
+    host: pg.internal
+    updated_at: 2024-01-15T10:30:00Z
+files:
+  out.txt:
+    src: https://example.com/out.txt
+`);
+    await expect(loadConfig(f)).rejects.toThrow('variables.db.updated_at:');
   });
 
   it('uses variables. prefix in error messages for variable source parsing', async () => {

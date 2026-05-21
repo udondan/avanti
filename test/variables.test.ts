@@ -127,6 +127,10 @@ describe('resolveVarsShellSafe', () => {
     expect(resolveVarsShellSafe('ref: $latest', {})).toBe('ref: $latest');
   });
 
+  it('passes ${latest} through unquoted (braced reserved var)', () => {
+    expect(resolveVarsShellSafe('ref: ${latest}', {})).toBe('ref: ${latest}');
+  });
+
   it('throws on undefined variable', () => {
     expect(() => resolveVarsShellSafe('$missing', {})).toThrow(
       'Undefined variable: $missing',
@@ -577,8 +581,246 @@ describe('resolveVariableSpec', () => {
       },
       cwd,
     );
-    expect(result.rendered.replace(/\r\n/g, '\n')).toBe(
+    expect((result.rendered as string).replace(/\r\n/g, '\n')).toBe(
       'app: myapp\nversion: 1.2.3\nurl: https://example.com/myapp/1.2.3',
     );
+  });
+
+  it('resolves a plain object variable to its structural equivalent', async () => {
+    const result = await resolveVariableSpec(
+      { db: { host: 'pg.internal', port: 5432 } },
+      cwd,
+    );
+    expect(result.db).toEqual({ host: 'pg.internal', port: 5432 });
+  });
+
+  it('resolves a plain array variable to its structural equivalent', async () => {
+    const result = await resolveVariableSpec(
+      { envs: ['staging', 'prod'] },
+      cwd,
+    );
+    expect(result.envs).toEqual(['staging', 'prod']);
+  });
+
+  it('throws when a variable value is null (programmatic call)', async () => {
+    // parseVariables rejects null, but resolveVariableSpec is a public API
+    // that can be called directly from JS — must defend at its own boundary.
+    await expect(
+      resolveVariableSpec({ bad: null } as never, cwd),
+    ).rejects.toThrow('variables.bad:');
+  });
+
+  it('throws when a variable value is undefined (programmatic call)', async () => {
+    await expect(
+      resolveVariableSpec({ bad: undefined } as never, cwd),
+    ).rejects.toThrow('variables.bad: unsupported value type "undefined"');
+  });
+
+  it('throws when a variable value is a bigint (programmatic call)', async () => {
+    await expect(
+      resolveVariableSpec({ bad: 42n } as never, cwd),
+    ).rejects.toThrow('variables.bad: unsupported value type "bigint"');
+  });
+
+  it('throws when a nested value inside an array is an unsupported type', async () => {
+    await expect(
+      resolveVariableSpec({ arr: [1, 42n] } as never, cwd),
+    ).rejects.toThrow('variables.arr:');
+    await expect(
+      resolveVariableSpec({ arr: [1, 42n] } as never, cwd),
+    ).rejects.toThrow('unsupported type "bigint" at [1]');
+  });
+
+  it('throws when a nested value inside an object is an unsupported type', async () => {
+    await expect(
+      resolveVariableSpec({ cfg: { key: Symbol('x') } } as never, cwd),
+    ).rejects.toThrow('variables.cfg:');
+    await expect(
+      resolveVariableSpec({ cfg: { key: Symbol('x') } } as never, cwd),
+    ).rejects.toThrow('unsupported type "symbol" at .key');
+  });
+
+  it('throws on circular object references', async () => {
+    const obj: Record<string, unknown> = { a: 1 };
+    obj['self'] = obj;
+    await expect(
+      resolveVariableSpec({ bad: obj } as never, cwd),
+    ).rejects.toThrow('circular reference at .self');
+  });
+
+  it('throws on circular array references', async () => {
+    const arr: unknown[] = [1, 2];
+    arr.push(arr);
+    await expect(
+      resolveVariableSpec({ bad: arr } as never, cwd),
+    ).rejects.toThrow('circular reference at [2]');
+  });
+
+  it('does not false-positive on shared non-circular references', async () => {
+    const shared = { host: 'pg.internal' };
+    const result = await resolveVariableSpec(
+      { cfg: { primary: shared, replica: shared } },
+      cwd,
+    );
+    expect((result.cfg as Record<string, unknown>).primary).toEqual({
+      host: 'pg.internal',
+    });
+    expect((result.cfg as Record<string, unknown>).replica).toEqual({
+      host: 'pg.internal',
+    });
+  });
+
+  it('resolves $var references in string leaves of an object variable', async () => {
+    const result = await resolveVariableSpec(
+      { host: 'pg.internal', db: { url: 'postgres://$host/mydb' } },
+      cwd,
+    );
+    expect(result.db).toEqual({ url: 'postgres://pg.internal/mydb' });
+  });
+
+  it('resolves $var references in string leaves of an array variable', async () => {
+    const result = await resolveVariableSpec(
+      { env: 'prod', tags: ['release-$env', 'stable'] },
+      cwd,
+    );
+    expect(result.tags).toEqual(['release-prod', 'stable']);
+  });
+
+  it('resolves $var references in deeply nested string leaves', async () => {
+    const result = await resolveVariableSpec(
+      { user: 'admin', db: { creds: { dsn: 'user=$user' } } },
+      cwd,
+    );
+    expect(result.db).toEqual({ creds: { dsn: 'user=admin' } });
+  });
+});
+
+describe('resolveVars — braced ${expr} syntax', () => {
+  it('resolves ${varname} braced plain string variable', () => {
+    expect(resolveVars('hello ${name}', { name: 'world' })).toBe('hello world');
+  });
+
+  it('resolves ${obj.prop} dot-access on object variable', () => {
+    expect(
+      resolveVars('host: ${db.host}', { db: { host: 'pg.internal' } }),
+    ).toBe('host: pg.internal');
+  });
+
+  it('resolves ${arr[0]} array index access', () => {
+    expect(
+      resolveVars('first: ${envs[0]}', { envs: ['staging', 'prod'] }),
+    ).toBe('first: staging');
+  });
+
+  it('resolves ${arr[1].prop} combined index and dot access', () => {
+    expect(
+      resolveVars('host: ${servers[1].host}', {
+        servers: [{ host: 'web1' }, { host: 'web2' }],
+      }),
+    ).toBe('host: web2');
+  });
+
+  it('resolves ${deep.a.b.c} deeply nested property', () => {
+    expect(
+      resolveVars('val: ${deep.a.b.c}', {
+        deep: { a: { b: { c: 'found' } } },
+      }),
+    ).toBe('val: found');
+  });
+
+  it('resolves number leaf as string', () => {
+    expect(resolveVars('port: ${db.port}', { db: { port: 5432 } })).toBe(
+      'port: 5432',
+    );
+  });
+
+  it('resolves boolean leaf as string', () => {
+    expect(resolveVars('tls: ${cfg.tls}', { cfg: { tls: true } })).toBe(
+      'tls: true',
+    );
+  });
+
+  it('resolves null leaf as "null"', () => {
+    expect(resolveVars('x: ${cfg.x}', { cfg: { x: null } })).toBe('x: null');
+  });
+
+  it('JSON-serialises an object leaf', () => {
+    expect(
+      resolveVars('data: ${cfg.nested}', {
+        cfg: { nested: { a: 1 } },
+      }),
+    ).toBe('data: {"a":1}');
+  });
+
+  it('JSON-serialises an array leaf', () => {
+    expect(resolveVars('list: ${cfg.items}', { cfg: { items: [1, 2] } })).toBe(
+      'list: [1,2]',
+    );
+  });
+
+  it('JSON-serialises whole complex $varname when used unbraced', () => {
+    expect(resolveVars('$db', { db: { host: 'x' } })).toBe('{"host":"x"}');
+  });
+
+  it('throws on ${arr[99]} out-of-bounds index', () => {
+    expect(() => resolveVars('${envs[99]}', { envs: ['a', 'b'] })).toThrow(
+      'Index [99] out of bounds',
+    );
+  });
+
+  it('throws on ${obj.missing} missing property', () => {
+    expect(() => resolveVars('${db.missing}', { db: { host: 'x' } })).toThrow(
+      'Property "missing" not found',
+    );
+  });
+
+  it('throws on ${notAVar} undefined variable', () => {
+    expect(() => resolveVars('${notAVar}', {})).toThrow(
+      'Undefined variable: ${notAVar}',
+    );
+  });
+
+  it('shell-quotes ${obj.prop} leaf value in resolveVarsShellSafe', () => {
+    const result = resolveVarsShellSafe('echo ${db.host}', {
+      db: { host: "it's here" },
+    });
+    const expected = isWindows ? "echo 'it''s here'" : "echo 'it'\\''s here'";
+    expect(result).toBe(expected);
+  });
+
+  it('preserves $latest inside braced expression (reserved passthrough)', () => {
+    expect(resolveVars('${latest}', {})).toBe('${latest}');
+  });
+
+  it('throws on empty braced expression ${}', () => {
+    expect(() => resolveVars('${}', {})).toThrow('Invalid path expression');
+  });
+
+  it('throws on whitespace-only braced expression ${ }', () => {
+    expect(() => resolveVars('${ }', {})).toThrow('Invalid path expression');
+  });
+
+  it('throws on unclosed [ in path expression', () => {
+    expect(() => resolveVars('${arr[}', { arr: ['a'] })).toThrow(
+      'Invalid path expression',
+    );
+  });
+
+  it('throws on missing dot between ] and next key (arr[0]host)', () => {
+    expect(() =>
+      resolveVars('${arr[0]host}', { arr: [{ host: 'x' }] }),
+    ).toThrow('Invalid path expression');
+  });
+
+  it('throws on double dot (a..b)', () => {
+    expect(() => resolveVars('${a..b}', { a: { b: 'x' } })).toThrow(
+      'Invalid path expression',
+    );
+  });
+
+  it('does not resolve prototype-inherited properties via dot access', () => {
+    expect(() =>
+      resolveVars('${obj.toString}', { obj: { key: 'val' } }),
+    ).toThrow('Property "toString" not found');
   });
 });

@@ -348,4 +348,207 @@ describe('applyTemplate', () => {
       ).toBe(expected);
     }
   });
+
+  // Build a null-prototype object — mirrors what deepResolveVars produces at runtime.
+  const o = <T extends object>(props: T): T =>
+    Object.assign(Object.create(null) as T, props);
+
+  // Complex variables: lists and objects (including nested) passed as template context.
+  // Using null-prototype nested objects to match the shape produced by deepResolveVars.
+  const complexVars = o({
+    servers: [o({ host: 'web1', port: 8080 }), o({ host: 'web2', port: 9090 })],
+    db: o({ host: 'pg.internal', creds: o({ user: 'admin' }) }),
+  });
+
+  describe('handlebars — complex variables', () => {
+    it('accesses an object property', async () => {
+      expect(
+        await applyTemplate('{{db.host}}', 'handlebars', complexVars),
+      ).toBe('pg.internal');
+    });
+
+    it('accesses an array element property via .[n]. notation', async () => {
+      expect(
+        await applyTemplate('{{servers.[0].host}}', 'handlebars', complexVars),
+      ).toBe('web1');
+    });
+
+    it('accesses a deeply nested property', async () => {
+      expect(
+        await applyTemplate('{{db.creds.user}}', 'handlebars', complexVars),
+      ).toBe('admin');
+    });
+
+    it('iterates over an array with #each', async () => {
+      expect(
+        await applyTemplate(
+          '{{#each servers}}{{host}}\n{{/each}}',
+          'handlebars',
+          complexVars,
+        ),
+      ).toBe('web1\nweb2\n');
+    });
+  });
+
+  describe('nunjucks — complex variables', () => {
+    it('accesses an object property', async () => {
+      expect(
+        await applyTemplate('{{ db.host }}', 'nunjucks', complexVars),
+      ).toBe('pg.internal');
+    });
+
+    it('accesses an array element property', async () => {
+      expect(
+        await applyTemplate('{{ servers[0].host }}', 'nunjucks', complexVars),
+      ).toBe('web1');
+    });
+
+    it('accesses a deeply nested property', async () => {
+      expect(
+        await applyTemplate('{{ db.creds.user }}', 'nunjucks', complexVars),
+      ).toBe('admin');
+    });
+
+    it('iterates over an array with for loop', async () => {
+      expect(
+        await applyTemplate(
+          '{% for s in servers %}{{ s.host }}\n{% endfor %}',
+          'nunjucks',
+          complexVars,
+        ),
+      ).toBe('web1\nweb2\n');
+    });
+  });
+
+  describe('jinja2 (nunjucks alias) — complex variables', () => {
+    it('accesses an object property', async () => {
+      expect(await applyTemplate('{{ db.host }}', 'jinja2', complexVars)).toBe(
+        'pg.internal',
+      );
+    });
+
+    it('iterates over an array with for loop', async () => {
+      expect(
+        await applyTemplate(
+          '{% for s in servers %}{{ s.host }}\n{% endfor %}',
+          'jinja2',
+          complexVars,
+        ),
+      ).toBe('web1\nweb2\n');
+    });
+  });
+
+  describe('liquidjs — complex variables', () => {
+    it('accesses an object property', async () => {
+      expect(
+        await applyTemplate('{{ db.host }}', 'liquidjs', complexVars),
+      ).toBe('pg.internal');
+    });
+
+    it('accesses an array element property', async () => {
+      expect(
+        await applyTemplate('{{ servers[0].host }}', 'liquidjs', complexVars),
+      ).toBe('web1');
+    });
+
+    it('accesses a deeply nested property', async () => {
+      expect(
+        await applyTemplate('{{ db.creds.user }}', 'liquidjs', complexVars),
+      ).toBe('admin');
+    });
+
+    it('iterates over an array with for loop', async () => {
+      expect(
+        await applyTemplate(
+          '{% for s in servers %}{{ s.host }}\n{% endfor %}',
+          'liquidjs',
+          complexVars,
+        ),
+      ).toBe('web1\nweb2\n');
+    });
+  });
+
+  describe('ejs — complex variables', () => {
+    it('accesses an object property', async () => {
+      expect(await applyTemplate('<%= db.host %>', 'ejs', complexVars)).toBe(
+        'pg.internal',
+      );
+    });
+
+    it('accesses an array element property', async () => {
+      expect(
+        await applyTemplate('<%= servers[0].host %>', 'ejs', complexVars),
+      ).toBe('web1');
+    });
+
+    it('accesses a deeply nested property', async () => {
+      expect(
+        await applyTemplate('<%= db.creds.user %>', 'ejs', complexVars),
+      ).toBe('admin');
+    });
+
+    it('iterates over an array with for-of loop', async () => {
+      expect(
+        await applyTemplate(
+          '<% for (const s of servers) { %><%= s.host %>\n<% } %>',
+          'ejs',
+          complexVars,
+        ),
+      ).toBe('web1\nweb2\n');
+    });
+  });
+
+  describe('mustache — complex variables', () => {
+    it('accesses an object property via dot notation', async () => {
+      expect(await applyTemplate('{{db.host}}', 'mustache', complexVars)).toBe(
+        'pg.internal',
+      );
+    });
+
+    it('accesses a deeply nested property', async () => {
+      expect(
+        await applyTemplate('{{db.creds.user}}', 'mustache', complexVars),
+      ).toBe('admin');
+    });
+
+    it('iterates over an array with section', async () => {
+      expect(
+        await applyTemplate(
+          '{{#servers}}{{host}}\n{{/servers}}',
+          'mustache',
+          complexVars,
+        ),
+      ).toBe('web1\nweb2\n');
+    });
+  });
+
+  describe('eta — complex variables', () => {
+    it('accesses an object property', async () => {
+      expect(await applyTemplate('<%= db.host %>', 'eta', complexVars)).toBe(
+        'pg.internal',
+      );
+    });
+
+    it('accesses an array element property', async () => {
+      expect(
+        await applyTemplate('<%= servers[0].host %>', 'eta', complexVars),
+      ).toBe('web1');
+    });
+
+    it('accesses a deeply nested property', async () => {
+      expect(
+        await applyTemplate('<%= db.creds.user %>', 'eta', complexVars),
+      ).toBe('admin');
+    });
+
+    it('iterates over an array with for-of loop', async () => {
+      expect(
+        await applyTemplate(
+          '<% for (const s of servers) { %><%= s.host %>\n<% } %>',
+          'eta',
+          complexVars,
+        ),
+      ).toBe('web1\nweb2\n');
+    });
+  });
 });
