@@ -21,7 +21,7 @@ function deepResolveVars(value: JsonValue, vars: Variables): JsonValue {
         (value as { constructor?: { name?: string } }).constructor?.name ??
         'unknown';
       throw new Error(
-        `Variable value contains a non-plain object (${name}) — quote YAML timestamps and other special values`,
+        `Variable value contains a non-plain object (${name}) — only plain objects and arrays are supported as variable values. If loading from YAML, quote timestamps and other auto-typed values.`,
       );
     }
     const out = Object.create(null) as { [key: string]: JsonValue };
