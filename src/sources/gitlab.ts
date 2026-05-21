@@ -566,8 +566,9 @@ async function fetchReleaseLinksViaApi(
   tag: string,
   host?: string,
 ): Promise<Map<string, Buffer>> {
+  const gitlabHost = getHost(host);
   const res = await fetchWithRetry(
-    `https://${getHost(host)}/api/v4/projects/${encodeURIComponent(project)}/releases/${encodeURIComponent(tag)}`,
+    `https://${gitlabHost}/api/v4/projects/${encodeURIComponent(project)}/releases/${encodeURIComponent(tag)}`,
     { headers: apiHeaders() },
   );
   if (!res.ok) {
@@ -585,7 +586,10 @@ async function fetchReleaseLinksViaApi(
   }
   const entries = await Promise.all(
     links.map(async (link): Promise<[string, Buffer]> => {
-      const dlRes = await fetchWithRetry(link.url, { headers: apiHeaders() });
+      const linkHost = new URL(link.url).hostname;
+      const headers =
+        linkHost === gitlabHost ? apiHeaders() : { 'User-Agent': 'avanti' };
+      const dlRes = await fetchWithRetry(link.url, { headers });
       if (!dlRes.ok) {
         throw new Error(
           `Failed to download release asset "${link.name}" from ${project}@${tag}: HTTP ${dlRes.status}`,
