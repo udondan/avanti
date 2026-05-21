@@ -35,6 +35,16 @@ function shouldFallback(status: number): boolean {
   return status === 401 || status === 403 || status === 404;
 }
 
+class HttpError extends Error {
+  constructor(
+    readonly status: number,
+    message: string,
+  ) {
+    super(message);
+    this.name = 'HttpError';
+  }
+}
+
 function isNetworkError(e: unknown): boolean {
   return e instanceof TypeError && e.message === 'fetch failed';
 }
@@ -572,7 +582,8 @@ async function fetchReleaseLinksViaApi(
     { headers: apiHeaders() },
   );
   if (!res.ok) {
-    throw new Error(
+    throw new HttpError(
+      res.status,
       `Failed to fetch release ${tag} from ${project}: HTTP ${res.status}`,
     );
   }
@@ -662,16 +673,13 @@ export async function fetchGitLabRelease(
       return { files: fetchReleaseLinksViaCli(project, tag, host) };
     }
     if (
-      e instanceof Error &&
-      e.message.includes('HTTP') &&
+      e instanceof HttpError &&
+      shouldFallback(e.status) &&
       withCliFallback &&
       isGlabAvailable()
     ) {
-      const status = parseInt(e.message.match(/HTTP (\d+)/)?.[1] ?? '0', 10);
-      if (shouldFallback(status)) {
-        verbose(`gitlab: API returned ${status}, falling back to glab`);
-        return { files: fetchReleaseLinksViaCli(project, tag, host) };
-      }
+      verbose(`gitlab: API returned ${e.status}, falling back to glab`);
+      return { files: fetchReleaseLinksViaCli(project, tag, host) };
     }
     throw e;
   }

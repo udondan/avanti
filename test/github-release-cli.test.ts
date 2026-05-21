@@ -12,7 +12,6 @@ vi.mock('fs', async (importOriginal) => {
     ...actual,
     mkdtempSync: vi.fn(),
     readdirSync: vi.fn(),
-    statSync: vi.fn(),
     readFileSync: vi.fn(),
     rmSync: vi.fn(),
   };
@@ -32,9 +31,23 @@ const mockSpawnSync = spawnSync as unknown as MockInstance<
 
 const mockMkdtempSync = fs.mkdtempSync as unknown as MockInstance;
 const mockReaddirSync = fs.readdirSync as unknown as MockInstance;
-const mockStatSync = fs.statSync as unknown as MockInstance;
 const mockReadFileSync = fs.readFileSync as unknown as MockInstance;
 const mockRmSync = fs.rmSync as unknown as MockInstance;
+
+function makeDirent(name: string): fs.Dirent {
+  return {
+    name,
+    isFile: () => true,
+    isDirectory: () => false,
+    isSymbolicLink: () => false,
+    isBlockDevice: () => false,
+    isCharacterDevice: () => false,
+    isFIFO: () => false,
+    isSocket: () => false,
+    path: '',
+    parentPath: '',
+  } as unknown as fs.Dirent;
+}
 
 function makeSpawnResult(opts: {
   stdout?: string;
@@ -78,8 +91,7 @@ describe('fetchGitHubRelease — CLI fallback', () => {
       new Response('Unauthorized', { status: 401 }),
     );
 
-    mockReaddirSync.mockReturnValueOnce(['app.tar.gz']);
-    mockStatSync.mockReturnValueOnce({ isFile: () => true });
+    mockReaddirSync.mockReturnValueOnce([makeDirent('app.tar.gz')]);
     mockReadFileSync.mockReturnValueOnce(Buffer.from('binary content'));
 
     mockSpawnSync
@@ -95,8 +107,7 @@ describe('fetchGitHubRelease — CLI fallback', () => {
       new TypeError('fetch failed'),
     );
 
-    mockReaddirSync.mockReturnValueOnce(['binary.bin']);
-    mockStatSync.mockReturnValueOnce({ isFile: () => true });
+    mockReaddirSync.mockReturnValueOnce([makeDirent('binary.bin')]);
     mockReadFileSync.mockReturnValueOnce(Buffer.from('raw bytes'));
 
     mockSpawnSync

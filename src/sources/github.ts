@@ -39,6 +39,16 @@ function shouldFallback(status: number): boolean {
   return status === 401 || status === 403 || status === 404;
 }
 
+class HttpError extends Error {
+  constructor(
+    readonly status: number,
+    message: string,
+  ) {
+    super(message);
+    this.name = 'HttpError';
+  }
+}
+
 function isNetworkError(e: unknown): boolean {
   return e instanceof TypeError && e.message === 'fetch failed';
 }
@@ -362,7 +372,8 @@ async function fetchReleaseAssetsViaApi(
     { headers: apiHeaders() },
   );
   if (!res.ok) {
-    throw new Error(
+    throw new HttpError(
+      res.status,
       `Failed to fetch release ${tag} from ${repo}: HTTP ${res.status}`,
     );
   }
@@ -415,10 +426,9 @@ function fetchReleaseAssetsViaCli(
       );
     }
     const files = new Map<string, Buffer>();
-    for (const name of fs.readdirSync(tmpDir)) {
-      const full = path.join(tmpDir, name);
-      if (fs.statSync(full).isFile()) {
-        files.set(name, fs.readFileSync(full));
+    for (const entry of fs.readdirSync(tmpDir, { withFileTypes: true })) {
+      if (entry.isFile()) {
+        files.set(entry.name, fs.readFileSync(path.join(tmpDir, entry.name)));
       }
     }
     if (!files.size) {
@@ -457,16 +467,13 @@ export async function fetchGitHubRelease(
       return { files: fetchReleaseAssetsViaCli(repo, tag, host) };
     }
     if (
-      e instanceof Error &&
-      e.message.includes('HTTP') &&
+      e instanceof HttpError &&
+      shouldFallback(e.status) &&
       withCliFallback &&
       isGhAvailable()
     ) {
-      const status = parseInt(e.message.match(/HTTP (\d+)/)?.[1] ?? '0', 10);
-      if (shouldFallback(status)) {
-        verbose(`github: API returned ${status}, falling back to gh`);
-        return { files: fetchReleaseAssetsViaCli(repo, tag, host) };
-      }
+      verbose(`github: API returned ${e.status}, falling back to gh`);
+      return { files: fetchReleaseAssetsViaCli(repo, tag, host) };
     }
     throw e;
   }
