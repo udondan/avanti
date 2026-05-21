@@ -144,7 +144,15 @@ export function atomicWrite(
           throw err;
         }
         try {
-          fs.writeSync(fd, t.content);
+          let written = 0;
+          while (written < t.content.length) {
+            written += fs.writeSync(
+              fd,
+              t.content,
+              written,
+              t.content.length - written,
+            );
+          }
         } finally {
           fs.closeSync(fd);
         }
