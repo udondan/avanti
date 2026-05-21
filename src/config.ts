@@ -251,9 +251,9 @@ export function parseConfigContent(content: string): AvantiConfig {
 
     if (typeof e['mode'] === 'number') {
       const n = e['mode'];
-      if (n < 0 || n > 0o7777) {
+      if (!Number.isInteger(n) || n < 0 || n > 0o7777) {
         throw new Error(
-          `files["${target}"].mode: ${n} is out of range (0–0o7777)`,
+          `files["${target}"].mode: ${n} is not a valid mode (expected an integer in range 0–0o7777)`,
         );
       }
       const dec = n.toString();

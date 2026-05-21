@@ -92,14 +92,16 @@ export function computeDiff(
   const contentChanged = oldContent !== newText;
   const hasChanges = contentChanged || modeChange !== undefined;
 
-  const patch = createTwoFilesPatch(
-    isNew ? '/dev/null' : targetPath,
-    targetPath,
-    oldContent,
-    newText,
-    isNew ? '' : undefined,
-    isNew ? 'new file' : undefined,
-  );
+  const patch = contentChanged
+    ? createTwoFilesPatch(
+        isNew ? '/dev/null' : targetPath,
+        targetPath,
+        oldContent,
+        newText,
+        isNew ? '' : undefined,
+        isNew ? 'new file' : undefined,
+      )
+    : '';
 
   return { targetPath, isNew, hasChanges, contentChanged, patch, modeChange };
 }
