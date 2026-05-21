@@ -11,22 +11,32 @@ import { fetchSource, FetchCache, FetchResult } from './sources';
 import { isBinary } from './binary';
 
 // Recursively resolve $var references in all string leaves of a JsonValue.
-function deepResolveVars(value: JsonValue, vars: Variables): JsonValue {
+function deepResolveVars(
+  value: JsonValue,
+  vars: Variables,
+  path = '',
+): JsonValue {
   if (typeof value === 'string') return resolveVars(value, vars);
-  if (Array.isArray(value)) return value.map((v) => deepResolveVars(v, vars));
+  if (Array.isArray(value)) {
+    return value.map((v, i) => deepResolveVars(v, vars, `${path}[${i}]`));
+  }
   if (typeof value === 'object' && value !== null) {
     const proto = Object.getPrototypeOf(value) as unknown;
     if (proto !== Object.prototype && proto !== null) {
-      const name =
+      const typeName =
         (value as { constructor?: { name?: string } }).constructor?.name ??
         'unknown';
+      const at = path ? ` at ${path}` : '';
       throw new Error(
-        `Variable value contains a non-plain object (${name}) — only plain objects and arrays are supported as variable values. If loading from YAML, quote timestamps and other auto-typed values.`,
+        `Variable value contains a non-plain object (${typeName})${at} — only plain objects and arrays are supported as variable values. If loading from YAML, quote timestamps and other auto-typed values.`,
       );
     }
     const out = Object.create(null) as { [key: string]: JsonValue };
     for (const [k, v] of Object.entries(value)) {
-      out[k] = deepResolveVars(v, vars);
+      const keyPart = /[.[\]"']/.test(k)
+        ? `["${k.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"]`
+        : `.${k}`;
+      out[k] = deepResolveVars(v, vars, `${path}${keyPart}`);
     }
     return out;
   }

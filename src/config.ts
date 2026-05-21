@@ -394,7 +394,10 @@ function assertPlainJsonValue(val: unknown, path: string): void {
     );
   }
   for (const [k, v] of Object.entries(val as Record<string, unknown>)) {
-    assertPlainJsonValue(v, `${path}.${k}`);
+    const keyPart = /[.[\]"']/.test(k)
+      ? `["${k.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"]`
+      : `.${k}`;
+    assertPlainJsonValue(v, `${path}${keyPart}`);
   }
 }
 
