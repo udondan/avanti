@@ -1183,7 +1183,7 @@ files:
     post: sed 's/$$HOME/redacted/g' # $HOME would be treated as an avanti variable
 ```
 
-`$$` produces a single `$` after substitution. `$$$name` produces `$` followed by the value of `name`.
+`$$` produces a single `$` after substitution. `$$$name` produces `$` followed by the value of `name`. `$${expr}` produces a literal `${expr}` — use this to include shell-style `${VAR}` or template placeholders verbatim in a string without avanti interpreting them.
 
 #### List and object variables
 
@@ -1222,6 +1222,8 @@ Use the braced `${expr}` syntax to access a specific element from a list or obje
 | `${name.a.b.c}`   | Deeply nested property                  | `${db.creds.user}` → `admin`       |
 
 When a leaf value is a number or boolean it is coerced to a string. When the expression resolves to an object or array it is JSON-serialised. Using a plain `$name` reference where `name` holds a list or object also JSON-serialises the value.
+
+> **Note:** Any `${...}` in a config string is now parsed as a path expression. Shell-style expansions such as `${HOME:-/tmp}` or external template placeholders like `${MY_VAR}` must be escaped as `$${HOME:-/tmp}` / `$${MY_VAR}` to be passed through literally.
 
 ```yaml
 variables:
