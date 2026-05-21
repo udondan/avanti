@@ -8,8 +8,8 @@ import {
   rmSync,
   writeFileSync,
 } from 'fs';
-import { tmpdir } from 'os';
-import { join, resolve } from 'path';
+import { homedir, tmpdir } from 'os';
+import { join, relative, resolve } from 'path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { parseDocument } from 'yaml';
 import { isWindows } from '../src/shell';
@@ -1659,6 +1659,33 @@ files:
       expect(readFileSync(join(tmpDir, 'output.txt'), 'utf8')).toBe(
         'Hi world!',
       );
+    });
+
+    it('expands tilde in --working-dir to the home directory', () => {
+      const tildeDir = mkdtempSync(join(homedir(), '.avanti-test-'));
+      try {
+        const sourceFile = join(tildeDir, 'source.txt');
+        writeFileSync(sourceFile, 'tilde expansion test');
+
+        const config = writeConfig(
+          tildeDir,
+          `files:
+  ./output.txt:
+    src: ${sourceFile}
+`,
+        );
+
+        const relPart = relative(homedir(), tildeDir);
+        const { exitCode } = runAvanti(config, `~/${relPart}`);
+
+        expect(exitCode).toBe(0);
+        expect(existsSync(join(tildeDir, 'output.txt'))).toBe(true);
+        expect(readFileSync(join(tildeDir, 'output.txt'), 'utf8')).toBe(
+          'tilde expansion test',
+        );
+      } finally {
+        rmSync(tildeDir, { recursive: true, force: true });
+      }
     });
 
     it('applies replace rules to already-rendered template output', () => {
