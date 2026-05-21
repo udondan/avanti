@@ -56,6 +56,13 @@ export function atomicWrite(
           oNoFollow,
         0o666,
       );
+      // Register for cleanup before the write so a writeSync failure (e.g.
+      // ENOSPC) doesn't leave an orphan .avanti-tmp in the target directory.
+      const stagingEntry: (typeof staged)[0] = {
+        tmp: tmpFile,
+        dest: t.targetPath,
+      };
+      staged.push(stagingEntry);
       try {
         let written = 0;
         while (written < t.content.length) {
@@ -85,7 +92,7 @@ export function atomicWrite(
         }
       }
 
-      staged.push({ tmp: tmpFile, dest: t.targetPath, effectiveMode });
+      stagingEntry.effectiveMode = effectiveMode;
     }
 
     // Phase 2: all staging succeeded — now create backups.
@@ -139,8 +146,12 @@ export function atomicWrite(
       const existingEntry = fs.lstatSync(t.targetPath, {
         throwIfNoEntry: false,
       });
-      // Reject non-regular, non-symlink entries (FIFOs, sockets, devices):
-      // O_TRUNC on a FIFO blocks indefinitely; device/socket writes are unsafe.
+      // Fast-path rejection of non-regular, non-symlink entries (FIFOs,
+      // sockets, devices): opening a FIFO with O_WRONLY blocks until a reader
+      // connects; device/socket writes have unpredictable side effects. Not
+      // relied on for correctness — the fstat check on the opened fd (below,
+      // POSIX path) closes the TOCTOU window if the path is replaced after
+      // this check.
       if (
         existingEntry &&
         !existingEntry.isFile() &&
@@ -160,10 +171,16 @@ export function atomicWrite(
       // symlink itself, writeFileSync would write through it to the target.
       // On POSIX: open with O_NOFOLLOW so the kernel rejects symlinks
       // atomically (no TOCTOU window); ELOOP means the path is a symlink.
+      // O_NONBLOCK prevents blocking at open(2) if the lstatSync pre-check
+      // lost a TOCTOU race and the path became a FIFO with no reader.
+      // fstatSync on the opened fd then closes the remaining TOCTOU window by
+      // validating the type after open, before any write.
       // On Windows: O_NOFOLLOW is not available; fall back to an lstat check
       // (best-effort — a narrow TOCTOU race remains).
       const oNoFollow: number =
         (fs.constants as Record<string, number>)['O_NOFOLLOW'] ?? 0;
+      const oNonBlock: number =
+        (fs.constants as Record<string, number>)['O_NONBLOCK'] ?? 0;
       if (oNoFollow !== 0) {
         let fd: number;
         try {
@@ -172,7 +189,8 @@ export function atomicWrite(
             fs.constants.O_WRONLY |
               fs.constants.O_CREAT |
               fs.constants.O_TRUNC |
-              oNoFollow,
+              oNoFollow |
+              oNonBlock,
             effectiveMode ?? 0o666,
           );
         } catch (err) {
@@ -185,6 +203,13 @@ export function atomicWrite(
           throw err;
         }
         try {
+          // fstat validates the type on the opened fd, catching any non-regular
+          // file that slipped past the lstatSync pre-check via a TOCTOU race.
+          if (!fs.fstatSync(fd).isFile()) {
+            throw new Error(
+              `writeInPlace: ${t.targetPath} is not a regular file; refusing to write`,
+            );
+          }
           let written = 0;
           while (written < t.content.length) {
             written += fs.writeSync(

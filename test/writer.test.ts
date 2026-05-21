@@ -299,11 +299,13 @@ describe('writeInPlace', () => {
 
   it('does not create a temp file', () => {
     const dest = path.join(tmpDir, 'output.txt');
-    const tmpFile = path.join(tmpDir, '.output.txt.avanti-tmp');
     atomicWrite([
       { targetPath: dest, content: buf('data'), writeInPlace: true },
     ]);
-    expect(fs.existsSync(tmpFile)).toBe(false);
+    const leftover = fs
+      .readdirSync(tmpDir)
+      .filter((f) => f.endsWith('.avanti-tmp'));
+    expect(leftover).toHaveLength(0);
   });
 
   it.skipIf(isWindows)('throws when targetPath is a symlink', () => {
