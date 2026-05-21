@@ -68,6 +68,11 @@ function parsePath(expr: string): { name: string; segments: PathSegment[] } {
     }
   }
 
+  if (expectingIndex) {
+    throw new Error(
+      `Unclosed "[" in expression "\${${expr}}" — expected a number followed by "]"`,
+    );
+  }
   if (!name) throw new Error(`Empty variable expression "\${${expr}}"`);
   return { name, segments };
 }
@@ -90,7 +95,7 @@ function walkPath(
           `Cannot access property "${seg.key}" on non-object in "\${${expr}}"`,
         );
       }
-      if (!(seg.key in current)) {
+      if (!Object.hasOwn(current, seg.key)) {
         throw new Error(`Property "${seg.key}" not found in "\${${expr}}"`);
       }
       current = current[seg.key];

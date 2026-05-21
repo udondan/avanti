@@ -719,4 +719,16 @@ describe('resolveVars — braced ${expr} syntax', () => {
   it('preserves $latest inside braced expression (reserved passthrough)', () => {
     expect(resolveVars('${latest}', {})).toBe('${latest}');
   });
+
+  it('throws on unclosed [ in path expression', () => {
+    expect(() => resolveVars('${arr[}', { arr: ['a'] })).toThrow(
+      'Unclosed "["',
+    );
+  });
+
+  it('does not resolve prototype-inherited properties via dot access', () => {
+    expect(() =>
+      resolveVars('${obj.toString}', { obj: { key: 'val' } }),
+    ).toThrow('Property "toString" not found');
+  });
 });

@@ -1833,18 +1833,64 @@ files:
     expect(typeof cfg.variables?.['sourced']).toBe('object');
   });
 
-  it('throws when a variable value is an object without src', async () => {
+  it('parses a plain object variable (no src)', async () => {
     const f = writeTmp(`
 variables:
-  bad:
-    something: else
+  server:
+    host: pg.internal
+    port: 5432
 files:
   out.txt:
     src: https://example.com/out.txt
 `);
-    await expect(loadConfig(f)).rejects.toThrow(
-      'variables.bad: value must be a string or a source object with "src"',
-    );
+    const cfg = await loadConfig(f);
+    expect(cfg.variables?.['server']).toEqual({
+      host: 'pg.internal',
+      port: 5432,
+    });
+  });
+
+  it('parses a plain list variable', async () => {
+    const f = writeTmp(`
+variables:
+  envs:
+    - staging
+    - production
+files:
+  out.txt:
+    src: https://example.com/out.txt
+`);
+    const cfg = await loadConfig(f);
+    expect(cfg.variables?.['envs']).toEqual(['staging', 'production']);
+  });
+
+  it('parses a nested object variable', async () => {
+    const f = writeTmp(`
+variables:
+  db:
+    host: pg.internal
+    creds:
+      user: admin
+files:
+  out.txt:
+    src: https://example.com/out.txt
+`);
+    const cfg = await loadConfig(f);
+    expect(cfg.variables?.['db']).toEqual({
+      host: 'pg.internal',
+      creds: { user: 'admin' },
+    });
+  });
+
+  it('throws when a variable value is null', async () => {
+    const f = writeTmp(`
+variables:
+  bad: ~
+files:
+  out.txt:
+    src: https://example.com/out.txt
+`);
+    await expect(loadConfig(f)).rejects.toThrow('variables.bad:');
   });
 
   it('uses variables. prefix in error messages for variable source parsing', async () => {

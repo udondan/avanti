@@ -393,9 +393,15 @@ function parseVariables(raw: unknown): VariableSpec {
       'src' in val
     ) {
       spec[key] = parseVariableEntry(val, key);
+    } else if (
+      Array.isArray(val) ||
+      (typeof val === 'object' && val !== null)
+    ) {
+      // Plain list or plain object variable (no "src" key).
+      spec[key] = val as import('./types').JsonValue;
     } else {
       throw new Error(
-        `variables.${key}: value must be a string or a source object with "src"`,
+        `variables.${key}: value must be a string, a source object with "src", a list, or a plain object`,
       );
     }
   }
