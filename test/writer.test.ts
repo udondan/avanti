@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 
 const isWindows = process.platform === 'win32';
-import { execSync } from 'child_process';
+import { execFileSync } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -301,7 +301,7 @@ describe('writeInPlace', () => {
 
   it.skipIf(isWindows)('throws when targetPath is a FIFO', () => {
     const fifo = path.join(tmpDir, 'test.fifo');
-    execSync(`mkfifo ${fifo}`);
+    execFileSync('mkfifo', [fifo]);
     expect(() =>
       atomicWrite([
         { targetPath: fifo, content: buf('data'), writeInPlace: true },
