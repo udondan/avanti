@@ -826,11 +826,17 @@ function parseSingleSrc(raw: unknown, loc: string): FileSrc {
     if (typeof g['project'] !== 'string' || !g['project']) {
       throw new Error(`${loc}.gitlab.project: required string`);
     }
-    if (g['file'] !== undefined && typeof g['file'] !== 'string') {
-      throw new Error(`${loc}.gitlab.file: must be a string`);
+    if (
+      g['file'] !== undefined &&
+      (typeof g['file'] !== 'string' || !g['file'])
+    ) {
+      throw new Error(`${loc}.gitlab.file: must be a non-empty string`);
     }
-    if (g['release'] !== undefined && typeof g['release'] !== 'string') {
-      throw new Error(`${loc}.gitlab.release: must be a string`);
+    if (
+      g['release'] !== undefined &&
+      (typeof g['release'] !== 'string' || !g['release'])
+    ) {
+      throw new Error(`${loc}.gitlab.release: must be a non-empty string`);
     }
     const hasFile = typeof g['file'] === 'string' && !!g['file'];
     const hasRelease = typeof g['release'] === 'string' && !!g['release'];
@@ -894,11 +900,17 @@ function parseSingleSrc(raw: unknown, loc: string): FileSrc {
     if (typeof g['repo'] !== 'string' || !g['repo']) {
       throw new Error(`${loc}.github.repo: required string`);
     }
-    if (g['file'] !== undefined && typeof g['file'] !== 'string') {
-      throw new Error(`${loc}.github.file: must be a string`);
+    if (
+      g['file'] !== undefined &&
+      (typeof g['file'] !== 'string' || !g['file'])
+    ) {
+      throw new Error(`${loc}.github.file: must be a non-empty string`);
     }
-    if (g['release'] !== undefined && typeof g['release'] !== 'string') {
-      throw new Error(`${loc}.github.release: must be a string`);
+    if (
+      g['release'] !== undefined &&
+      (typeof g['release'] !== 'string' || !g['release'])
+    ) {
+      throw new Error(`${loc}.github.release: must be a non-empty string`);
     }
     const hasFile = typeof g['file'] === 'string' && !!g['file'];
     const hasRelease = typeof g['release'] === 'string' && !!g['release'];
