@@ -327,6 +327,19 @@ describe('computeDiff — mode changes', () => {
     expect(result.isNew).toBe(true);
     expect(result.modeChange).toBeUndefined();
   });
+
+  it.skipIf(process.platform === 'win32')(
+    'does not set modeChange when the target is a symlink',
+    () => {
+      const target = path.join(tmpDir, 'real.sh');
+      const link = path.join(tmpDir, 'link.sh');
+      fs.writeFileSync(target, '#!/bin/sh\n');
+      fs.chmodSync(target, 0o644);
+      fs.symlinkSync(target, link);
+      const result = computeDiff(link, Buffer.from('#!/bin/sh\n'), '0755');
+      expect(result.modeChange).toBeUndefined();
+    },
+  );
 });
 
 describe('formatDiff — mode changes', () => {
