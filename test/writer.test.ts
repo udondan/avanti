@@ -283,4 +283,18 @@ describe('writeInPlace', () => {
     ]);
     expect(fs.existsSync(tmpFile)).toBe(false);
   });
+
+  it.skipIf(isWindows)('throws when targetPath is a symlink', () => {
+    const real = path.join(tmpDir, 'real.txt');
+    const link = path.join(tmpDir, 'link.txt');
+    fs.writeFileSync(real, 'original', 'utf8');
+    fs.symlinkSync(real, link);
+    expect(() =>
+      atomicWrite([
+        { targetPath: link, content: buf('new'), writeInPlace: true },
+      ]),
+    ).toThrow('is a symlink');
+    // real file must be untouched
+    expect(fs.readFileSync(real, 'utf8')).toBe('original');
+  });
 });

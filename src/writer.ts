@@ -22,9 +22,12 @@ export function atomicWrite(
     [];
   const backupTemps: string[] = [];
   try {
-    // Phase 1: write all temp files. No backups yet — if any write fails we
-    // don't want orphaned backup files for targets whose destinations haven't
-    // changed yet.
+    // Phase 1 (mv targets): write all temp files. Backups are deferred to
+    // Phase 2 so that a staging failure here never creates an orphaned backup
+    // for a destination that hasn't been modified yet.
+    // In-place targets skip this phase (no temp file); their backups are still
+    // created in Phase 2, so a Phase 4 write failure can leave a backup of the
+    // unmodified file — acceptable, since the destination was never touched.
     for (const t of mvTargets) {
       const dir = path.dirname(t.targetPath);
       if (!fs.existsSync(dir)) {
@@ -111,6 +114,15 @@ export function atomicWrite(
         } catch {
           // new file — umask default
         }
+      }
+      // Refuse to follow a symlink — writeFileSync would write through it to
+      // the symlink's target, unlike renameSync which replaces the symlink.
+      if (
+        fs.lstatSync(t.targetPath, { throwIfNoEntry: false })?.isSymbolicLink()
+      ) {
+        throw new Error(
+          `writeInPlace: ${t.targetPath} is a symlink; refusing to follow`,
+        );
       }
       fs.writeFileSync(t.targetPath, t.content);
       if (effectiveMode !== undefined) {
