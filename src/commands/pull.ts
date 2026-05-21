@@ -754,8 +754,13 @@ export function pullCommand(): Command {
           for (let i = 0; i < writeTargets.length; i++) {
             const d = allDiffs[i];
             if (d.modeChange && !d.contentChanged) {
-              fs.chmodSync(writeTargets[i].targetPath, d.modeChange.to);
-              modeOnlyCount++;
+              const lst = fs.lstatSync(writeTargets[i].targetPath, {
+                throwIfNoEntry: false,
+              });
+              if (lst && !lst.isSymbolicLink()) {
+                fs.chmodSync(writeTargets[i].targetPath, d.modeChange.to);
+                modeOnlyCount++;
+              }
             }
           }
         }

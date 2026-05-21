@@ -29,6 +29,7 @@ interface DiffLoopResult {
   allDiffs: FileDiff[];
   hasError: boolean;
   selfContent?: string;
+  selfMode?: string;
 }
 
 async function runDiffLoop(
@@ -54,6 +55,7 @@ async function runDiffLoop(
   const pendingWrites = new Map<string, Buffer>();
   let hasError = false;
   let selfContent: string | undefined;
+  let selfMode: string | undefined;
 
   let hasSelf = SELF_KEY in config.files;
   if (hasSelf) {
@@ -183,6 +185,7 @@ async function runDiffLoop(
         }
         if (isSelf) {
           selfContent = content.toString('utf8');
+          selfMode = entry.mode;
           continue;
         }
         allDiffs.push(computeDiff(targetPath!, content, entry.mode));
@@ -196,7 +199,7 @@ async function runDiffLoop(
     }
   }
 
-  return { allDiffs, hasError, selfContent };
+  return { allDiffs, hasError, selfContent, selfMode };
 }
 
 export function diffCommand(): Command {
@@ -262,6 +265,7 @@ export function diffCommand(): Command {
         if (firstPass.selfContent !== undefined) {
           let prevSelfContent: string | undefined;
           let currentSelfContent = firstPass.selfContent;
+          let currentSelfMode = firstPass.selfMode;
           let stableConfig: AvantiConfig | undefined;
 
           while (stableConfig === undefined) {
@@ -307,6 +311,7 @@ export function diffCommand(): Command {
 
             prevSelfContent = currentSelfContent;
             currentSelfContent = next.selfContent;
+            currentSelfMode = next.selfMode;
           }
 
           if (stableConfig !== undefined) {
@@ -336,9 +341,15 @@ export function diffCommand(): Command {
               );
               const selfBuf = Buffer.from(currentSelfContent, 'utf8');
               if (existingIdx === -1) {
-                allDiffs.push(computeDiff(configPath, selfBuf));
+                allDiffs.push(
+                  computeDiff(configPath, selfBuf, currentSelfMode),
+                );
               } else {
-                allDiffs[existingIdx] = computeDiff(configPath, selfBuf);
+                allDiffs[existingIdx] = computeDiff(
+                  configPath,
+                  selfBuf,
+                  currentSelfMode,
+                );
               }
             }
           }
