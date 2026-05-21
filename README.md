@@ -1185,6 +1185,66 @@ files:
 
 `$$` produces a single `$` after substitution. `$$$name` produces `$` followed by the value of `name`.
 
+#### List and object variables
+
+Variables can hold lists (arrays) and objects (dictionaries), including nested structures. Declare them using standard YAML syntax:
+
+```yaml
+variables:
+  # list variable
+  envs:
+    - staging
+    - production
+
+  # object variable
+  db:
+    host: postgres.internal
+    port: 5432
+    creds:
+      user: admin
+```
+
+Any `$var` references inside string leaves are resolved against previously defined variables, just like plain string variables.
+
+#### Accessing nested values with `${expr}`
+
+Use the braced `${expr}` syntax to access a specific element from a list or object variable in any string field. The expression supports dot notation for object properties, bracket notation for array indices, and combinations of both:
+
+| Syntax            | Description                        | Example result                     |
+| ----------------- | ---------------------------------- | ---------------------------------- |
+| `$name`           | Plain string variable (short form) | `$version` → `1.2.3`               |
+| `${name}`         | Braced form of the above           | `${version}` → `1.2.3`             |
+| `${name.prop}`    | Object property access             | `${db.host}` → `postgres.internal` |
+| `${name[n]}`      | Array index access (zero-based)    | `${envs[0]}` → `staging`           |
+| `${name[n].prop}` | Array element property             | `${servers[1].host}` → `web2`      |
+| `${name.a.b.c}`   | Deeply nested property             | `${db.creds.user}` → `admin`       |
+
+When a leaf value is a number or boolean it is coerced to a string. When the expression resolves to an object or array it is JSON-serialised. Using a plain `$name` reference where `name` holds a list or object also JSON-serialises the value.
+
+```yaml
+variables:
+  envs:
+    - staging
+    - production
+  db:
+    host: postgres.internal
+    port: 5432
+    creds:
+      user: admin
+
+  # derive further string variables from complex ones
+  primary_env: ${envs[0]} # → "staging"
+  db_host: ${db.host} # → "postgres.internal"
+  db_user: ${db.creds.user} # → "admin"
+
+files:
+  deploy.sh:
+    src:
+      raw: 'psql -h ${db.host} -p ${db.port} -U ${db.creds.user}'
+```
+
+When using a [template engine](#template-rendering), the full list or object is passed as context and all native template features — loops, conditionals, filters — work on them directly. The `${expr}` syntax is only needed for plain string interpolation outside of templates.
+
 **Environment variables** use the `$env:NAME` form:
 
 ```yaml

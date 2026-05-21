@@ -577,8 +577,146 @@ describe('resolveVariableSpec', () => {
       },
       cwd,
     );
-    expect(result.rendered.replace(/\r\n/g, '\n')).toBe(
+    expect((result.rendered as string).replace(/\r\n/g, '\n')).toBe(
       'app: myapp\nversion: 1.2.3\nurl: https://example.com/myapp/1.2.3',
     );
+  });
+
+  it('stores a plain object variable as-is', async () => {
+    const result = await resolveVariableSpec(
+      { db: { host: 'pg.internal', port: 5432 } },
+      cwd,
+    );
+    expect(result.db).toEqual({ host: 'pg.internal', port: 5432 });
+  });
+
+  it('stores a plain array variable as-is', async () => {
+    const result = await resolveVariableSpec(
+      { envs: ['staging', 'prod'] },
+      cwd,
+    );
+    expect(result.envs).toEqual(['staging', 'prod']);
+  });
+
+  it('resolves $var references in string leaves of an object variable', async () => {
+    const result = await resolveVariableSpec(
+      { host: 'pg.internal', db: { url: 'postgres://$host/mydb' } },
+      cwd,
+    );
+    expect(result.db).toEqual({ url: 'postgres://pg.internal/mydb' });
+  });
+
+  it('resolves $var references in string leaves of an array variable', async () => {
+    const result = await resolveVariableSpec(
+      { env: 'prod', tags: ['release-$env', 'stable'] },
+      cwd,
+    );
+    expect(result.tags).toEqual(['release-prod', 'stable']);
+  });
+
+  it('resolves $var references in deeply nested string leaves', async () => {
+    const result = await resolveVariableSpec(
+      { user: 'admin', db: { creds: { dsn: 'user=$user' } } },
+      cwd,
+    );
+    expect(result.db).toEqual({ creds: { dsn: 'user=admin' } });
+  });
+});
+
+describe('resolveVars — braced ${expr} syntax', () => {
+  it('resolves ${varname} braced plain string variable', () => {
+    expect(resolveVars('hello ${name}', { name: 'world' })).toBe('hello world');
+  });
+
+  it('resolves ${obj.prop} dot-access on object variable', () => {
+    expect(
+      resolveVars('host: ${db.host}', { db: { host: 'pg.internal' } }),
+    ).toBe('host: pg.internal');
+  });
+
+  it('resolves ${arr[0]} array index access', () => {
+    expect(
+      resolveVars('first: ${envs[0]}', { envs: ['staging', 'prod'] }),
+    ).toBe('first: staging');
+  });
+
+  it('resolves ${arr[1].prop} combined index and dot access', () => {
+    expect(
+      resolveVars('host: ${servers[1].host}', {
+        servers: [{ host: 'web1' }, { host: 'web2' }],
+      }),
+    ).toBe('host: web2');
+  });
+
+  it('resolves ${deep.a.b.c} deeply nested property', () => {
+    expect(
+      resolveVars('val: ${deep.a.b.c}', {
+        deep: { a: { b: { c: 'found' } } },
+      }),
+    ).toBe('val: found');
+  });
+
+  it('resolves number leaf as string', () => {
+    expect(resolveVars('port: ${db.port}', { db: { port: 5432 } })).toBe(
+      'port: 5432',
+    );
+  });
+
+  it('resolves boolean leaf as string', () => {
+    expect(resolveVars('tls: ${cfg.tls}', { cfg: { tls: true } })).toBe(
+      'tls: true',
+    );
+  });
+
+  it('resolves null leaf as "null"', () => {
+    expect(resolveVars('x: ${cfg.x}', { cfg: { x: null } })).toBe('x: null');
+  });
+
+  it('JSON-serialises an object leaf', () => {
+    expect(
+      resolveVars('data: ${cfg.nested}', {
+        cfg: { nested: { a: 1 } },
+      }),
+    ).toBe('data: {"a":1}');
+  });
+
+  it('JSON-serialises an array leaf', () => {
+    expect(resolveVars('list: ${cfg.items}', { cfg: { items: [1, 2] } })).toBe(
+      'list: [1,2]',
+    );
+  });
+
+  it('JSON-serialises whole complex $varname when used unbraced', () => {
+    expect(resolveVars('$db', { db: { host: 'x' } })).toBe('{"host":"x"}');
+  });
+
+  it('throws on ${arr[99]} out-of-bounds index', () => {
+    expect(() => resolveVars('${envs[99]}', { envs: ['a', 'b'] })).toThrow(
+      'Index [99] out of bounds',
+    );
+  });
+
+  it('throws on ${obj.missing} missing property', () => {
+    expect(() => resolveVars('${db.missing}', { db: { host: 'x' } })).toThrow(
+      'Property "missing" not found',
+    );
+  });
+
+  it('throws on ${notAVar} undefined variable', () => {
+    expect(() => resolveVars('${notAVar}', {})).toThrow(
+      'Undefined variable: ${notAVar}',
+    );
+  });
+
+  it('shell-quotes ${obj.prop} leaf value in resolveVarsShellSafe', () => {
+    const result = resolveVarsShellSafe('echo ${db.host}', {
+      db: { host: "it's here" },
+    });
+    const expected = isWindows ? "echo 'it''s here'" : "echo 'it'\\''s here'";
+    expect(result).toBe(expected);
+  });
+
+  it('preserves $latest inside braced expression (reserved passthrough)', () => {
+    expect(resolveVars('${latest}', {})).toBe('${latest}');
   });
 });

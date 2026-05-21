@@ -1,7 +1,7 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { Variables, VariableSpec } from './types';
+import { JsonValue, Variables, VariableSpec } from './types';
 
 // $latest is a special sentinel used by the GitLab source to resolve the newest tag.
 export const RESERVED_VARS = new Set(['latest']);
@@ -28,15 +28,118 @@ export function validateVariables(vars: Variables | VariableSpec): void {
   }
 }
 
-// Single-pass regex: $$ → literal $, then $env:NAME, then $name.
-// Ordering within the alternation matters: $$ must come first so it is
-// consumed before the $name branch can match the second $.
-const TOKEN = /\$\$|\$env:([A-Za-z_][A-Za-z0-9_]*)|\$([A-Za-z_][A-Za-z0-9_]*)/g;
+// Single-pass regex: $$ → literal $, then $env:NAME, then ${expr} (braced),
+// then $name (unbraced). Ordering within the alternation matters: $$ must
+// come first so it is consumed before any other branch matches the second $.
+const TOKEN =
+  /\$\$|\$env:([A-Za-z_][A-Za-z0-9_]*)|\$\{([^}]+)\}|\$([A-Za-z_][A-Za-z0-9_]*)/g;
+
+type PathSegment =
+  | { type: 'prop'; key: string }
+  | { type: 'index'; index: number };
+
+// Parse an expression like "servers[1].host" into a variable name + segments.
+function parsePath(expr: string): { name: string; segments: PathSegment[] } {
+  // Split on . and [] boundaries while keeping delimiters
+  const parts = expr.split(/(\[|\]\.?|\.)/);
+  let name = '';
+  const segments: PathSegment[] = [];
+  let expectingIndex = false;
+
+  for (const part of parts) {
+    if (part === '' || part === ']' || part === '].' || part === '.') continue;
+    if (part === '[') {
+      expectingIndex = true;
+      continue;
+    }
+    if (expectingIndex) {
+      const idx = Number(part);
+      if (!Number.isInteger(idx) || idx < 0) {
+        throw new Error(
+          `Invalid array index "${part}" in expression "\${${expr}}"`,
+        );
+      }
+      segments.push({ type: 'index', index: idx });
+      expectingIndex = false;
+    } else if (name === '') {
+      name = part;
+    } else {
+      segments.push({ type: 'prop', key: part });
+    }
+  }
+
+  if (!name) throw new Error(`Empty variable expression "\${${expr}}"`);
+  return { name, segments };
+}
+
+// Walk a JsonValue tree following the parsed segments, returning the leaf.
+function walkPath(
+  root: JsonValue,
+  segments: PathSegment[],
+  expr: string,
+): JsonValue {
+  let current: JsonValue = root;
+  for (const seg of segments) {
+    if (seg.type === 'prop') {
+      if (
+        typeof current !== 'object' ||
+        current === null ||
+        Array.isArray(current)
+      ) {
+        throw new Error(
+          `Cannot access property "${seg.key}" on non-object in "\${${expr}}"`,
+        );
+      }
+      if (!(seg.key in current)) {
+        throw new Error(`Property "${seg.key}" not found in "\${${expr}}"`);
+      }
+      current = current[seg.key];
+    } else {
+      if (!Array.isArray(current)) {
+        throw new Error(
+          `Cannot use index [${seg.index}] on non-array in "\${${expr}}"`,
+        );
+      }
+      if (seg.index >= current.length) {
+        throw new Error(
+          `Index [${seg.index}] out of bounds (length ${current.length}) in "\${${expr}}"`,
+        );
+      }
+      current = current[seg.index];
+    }
+  }
+  return current;
+}
+
+// Evaluate a braced path expression like "servers[1].host" against vars.
+// Primitive leaf values are coerced to string; objects/arrays are JSON-serialised.
+function evaluatePath(vars: Variables, expr: string): string {
+  const { name, segments } = parsePath(expr.trim());
+  if (RESERVED_VARS.has(name)) return `\${${expr}}`;
+  if (!(name in vars)) throw new Error(`Undefined variable: \${${expr}}`);
+  const leaf = walkPath(vars[name], segments, expr);
+  if (leaf === null) return 'null';
+  if (typeof leaf !== 'object') return String(leaf);
+  return JSON.stringify(leaf);
+}
+
+// Stringify a variable value for unbraced $name substitution.
+// Strings pass through; complex types are JSON-serialised.
+function stringifyValue(v: JsonValue): string {
+  if (v === null) return 'null';
+  if (typeof v !== 'object') return String(v);
+  return JSON.stringify(v);
+}
 
 export function resolveVars(value: string, vars: Variables): string {
   return value.replace(
     TOKEN,
-    (match, envName: string | undefined, varName: string | undefined) => {
+    (
+      match,
+      envName: string | undefined,
+      bracedExpr: string | undefined,
+      varName: string | undefined,
+    ) => {
       if (match === '$$') return '$';
       if (envName !== undefined) {
         const val = process.env[envName];
@@ -45,11 +148,14 @@ export function resolveVars(value: string, vars: Variables): string {
         }
         return val;
       }
+      if (bracedExpr !== undefined) {
+        return evaluatePath(vars, bracedExpr);
+      }
       if (RESERVED_VARS.has(varName!)) return match;
       if (!(varName! in vars)) {
         throw new Error(`Undefined variable: $${varName}`);
       }
-      return vars[varName!];
+      return stringifyValue(vars[varName!]);
     },
   );
 }
@@ -71,7 +177,12 @@ function shellQuote(val: string): string {
 export function resolveVarsShellSafe(value: string, vars: Variables): string {
   return value.replace(
     TOKEN,
-    (match, envName: string | undefined, varName: string | undefined) => {
+    (
+      match,
+      envName: string | undefined,
+      bracedExpr: string | undefined,
+      varName: string | undefined,
+    ) => {
       if (match === '$$') return '$';
       if (envName !== undefined) {
         const val = process.env[envName];
@@ -80,11 +191,14 @@ export function resolveVarsShellSafe(value: string, vars: Variables): string {
         }
         return shellQuote(val);
       }
+      if (bracedExpr !== undefined) {
+        return shellQuote(evaluatePath(vars, bracedExpr));
+      }
       if (RESERVED_VARS.has(varName!)) return match;
       if (!(varName! in vars)) {
         throw new Error(`Undefined variable: $${varName}`);
       }
-      return shellQuote(vars[varName!]);
+      return shellQuote(stringifyValue(vars[varName!]));
     },
   );
 }

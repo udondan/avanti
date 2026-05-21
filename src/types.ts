@@ -1,4 +1,12 @@
-export type Variables = Record<string, string>;
+export type JsonValue =
+  | string
+  | number
+  | boolean
+  | null
+  | JsonValue[]
+  | { [key: string]: JsonValue };
+
+export type Variables = Record<string, JsonValue>;
 
 export type Via = 'api' | 'cli';
 
@@ -240,7 +248,7 @@ export interface VariableEntry {
   template?: TemplateEngine | true;
 }
 
-export type VariableSpec = Record<string, string | VariableEntry>;
+export type VariableSpec = Record<string, JsonValue | VariableEntry>;
 
 export interface AvantiConfig {
   variables?: VariableSpec;

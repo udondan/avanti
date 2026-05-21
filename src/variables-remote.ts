@@ -1,7 +1,27 @@
-import { FileEntry, Variables, VariableSpec } from './types';
+import {
+  FileEntry,
+  JsonValue,
+  Variables,
+  VariableEntry,
+  VariableSpec,
+} from './types';
 import { resolveVars } from './variables';
 import { fetchSource, FetchCache, FetchResult } from './sources';
 import { isBinary } from './binary';
+
+// Recursively resolve $var references in all string leaves of a JsonValue.
+function deepResolveVars(value: JsonValue, vars: Variables): JsonValue {
+  if (typeof value === 'string') return resolveVars(value, vars);
+  if (Array.isArray(value)) return value.map((v) => deepResolveVars(v, vars));
+  if (typeof value === 'object' && value !== null) {
+    const out = Object.create(null) as { [key: string]: JsonValue };
+    for (const [k, v] of Object.entries(value)) {
+      out[k] = deepResolveVars(v, vars);
+    }
+    return out;
+  }
+  return value;
+}
 
 export async function resolveVariableSpec(
   spec: VariableSpec,
@@ -20,13 +40,27 @@ export async function resolveVariableSpec(
         const msg = err instanceof Error ? err.message : String(err);
         throw new Error(`variables.${name}: ${msg}`, { cause: err });
       }
+    } else if (
+      typeof value !== 'object' ||
+      value === null ||
+      Array.isArray(value) ||
+      !('src' in value)
+    ) {
+      // Plain list or object variable — resolve $vars in any string leaves.
+      try {
+        resolved[name] = deepResolveVars(value, resolved);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        throw new Error(`variables.${name}: ${msg}`, { cause: err });
+      }
     } else {
+      const entry = value as VariableEntry;
       const synthetic: FileEntry = {
-        src: value.src,
+        src: entry.src,
         target: name,
-        json: value.json,
-        yaml: value.yaml,
-        toml: value.toml,
+        json: entry.json,
+        yaml: entry.yaml,
+        toml: entry.toml,
       };
       let result: FetchResult;
       try {
@@ -55,12 +89,12 @@ export async function resolveVariableSpec(
         );
       }
       let text = buf.toString('utf8');
-      if (value.template !== undefined) {
+      if (entry.template !== undefined) {
         applyTemplate ??= (await import('./processors/template')).applyTemplate;
         try {
           text = await applyTemplate(
             text,
-            value.template,
+            entry.template,
             resolved,
             srcPath || undefined,
           );
