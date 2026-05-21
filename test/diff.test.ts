@@ -217,6 +217,7 @@ describe('formatDiff', () => {
         targetPath: '/f',
         isNew: false,
         hasChanges: false,
+        contentChanged: false,
         patch: '',
       }),
     ).toBe('');
@@ -243,6 +244,7 @@ describe('formatDiff', () => {
       targetPath: '/path/to/img.png',
       isNew: true,
       hasChanges: true,
+      contentChanged: true,
       patch: '',
       isBinary: true,
     });
@@ -256,6 +258,7 @@ describe('formatDiff', () => {
       isNew: false,
       isDelete: true,
       hasChanges: true,
+      contentChanged: true,
       patch: '',
       isBinary: true,
     });
@@ -268,9 +271,115 @@ describe('formatDiff', () => {
       targetPath: '/path/to/img.png',
       isNew: false,
       hasChanges: true,
+      contentChanged: true,
       patch: '',
       isBinary: true,
     });
     expect(output).toContain('binary file changed');
   });
+});
+
+// ── mode change detection ─────────────────────────────────────────────────────
+
+describe('computeDiff — mode changes', () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'avanti-diff-mode-'));
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it.skipIf(process.platform === 'win32')(
+    'detects a mode mismatch on an existing file',
+    () => {
+      const file = path.join(tmpDir, 'script.sh');
+      fs.writeFileSync(file, '#!/bin/sh\n');
+      fs.chmodSync(file, 0o644);
+      const result = computeDiff(file, Buffer.from('#!/bin/sh\n'), '0755');
+      expect(result.hasChanges).toBe(true);
+      expect(result.contentChanged).toBe(false);
+      expect(result.modeChange).toBeDefined();
+      expect(result.modeChange!.to).toBe(0o755);
+    },
+  );
+
+  it.skipIf(process.platform === 'win32')(
+    'reports no modeChange when the mode already matches',
+    () => {
+      const file = path.join(tmpDir, 'script.sh');
+      fs.writeFileSync(file, '#!/bin/sh\n');
+      fs.chmodSync(file, 0o755);
+      const result = computeDiff(file, Buffer.from('#!/bin/sh\n'), '0755');
+      expect(result.hasChanges).toBe(false);
+      expect(result.modeChange).toBeUndefined();
+    },
+  );
+
+  it('does not set modeChange for a new file', () => {
+    const result = computeDiff(
+      path.join(tmpDir, 'new.sh'),
+      Buffer.from('#!/bin/sh\n'),
+      '0755',
+    );
+    expect(result.isNew).toBe(true);
+    expect(result.modeChange).toBeUndefined();
+  });
+
+  it.skipIf(process.platform === 'win32')(
+    'does not set modeChange when the target is a symlink',
+    () => {
+      const target = path.join(tmpDir, 'real.sh');
+      const link = path.join(tmpDir, 'link.sh');
+      fs.writeFileSync(target, '#!/bin/sh\n');
+      fs.chmodSync(target, 0o644);
+      fs.symlinkSync(target, link);
+      const result = computeDiff(link, Buffer.from('#!/bin/sh\n'), '0755');
+      expect(result.modeChange).toBeUndefined();
+    },
+  );
+});
+
+describe('formatDiff — mode changes', () => {
+  it.skipIf(process.platform === 'win32')(
+    'shows old mode / new mode for a mode-only change',
+    () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'avanti-fmt-mode-'));
+      try {
+        const file = path.join(tmpDir, 'script.sh');
+        fs.writeFileSync(file, '#!/bin/sh\n');
+        fs.chmodSync(file, 0o644);
+        const d = computeDiff(file, Buffer.from('#!/bin/sh\n'), '0755');
+        const output = formatDiff(d);
+        expect(output).toContain('old mode');
+        expect(output).toContain('new mode');
+        expect(output).toContain('0755');
+        expect(output).not.toContain('@@');
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.skipIf(process.platform === 'win32')(
+    'shows both mode change and content diff when both changed',
+    () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'avanti-fmt-mode-'));
+      try {
+        const file = path.join(tmpDir, 'script.sh');
+        fs.writeFileSync(file, 'old\n');
+        fs.chmodSync(file, 0o644);
+        const d = computeDiff(file, Buffer.from('new\n'), '0755');
+        const output = formatDiff(d);
+        expect(output).toContain('old mode');
+        expect(output).toContain('new mode');
+        expect(output).toContain('-old');
+        expect(output).toContain('+new');
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+    },
+  );
 });

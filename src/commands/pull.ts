@@ -288,7 +288,7 @@ async function runFetchLoop(
             selfSourceRecords = result.sourceRecords;
           continue;
         }
-        const diff = computeDiff(targetPath!, content);
+        const diff = computeDiff(targetPath!, content, entry.mode);
         allDiffs.push(diff);
         const backupPath =
           entry.backup && diff.hasChanges && !diff.isNew
@@ -543,14 +543,20 @@ export function pullCommand(): Command {
                 content: selfBuf,
                 mode: currentSelfMode,
               });
-              allDiffs.push(computeDiff(configPath, selfBuf));
+              allDiffs.push(computeDiff(configPath, selfBuf, currentSelfMode));
             } else {
+              const resolvedSelfMode =
+                currentSelfMode ?? writeTargets[existingIdx].mode;
               writeTargets[existingIdx] = {
                 ...writeTargets[existingIdx],
                 content: selfBuf,
-                mode: currentSelfMode ?? writeTargets[existingIdx].mode,
+                mode: resolvedSelfMode,
               };
-              allDiffs[existingIdx] = computeDiff(configPath, selfBuf);
+              allDiffs[existingIdx] = computeDiff(
+                configPath,
+                selfBuf,
+                resolvedSelfMode,
+              );
             }
             // Content comes from $self — attribute the config file write to the
             // $self sources so history reflects the actual origin.
@@ -736,11 +742,33 @@ export function pullCommand(): Command {
 
       try {
         const changedTargets = writeTargets.filter(
-          (_, i) => allDiffs[i].hasChanges,
+          (_, i) => allDiffs[i].hasChanges && allDiffs[i].contentChanged,
         );
+        // Content writes go first so that if atomicWrite throws, no permissions
+        // have been changed yet (minimises partial-apply surface).
         atomicWrite([...changedTargets, ...staleToRestore], staleToDelete);
+        // Mode-only changes: apply chmod directly (POSIX only — mode bits are
+        // not meaningful on Windows so modeChange is never set there).
+        let modeOnlyCount = 0;
+        if (process.platform !== 'win32') {
+          for (let i = 0; i < writeTargets.length; i++) {
+            const d = allDiffs[i];
+            if (d.modeChange && !d.contentChanged) {
+              const lst = fs.lstatSync(writeTargets[i].targetPath, {
+                throwIfNoEntry: false,
+              });
+              if (lst && !lst.isSymbolicLink()) {
+                fs.chmodSync(writeTargets[i].targetPath, d.modeChange.to);
+                modeOnlyCount++;
+              }
+            }
+          }
+        }
         const written =
-          changedTargets.length + staleToRestore.length + staleToDelete.length;
+          changedTargets.length +
+          staleToRestore.length +
+          staleToDelete.length +
+          modeOnlyCount;
         console.log(`Wrote ${written} file(s).`);
       } catch (err: unknown) {
         console.error(
