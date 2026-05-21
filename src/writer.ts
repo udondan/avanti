@@ -26,8 +26,9 @@ export function atomicWrite(
     // Phase 2 so that a staging failure here never creates an orphaned backup
     // for a destination that hasn't been modified yet.
     // In-place targets skip this phase (no temp file); their backups are still
-    // created in Phase 2, so a Phase 4 write failure can leave a backup of the
-    // unmodified file — acceptable, since the destination was never touched.
+    // created in Phase 2. If Phase 4 fails after open (which truncates the
+    // file), the destination may be empty or partially written — the backup
+    // captures the pre-write content and can be used for recovery.
     for (const t of mvTargets) {
       const dir = path.dirname(t.targetPath);
       if (!fs.existsSync(dir)) {
@@ -115,16 +116,50 @@ export function atomicWrite(
           // new file — umask default
         }
       }
-      // Refuse to follow a symlink — writeFileSync would write through it to
-      // the symlink's target, unlike renameSync which replaces the symlink.
-      if (
-        fs.lstatSync(t.targetPath, { throwIfNoEntry: false })?.isSymbolicLink()
-      ) {
-        throw new Error(
-          `writeInPlace: ${t.targetPath} is a symlink; refusing to follow`,
-        );
+      // Refuse to follow a symlink — unlike renameSync, which replaces the
+      // symlink itself, writeFileSync would write through it to the target.
+      // On POSIX: open with O_NOFOLLOW so the kernel rejects symlinks
+      // atomically (no TOCTOU window); ELOOP means the path is a symlink.
+      // On Windows: O_NOFOLLOW is not available; fall back to an lstat check
+      // (best-effort — a narrow TOCTOU race remains).
+      const oNoFollow: number =
+        (fs.constants as Record<string, number>)['O_NOFOLLOW'] ?? 0;
+      if (oNoFollow !== 0) {
+        let fd: number;
+        try {
+          fd = fs.openSync(
+            t.targetPath,
+            fs.constants.O_WRONLY |
+              fs.constants.O_CREAT |
+              fs.constants.O_TRUNC |
+              oNoFollow,
+          );
+        } catch (err) {
+          if ((err as NodeJS.ErrnoException).code === 'ELOOP') {
+            throw new Error(
+              `writeInPlace: ${t.targetPath} is a symlink; refusing to follow`,
+              { cause: err },
+            );
+          }
+          throw err;
+        }
+        try {
+          fs.writeSync(fd, t.content);
+        } finally {
+          fs.closeSync(fd);
+        }
+      } else {
+        if (
+          fs
+            .lstatSync(t.targetPath, { throwIfNoEntry: false })
+            ?.isSymbolicLink()
+        ) {
+          throw new Error(
+            `writeInPlace: ${t.targetPath} is a symlink; refusing to follow`,
+          );
+        }
+        fs.writeFileSync(t.targetPath, t.content);
       }
-      fs.writeFileSync(t.targetPath, t.content);
       if (effectiveMode !== undefined) {
         fs.chmodSync(t.targetPath, effectiveMode);
       }
