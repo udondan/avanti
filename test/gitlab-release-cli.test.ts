@@ -66,6 +66,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.restoreAllMocks();
   delete process.env.GITLAB_TOKEN;
   delete process.env.GITLAB_PRIVATE_TOKEN;
   delete process.env.GITLAB_HOST;

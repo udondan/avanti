@@ -67,6 +67,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.restoreAllMocks();
   delete process.env.GITHUB_TOKEN;
   delete process.env.GITHUB_HOST;
 });
