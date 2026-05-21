@@ -107,7 +107,7 @@ avanti revert  # roll back instantly if something breaks
 - **TOML merging** — deep-merge multiple TOML sources with configurable conflict, array, and table strategies
 - **Variables** — define reusable values in a `variables:` block and reference them anywhere with `$name`; variables can be plain strings, `$env:NAME` environment variable references, or fetched from any remote/local source (the same source types as `files:`)
 - **Post-processing** — apply text replacements (string or regex) and/or pipe content through a shell script
-- **Release artifacts** — download all binary assets attached to a GitHub or GitLab release by tag, or use `$latest` for the newest release
+- **Release artifacts** — download all release assets attached to a GitHub or GitLab release by tag, or use `$latest` for the newest release
 - **Directory sync** — recursively sync directories from GitLab/GitHub/Bitbucket/git/S3/local sources
 - **SHA pinning** — pin any remote source to a content fingerprint with `sha:`; use `avanti lock` to compute and write SHAs automatically; `avanti pull --accept-changes` reviews a mismatch and updates the pin
 - **`$self`** — avanti can manage its own config file; declare `$self` in `files:` and the fetched content becomes the active config for the rest of the run, including YAML/JSON merge from multiple sources
