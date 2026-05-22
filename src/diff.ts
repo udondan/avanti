@@ -11,6 +11,7 @@ export interface FileDiff {
   contentChanged: boolean;
   patch: string;
   isBinary?: boolean;
+  isUnreadable?: boolean;
   modeChange?: { from: number; to: number };
 }
 
@@ -38,7 +39,7 @@ export function computeDeleteDiff(targetPath: string): FileDiff {
       hasChanges: true,
       contentChanged: true,
       patch: '',
-      isBinary: true,
+      isUnreadable: true,
     };
   }
   if (isBinary(oldBuf)) {
@@ -77,6 +78,7 @@ export function computeDiff(
 ): FileDiff {
   let isNew: boolean;
   let oldBuf: Buffer;
+  let isUnreadable = false;
   try {
     isNew = !fs.existsSync(targetPath);
     oldBuf = isNew ? Buffer.alloc(0) : fs.readFileSync(targetPath);
@@ -87,6 +89,7 @@ export function computeDiff(
     // so the write is always applied — prevents a crash and ensures content
     // is (re-)written to match the declared source.
     isNew = true;
+    isUnreadable = true;
     oldBuf = Buffer.alloc(0);
   }
 
@@ -122,6 +125,7 @@ export function computeDiff(
       contentChanged,
       patch: '',
       isBinary: true,
+      ...(isUnreadable && { isUnreadable }),
       modeChange,
     };
   }
@@ -142,7 +146,15 @@ export function computeDiff(
       )
     : '';
 
-  return { targetPath, isNew, hasChanges, contentChanged, patch, modeChange };
+  return {
+    targetPath,
+    isNew,
+    hasChanges,
+    contentChanged,
+    patch,
+    ...(isUnreadable && { isUnreadable }),
+    modeChange,
+  };
 }
 
 export function formatDiff(diff: FileDiff): string {
@@ -166,6 +178,18 @@ export function formatDiff(diff: FileDiff): string {
     modeTo = chalk.green(
       `+new mode ${diff.modeChange.to.toString(8).padStart(6, '0')}`,
     );
+  }
+
+  if (diff.isUnreadable) {
+    const oldPath = diff.isDelete ? diff.targetPath : '/dev/null';
+    const newPath = diff.isDelete ? '/dev/null' : diff.targetPath;
+    const label = diff.isDelete
+      ? 'file deleted (unreadable — no diff available)'
+      : 'file updated (existing content unreadable — showing new content only)';
+    let out = chalk.bold(`--- ${oldPath}\n+++ ${newPath}`) + '\n';
+    if (diff.modeChange) out += modeFrom + '\n' + modeTo + '\n';
+    out += chalk.cyan(`@@ ${label} @@`);
+    return out;
   }
 
   if (diff.isBinary) {

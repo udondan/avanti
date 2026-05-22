@@ -70,6 +70,7 @@ export function sudoFileExists(
     [...sudoUserArgs(sudo), 'test', '-e', path.resolve(targetPath)],
     { stdio: 'ignore' },
   );
+  if (r.error) throw new Error(`sudo test -e failed: ${r.error.message}`);
   return r.status === 0;
 }
 
@@ -82,6 +83,7 @@ export function sudoIsSymlink(
     [...sudoUserArgs(sudo), 'test', '-L', path.resolve(targetPath)],
     { stdio: 'ignore' },
   );
+  if (r.error) throw new Error(`sudo test -L failed: ${r.error.message}`);
   return r.status === 0;
 }
 
