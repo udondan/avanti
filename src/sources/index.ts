@@ -822,16 +822,16 @@ export async function fetchSource(
     if (entry.extract === true) {
       resolvedFiles = extracted;
     } else {
+      const resolvedPatterns = entry.extract.map((p) => resolveVars(p, vars));
       try {
-        resolvedFiles = applyFilter(extracted, entry.extract);
+        resolvedFiles = applyFilter(extracted, resolvedPatterns);
       } catch (err) {
         if (
           err instanceof Error &&
           err.message.startsWith('filter matched no files')
         ) {
-          const patterns = entry.extract;
           throw new Error(
-            `extract matched no entries (${patterns.length} pattern${patterns.length === 1 ? '' : 's'}: ${patterns.map((p) => JSON.stringify(p)).join(', ')})`,
+            `extract matched no entries (${resolvedPatterns.length} pattern${resolvedPatterns.length === 1 ? '' : 's'}: ${resolvedPatterns.map((p) => JSON.stringify(p)).join(', ')})`,
             { cause: err },
           );
         }
