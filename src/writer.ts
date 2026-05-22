@@ -175,9 +175,15 @@ function sudoWriteMv(t: SudoWriteTarget): void {
 
     // Apply mode: explicit config value wins; existing dest mode is used as fallback
     // for updates so sudo mv doesn't silently change permissions. For new files with
-    // no explicit mode, apply 0644 — equivalent to 0666 & ~022 (the standard default)
-    // — so sudo and non-sudo writes produce consistent permissions.
-    const effectiveMode = t.mode ?? existingMode ?? '0644';
+    // no explicit mode, derive from the process umask (0o666 & ~umask) so sudo and
+    // non-sudo writes produce the same default permissions.
+    // process.umask() is deprecated due to worker-thread race concerns; avanti is a
+    // single-threaded CLI so the race does not apply.
+    // eslint-disable-next-line @typescript-eslint/no-deprecated
+    const mask = process.umask();
+    process.umask(mask); // restore immediately
+    const defaultMode = (0o666 & ~mask).toString(8).padStart(4, '0');
+    const effectiveMode = t.mode ?? existingMode ?? defaultMode;
     sudoRun(sudo, ['chmod', '--', effectiveMode, t.targetPath]);
   } finally {
     try {
