@@ -123,7 +123,7 @@ export interface GitSrc {
   git: {
     repo: string;
     file: string;
-    /** Branch, tag, commit, `$latest` (newest semver tag), `$recent` (newest tag), or `/pattern/[flags]`. */
+    /** Branch, tag, commit, `$latest` (newest semver tag), `$recent` (first tag in `git ls-remote` output order — not date-ordered), or `/pattern/[flags]` (first match in `git ls-remote` output order). */
     ref?: string;
     sha?: string;
   };

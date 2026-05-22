@@ -116,15 +116,23 @@ async function resolveRef(
     );
   }
 
-  // Pattern: paginate tags sorted by target date, filter by regex
-  const tags = await listBitbucketTagsAll(
-    workspace,
-    repo,
-    '-target.date',
-    host,
-  );
-  const found = tags.find((n) => pattern!.test(n)) ?? null;
-  if (found) return found;
+  // Pattern: paginate tags sorted by target date, short-circuit on first match
+  let patternUrl: string | null =
+    `${getApiBase(host)}/repositories/${workspace}/${repo}/refs/tags?sort=-target.date&pagelen=100`;
+  while (patternUrl) {
+    const res = await fetchWithRetry(patternUrl, { headers: apiHeaders() });
+    if (!res.ok)
+      throw new Error(
+        `Failed to list tags for ${workspace}/${repo}: HTTP ${res.status}`,
+      );
+    const data = (await res.json()) as {
+      values: Array<{ name: string }>;
+      next?: string;
+    };
+    const found = data.values.find((t) => pattern!.test(t.name));
+    if (found) return found.name;
+    patternUrl = data.next ?? null;
+  }
   throw new Error(`No tags matching "${ref}" found for ${workspace}/${repo}`);
 }
 
