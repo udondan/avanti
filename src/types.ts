@@ -38,6 +38,7 @@ export interface GitLabFileSrc {
     host?: string;
     via?: Via | Via[];
   };
+  filter?: string[];
   if?: Condition | Condition[];
   ifAny?: Condition[];
 }
@@ -50,6 +51,7 @@ export interface GitLabReleaseSrc {
     host?: string;
     via?: Via | Via[];
   };
+  filter?: string[];
   if?: Condition | Condition[];
   ifAny?: Condition[];
 }
@@ -65,6 +67,7 @@ export interface GitHubFileSrc {
     host?: string;
     via?: Via | Via[];
   };
+  filter?: string[];
   if?: Condition | Condition[];
   ifAny?: Condition[];
 }
@@ -77,6 +80,7 @@ export interface GitHubReleaseSrc {
     host?: string;
     via?: Via | Via[];
   };
+  filter?: string[];
   if?: Condition | Condition[];
   ifAny?: Condition[];
 }
@@ -105,6 +109,7 @@ export interface BitbucketSrc {
     sha?: string;
     host?: string;
   };
+  filter?: string[];
   if?: Condition | Condition[];
   ifAny?: Condition[];
 }
@@ -116,12 +121,14 @@ export interface GitSrc {
     ref?: string;
     sha?: string;
   };
+  filter?: string[];
   if?: Condition | Condition[];
   ifAny?: Condition[];
 }
 
 export interface AwsS3Src {
   aws_s3: string;
+  filter?: string[];
   sha?: string;
   if?: Condition | Condition[];
   ifAny?: Condition[];
@@ -170,6 +177,7 @@ export interface HttpSrc {
 export interface LocalSrc {
   path: string;
   optional?: boolean;
+  filter?: string[];
   sha?: string;
   if?: Condition | Condition[];
   ifAny?: Condition[];
