@@ -211,6 +211,10 @@ export function resolveFollowSymlink(
     if (fs.lstatSync(dir, { throwIfNoEntry: false })) {
       const realDir = fs.realpathSync(dir);
       assertWithinWorkingDir(realDir, realWorkingDir);
+      // Rewrite current using the canonical ancestor so that the final prefix
+      // check compares apples-to-apples. Without this, macOS /var/… paths
+      // fail the /private/var/… prefix check even when the path is valid.
+      current = path.join(realDir, path.relative(dir, current));
       break;
     }
     const parent = path.dirname(dir);

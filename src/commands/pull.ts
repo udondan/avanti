@@ -191,8 +191,17 @@ async function runFetchLoop(
           skippedPaths.add(symlinkPath);
           // Also skip the resolved real path so stale cleanup doesn't treat
           // the symlink target as unmanaged when followSymlink is in use.
-          const realPath = resolveFollowSymlink(symlinkPath, entry, workingDir);
-          if (realPath !== symlinkPath) skippedPaths.add(realPath);
+          // Skip for directory targets — resolveFollowSymlink throws on dir symlinks.
+          const isDirectoryTarget =
+            entry.target?.endsWith('/') || entry.target?.endsWith(path.sep);
+          if (!isDirectoryTarget) {
+            const realPath = resolveFollowSymlink(
+              symlinkPath,
+              entry,
+              workingDir,
+            );
+            if (realPath !== symlinkPath) skippedPaths.add(realPath);
+          }
         } catch {
           console.warn(
             `Warning: skipped entry has an unresolvable target path — stale cleanup disabled for this run.`,
@@ -214,8 +223,16 @@ async function runFetchLoop(
         try {
           const symlinkPath = resolveTargetPath(entry, '', workingDir, vars);
           skippedPaths.add(symlinkPath);
-          const realPath = resolveFollowSymlink(symlinkPath, entry, workingDir);
-          if (realPath !== symlinkPath) skippedPaths.add(realPath);
+          const isDirectoryTarget =
+            entry.target?.endsWith('/') || entry.target?.endsWith(path.sep);
+          if (!isDirectoryTarget) {
+            const realPath = resolveFollowSymlink(
+              symlinkPath,
+              entry,
+              workingDir,
+            );
+            if (realPath !== symlinkPath) skippedPaths.add(realPath);
+          }
         } catch {
           console.warn(
             `Warning: skipped entry has an unresolvable target path — stale cleanup disabled for this run.`,
