@@ -373,6 +373,51 @@ export function parseConfigContent(content: string): AvantiConfig {
       }
     }
 
+    if (e['extract'] !== undefined) {
+      if (Array.isArray(src)) {
+        throw new Error(
+          `files["${target}"].extract: cannot be used with a list of sources`,
+        );
+      }
+      if (!target.endsWith('/') && !target.endsWith(path.sep)) {
+        throw new Error(
+          `files["${target}"].extract: target must be a directory (end with "/") — archive extraction writes multiple files`,
+        );
+      }
+      const rawExtract = e['extract'];
+      if (rawExtract === true) {
+        fileEntry.extract = true;
+      } else if (Array.isArray(rawExtract)) {
+        if (rawExtract.length === 0) {
+          throw new Error(
+            `files["${target}"].extract: must not be an empty array`,
+          );
+        }
+        fileEntry.extract = (rawExtract as unknown[]).map((pat, i) => {
+          if (typeof pat !== 'string' || !pat) {
+            throw new Error(
+              `files["${target}"].extract[${i}]: must be a non-empty string`,
+            );
+          }
+          if (pat.length > 2 && pat.startsWith('/') && pat.endsWith('/')) {
+            try {
+              new RegExp(pat.slice(1, -1));
+            } catch (err) {
+              throw new Error(
+                `files["${target}"].extract[${i}]: invalid regex`,
+                { cause: err },
+              );
+            }
+          }
+          return pat;
+        });
+      } else {
+        throw new Error(
+          `files["${target}"].extract: must be true or a non-empty array of patterns`,
+        );
+      }
+    }
+
     let expandedTargets: string[];
     try {
       expandedTargets = expandBraces(target);

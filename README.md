@@ -414,19 +414,20 @@ A brace group is only expanded when it contains **at least one comma** (e.g. `{f
 
 > **YAML quoting:** YAML treats `{` at the start of a plain key as a flow mapping. If the brace group is the first character of a key, quote it: `'{dev,prod}.yml':` or `"{dev,prod}.yml":`. Keys where the brace group appears after a path prefix (e.g. `config/{dev,prod}.yml`) do not need quoting.
 
-| Field          | Required | Description                                                                                                                                                                                                                             |
-| -------------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `src`          | Yes      | Source (see below). May be a single source or a **list** of sources to concatenate.                                                                                                                                                     |
-| `if`           | No       | Condition object (or list of objects). All must pass for the entry to be processed. See [Conditions](#conditions).                                                                                                                      |
-| `ifAny`        | No       | List of condition objects. At least one must pass. See [Conditions](#conditions).                                                                                                                                                       |
-| `mode`         | No       | File permission mode. Use a quoted octal string (`"0755"`) or a YAML octal literal (`0o755`). Mode-only changes (content unchanged) are detected by `diff` and applied by `pull`. **POSIX only** — ignored on Windows.                  |
-| `replace`      | No       | List of `{from, to}` replacement rules. `from` may be a plain string or `/pattern/flags` regex.                                                                                                                                         |
-| `post`         | No       | Shell script. Content is piped via stdin; stdout is used as the result. Runs after `replace`.                                                                                                                                           |
-| `template`     | No       | Treat the fetched content as a template and render it with avanti config variables as context. See [Template Rendering](#template-rendering).                                                                                           |
-| `json`         | No       | JSON merge/format options (see below). When omitted, merging is auto-enabled if all sources have a `.json` or `.jsonc` extension. Use `true`/`false` to force on or off regardless of extension.                                        |
-| `yaml`         | No       | YAML merge/format options (see below). When omitted, merging is auto-enabled if all sources have a `.yaml` or `.yml` extension. Use `true`/`false` to force on or off regardless of extension. Comments are preserved in merged output. |
-| `strategy`     | No       | Write strategy: `replace` _(default)_ — overwrite the target file entirely; `insert` — merge content into the existing file without clobbering unrelated content. See [Insert Mode](#insert-mode).                                      |
-| `writeInPlace` | No       | If `true`, replaces file content in-place instead of using an atomic rename. Preserves the existing inode. **Not atomic** — use only when inode stability is required. See [Write in Place](#write-in-place).                           |
+| Field          | Required | Description                                                                                                                                                                                                                                                                                    |
+| -------------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src`          | Yes      | Source (see below). May be a single source or a **list** of sources to concatenate.                                                                                                                                                                                                            |
+| `if`           | No       | Condition object (or list of objects). All must pass for the entry to be processed. See [Conditions](#conditions).                                                                                                                                                                             |
+| `ifAny`        | No       | List of condition objects. At least one must pass. See [Conditions](#conditions).                                                                                                                                                                                                              |
+| `mode`         | No       | File permission mode. Use a quoted octal string (`"0755"`) or a YAML octal literal (`0o755`). Mode-only changes (content unchanged) are detected by `diff` and applied by `pull`. **POSIX only** — ignored on Windows.                                                                         |
+| `replace`      | No       | List of `{from, to}` replacement rules. `from` may be a plain string or `/pattern/flags` regex.                                                                                                                                                                                                |
+| `post`         | No       | Shell script. Content is piped via stdin; stdout is used as the result. Runs after `replace`.                                                                                                                                                                                                  |
+| `template`     | No       | Treat the fetched content as a template and render it with avanti config variables as context. See [Template Rendering](#template-rendering).                                                                                                                                                  |
+| `json`         | No       | JSON merge/format options (see below). When omitted, merging is auto-enabled if all sources have a `.json` or `.jsonc` extension. Use `true`/`false` to force on or off regardless of extension.                                                                                               |
+| `yaml`         | No       | YAML merge/format options (see below). When omitted, merging is auto-enabled if all sources have a `.yaml` or `.yml` extension. Use `true`/`false` to force on or off regardless of extension. Comments are preserved in merged output.                                                        |
+| `strategy`     | No       | Write strategy: `replace` _(default)_ — overwrite the target file entirely; `insert` — merge content into the existing file without clobbering unrelated content. See [Insert Mode](#insert-mode).                                                                                             |
+| `writeInPlace` | No       | If `true`, replaces file content in-place instead of using an atomic rename. Preserves the existing inode. **Not atomic** — use only when inode stability is required. See [Write in Place](#write-in-place).                                                                                  |
+| `extract`      | No       | Unpack an archive (`.zip`, `.tar`, `.tar.gz`, `.tgz`) downloaded from a single-file source before writing. Target must end with `"/"`. Use `true` to extract all files, or a list of patterns to extract only matching entries. Cannot be combined with a list `src`. See [Extract](#extract). |
 
 ### Source Types
 
@@ -570,6 +571,7 @@ The optional `filter` field narrows which files are kept when a source returns m
 | Pattern            | Matches                                                                                |
 | ------------------ | -------------------------------------------------------------------------------------- |
 | `exact.png`        | Exact string equality                                                                  |
+| `subdir/`          | Directory prefix — all entries whose path starts with `subdir/`                        |
 | `file-{a,b,c}.yml` | Brace-expanded alternatives — `file-a.yml`, `file-b.yml`, `file-c.yml`                 |
 | `/^some.*\.jpg/`   | JavaScript regular expression (delimited by `/`) tested against the full relative path |
 
@@ -582,11 +584,56 @@ files:
         release: $latest
       filter:
         - exact-match.png
+        - dist/ # all files under dist/
         - checksums-{amd64,arm64}.txt
         - /^some.*\.jpg/
 ```
 
 Variables are resolved in filter patterns before matching, so patterns like `$env:ARCH.tar.gz` or `$platform-release.zip` work as expected. An error is raised if the filter matches zero files, preventing silent misconfiguration. The `sha` fingerprint (if present) is computed over the filtered set.
+
+> **Note:** brace expansion is not supported in directory-prefix patterns (patterns ending with `/`). Use separate patterns instead — e.g. `"core/"` and `"utils/"` rather than `"{core,utils}/"`.
+
+#### Extract
+
+The optional `extract` field unpacks a downloaded archive before writing files. It applies to any single-file source (HTTP URL, local path, etc.) that returns an archive. Set `extract: true` to extract all entries, or provide a list of patterns to keep only matching entries.
+
+**The target must be a directory** (end with `/`). Archive extraction writes multiple files; a non-directory target is rejected at parse time.
+
+| Format     | Extensions        |
+| ---------- | ----------------- |
+| ZIP        | `.zip`            |
+| tar        | `.tar`            |
+| tar + gzip | `.tar.gz`, `.tgz` |
+
+Patterns use the same syntax as [`filter`](#filter):
+
+| Pattern       | Matches                                                                                |
+| ------------- | -------------------------------------------------------------------------------------- |
+| `exact.png`   | Exact string equality                                                                  |
+| `subdir/`     | Directory prefix — all entries whose path starts with `subdir/`                        |
+| `{a,b,c}.yml` | Brace-expanded alternatives                                                            |
+| `/^.*\.jpg/`  | JavaScript regular expression (delimited by `/`) tested against the full relative path |
+
+> **Note:** brace expansion is not supported in directory-prefix patterns (patterns ending with `/`). Use separate patterns instead — e.g. `"core/"` and `"utils/"` rather than `"{core,utils}/"`.
+
+```yaml
+files:
+  # Extract all files from a release archive into a local directory
+  tools/:
+    src: https://example.com/release.tar.gz
+    extract: true
+
+  # Extract only matching entries
+  assets/:
+    src: https://example.com/bundle.zip
+    extract:
+      - readme.md # exact match
+      - images/ # all entries under images/
+      - libs/{core,utils}.js # brace expansion (not with trailing /)
+      - /^assets\/.*\.png$/ # regex
+```
+
+Variables are resolved in patterns before matching. An error is raised if the pattern list matches zero entries. `extract` cannot be combined with a list `src`. Entry paths are validated — archives containing path-traversal sequences (`../`) or absolute paths are rejected for security. The `sha` fingerprint (if present) is computed over the archive before extraction.
 
 ### Directory Sources
 
