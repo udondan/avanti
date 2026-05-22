@@ -56,7 +56,10 @@ function deepRemoveFromJsonObj(
     if (!Object.hasOwn(existing, key)) continue;
     const oldVal = oldContrib[key];
     const curVal = existing[key];
-    const newVal = newContrib != null ? newContrib[key] : undefined;
+    const newVal =
+      newContrib != null && Object.hasOwn(newContrib, key)
+        ? newContrib[key]
+        : undefined;
 
     if (isPlainObject(oldVal) && isPlainObject(curVal)) {
       const nestedNew = isPlainObject(newVal) ? newVal : null;
@@ -203,12 +206,18 @@ function applyJsonInsert(
     try {
       const oldContrib = parseJson(lastProcessed) as Record<string, unknown>;
       if (isPlainObject(existingParsed) && isPlainObject(oldContrib)) {
+        // Order-preservation only works under last_wins; with first_wins the
+        // stale key would persist, and with abort mergeJson would throw on
+        // the un-removed key.
+        const effectiveConflicts = opts['conflicts'] ?? 'last_wins';
         let newContrib: Record<string, unknown> | null = null;
-        try {
-          const p = parseJson(processedText);
-          if (isPlainObject(p)) newContrib = p;
-        } catch {
-          // unparseable processedText → null (old behaviour)
+        if (effectiveConflicts === 'last_wins') {
+          try {
+            const p = parseJson(processedText);
+            if (isPlainObject(p)) newContrib = p;
+          } catch {
+            // unparseable processedText → null (old behaviour)
+          }
         }
         deepRemoveFromJsonObj(existingParsed, oldContrib, newContrib);
       }

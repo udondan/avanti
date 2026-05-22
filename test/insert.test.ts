@@ -253,6 +253,35 @@ describe('JSON — property order preservation', () => {
     );
     expect(result).toBe('{\n  "z": 1,\n  "a": 100,\n  "m": 3\n}\n');
   });
+
+  it('uses remove-then-merge (no order preservation) when conflicts: first_wins', () => {
+    const targetPath = path.join(tmpDir, 'file.json');
+    // 'a' is first in the existing file but was contributed by avanti (value 99)
+    fs.writeFileSync(targetPath, '{\n  "a": 99,\n  "b": 2\n}\n');
+    const result = applyInsertMode(
+      makeEntry({ json: { conflicts: 'first_wins' } }),
+      JSON.stringify({ a: 100 }),
+      JSON.stringify({ a: 99 }),
+      targetPath,
+    );
+    // first_wins: 'a' is removed then re-merged; new value wins (no conflict)
+    expect(JSON.parse(result)).toEqual({ b: 2, a: 100 });
+  });
+
+  it('does not throw with conflicts: abort when updated key is removed before merge', () => {
+    const targetPath = path.join(tmpDir, 'file.json');
+    fs.writeFileSync(targetPath, JSON.stringify({ a: 99, b: 2 }, null, 2));
+    // With abort, the old value must be removed before merging the new one
+    // or mergeJson would throw a conflict error.
+    expect(() =>
+      applyInsertMode(
+        makeEntry({ json: { conflicts: 'abort' } }),
+        JSON.stringify({ a: 100 }),
+        JSON.stringify({ a: 99 }),
+        targetPath,
+      ),
+    ).not.toThrow();
+  });
 });
 
 // ── YAML ──────────────────────────────────────────────────────────────────────
