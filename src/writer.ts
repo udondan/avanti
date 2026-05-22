@@ -1,6 +1,7 @@
 import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
+import { spawnSync } from 'child_process';
 
 export interface WriteTarget {
   targetPath: string;
@@ -8,6 +9,144 @@ export interface WriteTarget {
   mode?: string;
   backupPath?: string;
   writeInPlace?: boolean;
+  sudo?: boolean | string;
+}
+
+export function sudoUserArgs(sudo: boolean | string): string[] {
+  return typeof sudo === 'string' ? ['-u', sudo] : [];
+}
+
+export function sudoAuth(sudo: boolean | string = true): void {
+  const result = spawnSync('sudo', [...sudoUserArgs(sudo), '-v'], {
+    stdio: 'inherit',
+  });
+  if (result.status !== 0 || result.error) {
+    throw new Error('sudo authentication failed');
+  }
+}
+
+export function sudoAtomicWrite(
+  targets: WriteTarget[],
+  deletions: string[] = [],
+): void {
+  const mvTargets = targets.filter((t) => !t.writeInPlace);
+  const inPlaceTargets = targets.filter((t) => t.writeInPlace);
+  for (const t of mvTargets) {
+    sudoWriteMv(t);
+  }
+  for (const t of inPlaceTargets) {
+    sudoWriteInPlace(t);
+  }
+  for (const p of deletions) {
+    const r = spawnSync('sudo', ['rm', '-f', p], { stdio: 'inherit' });
+    if (r.status !== 0) {
+      console.warn(`Warning: could not delete ${p}`);
+    }
+  }
+}
+
+function sudoRun(sudo: boolean | string, args: string[]): void {
+  const r = spawnSync('sudo', [...sudoUserArgs(sudo), ...args], {
+    stdio: 'inherit',
+  });
+  if (r.status !== 0 || r.error) {
+    throw new Error(`sudo ${args.join(' ')} failed`);
+  }
+}
+
+function sudoWriteMv(t: WriteTarget): void {
+  const sudo = t.sudo!;
+  const dir = path.dirname(t.targetPath);
+  sudoRun(sudo, ['mkdir', '-p', dir]);
+
+  const tmpName =
+    '.' +
+    path.basename(t.targetPath) +
+    '.' +
+    crypto.randomBytes(8).toString('hex') +
+    '.avanti-tmp';
+  const tmpFile = path.join(dir, tmpName);
+
+  const tee = spawnSync('sudo', [...sudoUserArgs(sudo), 'tee', tmpFile], {
+    input: t.content,
+    stdio: ['pipe', 'ignore', 'inherit'],
+  });
+  if (tee.status !== 0 || tee.error) {
+    try {
+      sudoRun(sudo, ['rm', '-f', tmpFile]);
+    } catch {
+      // best-effort temp cleanup; ignore failure
+    }
+    throw new Error(`sudo write failed for ${t.targetPath}`);
+  }
+
+  if (t.backupPath) {
+    const exists = spawnSync(
+      'sudo',
+      [...sudoUserArgs(sudo), 'test', '-f', t.targetPath],
+      { stdio: 'ignore' },
+    );
+    if (exists.status === 0) {
+      const backupDir = path.dirname(t.backupPath);
+      sudoRun(sudo, ['mkdir', '-p', backupDir]);
+      const backupTmp = path.join(
+        backupDir,
+        '.' +
+          path.basename(t.backupPath) +
+          '.' +
+          crypto.randomBytes(8).toString('hex') +
+          '.avanti-tmp',
+      );
+      sudoRun(sudo, ['cp', t.targetPath, backupTmp]);
+      sudoRun(sudo, ['mv', backupTmp, t.backupPath]);
+    }
+  }
+
+  sudoRun(sudo, ['mv', tmpFile, t.targetPath]);
+
+  if (t.mode) {
+    sudoRun(sudo, ['chmod', t.mode, t.targetPath]);
+  }
+}
+
+function sudoWriteInPlace(t: WriteTarget): void {
+  const sudo = t.sudo!;
+  const dir = path.dirname(t.targetPath);
+  sudoRun(sudo, ['mkdir', '-p', dir]);
+
+  if (t.backupPath) {
+    const exists = spawnSync(
+      'sudo',
+      [...sudoUserArgs(sudo), 'test', '-f', t.targetPath],
+      { stdio: 'ignore' },
+    );
+    if (exists.status === 0) {
+      const backupDir = path.dirname(t.backupPath);
+      sudoRun(sudo, ['mkdir', '-p', backupDir]);
+      const backupTmp = path.join(
+        backupDir,
+        '.' +
+          path.basename(t.backupPath) +
+          '.' +
+          crypto.randomBytes(8).toString('hex') +
+          '.avanti-tmp',
+      );
+      sudoRun(sudo, ['cp', t.targetPath, backupTmp]);
+      sudoRun(sudo, ['mv', backupTmp, t.backupPath]);
+    }
+  }
+
+  const tee = spawnSync('sudo', [...sudoUserArgs(sudo), 'tee', t.targetPath], {
+    input: t.content,
+    stdio: ['pipe', 'ignore', 'inherit'],
+  });
+  if (tee.status !== 0 || tee.error) {
+    throw new Error(`sudo write failed for ${t.targetPath}`);
+  }
+
+  if (t.mode) {
+    sudoRun(sudo, ['chmod', t.mode, t.targetPath]);
+  }
 }
 
 export function atomicWrite(

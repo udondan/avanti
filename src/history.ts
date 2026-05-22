@@ -10,6 +10,7 @@ export interface FileHistoryMeta {
   firstSeenAt: string;
   existedBeforeAvanti: boolean;
   currentVersion: number;
+  sudo?: boolean | string;
   insertedFragment?: {
     raw: string;
     processed: string;
@@ -35,6 +36,7 @@ export interface PullLogFileRef {
   slug: string;
   version: number;
   wasNew: boolean;
+  sudo?: boolean | string;
   sources?: SourceShaRecord[];
 }
 
@@ -128,6 +130,7 @@ export class HistoryManager {
     newContent: Buffer,
     isNew: boolean,
     sources?: SourceShaRecord[],
+    sudo?: boolean | string,
   ): { version: number; fileRef: PullLogFileRef } {
     const slug = sha256(targetPath);
     const fileDir = path.join(this.filesDir, slug);
@@ -155,12 +158,14 @@ export class HistoryManager {
       };
     }
 
+    meta.sudo = sudo || undefined;
+
     const nextVersion = meta.currentVersion + 1;
     fs.writeFileSync(path.join(fileDir, `v${nextVersion}`), newContent);
 
-    if (isFirstSeen) {
-      fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2), 'utf8');
+    fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2), 'utf8');
 
+    if (isFirstSeen) {
       const index = this.readIndex();
       index[targetPath] = slug;
       this.writeIndex(index);
@@ -171,6 +176,7 @@ export class HistoryManager {
       slug,
       version: nextVersion,
       wasNew: isNew,
+      ...(sudo ? { sudo } : {}),
       ...(sources !== undefined && { sources }),
     };
 
@@ -189,6 +195,7 @@ export class HistoryManager {
           fs.readFileSync(metaPath, 'utf8'),
         ) as FileHistoryMeta;
         meta.currentVersion = ref.version;
+        meta.sudo = ref.sudo || undefined;
         fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2), 'utf8');
       }
     }

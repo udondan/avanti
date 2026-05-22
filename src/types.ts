@@ -286,6 +286,7 @@ export interface FileEntry {
   writeInPlace?: boolean;
   followSymlink?: boolean;
   extract?: true | string[];
+  sudo?: boolean | string;
 }
 
 export interface VariableEntry {

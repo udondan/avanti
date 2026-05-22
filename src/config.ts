@@ -313,6 +313,17 @@ export function parseConfigContent(content: string): AvantiConfig {
       fileEntry.writeInPlace = e['writeInPlace'];
     if (typeof e['followSymlink'] === 'boolean')
       fileEntry.followSymlink = e['followSymlink'];
+    if (e['sudo'] !== undefined) {
+      if (e['sudo'] === true) {
+        fileEntry.sudo = true;
+      } else if (typeof e['sudo'] === 'string' && e['sudo']) {
+        fileEntry.sudo = e['sudo'];
+      } else if (e['sudo'] !== false) {
+        throw new Error(
+          `files["${target}"].sudo: must be true or a non-empty username string`,
+        );
+      }
+    }
     if (e['strategy'] !== undefined) {
       if (e['strategy'] !== 'replace' && e['strategy'] !== 'insert') {
         throw new Error(

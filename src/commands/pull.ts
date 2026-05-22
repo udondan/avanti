@@ -1,6 +1,7 @@
 import { Command } from 'commander';
 import * as fs from 'fs';
 import * as path from 'path';
+import { spawnSync } from 'child_process';
 import {
   isRemoteConfigSpec,
   loadConfig,
@@ -23,7 +24,13 @@ import { applyPost } from '../processors/post';
 import { applyInsertMode } from '../processors/insert';
 import { isBinary } from '../binary';
 import { computeDiff, computeDeleteDiff, printDiffs } from '../diff';
-import { atomicWrite, WriteTarget } from '../writer';
+import {
+  atomicWrite,
+  sudoAtomicWrite,
+  sudoAuth,
+  sudoUserArgs,
+  WriteTarget,
+} from '../writer';
 import { FileDiff } from '../diff';
 import {
   buildEntryPreVars,
@@ -370,6 +377,7 @@ async function runFetchLoop(
           mode: entry.mode,
           backupPath,
           writeInPlace: entry.writeInPlace,
+          sudo: entry.sudo,
         });
         pendingWrites.set(ep, content);
         // Also index under the original symlink path so local source lookups
@@ -645,6 +653,7 @@ export function pullCommand(): Command {
 
       // Detect stale files: present in last pull but no longer in current source fetch
       const staleToDelete: string[] = [];
+      const staleDeleteNeedsSudo = new Set<string>();
       const staleToRestore: WriteTarget[] = [];
       const staleDiffs: FileDiff[] = [];
 
@@ -672,11 +681,13 @@ export function pullCommand(): Command {
               staleToRestore.push({
                 targetPath: ref.absolutePath,
                 content: original,
+                sudo: meta.sudo,
               });
               staleDiffs.push(computeDiff(ref.absolutePath, original));
             }
           } else {
             staleToDelete.push(ref.absolutePath);
+            if (meta.sudo) staleDeleteNeedsSudo.add(ref.absolutePath);
             staleDiffs.push(computeDeleteDiff(ref.absolutePath));
           }
         }
@@ -804,6 +815,7 @@ export function pullCommand(): Command {
               writeTargets[i].content,
               allDiffs[i].isNew,
               sourceShaRecords,
+              writeTargets[i].sudo,
             );
             stagedFileRefs.push(fileRef);
           } catch {
@@ -818,9 +830,40 @@ export function pullCommand(): Command {
         const changedTargets = writeTargets.filter(
           (_, i) => allDiffs[i].hasChanges && allDiffs[i].contentChanged,
         );
+
+        // Authenticate sudo once before any writes if any target needs it.
+        const allWriteTargets = [...changedTargets, ...staleToRestore];
+        const sudoValues = new Set<boolean | string>(
+          allWriteTargets.map((t) => t.sudo).filter(Boolean) as (
+            | boolean
+            | string
+          )[],
+        );
+        if (staleDeleteNeedsSudo.size > 0) {
+          sudoValues.add(true);
+        }
+        for (const sv of sudoValues) {
+          sudoAuth(sv);
+        }
+
         // Content writes go first so that if atomicWrite throws, no permissions
         // have been changed yet (minimises partial-apply surface).
-        atomicWrite([...changedTargets, ...staleToRestore], staleToDelete);
+        const regularChanged = changedTargets.filter((t) => !t.sudo);
+        const sudoChanged = changedTargets.filter((t) => t.sudo);
+        const regularRestore = staleToRestore.filter((t) => !t.sudo);
+        const sudoRestore = staleToRestore.filter((t) => t.sudo);
+        const regularDelete = staleToDelete.filter(
+          (p) => !staleDeleteNeedsSudo.has(p),
+        );
+        const sudoDelete = staleToDelete.filter((p) =>
+          staleDeleteNeedsSudo.has(p),
+        );
+
+        atomicWrite([...regularChanged, ...regularRestore], regularDelete);
+        if (sudoChanged.length + sudoRestore.length + sudoDelete.length > 0) {
+          sudoAtomicWrite([...sudoChanged, ...sudoRestore], sudoDelete);
+        }
+
         // Mode-only changes: apply chmod directly (POSIX only — mode bits are
         // not meaningful on Windows so modeChange is never set there).
         let modeOnlyCount = 0;
@@ -832,7 +875,20 @@ export function pullCommand(): Command {
                 throwIfNoEntry: false,
               });
               if (lst && !lst.isSymbolicLink()) {
-                fs.chmodSync(writeTargets[i].targetPath, d.modeChange.to);
+                if (writeTargets[i].sudo) {
+                  spawnSync(
+                    'sudo',
+                    [
+                      ...sudoUserArgs(writeTargets[i].sudo!),
+                      'chmod',
+                      d.modeChange.to.toString(8).padStart(4, '0'),
+                      writeTargets[i].targetPath,
+                    ],
+                    { stdio: 'inherit' },
+                  );
+                } else {
+                  fs.chmodSync(writeTargets[i].targetPath, d.modeChange.to);
+                }
                 modeOnlyCount++;
               }
             }
