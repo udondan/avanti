@@ -239,3 +239,120 @@ describe('fetchGit — success paths', () => {
     expect(checkoutArgs).toContain(hash);
   });
 });
+
+// ── fetchGit — ref sentinel and pattern resolution ────────────────────────────
+
+describe('fetchGit — ref sentinel and pattern resolution', () => {
+  function lsRemoteOutput(tags: string[]): string {
+    return tags
+      .map((t, i) => `${'a'.repeat(39)}${i}\trefs/tags/${t}^{}`)
+      .join('\n');
+  }
+
+  it('$latest uses --sort=-version:refname and resolves to first semver tag', () => {
+    mockSpawnSync
+      .mockReturnValueOnce(
+        makeSpawnResult({
+          stdout: lsRemoteOutput(['v2.0.0', 'v1.9.0', 'nightly']),
+          status: 0,
+        }),
+      )
+      .mockReturnValueOnce(
+        makeSpawnResult({ status: 1, stderr: 'clone failed' }),
+      );
+
+    expect(() =>
+      fetchGit('git+ssh://git@host/repo.git', 'file.txt', '$latest'),
+    ).toThrow('git clone failed: clone failed');
+
+    const lsArgs = mockSpawnSync.mock.calls[0][1] as string[];
+    expect(lsArgs).toContain('--sort=-version:refname');
+    const cloneArgs = mockSpawnSync.mock.calls[1][1] as string[];
+    expect(cloneArgs).toContain('v2.0.0');
+  });
+
+  it('$recent uses --sort=-creatordate and resolves to first tag regardless of format', () => {
+    mockSpawnSync
+      .mockReturnValueOnce(
+        makeSpawnResult({
+          stdout: lsRemoteOutput(['nightly', 'v1.0.0']),
+          status: 0,
+        }),
+      )
+      .mockReturnValueOnce(
+        makeSpawnResult({ status: 1, stderr: 'clone failed' }),
+      );
+
+    expect(() =>
+      fetchGit('git+ssh://git@host/repo.git', 'file.txt', '$recent'),
+    ).toThrow('git clone failed: clone failed');
+
+    const lsArgs = mockSpawnSync.mock.calls[0][1] as string[];
+    expect(lsArgs).toContain('--sort=-creatordate');
+    const cloneArgs = mockSpawnSync.mock.calls[1][1] as string[];
+    expect(cloneArgs).toContain('nightly');
+  });
+
+  it('pattern /^v1\\./ resolves to first matching tag', () => {
+    mockSpawnSync
+      .mockReturnValueOnce(
+        makeSpawnResult({
+          stdout: lsRemoteOutput(['v2.0.0', 'v1.9.0', 'v1.8.0']),
+          status: 0,
+        }),
+      )
+      .mockReturnValueOnce(
+        makeSpawnResult({ status: 1, stderr: 'clone failed' }),
+      );
+
+    expect(() =>
+      fetchGit('git+ssh://git@host/repo.git', 'file.txt', '/^v1\\./'),
+    ).toThrow('git clone failed');
+
+    const cloneArgs = mockSpawnSync.mock.calls[1][1] as string[];
+    expect(cloneArgs).toContain('v1.9.0');
+  });
+
+  it('$latest throws when no semver tags exist', () => {
+    mockSpawnSync.mockReturnValueOnce(
+      makeSpawnResult({
+        stdout: lsRemoteOutput(['nightly', 'edge']),
+        status: 0,
+      }),
+    );
+
+    expect(() =>
+      fetchGit('git+ssh://git@host/repo.git', 'file.txt', '$latest'),
+    ).toThrow('No semver tags found');
+  });
+
+  it('$recent throws when no tags exist', () => {
+    mockSpawnSync.mockReturnValueOnce(
+      makeSpawnResult({ stdout: '', status: 0 }),
+    );
+
+    expect(() =>
+      fetchGit('git+ssh://git@host/repo.git', 'file.txt', '$recent'),
+    ).toThrow('No tags found');
+  });
+
+  it('pattern throws when no tags match', () => {
+    mockSpawnSync.mockReturnValueOnce(
+      makeSpawnResult({ stdout: lsRemoteOutput(['v2.0.0']), status: 0 }),
+    );
+
+    expect(() =>
+      fetchGit('git+ssh://git@host/repo.git', 'file.txt', '/^v99\\./'),
+    ).toThrow('No tags matching "/^v99\\./"');
+  });
+
+  it('throws when ls-remote fails', () => {
+    mockSpawnSync.mockReturnValueOnce(
+      makeSpawnResult({ status: 1, stderr: 'authentication failed' }),
+    );
+
+    expect(() =>
+      fetchGit('git+ssh://git@host/repo.git', 'file.txt', '$latest'),
+    ).toThrow('Failed to list tags');
+  });
+});

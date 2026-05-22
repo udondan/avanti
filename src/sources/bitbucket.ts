@@ -4,8 +4,8 @@ import { verbose } from '../logger';
 import {
   isLatestSentinel,
   isRecentSentinel,
+  maxSemverTag,
   parseRefPattern,
-  SEMVER_PATTERN,
 } from '../ref';
 
 export interface BitbucketResult {
@@ -36,14 +36,15 @@ function apiHeaders(): Record<string, string> {
   return headers;
 }
 
-async function findBitbucketTagMatchingPattern(
+async function listBitbucketTagsAll(
   workspace: string,
   repo: string,
-  pattern: RegExp,
+  sort: string,
   host?: string,
-): Promise<string | null> {
+): Promise<string[]> {
+  const all: string[] = [];
   let url: string | null =
-    `${getApiBase(host)}/repositories/${workspace}/${repo}/refs/tags?sort=-name&pagelen=100`;
+    `${getApiBase(host)}/repositories/${workspace}/${repo}/refs/tags?sort=${sort}&pagelen=100`;
   let pages = 0;
   while (url && pages < 5) {
     const res = await fetchWithRetry(url, { headers: apiHeaders() });
@@ -55,12 +56,11 @@ async function findBitbucketTagMatchingPattern(
       values: Array<{ name: string }>;
       next?: string;
     };
-    const found = data.values.find((t) => pattern.test(t.name));
-    if (found) return found.name;
+    all.push(...data.values.map((t) => t.name));
     url = data.next ?? null;
     pages++;
   }
-  return null;
+  return all;
 }
 
 async function resolveRef(
@@ -91,14 +91,10 @@ async function resolveRef(
     return repoData.mainbranch?.name ?? 'main';
   }
 
-  // $latest: paginate tags (sort=-name), filter by SEMVER_PATTERN
+  // $latest: collect all tags, pick the highest semver
   if (isLatestSentinel(ref)) {
-    const found = await findBitbucketTagMatchingPattern(
-      workspace,
-      repo,
-      SEMVER_PATTERN,
-      host,
-    );
+    const tags = await listBitbucketTagsAll(workspace, repo, '-name', host);
+    const found = maxSemverTag(tags);
     if (found) return found;
     // No semver tag found: fall back to default branch
     const repoRes = await fetchWithRetry(
@@ -116,10 +112,10 @@ async function resolveRef(
     return repoData.mainbranch?.name ?? 'main';
   }
 
-  // $recent: most recently created tag by name sort (first result)
+  // $recent: most recently committed tag (sort by target commit date)
   if (isRecentSentinel(ref)) {
     const tagsRes = await fetchWithRetry(
-      `${getApiBase(host)}/repositories/${workspace}/${repo}/refs/tags?sort=-name&pagelen=1`,
+      `${getApiBase(host)}/repositories/${workspace}/${repo}/refs/tags?sort=-target.date&pagelen=1`,
       { headers: apiHeaders() },
     );
     if (tagsRes.ok) {
@@ -144,13 +140,14 @@ async function resolveRef(
     return repoData.mainbranch?.name ?? 'main';
   }
 
-  // Pattern: paginate tags, filter by regex
-  const found = await findBitbucketTagMatchingPattern(
+  // Pattern: paginate tags sorted by target date, filter by regex
+  const tags = await listBitbucketTagsAll(
     workspace,
     repo,
-    pattern!,
+    '-target.date',
     host,
   );
+  const found = tags.find((n) => pattern!.test(n)) ?? null;
   if (found) return found;
   throw new Error(`No tags matching "${ref}" found for ${workspace}/${repo}`);
 }

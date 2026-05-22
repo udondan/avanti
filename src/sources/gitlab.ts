@@ -146,11 +146,16 @@ function findGitLabTagMatchingPatternCli(
   host?: string,
   sortBy: 'updated' | 'version' = 'updated',
 ): string | null {
-  const endpoint = `projects/${encodeURIComponent(project)}/repository/tags?order_by=${sortBy}&sort=desc&per_page=100`;
-  const res = glabApi(endpoint, host);
-  if (res.status !== 0) return null;
-  const tags = JSON.parse(res.stdout) as Array<{ name: string }>;
-  return tags.find((t) => pattern.test(t.name))?.name ?? null;
+  for (let page = 1; page <= 5; page++) {
+    const endpoint = `projects/${encodeURIComponent(project)}/repository/tags?order_by=${sortBy}&sort=desc&per_page=100&page=${page}`;
+    const res = glabApi(endpoint, host);
+    if (res.status !== 0) return null;
+    const tags = JSON.parse(res.stdout) as Array<{ name: string }>;
+    if (!tags.length) break;
+    const found = tags.find((t) => pattern.test(t.name));
+    if (found) return found.name;
+  }
+  return null;
 }
 
 async function resolveRef(
@@ -724,27 +729,27 @@ function resolveReleaseTagViaCli(
   const pattern = parseRefPattern(release);
 
   if (pattern || isRecentSentinel(release)) {
-    const endpoint = `projects/${encodeURIComponent(project)}/releases?order_by=released_at&sort=desc&per_page=100`;
-    const res = glabApi(endpoint, host);
-    if (res.status === 0 && res.stdout.trim()) {
+    for (let page = 1; page <= 5; page++) {
+      const endpoint = `projects/${encodeURIComponent(project)}/releases?order_by=released_at&sort=desc&per_page=100&page=${page}`;
+      const res = glabApi(endpoint, host);
+      if (res.status !== 0 || !res.stdout.trim()) break;
       try {
         const releases = JSON.parse(res.stdout) as Array<{ tag_name: string }>;
+        if (!releases.length) break;
         if (isRecentSentinel(release)) {
-          if (releases.length) return releases[0].tag_name;
-        } else {
-          const found = releases.find((r) => pattern!.test(r.tag_name));
-          if (found) return found.tag_name;
-          throw new Error(
-            `No releases matching "${release}" found for ${project}`,
-          );
+          return releases[0].tag_name; // first on page 1 = most recent
         }
+        const found = releases.find((r) => pattern!.test(r.tag_name));
+        if (found) return found.tag_name;
       } catch (e) {
-        if (e instanceof SyntaxError) {
-          // fall through to tags
-        } else throw e;
+        if (e instanceof SyntaxError) break;
+        throw e;
       }
     }
-    // Fall back to tags for $recent
+    if (pattern) {
+      throw new Error(`No releases matching "${release}" found for ${project}`);
+    }
+    // $recent with no releases: fall back to tags
     const tagsEndpoint = `projects/${encodeURIComponent(project)}/repository/tags?order_by=updated&sort=desc&per_page=1`;
     const tagRes = glabApi(tagsEndpoint, host);
     if (tagRes.status !== 0) {

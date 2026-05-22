@@ -7,6 +7,7 @@ import { verbose } from '../logger';
 import {
   isLatestSentinel,
   isRecentSentinel,
+  maxSemverTag,
   parseRefPattern,
   SEMVER_PATTERN,
 } from '../ref';
@@ -264,6 +265,29 @@ function listTreeViaCli(
   return res.stdout.trim().split('\n').filter(Boolean);
 }
 
+async function findHighestSemverTagApi(
+  repo: string,
+  host?: string,
+): Promise<string | null> {
+  const collected: string[] = [];
+  const perPage = 100;
+  for (let page = 1; page <= 5; page++) {
+    const res = await fetchWithRetry(
+      `${getApiBase(host)}/repos/${repo}/tags?per_page=${perPage}&page=${page}`,
+      { headers: apiHeaders() },
+    );
+    if (!res.ok)
+      throw new HttpError(
+        res.status,
+        `Failed to list tags for ${repo}: HTTP ${res.status}`,
+      );
+    const tags = (await res.json()) as Array<{ name: string }>;
+    collected.push(...tags.map((t) => t.name));
+    if (tags.length < perPage) break; // last page
+  }
+  return maxSemverTag(collected);
+}
+
 async function findTagMatchingPatternApi(
   repo: string,
   pattern: RegExp,
@@ -312,6 +336,21 @@ function findTagMatchingPatternCli(
   );
 }
 
+function findHighestSemverTagCli(repo: string, host?: string): string | null {
+  const args = [
+    'api',
+    ...hostnameArgs(host),
+    '--paginate',
+    `repos/${repo}/tags`,
+    '--jq',
+    '.[].name',
+  ];
+  verbose(`github: gh: gh ${args.join(' ')}`);
+  const res = ghRun(args);
+  if (res.status !== 0) return null;
+  return maxSemverTag(res.stdout.trim().split('\n').filter(Boolean));
+}
+
 async function resolveRef(
   repo: string,
   ref: string | undefined,
@@ -320,7 +359,7 @@ async function resolveRef(
 ): Promise<string> {
   const pattern = ref ? parseRefPattern(ref) : null;
   if (!isLatestSentinel(ref) && !isRecentSentinel(ref) && !pattern) {
-    return ref ?? 'HEAD';
+    return ref || 'HEAD';
   }
 
   verbose(`github: resolving "${ref}" for ${repo}`);
@@ -392,11 +431,11 @@ async function resolveRef(
     );
   }
 
-  // $latest: paginate tags filtered by SEMVER_PATTERN
+  // $latest: collect all semver tags and return the highest version
   if (isLatestSentinel(ref)) {
     let found: string | null;
     try {
-      found = await findTagMatchingPatternApi(repo, SEMVER_PATTERN, host);
+      found = await findHighestSemverTagApi(repo, host);
     } catch (e) {
       if (isNetworkError(e) && withCliFallback && isGhAvailable()) {
         verbose(`github: HTTP fetch failed, falling back to gh`);
@@ -474,7 +513,7 @@ function resolveRefViaCli(repo: string, ref: string, host?: string): string {
   }
 
   if (isLatestSentinel(ref)) {
-    const found = findTagMatchingPatternCli(repo, SEMVER_PATTERN, host);
+    const found = findHighestSemverTagCli(repo, host);
     if (found !== null) return found;
     throw new Error(
       `No semver tags found for ${repo} (needed to resolve $latest)`,

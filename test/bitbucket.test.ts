@@ -149,6 +149,73 @@ describe('fetchBitbucket — ref resolution', () => {
       'bb.internal.example.com',
     );
   });
+
+  it('$latest picks the highest semver across multiple pages', async () => {
+    const mockFetch = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(
+        jsonResponse({
+          values: [{ name: 'v1.9.9' }, { name: 'nightly' }],
+          next: 'https://api.bitbucket.org/2.0/page2',
+        }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({ values: [{ name: 'v2.0.0' }, { name: 'v1.8.0' }] }),
+      )
+      .mockResolvedValueOnce(textResponse('content'));
+
+    await fetchBitbucket('ws', 'repo', 'file.txt', '$latest');
+
+    expect(mockFetch.mock.calls[2][0] as string).toContain('/src/v2.0.0/');
+  });
+
+  it('$recent sorts by target.date and returns newest', async () => {
+    const mockFetch = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(jsonResponse({ values: [{ name: 'nightly' }] }))
+      .mockResolvedValueOnce(textResponse('content'));
+
+    await fetchBitbucket('ws', 'repo', 'file.txt', '$recent');
+
+    expect(mockFetch.mock.calls[0][0] as string).toContain('sort=-target.date');
+    expect(mockFetch.mock.calls[1][0] as string).toContain('/src/nightly/');
+  });
+
+  it('$recent falls back to mainbranch when no tags exist', async () => {
+    const mockFetch = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(jsonResponse({ values: [] }))
+      .mockResolvedValueOnce(jsonResponse({ mainbranch: { name: 'main' } }))
+      .mockResolvedValueOnce(textResponse('content'));
+
+    await fetchBitbucket('ws', 'repo', 'file.txt', '$recent');
+
+    expect(mockFetch.mock.calls[2][0] as string).toContain('/src/main/');
+  });
+
+  it('pattern resolves to first matching tag by target.date order', async () => {
+    const mockFetch = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(
+        jsonResponse({ values: [{ name: 'v2.0.0' }, { name: 'v1.9.0' }] }),
+      )
+      .mockResolvedValueOnce(textResponse('content'));
+
+    await fetchBitbucket('ws', 'repo', 'file.txt', '/^v1\\./');
+
+    expect(mockFetch.mock.calls[0][0] as string).toContain('sort=-target.date');
+    expect(mockFetch.mock.calls[1][0] as string).toContain('/src/v1.9.0/');
+  });
+
+  it('throws when pattern matches no tags', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(() =>
+      Promise.resolve(jsonResponse({ values: [{ name: 'v2.0.0' }] })),
+    );
+
+    await expect(
+      fetchBitbucket('ws', 'repo', 'file.txt', '/^v99\\./'),
+    ).rejects.toThrow('No tags matching "/^v99\\./" found for ws/repo');
+  });
 });
 
 // ── Single file ───────────────────────────────────────────────────────────────

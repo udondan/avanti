@@ -1,6 +1,25 @@
 /** Matches stable semver tags: vX.Y.Z or X.Y.Z (exactly three components). */
 export const SEMVER_PATTERN = /^v?\d+\.\d+\.\d+$/;
 
+function parseSemver(tag: string): [number, number, number] {
+  const m = /^v?(\d+)\.(\d+)\.(\d+)$/.exec(tag);
+  if (!m) return [0, 0, 0];
+  return [parseInt(m[1], 10), parseInt(m[2], 10), parseInt(m[3], 10)];
+}
+
+/** Return the tag with the highest semver among the given list, or null if empty. */
+export function maxSemverTag(tags: string[]): string | null {
+  const valid = tags.filter((t) => SEMVER_PATTERN.test(t));
+  if (!valid.length) return null;
+  return valid.reduce((best, tag) => {
+    const [bMaj, bMin, bPatch] = parseSemver(best);
+    const [tMaj, tMin, tPatch] = parseSemver(tag);
+    if (tMaj !== bMaj) return tMaj > bMaj ? tag : best;
+    if (tMin !== bMin) return tMin > bMin ? tag : best;
+    return tPatch > bPatch ? tag : best;
+  });
+}
+
 export function isLatestSentinel(ref: string | undefined): boolean {
   return ref === '$latest';
 }
