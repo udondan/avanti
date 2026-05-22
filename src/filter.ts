@@ -10,18 +10,15 @@ function compilePattern(pattern: string): CompiledPattern {
     try {
       return { kind: 'regex', re: new RegExp(source) };
     } catch (err) {
-      throw new Error(
-        `filter pattern ${JSON.stringify(pattern)}: invalid regex`,
-        {
-          cause: err,
-        },
-      );
+      throw new Error(`pattern ${JSON.stringify(pattern)}: invalid regex`, {
+        cause: err,
+      });
     }
   }
   if (pattern.endsWith('/')) {
     if (pattern.includes('{')) {
       throw new Error(
-        `filter pattern ${JSON.stringify(pattern)}: brace expansion is not supported in directory-prefix patterns (ending with "/"); use separate patterns instead, e.g. "core/" and "utils/" instead of "{core,utils}/"`,
+        `pattern ${JSON.stringify(pattern)}: brace expansion is not supported in directory-prefix patterns (ending with "/"); use separate patterns instead, e.g. "core/" and "utils/" instead of "{core,utils}/"`,
       );
     }
     return { kind: 'prefix', value: pattern };

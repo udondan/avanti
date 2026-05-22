@@ -1,3 +1,4 @@
+import * as path from 'path';
 import { Readable } from 'stream';
 import { Parser, ReadEntry } from 'tar';
 import unzipper from 'unzipper';
@@ -15,13 +16,12 @@ export function detectArchiveFormat(filename: string): ArchiveFormat | null {
 }
 
 function normalizePath(p: string): string | null {
-  const normalized = p.replace(/\\/g, '/').replace(/^\.\//, '');
+  const normalized = path.posix.normalize(p.replace(/\\/g, '/'));
   if (!normalized || normalized === '.') return null;
-  const segments = normalized.split('/');
   if (
     normalized.startsWith('/') ||
     /^[A-Za-z]:/.test(normalized) ||
-    segments.includes('..')
+    normalized.split('/').includes('..')
   ) {
     throw new Error(
       `Archive contains unsafe entry path "${p}" — rejecting to prevent path traversal`,
@@ -59,7 +59,9 @@ async function extractTar(buffer: Buffer): Promise<Map<string, Buffer>> {
       try {
         normalized = normalizePath(entry.path);
       } catch (err) {
-        reject(err instanceof Error ? err : new Error(String(err)));
+        const error = err instanceof Error ? err : new Error(String(err));
+        reject(error);
+        entry.resume();
         return;
       }
       if (normalized === null) {
