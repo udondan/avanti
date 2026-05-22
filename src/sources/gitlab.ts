@@ -147,17 +147,18 @@ function findGitLabTagMatchingPatternCli(
   host?: string,
   sortBy: 'updated' | 'version' = 'updated',
 ): string | null {
+  const perPage = 100;
   for (let page = 1; ; page++) {
-    const endpoint = `projects/${encodeURIComponent(project)}/repository/tags?order_by=${sortBy}&sort=desc&per_page=100&page=${page}`;
+    const endpoint = `projects/${encodeURIComponent(project)}/repository/tags?order_by=${sortBy}&sort=desc&per_page=${perPage}&page=${page}`;
     const res = glabApi(endpoint, host);
     if (res.status !== 0)
       throw new Error(
         `Failed to list tags for ${project}: ${res.stderr.trim() || 'glab exited with status ' + res.status}`,
       );
     const tags = JSON.parse(res.stdout) as Array<{ name: string }>;
-    if (!tags.length) break;
     const found = tags.find((t) => pattern.test(t.name));
     if (found) return found.name;
+    if (tags.length < perPage) break;
   }
   return null;
 }
