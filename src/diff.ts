@@ -15,16 +15,32 @@ export interface FileDiff {
 }
 
 export function computeDeleteDiff(targetPath: string): FileDiff {
-  if (!fs.existsSync(targetPath)) {
+  let oldBuf: Buffer;
+  try {
+    if (!fs.existsSync(targetPath)) {
+      return {
+        targetPath,
+        isNew: false,
+        hasChanges: false,
+        contentChanged: false,
+        patch: '',
+      };
+    }
+    oldBuf = fs.readFileSync(targetPath);
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code !== 'EACCES' && code !== 'EPERM') throw err;
+    // File exists but is unreadable (e.g. root-owned 0600).
     return {
       targetPath,
       isNew: false,
-      hasChanges: false,
-      contentChanged: false,
+      isDelete: true,
+      hasChanges: true,
+      contentChanged: true,
       patch: '',
+      isBinary: true,
     };
   }
-  const oldBuf = fs.readFileSync(targetPath);
   if (isBinary(oldBuf)) {
     return {
       targetPath,
@@ -59,19 +75,37 @@ export function computeDiff(
   newContent: Buffer,
   desiredMode?: string,
 ): FileDiff {
-  const isNew = !fs.existsSync(targetPath);
-  const oldBuf = isNew ? Buffer.alloc(0) : fs.readFileSync(targetPath);
+  let isNew: boolean;
+  let oldBuf: Buffer;
+  try {
+    isNew = !fs.existsSync(targetPath);
+    oldBuf = isNew ? Buffer.alloc(0) : fs.readFileSync(targetPath);
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code !== 'EACCES' && code !== 'EPERM') throw err;
+    // File exists but is unreadable (e.g. root-owned 0600). Treat as new
+    // so the write is always applied — prevents a crash and ensures content
+    // is (re-)written to match the declared source.
+    isNew = true;
+    oldBuf = Buffer.alloc(0);
+  }
 
   let modeChange: { from: number; to: number } | undefined;
   if (!isNew && desiredMode && process.platform !== 'win32') {
     const desired = parseInt(desiredMode, 8);
     if (!isNaN(desired)) {
-      const stat = fs.lstatSync(targetPath, { throwIfNoEntry: false });
-      if (stat !== undefined && !stat.isSymbolicLink()) {
-        const current = stat.mode & 0o7777;
-        if (desired !== current) {
-          modeChange = { from: current, to: desired };
+      try {
+        const stat = fs.lstatSync(targetPath, { throwIfNoEntry: false });
+        if (stat !== undefined && !stat.isSymbolicLink()) {
+          const current = stat.mode & 0o7777;
+          if (desired !== current) {
+            modeChange = { from: current, to: desired };
+          }
         }
+      } catch (err) {
+        const code = (err as NodeJS.ErrnoException).code;
+        if (code !== 'EACCES' && code !== 'EPERM') throw err;
+        // Cannot stat unreadable file — skip mode detection.
       }
     }
   }

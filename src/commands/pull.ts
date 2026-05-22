@@ -688,6 +688,10 @@ export function pullCommand(): Command {
                 sudo: meta.sudo,
               });
               staleDiffs.push(computeDiff(ref.absolutePath, original));
+            } else {
+              console.warn(
+                `Warning: cannot restore original for ${ref.absolutePath} — v0 was never captured (file was unreadable at first pull). Leaving file unchanged.`,
+              );
             }
           } else {
             staleToDelete.push(ref.absolutePath);

@@ -155,8 +155,8 @@ export class HistoryManager {
             throw err;
           }
           // File exists but is unreadable (e.g. root-owned 0600).
-          // Record that it existed without capturing v0 — stale cleanup
-          // still works; revert-to-original is unavailable for this file.
+          // Record that it existed without capturing v0; revert-to-original
+          // will be unavailable for this file.
         }
       }
       meta = {
