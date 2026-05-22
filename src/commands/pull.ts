@@ -841,11 +841,18 @@ export function pullCommand(): Command {
           AVANTI_TARGET: ctx.targetPath,
           AVANTI_IS_NEW: String(ctx.isNew),
         };
-        if (ctx.hooks.beforeWrite) runHook(ctx.hooks.beforeWrite, env);
-        if (ctx.isNew && ctx.hooks.beforeCreate)
-          runHook(ctx.hooks.beforeCreate, env);
-        if (!ctx.isNew && ctx.hooks.beforeUpdate)
-          runHook(ctx.hooks.beforeUpdate, env);
+        try {
+          if (ctx.hooks.beforeWrite) runHook(ctx.hooks.beforeWrite, env);
+          if (ctx.isNew && ctx.hooks.beforeCreate)
+            runHook(ctx.hooks.beforeCreate, env);
+          if (!ctx.isNew && ctx.hooks.beforeUpdate)
+            runHook(ctx.hooks.beforeUpdate, env);
+        } catch (err: unknown) {
+          console.error(
+            `Hook failed for ${ctx.targetPath}: ${err instanceof Error ? err.message : String(err)}`,
+          );
+          process.exit(2);
+        }
       }
 
       try {
@@ -883,8 +890,15 @@ export function pullCommand(): Command {
             AVANTI_TARGET: ctx.targetPath,
             AVANTI_IS_NEW: String(ctx.isNew),
           };
-          if (ctx.isNew && ctx.hooks.create) runHook(ctx.hooks.create, env);
-          if (!ctx.isNew && ctx.hooks.update) runHook(ctx.hooks.update, env);
+          try {
+            if (ctx.isNew && ctx.hooks.create) runHook(ctx.hooks.create, env);
+            if (!ctx.isNew && ctx.hooks.update) runHook(ctx.hooks.update, env);
+          } catch (err: unknown) {
+            console.error(
+              `Hook failed for ${ctx.targetPath}: ${err instanceof Error ? err.message : String(err)}`,
+            );
+            process.exit(2);
+          }
         }
       } catch (err: unknown) {
         console.error(

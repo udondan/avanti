@@ -107,14 +107,19 @@ describe('runHook', () => {
   });
 
   it('receives AVANTI_TARGET env var', () => {
-    if (!isWindows) {
-      const dir = mkdtempSync(join(tmpdir(), 'avanti-hook-'));
-      const out = join(dir, 'out.txt');
+    const dir = mkdtempSync(join(tmpdir(), 'avanti-hook-'));
+    const out = join(dir, 'out.txt');
+    if (isWindows) {
+      // Windows prelude maps $AVANTI_TARGET = $env:AVANTI_TARGET; so PS syntax works
+      runHook(`[System.IO.File]::WriteAllText('${out}', $AVANTI_TARGET)`, {
+        AVANTI_TARGET: '/some/path',
+      });
+    } else {
       runHook(`printf '%s' "$AVANTI_TARGET" > ${out}`, {
         AVANTI_TARGET: '/some/path',
       });
-      expect(readFileSync(out, 'utf8')).toBe('/some/path');
     }
+    expect(readFileSync(out, 'utf8')).toBe('/some/path');
   });
 });
 

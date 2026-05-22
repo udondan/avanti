@@ -1004,6 +1004,8 @@ Side-effect hooks (`before*`, `create`, `update`) receive two environment variab
 | `AVANTI_TARGET` | Absolute path of the target file                            |
 | `AVANTI_IS_NEW` | `"true"` if the file is being created; `"false"` if updated |
 
+On Unix, access them as `$AVANTI_TARGET` / `$AVANTI_IS_NEW`. On Windows (PowerShell), avanti automatically injects a prelude that maps these to local variables, so `$AVANTI_TARGET` works identically — you do not need to write `$env:AVANTI_TARGET`.
+
 Only hooks for files with **actual changes** are fired (`create`/`update`/`before*` are silent no-ops when content and mode are unchanged).
 
 ```yaml
@@ -1328,7 +1330,7 @@ files:
         to: $email # resolved to "you@example.com"
 ```
 
-Variables are resolved in every string field: target keys, `ref`, `exec` commands, HTTP URLs, local paths, `raw` content, `filter` patterns, `replace` rules (`from` and `to`), and `on:` hook scripts.
+Variables are resolved in every string field: target keys, `ref`, `exec` commands, HTTP URLs, local paths, `raw` content, `filter` patterns, `replace` rules (`from` and `to`), and `on.write` scripts. Side-effect hooks (`on.beforeWrite`, `on.beforeCreate`, `on.beforeUpdate`, `on.create`, `on.update`) are passed to the shell verbatim — use `$AVANTI_TARGET` / `$AVANTI_IS_NEW` env vars instead of `$varname` substitutions.
 
 For `raw:` sources, variables are resolved in the content itself. For all other source types (`http`, `local`, `github`, `gitlab`, `exec`), variables are only resolved in the fields that locate the source (URL, path, command) — not in the fetched content. Use a `replace:` rule if you need to substitute values in fetched content.
 
@@ -1528,7 +1530,7 @@ When the config is specified as a remote spec (e.g. `--config github:org/repo:.a
 
 In addition to `$self` and `$latest`, avanti injects several variables automatically at the start of every run. These names are reserved and cannot be used in `variables:`.
 
-**Per-file path variables**, **pull-time variables**, and **system variables** are all available everywhere variables are resolved: source URLs, `ref:`, conditions, `replace:`, `on:` hooks, template rendering, and `backup:` patterns.
+**Per-file path variables**, **pull-time variables**, and **system variables** are all available everywhere variables are resolved: source URLs, `ref:`, conditions, `replace:`, `on.write` scripts, template rendering, and `backup:` patterns. Side-effect hooks (`on.beforeWrite`, `on.beforeCreate`, `on.beforeUpdate`, `on.create`, `on.update`) do not resolve avanti variables — use `$AVANTI_TARGET` and `$AVANTI_IS_NEW` env vars instead.
 
 **Per-file path variables** — avanti derives the following variables from each file entry's resolved target path.
 
@@ -1543,7 +1545,7 @@ Example with working directory `/home/user/project` and map key `configs/app.yam
 | `$dirname`  | `/home/user/project/configs`          |
 | `$basedir`  | `configs`                             |
 
-> **Availability in source URLs and conditions:** per-file path variables are only resolved before the fetch when the map key is a fixed (non-directory) path. They are always available in processors (`replace:`, `on:` hooks, template rendering) and `backup:`.
+> **Availability in source URLs and conditions:** per-file path variables are only resolved before the fetch when the map key is a fixed (non-directory) path. They are always available in processors (`replace:`, `on.write` scripts, template rendering) and `backup:`. Side-effect hooks (`on.create`, `on.update`, etc.) do not resolve avanti variables.
 
 ```yaml
 variables:
@@ -1565,14 +1567,14 @@ files:
     if:
       exists: $path
 
-  # $dirname in a hook — log which directory was updated
+  # $dirname in on.write — transform content using the file's directory name
   app/config.yaml:
     src: github:org/repo/app/config.yaml
     on:
-      update: echo updated $dirname >> pull.log
+      write: sed "s|__DIR__|$dirname|g"
 ```
 
-**Pull-time variables** — injected once at the start of every run and available everywhere (source URLs, conditions, `replace:`, `on:` hooks, template rendering, `backup:`):
+**Pull-time variables** — injected once at the start of every run and available everywhere (source URLs, conditions, `replace:`, `on.write` scripts, template rendering, `backup:`):
 
 | Variable    | Value                                   | Example               |
 | ----------- | --------------------------------------- | --------------------- |

@@ -621,9 +621,42 @@ describe('Integration', () => {
   });
 
   describe('on: lifecycle hooks', () => {
-    if (isWindows) return;
+    it.skipIf(!isWindows)(
+      'fires on.create only for new files (Windows)',
+      () => {
+        const sourceFile = join(tmpDir, 'source.txt');
+        writeFileSync(sourceFile, 'hello');
+        const marker = join(tmpDir, 'marker.txt');
+        const outPath = join(tmpDir, 'output.txt');
 
-    it('fires on.create only for new files', () => {
+        const config = writeConfig(
+          tmpDir,
+          `files:
+  ./output.txt:
+    src: ${sourceFile}
+    on:
+      create: "[System.IO.File]::WriteAllText('${marker}', 'created:' + $AVANTI_TARGET)"
+      update: "[System.IO.File]::WriteAllText('${marker}', 'updated:' + $AVANTI_TARGET)"
+`,
+        );
+
+        const { exitCode: e1 } = runAvanti(config, tmpDir);
+        expect(e1).toBe(0);
+        expect(readFileSync(marker, 'utf8')).toBe(`created:${outPath}`);
+
+        unlinkSync(marker);
+        const { exitCode: e2 } = runAvanti(config, tmpDir);
+        expect(e2).toBe(0);
+        expect(existsSync(marker)).toBe(false);
+
+        writeFileSync(sourceFile, 'hello updated');
+        const { exitCode: e3 } = runAvanti(config, tmpDir);
+        expect(e3).toBe(0);
+        expect(readFileSync(marker, 'utf8')).toBe(`updated:${outPath}`);
+      },
+    );
+
+    it.skipIf(isWindows)('fires on.create only for new files', () => {
       const sourceFile = join(tmpDir, 'source.txt');
       writeFileSync(sourceFile, 'hello');
       const marker = join(tmpDir, 'marker.txt');
@@ -661,7 +694,7 @@ describe('Integration', () => {
       );
     });
 
-    it('fires on.beforeCreate before writing', () => {
+    it.skipIf(isWindows)('fires on.beforeCreate before writing', () => {
       const sourceFile = join(tmpDir, 'source2.txt');
       writeFileSync(sourceFile, 'data');
       const marker = join(tmpDir, 'before_marker.txt');
@@ -682,7 +715,7 @@ describe('Integration', () => {
       expect(existsSync(join(tmpDir, 'output2.txt'))).toBe(true);
     });
 
-    it('passes AVANTI_IS_NEW env var correctly', () => {
+    it.skipIf(isWindows)('passes AVANTI_IS_NEW env var correctly', () => {
       const sourceFile = join(tmpDir, 'source3.txt');
       writeFileSync(sourceFile, 'data');
       const marker = join(tmpDir, 'isnew_marker.txt');
