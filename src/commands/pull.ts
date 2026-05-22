@@ -187,7 +187,12 @@ async function runFetchLoop(
         )
       ) {
         try {
-          skippedPaths.add(resolveTargetPath(entry, '', workingDir, vars));
+          const symlinkPath = resolveTargetPath(entry, '', workingDir, vars);
+          skippedPaths.add(symlinkPath);
+          // Also skip the resolved real path so stale cleanup doesn't treat
+          // the symlink target as unmanaged when followSymlink is in use.
+          const realPath = resolveFollowSymlink(symlinkPath, entry, workingDir);
+          if (realPath !== symlinkPath) skippedPaths.add(realPath);
         } catch {
           console.warn(
             `Warning: skipped entry has an unresolvable target path — stale cleanup disabled for this run.`,
@@ -207,7 +212,10 @@ async function runFetchLoop(
 
       if (result.allSkipped && !isSelf) {
         try {
-          skippedPaths.add(resolveTargetPath(entry, '', workingDir, vars));
+          const symlinkPath = resolveTargetPath(entry, '', workingDir, vars);
+          skippedPaths.add(symlinkPath);
+          const realPath = resolveFollowSymlink(symlinkPath, entry, workingDir);
+          if (realPath !== symlinkPath) skippedPaths.add(realPath);
         } catch {
           console.warn(
             `Warning: skipped entry has an unresolvable target path — stale cleanup disabled for this run.`,
@@ -281,6 +289,13 @@ async function runFetchLoop(
               fs.existsSync(targetPath!)
             ) {
               skippedPaths.add(targetPath!); // keep stale detection from treating this as missing
+              // Also skip the resolved real path when followSymlink is in use.
+              const realForSkip = resolveFollowSymlink(
+                targetPath!,
+                entry,
+                workingDir,
+              );
+              if (realForSkip !== targetPath!) skippedPaths.add(realForSkip);
               continue; // source and processed output unchanged — skip write entirely (no-op)
             }
             const processedText = text;

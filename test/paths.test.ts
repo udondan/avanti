@@ -129,6 +129,45 @@ describe('resolveFollowSymlink', () => {
       resolveFollowSymlink(link, { followSymlink: true }, tmpDir),
     ).toThrow(/resolves to a directory/);
   });
+
+  it.skipIf(isWindows)(
+    'throws when symlink-to-directory is reached through a symlink chain',
+    () => {
+      // link.txt -> intermediate -> subdir (directory)
+      // Verifies that the directory check happens after full canonicalization.
+      const subdir = path.join(tmpDir, 'subdir');
+      fs.mkdirSync(subdir);
+      const intermediate = path.join(tmpDir, 'intermediate');
+      fs.symlinkSync(subdir, intermediate);
+      const link = path.join(tmpDir, 'link.txt');
+      fs.symlinkSync(intermediate, link);
+      expect(() =>
+        resolveFollowSymlink(link, { followSymlink: true }, tmpDir),
+      ).toThrow(/resolves to a directory/);
+    },
+  );
+
+  it.skipIf(isWindows)(
+    'throws when a dangling symlink escapes via an intermediate symlinked directory',
+    () => {
+      const outsideDir = fs.mkdtempSync(
+        path.join(os.tmpdir(), 'avanti-outside-'),
+      );
+      try {
+        // workingDir/out -> outsideDir (symlink to a directory outside working dir)
+        const outLink = path.join(tmpDir, 'out');
+        fs.symlinkSync(outsideDir, outLink);
+        // link.txt -> workingDir/out/secret.txt (dangling, but out/ escapes)
+        const link = path.join(tmpDir, 'link.txt');
+        fs.symlinkSync(path.join(tmpDir, 'out', 'secret.txt'), link);
+        expect(() =>
+          resolveFollowSymlink(link, { followSymlink: true }, tmpDir),
+        ).toThrow(/escapes working directory/);
+      } finally {
+        fs.rmSync(outsideDir, { recursive: true, force: true });
+      }
+    },
+  );
 });
 
 describe('expandBraces', () => {

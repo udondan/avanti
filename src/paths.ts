@@ -165,21 +165,39 @@ export function resolveFollowSymlink(
   // any component of the resolved path is missing.
   const linkTarget = fs.readlinkSync(targetPath);
   let resolved = path.resolve(path.dirname(targetPath), linkTarget);
-  // If the target already exists, fully canonicalize to resolve any remaining
-  // symlink chains and platform aliases (e.g. macOS /var → /private/var).
-  const resolvedStat = fs.lstatSync(resolved, { throwIfNoEntry: false });
-  if (resolvedStat?.isDirectory()) {
-    throw new Error(
-      `followSymlink: "${targetPath}" resolves to a directory; refusing to write`,
-    );
-  }
-  if (resolvedStat) {
-    resolved = fs.realpathSync(resolved);
-  }
   // Normalize workingDir to its canonical path so the prefix check is stable
   // on platforms where the working directory is itself reached via a symlink
   // (e.g. macOS /var/folders → /private/var/folders).
   const realWorkingDir = fs.realpathSync(workingDir);
+  const resolvedStat = fs.lstatSync(resolved, { throwIfNoEntry: false });
+  if (resolvedStat) {
+    // Target exists — fully canonicalize to resolve any remaining symlink
+    // chains and platform aliases, then check for directories. The directory
+    // check must happen after realpathSync so that a symlink-to-directory is
+    // caught (lstatSync before canonicalization only shows isSymbolicLink()).
+    resolved = fs.realpathSync(resolved);
+    if (fs.lstatSync(resolved).isDirectory()) {
+      throw new Error(
+        `followSymlink: "${targetPath}" resolves to a directory; refusing to write`,
+      );
+    }
+  } else {
+    // Dangling symlink — target doesn't exist yet. Canonicalize the deepest
+    // existing ancestor directory to catch intermediate symlinked dirs that
+    // could redirect writes outside the working directory even when the raw
+    // string path appears inside it (e.g. workingDir/out -> /etc).
+    let dir = path.dirname(resolved);
+    for (;;) {
+      if (fs.lstatSync(dir, { throwIfNoEntry: false })) {
+        const realDir = fs.realpathSync(dir);
+        assertWithinWorkingDir(realDir, realWorkingDir);
+        break;
+      }
+      const parent = path.dirname(dir);
+      if (parent === dir) break; // reached filesystem root without finding an existing dir
+      dir = parent;
+    }
+  }
   assertWithinWorkingDir(resolved, realWorkingDir);
   return resolved;
 }
