@@ -46,8 +46,11 @@ export function sudoDelete(p: string, sudo: boolean | string): void {
   const r = spawnSync('sudo', [...sudoUserArgs(sudo), 'rm', '-f', '--', p], {
     stdio: 'inherit',
   });
-  if (r.status !== 0) {
-    console.warn(`Warning: could not delete ${p}`);
+  if (r.status !== 0 || r.error) {
+    const detail = r.error
+      ? r.error.message
+      : `exit code ${r.status ?? 'unknown'}`;
+    console.warn(`Warning: could not delete ${p}: ${detail}`);
   }
 }
 
@@ -199,6 +202,37 @@ function sudoWriteInPlace(t: WriteTarget): void {
         sudoRun(sudo, ['cp', '--', t.targetPath, backupTmp]);
         sudoRun(sudo, ['mv', '--', backupTmp, t.backupPath]);
         backupTmp = undefined;
+      }
+    }
+
+    // Refuse symlinks (sudo tee would follow them to an unintended target)
+    // and refuse non-regular files (FIFOs, devices, sockets), mirroring the
+    // non-sudo writeInPlace path.
+    const symlinkCheck = spawnSync(
+      'sudo',
+      [...sudoUserArgs(sudo), 'test', '-L', '--', t.targetPath],
+      { stdio: 'ignore' },
+    );
+    if (symlinkCheck.status === 0) {
+      throw new Error(
+        `writeInPlace: ${t.targetPath} is a symlink; refusing to follow`,
+      );
+    }
+    const existsCheck = spawnSync(
+      'sudo',
+      [...sudoUserArgs(sudo), 'test', '-e', '--', t.targetPath],
+      { stdio: 'ignore' },
+    );
+    if (existsCheck.status === 0) {
+      const regularCheck = spawnSync(
+        'sudo',
+        [...sudoUserArgs(sudo), 'test', '-f', '--', t.targetPath],
+        { stdio: 'ignore' },
+      );
+      if (regularCheck.status !== 0) {
+        throw new Error(
+          `writeInPlace: ${t.targetPath} is not a regular file; refusing to write`,
+        );
       }
     }
 

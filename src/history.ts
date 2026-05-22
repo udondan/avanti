@@ -158,8 +158,6 @@ export class HistoryManager {
       };
     }
 
-    meta.sudo = sudo || undefined;
-
     const nextVersion = meta.currentVersion + 1;
     fs.writeFileSync(path.join(fileDir, `v${nextVersion}`), newContent);
 

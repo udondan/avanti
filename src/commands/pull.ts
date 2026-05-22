@@ -833,7 +833,8 @@ export function pullCommand(): Command {
           (_, i) => allDiffs[i].hasChanges && allDiffs[i].contentChanged,
         );
 
-        // Authenticate once per distinct sudo identity before any writes.
+        // Authenticate once per distinct sudo identity before any writes,
+        // including mode-only chmod targets (excluded from changedTargets).
         const allWriteTargets = [...changedTargets, ...staleToRestore];
         const sudoValues = new Set<boolean | string>(
           allWriteTargets.map((t) => t.sudo).filter(Boolean) as (
@@ -843,6 +844,15 @@ export function pullCommand(): Command {
         );
         for (const sv of staleDeleteSudo.values()) {
           sudoValues.add(sv);
+        }
+        for (let i = 0; i < writeTargets.length; i++) {
+          if (
+            allDiffs[i].modeChange &&
+            !allDiffs[i].contentChanged &&
+            writeTargets[i].sudo
+          ) {
+            sudoValues.add(writeTargets[i].sudo!);
+          }
         }
         for (const sv of sudoValues) {
           sudoAuth(sv);
