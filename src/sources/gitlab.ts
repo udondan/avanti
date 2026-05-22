@@ -122,9 +122,10 @@ async function findGitLabTagMatchingPatternApi(
   host?: string,
   sortBy: 'updated' | 'version' = 'updated',
 ): Promise<string | null> {
+  const perPage = 100;
   for (let page = 1; ; page++) {
     const res = await fetchWithRetry(
-      `https://${getHost(host)}/api/v4/projects/${encodeURIComponent(project)}/repository/tags?order_by=${sortBy}&sort=desc&per_page=100&page=${page}`,
+      `https://${getHost(host)}/api/v4/projects/${encodeURIComponent(project)}/repository/tags?order_by=${sortBy}&sort=desc&per_page=${perPage}&page=${page}`,
       { headers: apiHeaders() },
     );
     if (!res.ok)
@@ -133,9 +134,9 @@ async function findGitLabTagMatchingPatternApi(
         `Failed to list tags for ${project}: HTTP ${res.status}`,
       );
     const tags = (await res.json()) as Array<{ name: string }>;
-    if (!tags.length) break;
     const found = tags.find((t) => pattern.test(t.name));
     if (found) return found.name;
+    if (tags.length < perPage) break;
   }
   return null;
 }
@@ -689,8 +690,6 @@ async function resolveReleaseTag(
       const found = releases.find((r) => pattern!.test(r.tag_name));
       if (found) return found.tag_name;
     }
-    if (withCliFallback && isGlabAvailable())
-      return resolveReleaseTagViaCli(project, release, host);
     throw new Error(`No releases matching "${release}" found for ${project}`);
   }
 

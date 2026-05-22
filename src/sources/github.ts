@@ -295,9 +295,10 @@ async function findTagMatchingPatternApi(
   pattern: RegExp,
   host?: string,
 ): Promise<string | null> {
+  const perPage = 100;
   for (let page = 1; ; page++) {
     const res = await fetchWithRetry(
-      `${getApiBase(host)}/repos/${repo}/tags?per_page=100&page=${page}`,
+      `${getApiBase(host)}/repos/${repo}/tags?per_page=${perPage}&page=${page}`,
       { headers: apiHeaders() },
     );
     if (!res.ok)
@@ -306,9 +307,9 @@ async function findTagMatchingPatternApi(
         `Failed to list tags for ${repo}: HTTP ${res.status}`,
       );
     const tags = (await res.json()) as Array<{ name: string }>;
-    if (!tags.length) break;
     const found = tags.find((t) => pattern.test(t.name));
     if (found) return found.name;
+    if (tags.length < perPage) break;
   }
   return null;
 }
@@ -532,9 +533,7 @@ function resolveRefViaCli(repo: string, ref: string, host?: string): string {
       `Failed to list tags for ${repo}: ${tagRes.stderr.trim() || 'gh exited with status ' + tagRes.status}`,
     );
   if (!tagRes.stdout.trim())
-    throw new Error(
-      `No releases or tags found for ${repo} (needed to resolve $recent)`,
-    );
+    throw new Error(`No tags found for ${repo} (needed to resolve $recent)`);
   return tagRes.stdout.trim();
 }
 
