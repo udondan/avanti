@@ -209,7 +209,11 @@ function applyJsonInsert(
         // Order-preservation only works under last_wins; with first_wins the
         // stale key would persist, and with abort mergeJson would throw on
         // the un-removed key.
-        const effectiveConflicts = opts['conflicts'] ?? 'last_wins';
+        const rawConflicts = opts['conflicts'];
+        const effectiveConflicts =
+          rawConflicts === 'abort' || rawConflicts === 'first_wins'
+            ? rawConflicts
+            : 'last_wins';
         let newContrib: Record<string, unknown> | null = null;
         if (effectiveConflicts === 'last_wins') {
           try {

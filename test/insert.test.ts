@@ -266,6 +266,8 @@ describe('JSON — property order preservation', () => {
     );
     // first_wins: 'a' is removed then re-merged; new value wins (no conflict)
     expect(JSON.parse(result)).toEqual({ b: 2, a: 100 });
+    // 'a' must appear after 'b' — no order preservation under first_wins
+    expect(Object.keys(JSON.parse(result) as object)).toEqual(['b', 'a']);
   });
 
   it('does not throw with conflicts: abort when updated key is removed before merge', () => {
@@ -281,6 +283,24 @@ describe('JSON — property order preservation', () => {
         targetPath,
       ),
     ).not.toThrow();
+  });
+
+  it('falls back to remove-then-merge when processedText is unparseable JSON', () => {
+    const targetPath = path.join(tmpDir, 'file.json');
+    // 'a' is first; old contribution was { a: 99 }
+    fs.writeFileSync(targetPath, '{\n  "a": 99,\n  "b": 2\n}\n');
+    // processedText is invalid JSON → parseJson throws inside the newContrib try/catch
+    // → newContrib stays null → old remove-then-merge behaviour applies
+    // → 'a' is removed from existingParsed before mergeJson runs
+    // mergeJson itself will throw on the invalid processedText, which is expected
+    expect(() =>
+      applyInsertMode(
+        makeEntry({ json: true }),
+        'not { valid json',
+        JSON.stringify({ a: 99 }),
+        targetPath,
+      ),
+    ).toThrow();
   });
 });
 
