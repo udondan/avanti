@@ -5,7 +5,17 @@ type CompiledPattern =
 
 function compilePattern(pattern: string): CompiledPattern {
   if (pattern.length > 2 && pattern.startsWith('/') && pattern.endsWith('/')) {
-    return { kind: 'regex', re: new RegExp(pattern.slice(1, -1)) };
+    const source = pattern.slice(1, -1);
+    try {
+      return { kind: 'regex', re: new RegExp(source) };
+    } catch (err) {
+      throw new Error(
+        `filter pattern ${JSON.stringify(pattern)}: invalid regex`,
+        {
+          cause: err,
+        },
+      );
+    }
   }
   if (pattern.includes('{')) {
     return { kind: 'brace', expanded: new Set(expandBraces(pattern)) };
