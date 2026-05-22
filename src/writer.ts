@@ -142,16 +142,17 @@ function sudoWriteMv(t: SudoWriteTarget): void {
     }
 
     if (t.backupPath) {
+      const resolvedTarget = path.resolve(t.targetPath);
       const isSymlink = spawnSync(
         'sudo',
-        [...sudoUserArgs(sudo), 'test', '-L', '--', t.targetPath],
+        [...sudoUserArgs(sudo), 'test', '-L', resolvedTarget],
         { stdio: 'ignore' },
       );
       const isFile =
         isSymlink.status !== 0 &&
         spawnSync(
           'sudo',
-          [...sudoUserArgs(sudo), 'test', '-f', '--', t.targetPath],
+          [...sudoUserArgs(sudo), 'test', '-f', resolvedTarget],
           { stdio: 'ignore' },
         ).status === 0;
       if (isFile) {
@@ -165,7 +166,7 @@ function sudoWriteMv(t: SudoWriteTarget): void {
             crypto.randomBytes(8).toString('hex') +
             '.avanti-tmp',
         );
-        sudoRun(sudo, ['cp', '--', t.targetPath, backupTmp]);
+        sudoRun(sudo, ['cp', '--', resolvedTarget, backupTmp]);
         sudoRun(sudo, ['mv', '--', backupTmp, t.backupPath]);
         backupTmp = undefined; // renamed into place — no cleanup needed
       }
@@ -215,17 +216,19 @@ function sudoWriteInPlace(t: SudoWriteTarget): void {
   let backupTmp: string | undefined;
 
   try {
+    const resolvedTarget = path.resolve(t.targetPath);
+
     if (t.backupPath) {
       const isSymlink = spawnSync(
         'sudo',
-        [...sudoUserArgs(sudo), 'test', '-L', '--', t.targetPath],
+        [...sudoUserArgs(sudo), 'test', '-L', resolvedTarget],
         { stdio: 'ignore' },
       );
       const isFile =
         isSymlink.status !== 0 &&
         spawnSync(
           'sudo',
-          [...sudoUserArgs(sudo), 'test', '-f', '--', t.targetPath],
+          [...sudoUserArgs(sudo), 'test', '-f', resolvedTarget],
           { stdio: 'ignore' },
         ).status === 0;
       if (isFile) {
@@ -239,7 +242,7 @@ function sudoWriteInPlace(t: SudoWriteTarget): void {
             crypto.randomBytes(8).toString('hex') +
             '.avanti-tmp',
         );
-        sudoRun(sudo, ['cp', '--', t.targetPath, backupTmp]);
+        sudoRun(sudo, ['cp', '--', resolvedTarget, backupTmp]);
         sudoRun(sudo, ['mv', '--', backupTmp, t.backupPath]);
         backupTmp = undefined;
       }
@@ -250,7 +253,7 @@ function sudoWriteInPlace(t: SudoWriteTarget): void {
     // non-sudo writeInPlace path.
     const symlinkCheck = spawnSync(
       'sudo',
-      [...sudoUserArgs(sudo), 'test', '-L', '--', t.targetPath],
+      [...sudoUserArgs(sudo), 'test', '-L', resolvedTarget],
       { stdio: 'ignore' },
     );
     if (symlinkCheck.status === 0) {
@@ -260,13 +263,13 @@ function sudoWriteInPlace(t: SudoWriteTarget): void {
     }
     const existsCheck = spawnSync(
       'sudo',
-      [...sudoUserArgs(sudo), 'test', '-e', '--', t.targetPath],
+      [...sudoUserArgs(sudo), 'test', '-e', resolvedTarget],
       { stdio: 'ignore' },
     );
     if (existsCheck.status === 0) {
       const regularCheck = spawnSync(
         'sudo',
-        [...sudoUserArgs(sudo), 'test', '-f', '--', t.targetPath],
+        [...sudoUserArgs(sudo), 'test', '-f', resolvedTarget],
         { stdio: 'ignore' },
       );
       if (regularCheck.status !== 0) {
