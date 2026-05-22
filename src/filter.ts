@@ -1,7 +1,8 @@
 type CompiledPattern =
   | { kind: 'exact'; value: string }
   | { kind: 'regex'; re: RegExp }
-  | { kind: 'brace'; expanded: Set<string> };
+  | { kind: 'brace'; expanded: Set<string> }
+  | { kind: 'prefix'; value: string };
 
 function compilePattern(pattern: string): CompiledPattern {
   if (pattern.length > 2 && pattern.startsWith('/') && pattern.endsWith('/')) {
@@ -17,6 +18,9 @@ function compilePattern(pattern: string): CompiledPattern {
       );
     }
   }
+  if (pattern.endsWith('/')) {
+    return { kind: 'prefix', value: pattern };
+  }
   if (pattern.includes('{')) {
     return { kind: 'brace', expanded: new Set(expandBraces(pattern)) };
   }
@@ -26,6 +30,7 @@ function compilePattern(pattern: string): CompiledPattern {
 function matchesCompiled(key: string, compiled: CompiledPattern): boolean {
   if (compiled.kind === 'regex') return compiled.re.test(key);
   if (compiled.kind === 'brace') return compiled.expanded.has(key);
+  if (compiled.kind === 'prefix') return key.startsWith(compiled.value);
   return compiled.value === key;
 }
 

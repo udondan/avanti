@@ -30,6 +30,7 @@ import { mergeYaml, formatYaml } from '../processors/yaml';
 import { mergeToml, formatToml } from '../processors/toml';
 import { isBinary } from '../binary';
 import { applyFilter } from '../filter';
+import { extractArchive, detectArchiveFormat } from '../extract';
 
 const JSON_EXTENSIONS = new Set(['.json', '.jsonc']);
 const YAML_EXTENSIONS = new Set(['.yaml', '.yml']);
@@ -803,7 +804,28 @@ export async function fetchSource(
     pendingWrites,
   );
   if (skipped) return { files: new Map(), sourceRecords: [], allSkipped: true };
-  const singleResult = { files: singleFiles };
+
+  let resolvedFiles = singleFiles;
+  if (entry.extract !== undefined) {
+    if (singleFiles.size !== 1) {
+      throw new Error(
+        `"extract" requires a single-file source, but source returned ${singleFiles.size} file(s)`,
+      );
+    }
+    const [[archiveFilename, archiveBuffer]] = [...singleFiles.entries()];
+    if (detectArchiveFormat(archiveFilename) === null) {
+      throw new Error(
+        `"extract" was specified but "${archiveFilename}" is not a recognised archive format`,
+      );
+    }
+    const extracted = await extractArchive(archiveBuffer, archiveFilename);
+    resolvedFiles =
+      entry.extract === true
+        ? extracted
+        : applyFilter(extracted, entry.extract);
+  }
+
+  const singleResult = { files: resolvedFiles };
   const sourceRecords: SourceFetchRecord[] =
     singleRecord !== null ? [singleRecord] : [];
 
