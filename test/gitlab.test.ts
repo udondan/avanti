@@ -271,6 +271,62 @@ describe('fetchGitLab — network-error fallback to glab', () => {
     ).rejects.toThrow('fetch failed');
   });
 
+  it('resolves $recent to the most recently updated tag via API', async () => {
+    vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify([{ name: 'nightly' }]), { status: 200 }),
+      )
+      .mockResolvedValueOnce(new Response('{}', { status: 200 }))
+      .mockResolvedValueOnce(
+        new Response(Buffer.from('nightly content'), { status: 200 }),
+      );
+
+    const result = await fetchGitLab('group/project', 'file.txt', '$recent');
+    expect(result.files.get('file.txt')?.toString('utf8')).toBe(
+      'nightly content',
+    );
+  });
+
+  it('throws when $recent finds no tags', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response(JSON.stringify([]), { status: 200 }),
+    );
+
+    await expect(
+      fetchGitLab('group/project', 'file.txt', '$recent'),
+    ).rejects.toThrow('No tags found');
+  });
+
+  it('resolves /pattern/ to the first matching tag via API', async () => {
+    vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify([{ name: 'v2.0.0' }, { name: 'v1.9.0' }]), {
+          status: 200,
+        }),
+      )
+      .mockResolvedValueOnce(new Response('{}', { status: 200 }))
+      .mockResolvedValueOnce(
+        new Response(Buffer.from('v1 content'), { status: 200 }),
+      );
+
+    const result = await fetchGitLab('group/project', 'file.txt', '/^v1\\./');
+    expect(result.files.get('file.txt')?.toString('utf8')).toBe('v1 content');
+  });
+
+  it('throws when /pattern/ matches no tags', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(() =>
+      Promise.resolve(
+        new Response(JSON.stringify([{ name: 'v2.0.0' }]), { status: 200 }),
+      ),
+    );
+    // glab unavailable so the CLI fallback is not attempted
+    mockSpawnSync.mockReturnValue(makeGlabUnavailable());
+
+    await expect(
+      fetchGitLab('group/project', 'file.txt', '/^v99\\./'),
+    ).rejects.toThrow('No tags matching "/^v99\\./" found for group/project');
+  });
+
   it('falls back to glab for $latest ref resolution', async () => {
     vi.spyOn(globalThis, 'fetch').mockRejectedValue(
       new TypeError('fetch failed'),

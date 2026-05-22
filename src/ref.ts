@@ -7,7 +7,7 @@ function parseSemver(tag: string): [number, number, number] {
   return [parseInt(m[1], 10), parseInt(m[2], 10), parseInt(m[3], 10)];
 }
 
-/** Return the tag with the highest semver among the given list, or null if empty. */
+/** Return the tag with the highest semver among the given list, or null if the list is empty or contains no semver tags. */
 export function maxSemverTag(tags: string[]): string | null {
   const valid = tags.filter((t) => SEMVER_PATTERN.test(t));
   if (!valid.length) return null;

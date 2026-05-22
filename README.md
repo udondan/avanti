@@ -1367,7 +1367,7 @@ variables:
   registry_line: //$host/:_authToken=$token # both $host and $token are available
 ```
 
-The `ref` (and `release`) field accepts three forms:
+The `ref` (and `release`) field accepts four forms:
 
 - **Literal** — a branch name, tag, or commit hash passed directly to the VCS (e.g. `main`, `v1.2.3`, `abc123`).
 - **`$latest`** — resolves to the newest **stable semver tag** (`vX.Y.Z` or `X.Y.Z`, no pre-release suffix), consistently across all providers. For GitLab and GitHub it first checks the published "latest release"; for all providers it falls back to scanning tags filtered by the semver pattern.

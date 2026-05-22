@@ -483,7 +483,9 @@ async function resolveRef(
   if (tagRes.ok) {
     const tags = (await tagRes.json()) as Array<{ name: string }>;
     if (tags.length) return tags[0].name;
-    throw new Error(`No releases or tags found for ${repo}`);
+    throw new Error(
+      `No releases or tags found for ${repo} (needed to resolve $recent)`,
+    );
   }
   if (shouldFallback(tagRes.status) && withCliFallback && isGhAvailable()) {
     return resolveRefViaCli(repo, ref!, host);
@@ -541,7 +543,9 @@ function resolveRefViaCli(repo: string, ref: string, host?: string): string {
       `Failed to list tags for ${repo}: ${tagRes.stderr.trim() || 'gh exited with status ' + tagRes.status}`,
     );
   if (!tagRes.stdout.trim())
-    throw new Error(`No releases or tags found for ${repo}`);
+    throw new Error(
+      `No releases or tags found for ${repo} (needed to resolve $recent)`,
+    );
   return tagRes.stdout.trim();
 }
 

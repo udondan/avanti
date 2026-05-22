@@ -368,5 +368,65 @@ describe('fetchGitHubRelease', () => {
     );
   });
 
+  it('resolves $recent before fetching release assets', async () => {
+    vi.spyOn(globalThis, 'fetch')
+      // resolveRef: releases/latest → non-semver "nightly" tag; $recent accepts any tag format
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ tag_name: 'nightly' }), { status: 200 }),
+      )
+      // fetchGitHubRelease: GET /releases/tags/nightly → assets
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ assets: [{ id: 5, name: 'nightly.tar.gz' }] }),
+          { status: 200 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(Buffer.from('nightly build'), { status: 200 }),
+      );
+
+    const result = await fetchGitHubRelease('owner/repo', '$recent');
+    expect(result.files.get('nightly.tar.gz')?.toString()).toBe(
+      'nightly build',
+    );
+  });
+
+  it('resolves /pattern/ before fetching release assets', async () => {
+    vi.spyOn(globalThis, 'fetch')
+      // pattern branch: paginate tags → [{name:'v2.0.0'},{name:'v1.9.0'}], picks v1.9.0
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify([{ name: 'v2.0.0' }, { name: 'v1.9.0' }]), {
+          status: 200,
+        }),
+      )
+      // fetchGitHubRelease: GET /releases/tags/v1.9.0 → assets
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ assets: [{ id: 9, name: 'v1.9.0.tar.gz' }] }),
+          { status: 200 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(Buffer.from('v1 content'), { status: 200 }),
+      );
+
+    const result = await fetchGitHubRelease('owner/repo', '/^v1\\./');
+    expect(result.files.get('v1.9.0.tar.gz')?.toString()).toBe('v1 content');
+  });
+
+  it('throws when /pattern/ matches no tags for release', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(() =>
+      Promise.resolve(
+        new Response(JSON.stringify([{ name: 'v2.0.0' }]), { status: 200 }),
+      ),
+    );
+    // gh unavailable so the CLI fallback is not attempted
+    mockSpawnSync.mockReturnValue(makeGhUnavailable());
+
+    await expect(fetchGitHubRelease('owner/repo', '/^v99\\./')).rejects.toThrow(
+      'No tags matching "/^v99\\./" found for owner/repo',
+    );
+  });
+
   // CLI fallback tests live in test/github-release-cli.test.ts (need vi.mock('fs'))
 });
