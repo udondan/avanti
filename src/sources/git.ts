@@ -103,10 +103,14 @@ function resolveGitRef(repo: string, ref: string): string {
   if (!wantSemver && !wantRecent && !pattern) return ref;
 
   verbose(`git: listing remote tags for ${redactGitUrl(repo)}`);
+  // $latest: sort by version (semver-aware); $recent/pattern: sort by creation date
+  const sortArg = wantSemver
+    ? '--sort=-version:refname'
+    : '--sort=-creatordate';
   const result = run('git', [
     'ls-remote',
     '--tags',
-    '--sort=-version:refname',
+    sortArg,
     repo,
     'refs/tags/*^{}',
   ]);

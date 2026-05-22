@@ -47,7 +47,10 @@ async function findBitbucketTagMatchingPattern(
   let pages = 0;
   while (url && pages < 5) {
     const res = await fetchWithRetry(url, { headers: apiHeaders() });
-    if (!res.ok) return null;
+    if (!res.ok)
+      throw new Error(
+        `Failed to list tags for ${workspace}/${repo}: HTTP ${res.status}`,
+      );
     const data = (await res.json()) as {
       values: Array<{ name: string }>;
       next?: string;

@@ -279,14 +279,14 @@ describe('fetchGitLab — network-error fallback to glab', () => {
     // resolveRef catch: isGlabAvailable → glab --version
     // resolveRefViaCli: glab api …/tags → returns tag name
     // detectPathType catch: isGlabAvailable → glab --version
-    // detectPathTypeViaCli: glab api …/files/…?ref=v1.0 → status 0 = 'file'
+    // detectPathTypeViaCli: glab api …/files/…?ref=v1.0.0 → status 0 = 'file'
     // fetchFile catch: isGlabAvailable → glab --version
-    // fetchFileViaCli: glab api …/files/…/raw?ref=v1.0 → content
+    // fetchFileViaCli: glab api …/files/…/raw?ref=v1.0.0 → content
     mockSpawnSync
       .mockReturnValueOnce(makeGlabAvailable())
       .mockReturnValueOnce(
         makeSpawnResult({
-          stdout: JSON.stringify([{ name: 'v1.0' }]),
+          stdout: JSON.stringify([{ name: 'v1.0.0' }]),
           status: 0,
         }),
       )

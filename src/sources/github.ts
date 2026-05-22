@@ -274,7 +274,11 @@ async function findTagMatchingPatternApi(
       `${getApiBase(host)}/repos/${repo}/tags?per_page=100&page=${page}`,
       { headers: apiHeaders() },
     );
-    if (!res.ok) return null;
+    if (!res.ok)
+      throw new HttpError(
+        res.status,
+        `Failed to list tags for ${repo}: HTTP ${res.status}`,
+      );
     const tags = (await res.json()) as Array<{ name: string }>;
     if (!tags.length) break;
     const found = tags.find((t) => pattern.test(t.name));
@@ -340,6 +344,15 @@ async function resolveRef(
         verbose(`github: HTTP fetch failed, falling back to gh`);
         return resolveRefViaCli(repo, ref!, host);
       }
+      if (
+        e instanceof HttpError &&
+        shouldFallback(e.status) &&
+        withCliFallback &&
+        isGhAvailable()
+      ) {
+        verbose(`github: API returned ${e.status}, falling back to gh`);
+        return resolveRefViaCli(repo, ref!, host);
+      }
       throw e;
     }
     if (found !== null) return found;
@@ -387,6 +400,15 @@ async function resolveRef(
     } catch (e) {
       if (isNetworkError(e) && withCliFallback && isGhAvailable()) {
         verbose(`github: HTTP fetch failed, falling back to gh`);
+        return resolveRefViaCli(repo, ref!, host);
+      }
+      if (
+        e instanceof HttpError &&
+        shouldFallback(e.status) &&
+        withCliFallback &&
+        isGhAvailable()
+      ) {
+        verbose(`github: API returned ${e.status}, falling back to gh`);
         return resolveRefViaCli(repo, ref!, host);
       }
       throw e;

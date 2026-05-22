@@ -17,8 +17,10 @@ export function isRecentSentinel(ref: string | undefined): boolean {
 export function parseRefPattern(ref: string): RegExp | null {
   const m = /^\/(.+)\/([gimsuy]*)$/.exec(ref);
   if (!m) return null;
+  // Strip stateful flags (g=global, y=sticky) — callers use .test() in loops
+  const flags = m[2].replace(/[gy]/g, '') || undefined;
   try {
-    return new RegExp(m[1], m[2] || undefined);
+    return new RegExp(m[1], flags);
   } catch (e) {
     throw new Error(`Invalid ref pattern "${ref}": ${(e as Error).message}`, {
       cause: e,
