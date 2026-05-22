@@ -7,6 +7,7 @@ import {
   AwsS3Src,
   Condition,
   ExecSrc,
+  OnHooks,
   FileEntry,
   FileSrc,
   HttpSrc,
@@ -308,7 +309,42 @@ export function parseConfigContent(content: string): AvantiConfig {
       fileEntry.mode = e['mode'];
     }
     if (typeof e['backup'] === 'string') fileEntry.backup = e['backup'];
-    if (typeof e['post'] === 'string') fileEntry.post = e['post'];
+    if (e['post'] !== undefined) {
+      throw new Error(
+        `files["${target}"].post: removed — use on.write instead`,
+      );
+    }
+    if (e['on'] !== undefined) {
+      if (
+        typeof e['on'] !== 'object' ||
+        e['on'] === null ||
+        Array.isArray(e['on']) ||
+        (Object.getPrototypeOf(e['on']) !== Object.prototype &&
+          Object.getPrototypeOf(e['on']) !== null)
+      ) {
+        throw new Error(`files["${target}"].on: must be a mapping`);
+      }
+      const validKeys = new Set<keyof OnHooks>([
+        'write',
+        'beforeWrite',
+        'beforeCreate',
+        'beforeUpdate',
+        'create',
+        'update',
+      ]);
+      const onObj = e['on'] as Record<string, unknown>;
+      const onHooks: OnHooks = Object.create(null) as OnHooks;
+      for (const key of Object.keys(onObj)) {
+        if (!validKeys.has(key as keyof OnHooks)) {
+          throw new Error(`files["${target}"].on: unknown key "${key}"`);
+        }
+        if (typeof onObj[key] !== 'string') {
+          throw new Error(`files["${target}"].on.${key}: must be a string`);
+        }
+        onHooks[key as keyof OnHooks] = onObj[key];
+      }
+      fileEntry.on = onHooks;
+    }
     if (typeof e['writeInPlace'] === 'boolean')
       fileEntry.writeInPlace = e['writeInPlace'];
     if (typeof e['followSymlink'] === 'boolean')

@@ -1,8 +1,9 @@
-import { readFileSync } from 'fs';
+import { mkdtempSync, readFileSync, rmSync } from 'fs';
 import { join } from 'path';
+import { tmpdir } from 'os';
 import { describe, it, expect } from 'vitest';
 import { applyReplace } from '../src/processors/replace';
-import { applyPost } from '../src/processors/post';
+import { applyWriteHook, runHook } from '../src/processors/on';
 import { applyTemplate } from '../src/processors/template';
 import { isWindows } from '../src/shell';
 
@@ -45,30 +46,29 @@ describe('applyReplace', () => {
   });
 });
 
-describe('applyPost', () => {
+describe('applyWriteHook', () => {
   it('pipes content through shell script', () => {
     const script = isWindows
       ? '[Console]::Out.Write([Console]::In.ReadToEnd().ToUpper())'
       : 'tr a-z A-Z';
-    const result = applyPost('hello\n', script);
+    const result = applyWriteHook('hello\n', script);
     expect(result).toBe('HELLO\n');
   });
 
   it('throws on non-zero exit', () => {
-    expect(() => applyPost('x', 'exit 1')).toThrow(
-      'post script exited with code 1',
+    expect(() => applyWriteHook('x', 'exit 1')).toThrow(
+      'on.write script exited with code 1',
     );
   });
 
   it('resolves variables in the script', () => {
     if (isWindows) {
-      // Use a PS-compatible command that still exercises avanti variable substitution
-      const result = applyPost('', '[Console]::Out.Write($msg)', {
+      const result = applyWriteHook('', '[Console]::Out.Write($msg)', {
         msg: 'hello',
       });
       expect(result).toBe('hello');
     } else {
-      const result = applyPost('hello\n', 'tr $from $to', {
+      const result = applyWriteHook('hello\n', 'tr $from $to', {
         from: 'a-z',
         to: 'A-Z',
       });
@@ -77,24 +77,57 @@ describe('applyPost', () => {
   });
 
   it('throws on undefined variable in script', () => {
-    expect(() => applyPost('x', 'echo $missing', {})).toThrow(
+    expect(() => applyWriteHook('x', 'echo $missing', {})).toThrow(
       'Undefined variable: $missing',
     );
   });
 
   it('shell-quotes variable values to prevent metachar injection', () => {
     if (isWindows) {
-      // Without quoting, "; Write-Output injected" would run as a second command.
-      const result = applyPost('', '[Console]::Out.Write($val)', {
+      const result = applyWriteHook('', '[Console]::Out.Write($val)', {
         val: 'hello; Write-Output injected',
       });
       expect(result).toBe('hello; Write-Output injected');
     } else {
-      // Without quoting, "hello; echo injected" would run two commands.
-      const result = applyPost('', "printf '%s' $val", {
+      const result = applyWriteHook('', "printf '%s' $val", {
         val: 'hello; echo injected',
       });
       expect(result).toBe('hello; echo injected');
+    }
+  });
+});
+
+describe('runHook', () => {
+  it('runs side-effect script without content transform', () => {
+    expect(() => runHook(isWindows ? 'exit 0' : 'true')).not.toThrow();
+  });
+
+  it('throws on non-zero exit', () => {
+    expect(() => runHook('exit 1')).toThrow('hook script exited with code 1');
+  });
+
+  it('receives AVANTI_TARGET env var', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'avanti-hook-'));
+    try {
+      const out = join(dir, 'out.txt');
+      if (isWindows) {
+        // Windows prelude maps $AVANTI_TARGET = $env:AVANTI_TARGET; so PS syntax works
+        // Escape single quotes in path for PS single-quoted string literals.
+        const psSafeOut = out.replace(/'/g, "''");
+        runHook(
+          `[System.IO.File]::WriteAllText('${psSafeOut}', $AVANTI_TARGET)`,
+          {
+            AVANTI_TARGET: '/some/path',
+          },
+        );
+      } else {
+        runHook(`printf '%s' "$AVANTI_TARGET" > "${out}"`, {
+          AVANTI_TARGET: '/some/path',
+        });
+      }
+      expect(readFileSync(out, 'utf8')).toBe('/some/path');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
     }
   });
 });
