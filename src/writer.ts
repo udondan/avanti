@@ -111,12 +111,19 @@ function sudoWriteMv(t: WriteTarget): void {
     }
 
     if (t.backupPath) {
-      const exists = spawnSync(
+      const isSymlink = spawnSync(
         'sudo',
-        [...sudoUserArgs(sudo), 'test', '-f', '--', t.targetPath],
+        [...sudoUserArgs(sudo), 'test', '-L', '--', t.targetPath],
         { stdio: 'ignore' },
       );
-      if (exists.status === 0) {
+      const isFile =
+        isSymlink.status !== 0 &&
+        spawnSync(
+          'sudo',
+          [...sudoUserArgs(sudo), 'test', '-f', '--', t.targetPath],
+          { stdio: 'ignore' },
+        ).status === 0;
+      if (isFile) {
         const backupDir = path.dirname(t.backupPath);
         sudoRun(sudo, ['mkdir', '-p', '--', backupDir]);
         backupTmp = path.join(
@@ -166,12 +173,19 @@ function sudoWriteInPlace(t: WriteTarget): void {
 
   try {
     if (t.backupPath) {
-      const exists = spawnSync(
+      const isSymlink = spawnSync(
         'sudo',
-        [...sudoUserArgs(sudo), 'test', '-f', '--', t.targetPath],
+        [...sudoUserArgs(sudo), 'test', '-L', '--', t.targetPath],
         { stdio: 'ignore' },
       );
-      if (exists.status === 0) {
+      const isFile =
+        isSymlink.status !== 0 &&
+        spawnSync(
+          'sudo',
+          [...sudoUserArgs(sudo), 'test', '-f', '--', t.targetPath],
+          { stdio: 'ignore' },
+        ).status === 0;
+      if (isFile) {
         const backupDir = path.dirname(t.backupPath);
         sudoRun(sudo, ['mkdir', '-p', '--', backupDir]);
         backupTmp = path.join(
