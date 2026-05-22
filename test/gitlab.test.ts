@@ -314,11 +314,13 @@ describe('fetchGitLab — network-error fallback to glab', () => {
   });
 
   it('throws when /pattern/ matches no tags', async () => {
-    vi.spyOn(globalThis, 'fetch').mockImplementation(() =>
-      Promise.resolve(
+    vi.spyOn(globalThis, 'fetch')
+      // page 1: one non-matching tag
+      .mockResolvedValueOnce(
         new Response(JSON.stringify([{ name: 'v2.0.0' }]), { status: 200 }),
-      ),
-    );
+      )
+      // page 2: empty → terminates pagination
+      .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }));
     // glab unavailable so the CLI fallback is not attempted
     mockSpawnSync.mockReturnValue(makeGlabUnavailable());
 

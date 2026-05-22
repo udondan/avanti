@@ -298,11 +298,13 @@ describe('fetchGitHub — ref sentinels and pattern', () => {
   });
 
   it('throws when pattern matches no tags', async () => {
-    vi.spyOn(globalThis, 'fetch').mockImplementation(() =>
-      Promise.resolve(
+    vi.spyOn(globalThis, 'fetch')
+      // page 1: one non-matching tag
+      .mockResolvedValueOnce(
         new Response(JSON.stringify([{ name: 'v2.0.0' }]), { status: 200 }),
-      ),
-    );
+      )
+      // page 2: empty → terminates pagination
+      .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }));
     // gh is unavailable so the CLI fallback is not attempted
     mockSpawnSync.mockReturnValue(makeGhUnavailable());
 
@@ -415,11 +417,13 @@ describe('fetchGitHubRelease', () => {
   });
 
   it('throws when /pattern/ matches no tags for release', async () => {
-    vi.spyOn(globalThis, 'fetch').mockImplementation(() =>
-      Promise.resolve(
+    vi.spyOn(globalThis, 'fetch')
+      // page 1: one non-matching tag
+      .mockResolvedValueOnce(
         new Response(JSON.stringify([{ name: 'v2.0.0' }]), { status: 200 }),
-      ),
-    );
+      )
+      // page 2: empty → terminates pagination
+      .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }));
     // gh unavailable so the CLI fallback is not attempted
     mockSpawnSync.mockReturnValue(makeGhUnavailable());
 
