@@ -50,6 +50,7 @@ export function applyUpdatedShas(
 
       let label: string | null = null;
       let shaPath: (string | number)[] | null = null;
+      let supportsFilter = false;
 
       if (n.get('github')) {
         const gh = n.get('github') as {
@@ -69,6 +70,7 @@ export function applyUpdatedShas(
               label = `github${hostPart}:${repo}:${file}${ref ? `@${ref}` : ''}`;
             }
             shaPath = [...srcBase, 'github', 'sha'];
+            supportsFilter = true;
           }
         }
       } else if (n.get('gitlab')) {
@@ -87,6 +89,7 @@ export function applyUpdatedShas(
               label = `gitlab${hostPart}:${project}:${file}${ref ? `@${ref}` : ''}`;
             }
             shaPath = [...srcBase, 'gitlab', 'sha'];
+            supportsFilter = true;
           }
         }
       } else if (n.get('bitbucket')) {
@@ -103,6 +106,7 @@ export function applyUpdatedShas(
             const hostPart = host ? `[${host}]` : '';
             label = `bitbucket${hostPart}:${ws}/${repo}:${file}${ref ? `@${ref}` : ''}`;
             shaPath = [...srcBase, 'bitbucket', 'sha'];
+            supportsFilter = true;
           }
         }
       } else if (n.get('git')) {
@@ -114,6 +118,7 @@ export function applyUpdatedShas(
           if (repo && file) {
             label = `git:${repo}:${file}${ref ? `@${ref}` : ''}`;
             shaPath = [...srcBase, 'git', 'sha'];
+            supportsFilter = true;
           }
         }
       } else if (n.get('exec') !== undefined) {
@@ -127,6 +132,7 @@ export function applyUpdatedShas(
         if (s3) {
           label = `aws_s3:${s3}`;
           shaPath = [...srcBase, 'sha'];
+          supportsFilter = true;
         }
       } else if (n.get('aws_secrets_manager')) {
         const sm = n.get('aws_secrets_manager') as {
@@ -174,6 +180,7 @@ export function applyUpdatedShas(
         if (p) {
           label = `path:${p}`;
           shaPath = [...srcBase, 'sha'];
+          supportsFilter = true;
         }
       } else if (n.get('url') !== undefined) {
         const u = n.get('url') as string | null;
@@ -183,7 +190,7 @@ export function applyUpdatedShas(
         }
       }
 
-      if (label) {
+      if (label && supportsFilter) {
         const rawFilter = n.get('filter', true);
         if (isSeq(rawFilter) && rawFilter.items.length > 0) {
           const filterArr = rawFilter.items
