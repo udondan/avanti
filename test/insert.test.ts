@@ -212,6 +212,98 @@ describe('JSON — array handling', () => {
   });
 });
 
+describe('JSON — property order preservation', () => {
+  it('key updated in new contribution keeps its original position', () => {
+    const targetPath = path.join(tmpDir, 'file.json');
+    fs.writeFileSync(targetPath, '{\n  "a": 99,\n  "b": 2,\n  "c": 3\n}\n');
+    const result = applyInsertMode(
+      makeEntry({ json: true }),
+      JSON.stringify({ a: 100 }),
+      JSON.stringify({ a: 99 }),
+      targetPath,
+    );
+    expect(result).toBe('{\n  "a": 100,\n  "b": 2,\n  "c": 3\n}\n');
+  });
+
+  it('nested key updated in new contribution keeps its original position', () => {
+    const targetPath = path.join(tmpDir, 'file.json');
+    fs.writeFileSync(
+      targetPath,
+      JSON.stringify({ config: { a: 99, userProp: 'x' } }, null, 2),
+    );
+    const result = applyInsertMode(
+      makeEntry({ json: true }),
+      JSON.stringify({ config: { a: 100 } }),
+      JSON.stringify({ config: { a: 99 } }),
+      targetPath,
+    );
+    const parsed = JSON.parse(result) as Record<string, unknown>;
+    expect(parsed).toEqual({ config: { a: 100, userProp: 'x' } });
+    expect(Object.keys(parsed['config'] as object)).toEqual(['a', 'userProp']);
+  });
+
+  it('top-level key order matches original file when key is updated', () => {
+    const targetPath = path.join(tmpDir, 'file.json');
+    fs.writeFileSync(targetPath, '{\n  "z": 1,\n  "a": 99,\n  "m": 3\n}\n');
+    const result = applyInsertMode(
+      makeEntry({ json: true }),
+      JSON.stringify({ a: 100 }),
+      JSON.stringify({ a: 99 }),
+      targetPath,
+    );
+    expect(result).toBe('{\n  "z": 1,\n  "a": 100,\n  "m": 3\n}\n');
+  });
+
+  it('uses remove-then-merge (no order preservation) when conflicts: first_wins', () => {
+    const targetPath = path.join(tmpDir, 'file.json');
+    // 'a' is first in the existing file but was contributed by avanti (value 99)
+    fs.writeFileSync(targetPath, '{\n  "a": 99,\n  "b": 2\n}\n');
+    const result = applyInsertMode(
+      makeEntry({ json: { conflicts: 'first_wins' } }),
+      JSON.stringify({ a: 100 }),
+      JSON.stringify({ a: 99 }),
+      targetPath,
+    );
+    // first_wins: 'a' is removed then re-merged; new value wins (no conflict)
+    expect(JSON.parse(result)).toEqual({ b: 2, a: 100 });
+    // 'a' must appear after 'b' — no order preservation under first_wins
+    expect(Object.keys(JSON.parse(result) as object)).toEqual(['b', 'a']);
+  });
+
+  it('does not throw with conflicts: abort when updated key is removed before merge', () => {
+    const targetPath = path.join(tmpDir, 'file.json');
+    fs.writeFileSync(targetPath, JSON.stringify({ a: 99, b: 2 }, null, 2));
+    // With abort, the old value must be removed before merging the new one
+    // or mergeJson would throw a conflict error.
+    expect(() =>
+      applyInsertMode(
+        makeEntry({ json: { conflicts: 'abort' } }),
+        JSON.stringify({ a: 100 }),
+        JSON.stringify({ a: 99 }),
+        targetPath,
+      ),
+    ).not.toThrow();
+  });
+
+  it('falls back to remove-then-merge when processedText is unparseable JSON', () => {
+    const targetPath = path.join(tmpDir, 'file.json');
+    // 'a' is first; old contribution was { a: 99 }
+    fs.writeFileSync(targetPath, '{\n  "a": 99,\n  "b": 2\n}\n');
+    // processedText is invalid JSON → parseJson throws inside the newContrib try/catch
+    // → newContrib stays null → old remove-then-merge behaviour applies
+    // → 'a' is removed from existingParsed before mergeJson runs
+    // mergeJson itself will throw on the invalid processedText, which is expected
+    expect(() =>
+      applyInsertMode(
+        makeEntry({ json: true }),
+        'not { valid json',
+        JSON.stringify({ a: 99 }),
+        targetPath,
+      ),
+    ).toThrow();
+  });
+});
+
 // ── YAML ──────────────────────────────────────────────────────────────────────
 
 describe('YAML — first insert', () => {
