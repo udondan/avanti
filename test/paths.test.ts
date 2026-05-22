@@ -22,8 +22,22 @@ describe('expandTilde', () => {
   });
 });
 
+// Detect whether this process can create symlinks at runtime.
+// On Windows without SeCreateSymbolicLinkPrivilege, symlinkSync throws EPERM.
+const canCreateSymlinks = (() => {
+  try {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'avanti-symtest-'));
+    const link = path.join(tmp, 'link');
+    fs.symlinkSync(tmp, link);
+    fs.rmSync(link);
+    fs.rmdirSync(tmp);
+    return true;
+  } catch {
+    return false;
+  }
+})();
+
 describe('resolveFollowSymlink', () => {
-  const isWindows = process.platform === 'win32';
   let tmpDir: string;
 
   beforeEach(() => {
@@ -67,7 +81,7 @@ describe('resolveFollowSymlink', () => {
     );
   });
 
-  it.skipIf(isWindows)(
+  it.skipIf(!canCreateSymlinks)(
     'resolves a symlink to the real file path within working dir',
     () => {
       const real = path.join(tmpDir, 'real.txt');
@@ -84,7 +98,7 @@ describe('resolveFollowSymlink', () => {
     },
   );
 
-  it.skipIf(isWindows)(
+  it.skipIf(!canCreateSymlinks)(
     'resolves a dangling symlink (target does not exist yet) within working dir',
     () => {
       const link = path.join(tmpDir, 'link.txt');
@@ -100,7 +114,7 @@ describe('resolveFollowSymlink', () => {
     },
   );
 
-  it.skipIf(isWindows)(
+  it.skipIf(!canCreateSymlinks)(
     'throws when symlink resolves to a path outside the working directory',
     () => {
       const outsideDir = fs.mkdtempSync(
@@ -120,17 +134,20 @@ describe('resolveFollowSymlink', () => {
     },
   );
 
-  it.skipIf(isWindows)('throws when symlink resolves to a directory', () => {
-    const subdir = path.join(tmpDir, 'subdir');
-    fs.mkdirSync(subdir);
-    const link = path.join(tmpDir, 'dirlink');
-    fs.symlinkSync(subdir, link);
-    expect(() =>
-      resolveFollowSymlink(link, { followSymlink: true }, tmpDir),
-    ).toThrow(/resolves to a directory/);
-  });
+  it.skipIf(!canCreateSymlinks)(
+    'throws when symlink resolves to a directory',
+    () => {
+      const subdir = path.join(tmpDir, 'subdir');
+      fs.mkdirSync(subdir);
+      const link = path.join(tmpDir, 'dirlink');
+      fs.symlinkSync(subdir, link);
+      expect(() =>
+        resolveFollowSymlink(link, { followSymlink: true }, tmpDir),
+      ).toThrow(/resolves to a directory/);
+    },
+  );
 
-  it.skipIf(isWindows)(
+  it.skipIf(!canCreateSymlinks)(
     'throws when symlink-to-directory is reached through a symlink chain',
     () => {
       // link.txt -> intermediate -> subdir (directory)
@@ -147,7 +164,7 @@ describe('resolveFollowSymlink', () => {
     },
   );
 
-  it.skipIf(isWindows)(
+  it.skipIf(!canCreateSymlinks)(
     'resolves a dangling symlink chain (A -> B -> nonexistent) within working dir',
     () => {
       const link2 = path.join(tmpDir, 'link2.txt');
@@ -164,7 +181,7 @@ describe('resolveFollowSymlink', () => {
     },
   );
 
-  it.skipIf(isWindows)(
+  it.skipIf(!canCreateSymlinks)(
     'throws when a dangling symlink chain contains a cycle',
     () => {
       // link.txt -> link2.txt -> link.txt (cycle, final target never exists)
@@ -180,7 +197,7 @@ describe('resolveFollowSymlink', () => {
     },
   );
 
-  it.skipIf(isWindows)(
+  it.skipIf(!canCreateSymlinks)(
     'throws when a dangling symlink escapes via an intermediate symlinked directory',
     () => {
       const outsideDir = fs.mkdtempSync(
@@ -202,7 +219,7 @@ describe('resolveFollowSymlink', () => {
     },
   );
 
-  it.skipIf(isWindows)(
+  it.skipIf(!canCreateSymlinks)(
     'resolves a dangling symlink when workingDir is itself a symlinked directory',
     () => {
       // Exercises the macOS /var → /private/var alias pattern: workingDir is a

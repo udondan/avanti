@@ -187,30 +187,31 @@ async function runFetchLoop(
           preVars,
         )
       ) {
+        let symlinkPath: string;
         try {
-          const symlinkPath = resolveTargetPath(entry, '', workingDir, vars);
-          skippedPaths.add(symlinkPath);
-          // Also skip the resolved real path so stale cleanup doesn't treat
-          // the symlink target as unmanaged when followSymlink is in use.
-          // Skip for directory targets — resolveFollowSymlink throws on dir symlinks.
-          const resolvedTarget = entry.target
-            ? resolveVars(entry.target, vars)
-            : '';
-          const isDirectoryTarget =
-            resolvedTarget.endsWith('/') || resolvedTarget.endsWith(path.sep);
-          if (!isDirectoryTarget) {
-            const realPath = resolveFollowSymlink(
-              symlinkPath,
-              entry,
-              workingDir,
-            );
-            if (realPath !== symlinkPath) skippedPaths.add(realPath);
-          }
+          symlinkPath = resolveTargetPath(entry, '', workingDir, vars);
         } catch {
           console.warn(
             `Warning: skipped entry has an unresolvable target path — stale cleanup disabled for this run.`,
           );
           hasUnresolvableSkippedPath = true;
+          continue;
+        }
+        skippedPaths.add(symlinkPath);
+        // Also skip the resolved real path so stale cleanup doesn't treat
+        // the symlink target as unmanaged when followSymlink is in use.
+        // Skip for directory targets — resolveFollowSymlink throws on dir symlinks.
+        // resolveFollowSymlink security errors (escape/directory/cycle) are
+        // intentionally NOT caught here — they propagate as hard failures.
+        const resolvedTarget0 = entry.target
+          ? resolveVars(entry.target, vars)
+          : '';
+        if (
+          !resolvedTarget0.endsWith('/') &&
+          !resolvedTarget0.endsWith(path.sep)
+        ) {
+          const realPath = resolveFollowSymlink(symlinkPath, entry, workingDir);
+          if (realPath !== symlinkPath) skippedPaths.add(realPath);
         }
         continue;
       }
@@ -224,27 +225,31 @@ async function runFetchLoop(
       );
 
       if (result.allSkipped && !isSelf) {
+        let symlinkPath2: string;
         try {
-          const symlinkPath = resolveTargetPath(entry, '', workingDir, vars);
-          skippedPaths.add(symlinkPath);
-          const resolvedTarget = entry.target
-            ? resolveVars(entry.target, vars)
-            : '';
-          const isDirectoryTarget =
-            resolvedTarget.endsWith('/') || resolvedTarget.endsWith(path.sep);
-          if (!isDirectoryTarget) {
-            const realPath = resolveFollowSymlink(
-              symlinkPath,
-              entry,
-              workingDir,
-            );
-            if (realPath !== symlinkPath) skippedPaths.add(realPath);
-          }
+          symlinkPath2 = resolveTargetPath(entry, '', workingDir, vars);
         } catch {
           console.warn(
             `Warning: skipped entry has an unresolvable target path — stale cleanup disabled for this run.`,
           );
           hasUnresolvableSkippedPath = true;
+          continue;
+        }
+        skippedPaths.add(symlinkPath2);
+        // resolveFollowSymlink security errors propagate as hard failures.
+        const resolvedTarget2 = entry.target
+          ? resolveVars(entry.target, vars)
+          : '';
+        if (
+          !resolvedTarget2.endsWith('/') &&
+          !resolvedTarget2.endsWith(path.sep)
+        ) {
+          const realPath = resolveFollowSymlink(
+            symlinkPath2,
+            entry,
+            workingDir,
+          );
+          if (realPath !== symlinkPath2) skippedPaths.add(realPath);
         }
         continue;
       }
