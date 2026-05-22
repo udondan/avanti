@@ -14,15 +14,15 @@ export function applyWriteHook(
     input: content,
     encoding: 'utf8',
   });
+  if (result.error) {
+    throw new Error(`on.write script failed to spawn: ${result.error.message}`);
+  }
   if (result.status !== 0) {
     const stderr = result.stderr?.trim() ?? '';
     const detail = result.signal
       ? `killed by signal ${result.signal}`
       : `exited with code ${result.status ?? 'null'}`;
     throw new Error(`on.write script ${detail}${stderr ? ': ' + stderr : ''}`);
-  }
-  if (result.error) {
-    throw new Error(`on.write script failed to spawn: ${result.error.message}`);
   }
   return result.stdout;
 }
@@ -48,13 +48,13 @@ export function runHook(
     env: { ...process.env, ...extraEnv },
     stdio: 'inherit',
   });
+  if (result.error) {
+    throw new Error(`hook script failed to spawn: ${result.error.message}`);
+  }
   if (result.status !== 0) {
     const detail = result.signal
       ? `killed by signal ${result.signal}`
       : `exited with code ${result.status ?? 'null'}`;
     throw new Error(`hook script ${detail}`);
-  }
-  if (result.error) {
-    throw new Error(`hook script failed to spawn: ${result.error.message}`);
   }
 }

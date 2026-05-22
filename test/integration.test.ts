@@ -694,6 +694,58 @@ describe('Integration', () => {
       );
     });
 
+    it.skipIf(!isWindows)(
+      'fires on.beforeCreate before writing (Windows)',
+      () => {
+        const sourceFile = join(tmpDir, 'source2.txt');
+        writeFileSync(sourceFile, 'data');
+        const marker = join(tmpDir, 'before_marker.txt');
+
+        const config = writeConfig(
+          tmpDir,
+          `files:
+  ./output2.txt:
+    src: ${sourceFile}
+    on:
+      beforeCreate: "[System.IO.File]::WriteAllText('${marker}', 'before')"
+`,
+        );
+
+        const { exitCode } = runAvanti(config, tmpDir);
+        expect(exitCode).toBe(0);
+        expect(readFileSync(marker, 'utf8')).toBe('before');
+        expect(existsSync(join(tmpDir, 'output2.txt'))).toBe(true);
+      },
+    );
+
+    it.skipIf(!isWindows)(
+      'passes AVANTI_IS_NEW env var correctly (Windows)',
+      () => {
+        const sourceFile = join(tmpDir, 'source3.txt');
+        writeFileSync(sourceFile, 'data');
+        const marker = join(tmpDir, 'isnew_marker.txt');
+
+        const config = writeConfig(
+          tmpDir,
+          `files:
+  ./output3.txt:
+    src: ${sourceFile}
+    on:
+      beforeWrite: "[System.IO.File]::WriteAllText('${marker}', $AVANTI_IS_NEW)"
+`,
+        );
+
+        const { exitCode: e1 } = runAvanti(config, tmpDir);
+        expect(e1).toBe(0);
+        expect(readFileSync(marker, 'utf8')).toBe('true');
+
+        writeFileSync(sourceFile, 'updated data');
+        const { exitCode: e2 } = runAvanti(config, tmpDir);
+        expect(e2).toBe(0);
+        expect(readFileSync(marker, 'utf8')).toBe('false');
+      },
+    );
+
     it.skipIf(isWindows)('fires on.beforeCreate before writing', () => {
       const sourceFile = join(tmpDir, 'source2.txt');
       writeFileSync(sourceFile, 'data');
