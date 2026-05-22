@@ -30,7 +30,7 @@
         "@types/ejs": "3.1.5",
         "@types/js-yaml": "4.0.9",
         "@types/mustache": "4.2.6",
-        "@types/node": "25.9.0",
+        "@types/node": "25.9.1",
         "@types/nunjucks": "3.2.6",
         "@types/tar": "7.0.87",
         "@types/unzipper": "0.10.11",
@@ -277,7 +277,7 @@
 
     "@types/mustache": ["@types/mustache@4.2.6", "", {}, "sha512-t+8/QWTAhOFlrF1IVZqKnMRJi84EgkIK5Kh0p2JV4OLywUvCwJPFxbJAl7XAow7DVIHsF+xW9f1MVzg0L6Szjw=="],
 
-    "@types/node": ["@types/node@25.9.0", "", { "dependencies": { "undici-types": ">=7.24.0 <7.24.7" } }, "sha512-AOQwYUNolgy3VosiRqXrACUXTN8nJUtPl7FJXMqZVyxiiCLhQuG3jXKvCS1ALr+Y2OmZhzzLVlYPEqJaiqkaJQ=="],
+    "@types/node": ["@types/node@25.9.1", "", { "dependencies": { "undici-types": ">=7.24.0 <7.24.7" } }, "sha512-xfrlY7UD5rMJk3ZVJP8BNzS28J36YJg+xp+LPXV1TdWxr8uMH5A860QNxYDGQe/ylDSgjxE52Q9VnO7p75tJxg=="],
 
     "@types/nunjucks": ["@types/nunjucks@3.2.6", "", {}, "sha512-pHiGtf83na1nCzliuAdq8GowYiXvH5l931xZ0YEHaLMNFgynpEqx+IPStlu7UaDkehfvl01e4x/9Tpwhy7Ue3w=="],
 
@@ -632,6 +632,8 @@
     "@aws-sdk/types/@smithy/types": ["@smithy/types@4.14.1", "", { "dependencies": { "tslib": "^2.6.2" } }, "sha512-59b5HtSVrVR/eYNei3BUj3DCPKD/G7EtDDe7OEJE7i7FtQFugYo6MxbotS8mVJkLNVf8gYaAlEBwwtJ9HzhWSg=="],
 
     "@eslint-community/eslint-utils/eslint-visitor-keys": ["eslint-visitor-keys@3.4.3", "", {}, "sha512-wpc+LXeiyiisxPlEkUzU6svyS1frIO3Mgxj1fdy7Pm8Ygzguax2N3Fa/D/ag1WqbOprdI+uY6wMUl8/a2G+iag=="],
+
+    "@types/unzipper/@types/node": ["@types/node@25.9.0", "", { "dependencies": { "undici-types": ">=7.24.0 <7.24.7" } }, "sha512-AOQwYUNolgy3VosiRqXrACUXTN8nJUtPl7FJXMqZVyxiiCLhQuG3jXKvCS1ALr+Y2OmZhzzLVlYPEqJaiqkaJQ=="],
 
     "@typescript-eslint/eslint-plugin/ignore": ["ignore@7.0.5", "", {}, "sha512-Hs59xBNfUIunMFgWAbGX5cq6893IbWg4KnrjbYwX3tx0ztorVgTDA6B2sxf8ejHJ4wz8BqGUMYlnzNBer5NvGg=="],
 
