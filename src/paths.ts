@@ -191,12 +191,12 @@ export function resolveFollowSymlink(
   let current = targetPath;
   const seen = new Set<string>();
   for (;;) {
-    if (seen.has(current)) {
+    if (seen.has(normalizePath(current))) {
       throw new Error(
         `followSymlink: "${targetPath}" contains a circular symlink`,
       );
     }
-    seen.add(current);
+    seen.add(normalizePath(current));
     const st = fs.lstatSync(current, { throwIfNoEntry: false });
     if (!st) break; // non-existent endpoint
     if (!st.isSymbolicLink()) break; // regular file/dir — stop here
