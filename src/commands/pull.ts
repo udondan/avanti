@@ -656,7 +656,7 @@ export function pullCommand(): Command {
       // Detect stale files: present in last pull but no longer in current source fetch
       const staleToDelete: string[] = [];
       // Maps path → sudo identity for stale files that need privileged deletion
-      const staleDeleteSudo = new Map<string, boolean | string>();
+      const staleDeleteSudo = new Map<string, true | string>();
       const staleToRestore: WriteTarget[] = [];
       const staleDiffs: FileDiff[] = [];
 
@@ -849,9 +849,9 @@ export function pullCommand(): Command {
         // Authenticate once per distinct sudo identity before any writes,
         // including mode-only chmod targets (excluded from changedTargets).
         const allWriteTargets = [...changedTargets, ...staleToRestore];
-        const sudoValues = new Set<boolean | string>(
+        const sudoValues = new Set<true | string>(
           allWriteTargets.map((t) => t.sudo).filter(Boolean) as (
-            | boolean
+            | true
             | string
           )[],
         );

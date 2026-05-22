@@ -9,16 +9,16 @@ export interface WriteTarget {
   mode?: string;
   backupPath?: string;
   writeInPlace?: boolean;
-  sudo?: boolean | string;
+  sudo?: true | string;
 }
 
-export type SudoWriteTarget = WriteTarget & { sudo: boolean | string };
+export type SudoWriteTarget = WriteTarget & { sudo: true | string };
 
-export function sudoUserArgs(sudo: boolean | string): string[] {
+export function sudoUserArgs(sudo: true | string): string[] {
   return typeof sudo === 'string' ? ['-u', sudo] : [];
 }
 
-export function sudoAuth(sudo: boolean | string = true): void {
+export function sudoAuth(sudo: true | string = true): void {
   if (process.platform === 'win32') {
     throw new Error('sudo is not supported on Windows');
   }
@@ -49,7 +49,7 @@ export function sudoAtomicWrite(targets: SudoWriteTarget[]): void {
   }
 }
 
-export function sudoDelete(p: string, sudo: boolean | string): void {
+export function sudoDelete(p: string, sudo: true | string): void {
   const r = spawnSync('sudo', [...sudoUserArgs(sudo), 'rm', '-f', '--', p], {
     stdio: 'inherit',
   });
@@ -62,7 +62,7 @@ export function sudoDelete(p: string, sudo: boolean | string): void {
 }
 
 export function sudoIsSymlink(
-  sudo: boolean | string,
+  sudo: true | string,
   targetPath: string,
 ): boolean {
   const r = spawnSync(
@@ -73,7 +73,7 @@ export function sudoIsSymlink(
   return r.status === 0;
 }
 
-export function sudoRun(sudo: boolean | string, args: string[]): void {
+export function sudoRun(sudo: true | string, args: string[]): void {
   const r = spawnSync('sudo', [...sudoUserArgs(sudo), ...args], {
     stdio: 'inherit',
   });
@@ -89,7 +89,7 @@ export function sudoRun(sudo: boolean | string, args: string[]): void {
 // trying GNU stat (-c %a) then BSD/macOS stat (-f %Lp). Returns undefined when
 // the file does not exist or the mode cannot be determined.
 function getSudoFileMode(
-  sudo: boolean | string,
+  sudo: true | string,
   targetPath: string,
 ): string | undefined {
   const absPath = path.resolve(targetPath); // ensure never starts with '-'
@@ -194,7 +194,6 @@ function sudoWriteMv(t: SudoWriteTarget): void {
     // single-threaded CLI so the race does not apply.
     // eslint-disable-next-line @typescript-eslint/no-deprecated
     const mask = process.umask();
-    process.umask(mask); // restore immediately
     const defaultMode = (0o666 & ~mask).toString(8).padStart(4, '0');
     const effectiveMode = t.mode ?? existingMode ?? defaultMode;
     sudoRun(sudo, ['chmod', '--', effectiveMode, t.targetPath]);
@@ -303,8 +302,16 @@ function sudoWriteInPlace(t: SudoWriteTarget): void {
       throw new Error(`sudo write failed for ${t.targetPath}: ${detail}`);
     }
 
-    if (t.mode) {
-      sudoRun(sudo, ['chmod', '--', t.mode, t.targetPath]);
+    // Apply mode: explicit config value wins; for new files with no explicit mode,
+    // derive from process umask so sudo and non-sudo writes produce the same
+    // default permissions. Existing files keep their current mode unchanged.
+    // eslint-disable-next-line @typescript-eslint/no-deprecated
+    const mask = process.umask();
+    const defaultMode = (0o666 & ~mask).toString(8).padStart(4, '0');
+    const isNewFile = existsCheck.status !== 0;
+    const effectiveMode = t.mode ?? (isNewFile ? defaultMode : undefined);
+    if (effectiveMode !== undefined) {
+      sudoRun(sudo, ['chmod', '--', effectiveMode, t.targetPath]);
     }
   } finally {
     if (backupTmp) {

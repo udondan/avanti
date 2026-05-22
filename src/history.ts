@@ -10,7 +10,7 @@ export interface FileHistoryMeta {
   firstSeenAt: string;
   existedBeforeAvanti: boolean;
   currentVersion: number;
-  sudo?: boolean | string;
+  sudo?: true | string;
   insertedFragment?: {
     raw: string;
     processed: string;
@@ -36,7 +36,7 @@ export interface PullLogFileRef {
   slug: string;
   version: number;
   wasNew: boolean;
-  sudo?: boolean | string;
+  sudo?: true | string;
   sources?: SourceShaRecord[];
 }
 
@@ -130,7 +130,7 @@ export class HistoryManager {
     newContent: Buffer,
     isNew: boolean,
     sources?: SourceShaRecord[],
-    sudo?: boolean | string,
+    sudo?: true | string,
   ): { version: number; fileRef: PullLogFileRef } {
     const slug = sha256(targetPath);
     const fileDir = path.join(this.filesDir, slug);
@@ -309,10 +309,7 @@ export class HistoryManager {
     }
   }
 
-  updateFileSudo(
-    absolutePath: string,
-    sudo: boolean | string | undefined,
-  ): void {
+  updateFileSudo(absolutePath: string, sudo: true | string | undefined): void {
     try {
       const index = this.readIndex();
       const slug = index[absolutePath];
