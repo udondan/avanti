@@ -41,6 +41,7 @@ import {
   buildFileVars,
   buildSystemVars,
   resolveBackupPath,
+  resolveVars,
 } from '../variables';
 
 interface ShaError {
@@ -192,8 +193,11 @@ async function runFetchLoop(
           // Also skip the resolved real path so stale cleanup doesn't treat
           // the symlink target as unmanaged when followSymlink is in use.
           // Skip for directory targets — resolveFollowSymlink throws on dir symlinks.
+          const resolvedTarget = entry.target
+            ? resolveVars(entry.target, vars)
+            : '';
           const isDirectoryTarget =
-            entry.target?.endsWith('/') || entry.target?.endsWith(path.sep);
+            resolvedTarget.endsWith('/') || resolvedTarget.endsWith(path.sep);
           if (!isDirectoryTarget) {
             const realPath = resolveFollowSymlink(
               symlinkPath,
@@ -223,8 +227,11 @@ async function runFetchLoop(
         try {
           const symlinkPath = resolveTargetPath(entry, '', workingDir, vars);
           skippedPaths.add(symlinkPath);
+          const resolvedTarget = entry.target
+            ? resolveVars(entry.target, vars)
+            : '';
           const isDirectoryTarget =
-            entry.target?.endsWith('/') || entry.target?.endsWith(path.sep);
+            resolvedTarget.endsWith('/') || resolvedTarget.endsWith(path.sep);
           if (!isDirectoryTarget) {
             const realPath = resolveFollowSymlink(
               symlinkPath,
