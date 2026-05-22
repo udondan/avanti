@@ -40,13 +40,14 @@ export function applyFilter(
 }
 
 export function expandBraces(pattern: string, limit = 100): string[] {
-  const results = _expandBraces(pattern);
-  if (results.length > limit)
-    throw new Error(`brace expansion exceeds ${limit} entries`);
-  return results;
+  const budget = { remaining: limit, limit };
+  return _expandBraces(pattern, budget);
 }
 
-function _expandBraces(pattern: string): string[] {
+function _expandBraces(
+  pattern: string,
+  budget: { remaining: number; limit: number },
+): string[] {
   const open = pattern.indexOf('{');
   if (open === -1) return [pattern];
 
@@ -77,8 +78,11 @@ function _expandBraces(pattern: string): string[] {
 
   const results: string[] = [];
   for (const alt of alternatives) {
-    for (const expanded of _expandBraces(prefix + alt + suffix)) {
+    for (const expanded of _expandBraces(prefix + alt + suffix, budget)) {
       results.push(expanded);
+      budget.remaining--;
+      if (budget.remaining < 0)
+        throw new Error(`brace expansion exceeds ${budget.limit} entries`);
     }
   }
   return results;

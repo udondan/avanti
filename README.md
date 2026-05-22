@@ -565,7 +565,7 @@ Use `avanti lock` to compute and write SHA values automatically. Use `avanti pul
 
 The optional `filter` field narrows which files are kept when a source returns multiple files (directory sources, release artifacts, S3 prefixes). It is supported on `path:`, `github:`, `gitlab:`, `bitbucket:`, `git:`, and `aws_s3:` sources.
 
-`filter` is a list of one or more patterns. A file is kept if **any** pattern matches its path relative to the source root (the filename for flat sources like release assets, or the relative path for directory sources):
+`filter` is a list of one or more patterns. A file is kept if **any** pattern matches its path relative to the source root (the filename for flat sources like release assets, or the relative path for directory sources). Paths are always matched using forward slashes (`/`) regardless of the platform — on Windows, write `subdir/file.yml`, not `subdir\file.yml`.
 
 | Pattern            | Matches                                                                                |
 | ------------------ | -------------------------------------------------------------------------------------- |
