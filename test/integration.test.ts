@@ -631,7 +631,8 @@ describe('Integration', () => {
         // Use forward slashes in paths embedded in YAML double-quoted strings to
         // avoid YAML escape processing corrupting backslash sequences like \a, \t.
         // PowerShell accepts forward slashes as path separators.
-        const markerFwd = marker.replace(/\\/g, '/');
+        // Escape single quotes so paths with apostrophes are valid PS literals.
+        const markerFwd = marker.replace(/\\/g, '/').replace(/'/g, "''");
 
         const config = writeConfig(
           tmpDir,
@@ -704,7 +705,7 @@ describe('Integration', () => {
         const sourceFile = join(tmpDir, 'source2.txt');
         writeFileSync(sourceFile, 'data');
         const marker = join(tmpDir, 'before_marker.txt');
-        const markerFwd = marker.replace(/\\/g, '/');
+        const markerFwd = marker.replace(/\\/g, '/').replace(/'/g, "''");
 
         const config = writeConfig(
           tmpDir,
@@ -729,7 +730,7 @@ describe('Integration', () => {
         const sourceFile = join(tmpDir, 'source3.txt');
         writeFileSync(sourceFile, 'data');
         const marker = join(tmpDir, 'isnew_marker.txt');
-        const markerFwd = marker.replace(/\\/g, '/');
+        const markerFwd = marker.replace(/\\/g, '/').replace(/'/g, "''");
 
         const config = writeConfig(
           tmpDir,

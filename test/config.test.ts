@@ -947,6 +947,19 @@ files:
     await expect(loadConfig(f)).rejects.toThrow('on: must be a mapping');
   });
 
+  it('rejects legacy post: field with migration hint', async () => {
+    const f = writeTmp(`
+files:
+  out.txt:
+    src:
+      exec: echo hi
+    post: cat
+`);
+    await expect(loadConfig(f)).rejects.toThrow(
+      'post: removed — use on.write instead',
+    );
+  });
+
   it('loads strategy: insert', async () => {
     const f = writeTmp(`
 files:

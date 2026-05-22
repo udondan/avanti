@@ -112,9 +112,14 @@ describe('runHook', () => {
       const out = join(dir, 'out.txt');
       if (isWindows) {
         // Windows prelude maps $AVANTI_TARGET = $env:AVANTI_TARGET; so PS syntax works
-        runHook(`[System.IO.File]::WriteAllText('${out}', $AVANTI_TARGET)`, {
-          AVANTI_TARGET: '/some/path',
-        });
+        // Escape single quotes in path for PS single-quoted string literals.
+        const psSafeOut = out.replace(/'/g, "''");
+        runHook(
+          `[System.IO.File]::WriteAllText('${psSafeOut}', $AVANTI_TARGET)`,
+          {
+            AVANTI_TARGET: '/some/path',
+          },
+        );
       } else {
         runHook(`printf '%s' "$AVANTI_TARGET" > "${out}"`, {
           AVANTI_TARGET: '/some/path',

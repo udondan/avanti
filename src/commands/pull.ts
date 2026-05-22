@@ -859,6 +859,7 @@ export function pullCommand(): Command {
         }
       }
 
+      let postWriteError: string | null = null;
       try {
         const changedTargets = writeTargets.filter(
           (_, i) => allDiffs[i].hasChanges && allDiffs[i].contentChanged,
@@ -890,18 +891,17 @@ export function pullCommand(): Command {
           modeOnlyCount;
         console.log(`Wrote ${written} file(s).`);
         for (const ctx of fileHookContexts) {
+          if (postWriteError !== null) break;
           const env = {
             AVANTI_TARGET: ctx.targetPath,
             AVANTI_IS_NEW: String(ctx.isNew),
           };
           const runNamedPostHook = (key: string, script: string): void => {
+            if (postWriteError !== null) return;
             try {
               runHook(script, env);
             } catch (err: unknown) {
-              console.error(
-                `Hook ${key} failed for ${ctx.targetPath}: ${err instanceof Error ? err.message : String(err)}`,
-              );
-              process.exit(2);
+              postWriteError = `Hook ${key} failed for ${ctx.targetPath}: ${err instanceof Error ? err.message : String(err)}`;
             }
           };
           if (ctx.isNew && ctx.hooks.create)
@@ -953,6 +953,11 @@ export function pullCommand(): Command {
         } catch {
           console.warn('Warning: could not save pull history.');
         }
+      }
+
+      if (postWriteError !== null) {
+        console.error(postWriteError);
+        process.exit(2);
       }
     });
 }
