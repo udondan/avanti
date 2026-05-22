@@ -2692,3 +2692,84 @@ files:
     await expect(loadConfig(f)).rejects.toThrow('filter[0]: invalid regex');
   });
 });
+
+describe('sudo field parsing', () => {
+  it('parses sudo: true', () => {
+    const f = writeTmp(`
+files:
+  config.yaml:
+    src: https://example.com/config.yaml
+    sudo: true
+`);
+    const cfg = parseConfigContent(fs.readFileSync(f, 'utf8'));
+    expect(cfg.files['config.yaml'].sudo).toBe(true);
+  });
+
+  it('parses sudo: false as undefined', () => {
+    const f = writeTmp(`
+files:
+  config.yaml:
+    src: https://example.com/config.yaml
+    sudo: false
+`);
+    const cfg = parseConfigContent(fs.readFileSync(f, 'utf8'));
+    expect(cfg.files['config.yaml'].sudo).toBeUndefined();
+  });
+
+  it('parses a username string', () => {
+    const f = writeTmp(`
+files:
+  config.yaml:
+    src: https://example.com/config.yaml
+    sudo: www-data
+`);
+    const cfg = parseConfigContent(fs.readFileSync(f, 'utf8'));
+    expect(cfg.files['config.yaml'].sudo).toBe('www-data');
+  });
+
+  it('leaves sudo undefined when not set', () => {
+    const f = writeTmp(`
+files:
+  config.yaml:
+    src: https://example.com/config.yaml
+`);
+    const cfg = parseConfigContent(fs.readFileSync(f, 'utf8'));
+    expect(cfg.files['config.yaml'].sudo).toBeUndefined();
+  });
+
+  it('throws for an empty string', () => {
+    const f = writeTmp(`
+files:
+  config.yaml:
+    src: https://example.com/config.yaml
+    sudo: ""
+`);
+    expect(() => parseConfigContent(fs.readFileSync(f, 'utf8'))).toThrow(
+      'files["config.yaml"].sudo: must be true or a non-empty username string',
+    );
+  });
+
+  it('throws for a numeric value', () => {
+    const f = writeTmp(`
+files:
+  config.yaml:
+    src: https://example.com/config.yaml
+    sudo: 42
+`);
+    expect(() => parseConfigContent(fs.readFileSync(f, 'utf8'))).toThrow(
+      'files["config.yaml"].sudo: must be true or a non-empty username string',
+    );
+  });
+
+  it('throws when username starts with a dash', () => {
+    const f = writeTmp(`
+files:
+  config.yaml:
+    src: https://example.com/config.yaml
+    sudo: "-baduser"
+`);
+    expect(() => parseConfigContent(fs.readFileSync(f, 'utf8'))).toThrow(
+      'files["config.yaml"].sudo: username must not start with \'-\'',
+    );
+  });
+});

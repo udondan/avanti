@@ -28,6 +28,7 @@ import {
   atomicWrite,
   sudoAtomicWrite,
   sudoAuth,
+  sudoDelete,
   sudoUserArgs,
   WriteTarget,
 } from '../writer';
@@ -653,7 +654,8 @@ export function pullCommand(): Command {
 
       // Detect stale files: present in last pull but no longer in current source fetch
       const staleToDelete: string[] = [];
-      const staleDeleteNeedsSudo = new Set<string>();
+      // Maps path → sudo identity for stale files that need privileged deletion
+      const staleDeleteSudo = new Map<string, boolean | string>();
       const staleToRestore: WriteTarget[] = [];
       const staleDiffs: FileDiff[] = [];
 
@@ -687,7 +689,7 @@ export function pullCommand(): Command {
             }
           } else {
             staleToDelete.push(ref.absolutePath);
-            if (meta.sudo) staleDeleteNeedsSudo.add(ref.absolutePath);
+            if (meta.sudo) staleDeleteSudo.set(ref.absolutePath, meta.sudo);
             staleDiffs.push(computeDeleteDiff(ref.absolutePath));
           }
         }
@@ -831,7 +833,7 @@ export function pullCommand(): Command {
           (_, i) => allDiffs[i].hasChanges && allDiffs[i].contentChanged,
         );
 
-        // Authenticate sudo once before any writes if any target needs it.
+        // Authenticate once per distinct sudo identity before any writes.
         const allWriteTargets = [...changedTargets, ...staleToRestore];
         const sudoValues = new Set<boolean | string>(
           allWriteTargets.map((t) => t.sudo).filter(Boolean) as (
@@ -839,8 +841,8 @@ export function pullCommand(): Command {
             | string
           )[],
         );
-        if (staleDeleteNeedsSudo.size > 0) {
-          sudoValues.add(true);
+        for (const sv of staleDeleteSudo.values()) {
+          sudoValues.add(sv);
         }
         for (const sv of sudoValues) {
           sudoAuth(sv);
@@ -853,15 +855,15 @@ export function pullCommand(): Command {
         const regularRestore = staleToRestore.filter((t) => !t.sudo);
         const sudoRestore = staleToRestore.filter((t) => t.sudo);
         const regularDelete = staleToDelete.filter(
-          (p) => !staleDeleteNeedsSudo.has(p),
-        );
-        const sudoDelete = staleToDelete.filter((p) =>
-          staleDeleteNeedsSudo.has(p),
+          (p) => !staleDeleteSudo.has(p),
         );
 
         atomicWrite([...regularChanged, ...regularRestore], regularDelete);
-        if (sudoChanged.length + sudoRestore.length + sudoDelete.length > 0) {
-          sudoAtomicWrite([...sudoChanged, ...sudoRestore], sudoDelete);
+        if (sudoChanged.length + sudoRestore.length > 0) {
+          sudoAtomicWrite([...sudoChanged, ...sudoRestore]);
+        }
+        for (const [p, sv] of staleDeleteSudo) {
+          sudoDelete(p, sv);
         }
 
         // Mode-only changes: apply chmod directly (POSIX only — mode bits are
@@ -876,16 +878,22 @@ export function pullCommand(): Command {
               });
               if (lst && !lst.isSymbolicLink()) {
                 if (writeTargets[i].sudo) {
-                  spawnSync(
+                  const chmodResult = spawnSync(
                     'sudo',
                     [
                       ...sudoUserArgs(writeTargets[i].sudo!),
                       'chmod',
+                      '--',
                       d.modeChange.to.toString(8).padStart(4, '0'),
                       writeTargets[i].targetPath,
                     ],
                     { stdio: 'inherit' },
                   );
+                  if (chmodResult.status !== 0) {
+                    throw new Error(
+                      `sudo chmod failed for ${writeTargets[i].targetPath}`,
+                    );
+                  }
                 } else {
                   fs.chmodSync(writeTargets[i].targetPath, d.modeChange.to);
                 }

@@ -17,18 +17,21 @@ export function sudoUserArgs(sudo: boolean | string): string[] {
 }
 
 export function sudoAuth(sudo: boolean | string = true): void {
+  if (process.platform === 'win32') {
+    throw new Error('sudo is not supported on Windows');
+  }
   const result = spawnSync('sudo', [...sudoUserArgs(sudo), '-v'], {
     stdio: 'inherit',
   });
   if (result.status !== 0 || result.error) {
-    throw new Error('sudo authentication failed');
+    const detail = result.error
+      ? result.error.message
+      : `exit code ${result.status ?? 'unknown'}`;
+    throw new Error(`sudo authentication failed: ${detail}`);
   }
 }
 
-export function sudoAtomicWrite(
-  targets: WriteTarget[],
-  deletions: string[] = [],
-): void {
+export function sudoAtomicWrite(targets: WriteTarget[]): void {
   const mvTargets = targets.filter((t) => !t.writeInPlace);
   const inPlaceTargets = targets.filter((t) => t.writeInPlace);
   for (const t of mvTargets) {
@@ -37,11 +40,14 @@ export function sudoAtomicWrite(
   for (const t of inPlaceTargets) {
     sudoWriteInPlace(t);
   }
-  for (const p of deletions) {
-    const r = spawnSync('sudo', ['rm', '-f', p], { stdio: 'inherit' });
-    if (r.status !== 0) {
-      console.warn(`Warning: could not delete ${p}`);
-    }
+}
+
+export function sudoDelete(p: string, sudo: boolean | string): void {
+  const r = spawnSync('sudo', [...sudoUserArgs(sudo), 'rm', '-f', '--', p], {
+    stdio: 'inherit',
+  });
+  if (r.status !== 0) {
+    console.warn(`Warning: could not delete ${p}`);
   }
 }
 
@@ -54,10 +60,36 @@ function sudoRun(sudo: boolean | string, args: string[]): void {
   }
 }
 
+// Returns the existing file's permission bits as an octal string via sudo stat,
+// trying GNU stat (-c %a) then BSD/macOS stat (-f %Lp). Returns undefined when
+// the file does not exist or the mode cannot be determined.
+function getSudoFileMode(
+  sudo: boolean | string,
+  targetPath: string,
+): string | undefined {
+  const gnu = spawnSync(
+    'sudo',
+    [...sudoUserArgs(sudo), 'stat', '-c', '%a', '--', targetPath],
+    { stdio: ['ignore', 'pipe', 'ignore'] },
+  );
+  if (gnu.status === 0) return gnu.stdout.toString().trim() || undefined;
+  const bsd = spawnSync(
+    'sudo',
+    [...sudoUserArgs(sudo), 'stat', '-f', '%Lp', targetPath],
+    { stdio: ['ignore', 'pipe', 'ignore'] },
+  );
+  if (bsd.status === 0) return bsd.stdout.toString().trim() || undefined;
+  return undefined;
+}
+
 function sudoWriteMv(t: WriteTarget): void {
   const sudo = t.sudo!;
   const dir = path.dirname(t.targetPath);
-  sudoRun(sudo, ['mkdir', '-p', dir]);
+  sudoRun(sudo, ['mkdir', '-p', '--', dir]);
+
+  // Capture existing mode before writing so we can restore it after mv.
+  // Explicit config mode wins; existing dest mode used as fallback.
+  const existingMode = t.mode ? undefined : getSudoFileMode(sudo, t.targetPath);
 
   const tmpName =
     '.' +
@@ -66,86 +98,116 @@ function sudoWriteMv(t: WriteTarget): void {
     crypto.randomBytes(8).toString('hex') +
     '.avanti-tmp';
   const tmpFile = path.join(dir, tmpName);
+  let backupTmp: string | undefined;
 
-  const tee = spawnSync('sudo', [...sudoUserArgs(sudo), 'tee', tmpFile], {
-    input: t.content,
-    stdio: ['pipe', 'ignore', 'inherit'],
-  });
-  if (tee.status !== 0 || tee.error) {
-    try {
-      sudoRun(sudo, ['rm', '-f', tmpFile]);
-    } catch {
-      // best-effort temp cleanup; ignore failure
-    }
-    throw new Error(`sudo write failed for ${t.targetPath}`);
-  }
-
-  if (t.backupPath) {
-    const exists = spawnSync(
+  try {
+    const tee = spawnSync(
       'sudo',
-      [...sudoUserArgs(sudo), 'test', '-f', t.targetPath],
-      { stdio: 'ignore' },
+      [...sudoUserArgs(sudo), 'tee', '--', tmpFile],
+      { input: t.content, stdio: ['pipe', 'ignore', 'inherit'] },
     );
-    if (exists.status === 0) {
-      const backupDir = path.dirname(t.backupPath);
-      sudoRun(sudo, ['mkdir', '-p', backupDir]);
-      const backupTmp = path.join(
-        backupDir,
-        '.' +
-          path.basename(t.backupPath) +
-          '.' +
-          crypto.randomBytes(8).toString('hex') +
-          '.avanti-tmp',
-      );
-      sudoRun(sudo, ['cp', t.targetPath, backupTmp]);
-      sudoRun(sudo, ['mv', backupTmp, t.backupPath]);
+    if (tee.status !== 0 || tee.error) {
+      throw new Error(`sudo write failed for ${t.targetPath}`);
     }
-  }
 
-  sudoRun(sudo, ['mv', tmpFile, t.targetPath]);
+    if (t.backupPath) {
+      const exists = spawnSync(
+        'sudo',
+        [...sudoUserArgs(sudo), 'test', '-f', '--', t.targetPath],
+        { stdio: 'ignore' },
+      );
+      if (exists.status === 0) {
+        const backupDir = path.dirname(t.backupPath);
+        sudoRun(sudo, ['mkdir', '-p', '--', backupDir]);
+        backupTmp = path.join(
+          backupDir,
+          '.' +
+            path.basename(t.backupPath) +
+            '.' +
+            crypto.randomBytes(8).toString('hex') +
+            '.avanti-tmp',
+        );
+        sudoRun(sudo, ['cp', '--', t.targetPath, backupTmp]);
+        sudoRun(sudo, ['mv', '--', backupTmp, t.backupPath]);
+        backupTmp = undefined; // renamed into place — no cleanup needed
+      }
+    }
 
-  if (t.mode) {
-    sudoRun(sudo, ['chmod', t.mode, t.targetPath]);
+    sudoRun(sudo, ['mv', '--', tmpFile, t.targetPath]);
+
+    // Apply mode: explicit config value wins; otherwise restore the destination's
+    // pre-write mode so sudo mv doesn't silently reset it to the umask default.
+    const effectiveMode = t.mode ?? existingMode;
+    if (effectiveMode) {
+      sudoRun(sudo, ['chmod', '--', effectiveMode, t.targetPath]);
+    }
+  } finally {
+    try {
+      sudoRun(sudo, ['rm', '-f', '--', tmpFile]);
+    } catch {
+      // best-effort cleanup
+    }
+    if (backupTmp) {
+      try {
+        sudoRun(sudo, ['rm', '-f', '--', backupTmp]);
+      } catch {
+        // best-effort cleanup
+      }
+    }
   }
 }
 
 function sudoWriteInPlace(t: WriteTarget): void {
   const sudo = t.sudo!;
   const dir = path.dirname(t.targetPath);
-  sudoRun(sudo, ['mkdir', '-p', dir]);
+  sudoRun(sudo, ['mkdir', '-p', '--', dir]);
 
-  if (t.backupPath) {
-    const exists = spawnSync(
-      'sudo',
-      [...sudoUserArgs(sudo), 'test', '-f', t.targetPath],
-      { stdio: 'ignore' },
-    );
-    if (exists.status === 0) {
-      const backupDir = path.dirname(t.backupPath);
-      sudoRun(sudo, ['mkdir', '-p', backupDir]);
-      const backupTmp = path.join(
-        backupDir,
-        '.' +
-          path.basename(t.backupPath) +
-          '.' +
-          crypto.randomBytes(8).toString('hex') +
-          '.avanti-tmp',
+  let backupTmp: string | undefined;
+
+  try {
+    if (t.backupPath) {
+      const exists = spawnSync(
+        'sudo',
+        [...sudoUserArgs(sudo), 'test', '-f', '--', t.targetPath],
+        { stdio: 'ignore' },
       );
-      sudoRun(sudo, ['cp', t.targetPath, backupTmp]);
-      sudoRun(sudo, ['mv', backupTmp, t.backupPath]);
+      if (exists.status === 0) {
+        const backupDir = path.dirname(t.backupPath);
+        sudoRun(sudo, ['mkdir', '-p', '--', backupDir]);
+        backupTmp = path.join(
+          backupDir,
+          '.' +
+            path.basename(t.backupPath) +
+            '.' +
+            crypto.randomBytes(8).toString('hex') +
+            '.avanti-tmp',
+        );
+        sudoRun(sudo, ['cp', '--', t.targetPath, backupTmp]);
+        sudoRun(sudo, ['mv', '--', backupTmp, t.backupPath]);
+        backupTmp = undefined;
+      }
     }
-  }
 
-  const tee = spawnSync('sudo', [...sudoUserArgs(sudo), 'tee', t.targetPath], {
-    input: t.content,
-    stdio: ['pipe', 'ignore', 'inherit'],
-  });
-  if (tee.status !== 0 || tee.error) {
-    throw new Error(`sudo write failed for ${t.targetPath}`);
-  }
+    const tee = spawnSync(
+      'sudo',
+      [...sudoUserArgs(sudo), 'tee', '--', t.targetPath],
+      { input: t.content, stdio: ['pipe', 'ignore', 'inherit'] },
+    );
+    if (tee.status !== 0 || tee.error) {
+      throw new Error(`sudo write failed for ${t.targetPath}`);
+    }
 
-  if (t.mode) {
-    sudoRun(sudo, ['chmod', t.mode, t.targetPath]);
+    if (t.mode) {
+      sudoRun(sudo, ['chmod', '--', t.mode, t.targetPath]);
+    }
+  } finally {
+    if (backupTmp) {
+      try {
+        sudoRun(sudo, ['rm', '-f', '--', backupTmp]);
+      } catch {
+        // best-effort cleanup
+      }
+    }
   }
 }
 

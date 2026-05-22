@@ -317,6 +317,11 @@ export function parseConfigContent(content: string): AvantiConfig {
       if (e['sudo'] === true) {
         fileEntry.sudo = true;
       } else if (typeof e['sudo'] === 'string' && e['sudo']) {
+        if (e['sudo'].startsWith('-')) {
+          throw new Error(
+            `files["${target}"].sudo: username must not start with '-'`,
+          );
+        }
         fileEntry.sudo = e['sudo'];
       } else if (e['sudo'] !== false) {
         throw new Error(
