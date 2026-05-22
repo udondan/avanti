@@ -174,7 +174,13 @@ export function resolveFollowSymlink(
         `followSymlink: "${targetPath}" resolves to a directory; refusing to write`,
       );
     }
-    assertWithinWorkingDir(resolved, realWorkingDir);
+    try {
+      assertWithinWorkingDir(resolved, realWorkingDir);
+    } catch {
+      throw new Error(
+        `followSymlink: "${targetPath}" resolves to "${resolved}" which escapes the working directory`,
+      );
+    }
     return resolved;
   } catch (err: unknown) {
     const code = (err as NodeJS.ErrnoException).code;
@@ -210,7 +216,13 @@ export function resolveFollowSymlink(
   for (;;) {
     if (fs.lstatSync(dir, { throwIfNoEntry: false })) {
       const realDir = fs.realpathSync(dir);
-      assertWithinWorkingDir(realDir, realWorkingDir);
+      try {
+        assertWithinWorkingDir(realDir, realWorkingDir);
+      } catch {
+        throw new Error(
+          `followSymlink: "${targetPath}" escapes the working directory via a symlinked intermediate directory`,
+        );
+      }
       // Rewrite current using the canonical ancestor so that the final prefix
       // check compares apples-to-apples. Without this, macOS /var/… paths
       // fail the /private/var/… prefix check even when the path is valid.
@@ -221,6 +233,12 @@ export function resolveFollowSymlink(
     if (parent === dir) break; // reached filesystem root
     dir = parent;
   }
-  assertWithinWorkingDir(current, realWorkingDir);
+  try {
+    assertWithinWorkingDir(current, realWorkingDir);
+  } catch {
+    throw new Error(
+      `followSymlink: "${targetPath}" escapes the working directory`,
+    );
+  }
   return current;
 }

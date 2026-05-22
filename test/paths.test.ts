@@ -134,7 +134,7 @@ describe('resolveFollowSymlink', () => {
         fs.symlinkSync(outsideFile, link, 'file');
         expect(() =>
           resolveFollowSymlink(link, { followSymlink: true }, tmpDir),
-        ).toThrow(/escapes working directory/);
+        ).toThrow(/escapes.*working directory/);
       } finally {
         fs.rmSync(outsideDir, { recursive: true, force: true });
       }
@@ -235,7 +235,7 @@ describe('resolveFollowSymlink', () => {
         fs.symlinkSync(path.join(tmpDir, 'out', 'secret.txt'), link, 'file');
         expect(() =>
           resolveFollowSymlink(link, { followSymlink: true }, tmpDir),
-        ).toThrow(/escapes working directory/);
+        ).toThrow(/escapes.*working directory/);
       } finally {
         fs.rmSync(outsideDir, { recursive: true, force: true });
       }
