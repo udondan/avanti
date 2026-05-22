@@ -2,6 +2,16 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Paths
+
+Never use absolute paths — not in shell commands, not in config files, not in settings, not anywhere. Always use relative paths from the current working directory. The shell is already in the right directory.
+
+- Git: `git status`, never `git -C /absolute/path status`
+- Permissions: `Read(/**)`, never `Read(//Users/someone/.../**)`
+- CLI: `./dist/cli.js`, never `/Users/someone/.../dist/cli.js`
+
+Any time you find yourself typing `/Users/` or any other hardcoded absolute path — stop and use a relative path instead.
+
 ## Package manager
 
 This project uses **mise** as the task runner and **Bun** as the package manager.

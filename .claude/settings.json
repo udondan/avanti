@@ -1,0 +1,49 @@
+{
+  "permissions": {
+    "allow": [
+      "Skill(address-pr-comments)",
+      "Skill(address-pr-comments:*)",
+
+      "Bash(mise run *)",
+      "Bash(mise exec *)",
+      "Bash(mise trust *)",
+
+      "Bash(bun run *)",
+      "Bash(bun test *)",
+
+      "Bash(bunx vitest *)",
+      "Bash(bunx eslint *)",
+      "Bash(bunx prettier *)",
+      "Bash(bunx tsc *)",
+
+      "Bash(git fetch *)",
+      "Bash(git rebase *)",
+      "Bash(git branch *)",
+      "Bash(git checkout *)",
+      "Bash(git cherry-pick *)",
+      "Bash(git rm *)",
+      "Bash(git pull *)",
+      "Bash(git worktree *)",
+
+      "Bash(gh pr *)",
+      "Bash(gh run *)",
+      "Bash(gh issue *)",
+      "Bash(gh api *)",
+
+      "Bash(./dist/cli.js *)",
+      "Bash(node dist/cli.js *)",
+
+      "Bash(echo *)",
+
+      "Bash(cat)",
+      "Bash(cat *)",
+      "Bash(awk *)",
+      "Bash(find * )",
+      "Bash(sed *)",
+
+      "Read(//tmp/**)",
+      "Read(//private/tmp/**)"
+    ],
+    "additionalDirectories": ["/tmp", "/private/tmp"]
+  }
+}
