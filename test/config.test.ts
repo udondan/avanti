@@ -874,16 +874,77 @@ files:
     ]);
   });
 
-  it('loads post field', async () => {
+  it('loads on.write field', async () => {
     const f = writeTmp(`
 files:
   out.yml:
     src:
       exec: glab api "projects/foo/bar"
-    post: "sed -e 's/v3/v4/g'"
+    on:
+      write: "sed -e 's/v3/v4/g'"
 `);
     const cfg = await loadConfig(f);
-    expect(cfg.files['out.yml'].post).toBe("sed -e 's/v3/v4/g'");
+    expect(cfg.files['out.yml'].on?.write).toBe("sed -e 's/v3/v4/g'");
+  });
+
+  it('loads all on: hooks', async () => {
+    const f = writeTmp(`
+files:
+  out.txt:
+    src:
+      exec: echo hello
+    on:
+      write: cat
+      beforeWrite: echo before
+      beforeCreate: echo beforeCreate
+      beforeUpdate: echo beforeUpdate
+      create: echo created
+      update: echo updated
+`);
+    const cfg = await loadConfig(f);
+    expect(cfg.files['out.txt'].on).toEqual({
+      write: 'cat',
+      beforeWrite: 'echo before',
+      beforeCreate: 'echo beforeCreate',
+      beforeUpdate: 'echo beforeUpdate',
+      create: 'echo created',
+      update: 'echo updated',
+    });
+  });
+
+  it('rejects unknown on: key', async () => {
+    const f = writeTmp(`
+files:
+  out.txt:
+    src:
+      exec: echo hi
+    on:
+      unknown: echo nope
+`);
+    await expect(loadConfig(f)).rejects.toThrow('unknown key "unknown"');
+  });
+
+  it('rejects non-string on: value', async () => {
+    const f = writeTmp(`
+files:
+  out.txt:
+    src:
+      exec: echo hi
+    on:
+      write: 42
+`);
+    await expect(loadConfig(f)).rejects.toThrow('on.write: must be a string');
+  });
+
+  it('rejects non-object on: value', async () => {
+    const f = writeTmp(`
+files:
+  out.txt:
+    src:
+      exec: echo hi
+    on: "not an object"
+`);
+    await expect(loadConfig(f)).rejects.toThrow('on: must be a mapping');
   });
 
   it('loads strategy: insert', async () => {

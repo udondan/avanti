@@ -308,7 +308,33 @@ export function parseConfigContent(content: string): AvantiConfig {
       fileEntry.mode = e['mode'];
     }
     if (typeof e['backup'] === 'string') fileEntry.backup = e['backup'];
-    if (typeof e['post'] === 'string') fileEntry.post = e['post'];
+    if (e['on'] !== undefined) {
+      if (
+        typeof e['on'] !== 'object' ||
+        e['on'] === null ||
+        Array.isArray(e['on'])
+      ) {
+        throw new Error(`files["${target}"].on: must be a mapping`);
+      }
+      const validKeys = new Set([
+        'write',
+        'beforeWrite',
+        'beforeCreate',
+        'beforeUpdate',
+        'create',
+        'update',
+      ]);
+      const onObj = e['on'] as Record<string, unknown>;
+      for (const key of Object.keys(onObj)) {
+        if (!validKeys.has(key)) {
+          throw new Error(`files["${target}"].on: unknown key "${key}"`);
+        }
+        if (typeof onObj[key] !== 'string') {
+          throw new Error(`files["${target}"].on.${key}: must be a string`);
+        }
+      }
+      fileEntry.on = onObj;
+    }
     if (typeof e['writeInPlace'] === 'boolean')
       fileEntry.writeInPlace = e['writeInPlace'];
     if (typeof e['followSymlink'] === 'boolean')
