@@ -841,18 +841,22 @@ export function pullCommand(): Command {
           AVANTI_TARGET: ctx.targetPath,
           AVANTI_IS_NEW: String(ctx.isNew),
         };
-        try {
-          if (ctx.hooks.beforeWrite) runHook(ctx.hooks.beforeWrite, env);
-          if (ctx.isNew && ctx.hooks.beforeCreate)
-            runHook(ctx.hooks.beforeCreate, env);
-          if (!ctx.isNew && ctx.hooks.beforeUpdate)
-            runHook(ctx.hooks.beforeUpdate, env);
-        } catch (err: unknown) {
-          console.error(
-            `Hook failed for ${ctx.targetPath}: ${err instanceof Error ? err.message : String(err)}`,
-          );
-          process.exit(2);
-        }
+        const runNamedHook = (key: string, script: string): void => {
+          try {
+            runHook(script, env);
+          } catch (err: unknown) {
+            console.error(
+              `Hook ${key} failed for ${ctx.targetPath}: ${err instanceof Error ? err.message : String(err)}`,
+            );
+            process.exit(2);
+          }
+        };
+        if (ctx.hooks.beforeWrite)
+          runNamedHook('beforeWrite', ctx.hooks.beforeWrite);
+        if (ctx.isNew && ctx.hooks.beforeCreate)
+          runNamedHook('beforeCreate', ctx.hooks.beforeCreate);
+        if (!ctx.isNew && ctx.hooks.beforeUpdate)
+          runNamedHook('beforeUpdate', ctx.hooks.beforeUpdate);
       }
 
       try {
@@ -890,15 +894,20 @@ export function pullCommand(): Command {
             AVANTI_TARGET: ctx.targetPath,
             AVANTI_IS_NEW: String(ctx.isNew),
           };
-          try {
-            if (ctx.isNew && ctx.hooks.create) runHook(ctx.hooks.create, env);
-            if (!ctx.isNew && ctx.hooks.update) runHook(ctx.hooks.update, env);
-          } catch (err: unknown) {
-            console.error(
-              `Hook failed for ${ctx.targetPath}: ${err instanceof Error ? err.message : String(err)}`,
-            );
-            process.exit(2);
-          }
+          const runNamedPostHook = (key: string, script: string): void => {
+            try {
+              runHook(script, env);
+            } catch (err: unknown) {
+              console.error(
+                `Hook ${key} failed for ${ctx.targetPath}: ${err instanceof Error ? err.message : String(err)}`,
+              );
+              process.exit(2);
+            }
+          };
+          if (ctx.isNew && ctx.hooks.create)
+            runNamedPostHook('create', ctx.hooks.create);
+          if (!ctx.isNew && ctx.hooks.update)
+            runNamedPostHook('update', ctx.hooks.update);
         }
       } catch (err: unknown) {
         console.error(
