@@ -171,12 +171,12 @@ function sudoWriteMv(t: WriteTarget): void {
 
     sudoRun(sudo, ['mv', '--', tmpFile, t.targetPath]);
 
-    // Apply mode: explicit config value wins; otherwise restore the destination's
-    // pre-write mode so sudo mv doesn't silently reset it to the umask default.
-    const effectiveMode = t.mode ?? existingMode;
-    if (effectiveMode) {
-      sudoRun(sudo, ['chmod', '--', effectiveMode, t.targetPath]);
-    }
+    // Apply mode: explicit config value wins; existing dest mode is used as fallback
+    // for updates so sudo mv doesn't silently change permissions. For new files with
+    // no explicit mode, apply 0644 — equivalent to 0666 & ~022 (the standard default)
+    // — so sudo and non-sudo writes produce consistent permissions.
+    const effectiveMode = t.mode ?? existingMode ?? '0644';
+    sudoRun(sudo, ['chmod', '--', effectiveMode, t.targetPath]);
   } finally {
     try {
       sudoRun(sudo, ['rm', '-f', '--', tmpFile]);
