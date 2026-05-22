@@ -189,7 +189,7 @@ Run `avanti pull --accept-changes` to review the diff and update SHA values.
 
 `avanti diff` shows a `⚠ SHA mismatch` warning inline for any source that no longer matches its pinned SHA.
 
-SHA is computed over the raw fetched content of each source, before any `replace` or `post` processing. Each file's path and content are fed into the hash in sorted order, separated by null bytes — so renames and additions affect the fingerprint even for single-file sources. Pull history records the observed SHA for every source, so `avanti log` shows a full audit trail of what changed and when.
+SHA is computed over the raw fetched content of each source, before any `replace` or `on.write` processing. Each file's path and content are fed into the hash in sorted order, separated by null bytes — so renames and additions affect the fingerprint even for single-file sources. Pull history records the observed SHA for every source, so `avanti log` shows a full audit trail of what changed and when.
 
 Excluded from SHA pinning: local paths and `raw:` sources (their content is either authored locally or inline in the config, so changes are always visible).
 
@@ -368,7 +368,8 @@ files:
   some-file.yml:
     src:
       exec: glab api "projects/group%2Fproject/repository/files/some-file.yaml/raw?ref=main"
-    post: sed -e 's/v3/v4/g'
+    on:
+      write: sed -e 's/v3/v4/g'
 
   renovate.json:
     src:
@@ -423,7 +424,7 @@ A brace group is only expanded when it contains **at least one comma** (e.g. `{f
 | `mode`          | No       | File permission mode. Use a quoted octal string (`"0755"`) or a YAML octal literal (`0o755`). Mode-only changes (content unchanged) are detected by `diff` and applied by `pull`. **POSIX only** — ignored on Windows.                                                                         |
 | `backup`        | No       | Path to copy the current file to before overwriting it. Supports path variables (`$dirname`, `$filename`, `$datetime`) and the `%d+` counter token for auto-incrementing slots. See [Backup](#backup).                                                                                         |
 | `replace`       | No       | List of `{from, to}` replacement rules. `from` may be a plain string or `/pattern/flags` regex.                                                                                                                                                                                                |
-| `post`          | No       | Shell script. Content is piped via stdin; stdout is used as the result. Runs after `replace`.                                                                                                                                                                                                  |
+| `on`            | No       | Lifecycle event hooks. See [Event Hooks](#event-hooks).                                                                                                                                                                                                                                        |
 | `template`      | No       | Treat the fetched content as a template and render it with avanti config variables as context. See [Template Rendering](#template-rendering).                                                                                                                                                  |
 | `json`          | No       | JSON merge/format options (see below). When omitted, merging is auto-enabled if all sources have a `.json` or `.jsonc` extension. Use `true`/`false` to force on or off regardless of extension.                                                                                               |
 | `yaml`          | No       | YAML merge/format options (see below). When omitted, merging is auto-enabled if all sources have a `.yaml` or `.yml` extension. Use `true`/`false` to force on or off regardless of extension. Comments are preserved in merged output.                                                        |
@@ -729,7 +730,7 @@ files:
           ref: main
 ```
 
-Sources are fetched in order and joined with a newline. Post-processing (`replace`, `post`) is applied to the combined result. If any source fails, the entire entry is aborted.
+Sources are fetched in order and joined with a newline. Post-processing (`replace`, `on.write`) is applied to the combined result. If any source fails, the entire entry is aborted.
 
 ### JSON Merging
 
@@ -940,7 +941,7 @@ files:
 
 Set `template` to treat the fetched content as a template. avanti renders it at deploy time using all avanti config variables as the template context, then writes the rendered output to the target file.
 
-> **Security note** — EJS and Eta templates execute arbitrary JavaScript at render time. Handlebars, Nunjucks, Liquid, and Mustache are logic-limited and do not execute raw JS. For any engine, template sources must be trusted: either authored locally, fetched from a controlled internal source, or SHA-pinned (see [`sha:`](#sha-pinning)). Treat a compromised remote template as equivalent to a compromised `post:` script or `exec:` source.
+> **Security note** — EJS and Eta templates execute arbitrary JavaScript at render time. Handlebars, Nunjucks, Liquid, and Mustache are logic-limited and do not execute raw JS. For any engine, template sources must be trusted: either authored locally, fetched from a controlled internal source, or SHA-pinned (see [`sha:`](#sha-pinning)). Treat a compromised remote template as equivalent to a compromised `on.write` script or `exec:` source.
 
 ```yaml
 variables:
@@ -981,7 +982,42 @@ For multi-source arrays (`src: [a, b, c]`) and directory-to-single-file merges, 
 
 **`jinja2` alias** — `template: jinja2` is equivalent to `template: nunjucks`. Nunjucks is a JavaScript implementation heavily inspired by Jinja2; most Jinja2 templates work without changes.
 
-**Pipeline order** — template rendering runs first, before `replace` and `post`. Subsequent processors receive the already-rendered content.
+**Pipeline order** — template rendering runs first, before `replace` and `on.write`. Subsequent processors receive the already-rendered content.
+
+### Event Hooks
+
+The `on:` field on a file entry lets you run shell commands at specific points in the file lifecycle. `on.write` supports avanti variable substitution (same rules as `exec:` and `replace:`). Side-effect hooks (`before*`, `create`, `update`) are passed to the shell verbatim — use `$AVANTI_TARGET` and `$AVANTI_IS_NEW` as environment variables.
+
+| Hook              | When                                                                            | Content transform? |
+| ----------------- | ------------------------------------------------------------------------------- | ------------------ |
+| `on.write`        | During processing, after `replace`; stdin → stdout replaces content             | Yes                |
+| `on.beforeWrite`  | After user confirms, before writing — fires for every changed file              | No                 |
+| `on.beforeCreate` | Same timing, but only when the file is being **created** for the first time     | No                 |
+| `on.beforeUpdate` | Same timing, but only when the file already **exists** and has changed          | No                 |
+| `on.create`       | After the file has been successfully written — new files only                   | No                 |
+| `on.update`       | After the file has been successfully written — existing files with changes only | No                 |
+
+Side-effect hooks (`before*`, `create`, `update`) receive two environment variables:
+
+| Variable        | Value                                                       |
+| --------------- | ----------------------------------------------------------- |
+| `AVANTI_TARGET` | Absolute path of the target file                            |
+| `AVANTI_IS_NEW` | `"true"` if the file is being created; `"false"` if updated |
+
+On Unix, access them as `$AVANTI_TARGET` / `$AVANTI_IS_NEW`. On Windows (PowerShell), avanti automatically injects a prelude that maps these to local variables, so `$AVANTI_TARGET` works identically — you do not need to write `$env:AVANTI_TARGET`.
+
+Only hooks for files with **actual changes** are fired (`create`/`update`/`before*` are silent no-ops when content and mode are unchanged).
+
+```yaml
+files:
+  config/app.yml:
+    src: https://config.example.com/app.yml
+    on:
+      write: sed -e 's/v3/v4/g' # transform content
+      beforeCreate: mkdir -p "$(dirname "$AVANTI_TARGET")"
+      create: echo "Created $AVANTI_TARGET"
+      update: git add "$AVANTI_TARGET"
+```
 
 ### Insert Mode
 
@@ -998,7 +1034,7 @@ files:
 **How it works:**
 
 - **First run** — the fetched content is merged into the existing file (or written as-is if the file does not exist yet).
-- **Subsequent runs (no-op)** — avanti detects that the raw source and the post-processed output (`replace`/`post`) are both unchanged and skips the file entirely.
+- **Subsequent runs (no-op)** — avanti detects that the raw source and the post-processed output (`replace`/`on.write`) are both unchanged and skips the file entirely.
 - **Subsequent runs (source changed)** — avanti removes the keys/text it previously contributed, then merges the updated content in.
 - **User edits are preserved** — keys or text the user added or modified are left untouched. If a user overrides an avanti-managed key, avanti will not remove it even if the source no longer includes it.
 
@@ -1294,11 +1330,11 @@ files:
         to: $email # resolved to "you@example.com"
 ```
 
-Variables are resolved in every string field: target keys, `ref`, `exec` commands, HTTP URLs, local paths, `raw` content, `filter` patterns, `replace` rules (`from` and `to`), and `post` scripts.
+Variables are resolved in every string field: target keys, `ref`, `exec` commands, HTTP URLs, local paths, `raw` content, `filter` patterns, `replace` rules (`from` and `to`), and `on.write` scripts. Side-effect hooks (`on.beforeWrite`, `on.beforeCreate`, `on.beforeUpdate`, `on.create`, `on.update`) are passed to the shell verbatim — use `$AVANTI_TARGET` / `$AVANTI_IS_NEW` env vars instead of `$varname` substitutions.
 
 For `raw:` sources, variables are resolved in the content itself. For all other source types (`http`, `local`, `github`, `gitlab`, `exec`), variables are only resolved in the fields that locate the source (URL, path, command) — not in the fetched content. Use a `replace:` rule if you need to substitute values in fetched content.
 
-**Shell safety in `exec:` and `post:`** — when a variable is substituted into an `exec:` command or a `post:` script, its value is automatically single-quoted. This means shell metacharacters (`;`, `&&`, `$(...)`, etc.) in the value are treated as literal data and are never executed. The surrounding command template itself is not quoted, so the static shell syntax you write is executed as usual. On Unix the script runs via `sh -c`; on Windows it runs via PowerShell (`-EncodedCommand`).
+**Shell safety in `exec:` and `on.write`** — when a variable is substituted into an `exec:` command or an `on.write` hook script, its value is automatically single-quoted. This means shell metacharacters (`;`, `&&`, `$(...)`, etc.) in the value are treated as literal data and are never executed. The surrounding command template itself is not quoted, so the static shell syntax you write is executed as usual. On Unix the script runs via `sh -c`; on Windows it runs via PowerShell (`-EncodedCommand`).
 
 ```yaml
 variables:
@@ -1308,10 +1344,11 @@ files:
   data.json:
     src:
       exec: curl https://example.com/api/$version/data # expands to: curl …/'1.0'/data
-    post: sed 's/$version/replaced/g' # expands to: sed 's/'\''1.0'\''/replaced/g'
+    on:
+      write: sed 's/$version/replaced/g' # expands to: sed 's/'\''1.0'\''/replaced/g'
 ```
 
-**Escaping a literal `$`** — use `$$` to emit a literal `$` that is not treated as a variable reference. This is useful in `exec:` and `post:` scripts that contain shell or PowerShell syntax with `$`-prefixed identifiers (e.g. PowerShell built-ins like `$$true` or `$$null`):
+**Escaping a literal `$`** — use `$$` to emit a literal `$` that is not treated as a variable reference. This is useful in `exec:` commands and `on.write` hook scripts that contain shell or PowerShell syntax with `$`-prefixed identifiers (e.g. PowerShell built-ins like `$$true` or `$$null`):
 
 ```yaml
 files:
@@ -1319,7 +1356,8 @@ files:
     src:
       # On Windows exec: runs in PowerShell — $true is a PS built-in, needs $$
       exec: "if ($$true) { Write-Output 'yes' }"
-    post: sed 's/$$HOME/redacted/g' # $HOME would be treated as an avanti variable
+    on:
+      write: sed 's/$$HOME/redacted/g' # $HOME would be treated as an avanti variable
 ```
 
 `$$` produces a single `$` after substitution. `$$$name` produces `$` followed by the value of `name`. `$${expr}` produces a literal `${expr}` — use this to include shell-style `${VAR}` or template placeholders verbatim in a string without avanti interpreting them.
@@ -1464,7 +1502,7 @@ The `ref` (and `release`) field accepts four forms:
 
 When `ref` is omitted, all source types (GitHub, GitLab, Bitbucket, git) resolve to the repository's default branch.
 
-`$self` is a reserved keyword that expands to the absolute path of the active config file. It is injected automatically and cannot be used as a variable name. Use it anywhere a variable is valid — `exec:` commands, `replace:` rules, `exists:` conditions, `post:` scripts, or any source field:
+`$self` is a reserved keyword that expands to the absolute path of the active config file. It is injected automatically and cannot be used as a variable name. Use it anywhere a variable is valid — `exec:` commands, `replace:` rules, `exists:` conditions, `on.write` scripts, or any source field:
 
 ```yaml
 files:
@@ -1492,7 +1530,7 @@ When the config is specified as a remote spec (e.g. `--config github:org/repo:.a
 
 In addition to `$self` and `$latest`, avanti injects several variables automatically at the start of every run. These names are reserved and cannot be used in `variables:`.
 
-**Per-file path variables**, **pull-time variables**, and **system variables** are all available everywhere variables are resolved: source URLs, `ref:`, conditions, `replace:`, `post:`, template rendering, and `backup:` patterns.
+**Per-file path variables**, **pull-time variables**, and **system variables** are all available everywhere variables are resolved: source URLs, `ref:`, conditions, `replace:`, `on.write` scripts, template rendering, and `backup:` patterns. Side-effect hooks (`on.beforeWrite`, `on.beforeCreate`, `on.beforeUpdate`, `on.create`, `on.update`) do not resolve avanti variables — use `$AVANTI_TARGET` and `$AVANTI_IS_NEW` env vars instead.
 
 **Per-file path variables** — avanti derives the following variables from each file entry's resolved target path.
 
@@ -1507,7 +1545,7 @@ Example with working directory `/home/user/project` and map key `configs/app.yam
 | `$dirname`  | `/home/user/project/configs`          |
 | `$basedir`  | `configs`                             |
 
-> **Availability in source URLs and conditions:** per-file path variables are only resolved before the fetch when the map key is a fixed (non-directory) path. They are always available in processors (`replace:`, `post:`, template rendering) and `backup:`.
+> **Availability in source URLs and conditions:** per-file path variables are only resolved before the fetch when the map key is a fixed (non-directory) path. They are always available in processors (`replace:`, `on.write` scripts, template rendering) and `backup:`. Side-effect hooks (`on.create`, `on.update`, etc.) do not resolve avanti variables.
 
 ```yaml
 variables:
@@ -1529,13 +1567,14 @@ files:
     if:
       exists: $path
 
-  # $dirname in a processor — log which directory was updated
+  # $dirname in on.write — transform content using the file's directory name
   app/config.yaml:
     src: github:org/repo/app/config.yaml
-    post: echo updated $dirname >> pull.log
+    on:
+      write: sed "s|__DIR__|$dirname|g"
 ```
 
-**Pull-time variables** — injected once at the start of every run and available everywhere (source URLs, conditions, `replace:`, `post:`, template rendering, `backup:`):
+**Pull-time variables** — injected once at the start of every run and available everywhere (source URLs, conditions, `replace:`, `on.write` scripts, template rendering, `backup:`):
 
 | Variable    | Value                                   | Example               |
 | ----------- | --------------------------------------- | --------------------- |
@@ -1626,7 +1665,7 @@ files:
       arrays: concat
 ```
 
-`$self` supports all the same source types, `replace`, `post`, and YAML/JSON merge options as any other file entry. See [Self-managing Config](#self-managing-config) in the Use Cases section for a full worked example.
+`$self` supports all the same source types, `replace`, `on.write`, and YAML/JSON merge options as any other file entry. Lifecycle hooks (`on.beforeWrite`, `on.beforeCreate`, `on.beforeUpdate`, `on.create`, `on.update`) are not supported for `$self` — they require a confirmed write context that the config re-evaluation pass does not have. See [Self-managing Config](#self-managing-config) in the Use Cases section for a full worked example.
 
 ### Authentication
 

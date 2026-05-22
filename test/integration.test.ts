@@ -6,6 +6,7 @@ import {
   readdirSync,
   readFileSync,
   rmSync,
+  unlinkSync,
   writeFileSync,
 } from 'fs';
 import { tmpdir } from 'os';
@@ -566,12 +567,12 @@ describe('Integration', () => {
     });
   });
 
-  describe('post processor', () => {
+  describe('on.write processor', () => {
     it('pipes content through a shell command', () => {
       const sourceFile = join(tmpDir, 'source.txt');
       writeFileSync(sourceFile, 'hello world');
 
-      const postCmd = isWindows
+      const writeCmd = isWindows
         ? '[Console]::Out.Write([Console]::In.ReadToEnd().ToUpper())'
         : 'tr a-z A-Z';
       const config = writeConfig(
@@ -579,7 +580,8 @@ describe('Integration', () => {
         `files:
   ./output.txt:
     src: ${sourceFile}
-    post: "${postCmd}"
+    on:
+      write: "${writeCmd}"
 `,
       );
 
@@ -590,11 +592,11 @@ describe('Integration', () => {
       );
     });
 
-    it('chains replace and post processors', () => {
+    it('chains replace and on.write processors', () => {
       const sourceFile = join(tmpDir, 'source.txt');
       writeFileSync(sourceFile, 'foo bar');
 
-      const postCmd = isWindows
+      const writeCmd = isWindows
         ? '[Console]::Out.Write([Console]::In.ReadToEnd().ToUpper())'
         : 'tr a-z A-Z';
       const config = writeConfig(
@@ -605,7 +607,8 @@ describe('Integration', () => {
     replace:
       - from: foo
         to: hello
-    post: "${postCmd}"
+    on:
+      write: "${writeCmd}"
 `,
       );
 
@@ -614,6 +617,217 @@ describe('Integration', () => {
       expect(readFileSync(join(tmpDir, 'output.txt'), 'utf8')).toBe(
         'HELLO BAR',
       );
+    });
+  });
+
+  describe('on: lifecycle hooks', () => {
+    it.skipIf(!isWindows)(
+      'fires on.create only for new files (Windows)',
+      () => {
+        const sourceFile = join(tmpDir, 'source.txt');
+        writeFileSync(sourceFile, 'hello');
+        const marker = join(tmpDir, 'marker.txt');
+        const outPath = join(tmpDir, 'output.txt');
+        // Use forward slashes in paths embedded in YAML double-quoted strings to
+        // avoid YAML escape processing corrupting backslash sequences like \a, \t.
+        // PowerShell accepts forward slashes as path separators.
+        // Escape single quotes so paths with apostrophes are valid PS literals.
+        const markerFwd = marker.replace(/\\/g, '/').replace(/'/g, "''");
+
+        const config = writeConfig(
+          tmpDir,
+          `files:
+  ./output.txt:
+    src: ${sourceFile}
+    on:
+      create: "[System.IO.File]::WriteAllText('${markerFwd}', 'created:' + $AVANTI_TARGET)"
+      update: "[System.IO.File]::WriteAllText('${markerFwd}', 'updated:' + $AVANTI_TARGET)"
+`,
+        );
+
+        const { exitCode: e1 } = runAvanti(config, tmpDir);
+        expect(e1).toBe(0);
+        expect(readFileSync(marker, 'utf8')).toBe(`created:${outPath}`);
+
+        unlinkSync(marker);
+        const { exitCode: e2 } = runAvanti(config, tmpDir);
+        expect(e2).toBe(0);
+        expect(existsSync(marker)).toBe(false);
+
+        writeFileSync(sourceFile, 'hello updated');
+        const { exitCode: e3 } = runAvanti(config, tmpDir);
+        expect(e3).toBe(0);
+        expect(readFileSync(marker, 'utf8')).toBe(`updated:${outPath}`);
+      },
+    );
+
+    it.skipIf(isWindows)('fires on.create only for new files', () => {
+      const sourceFile = join(tmpDir, 'source.txt');
+      writeFileSync(sourceFile, 'hello');
+      const marker = join(tmpDir, 'marker.txt');
+
+      const config = writeConfig(
+        tmpDir,
+        `files:
+  ./output.txt:
+    src: ${sourceFile}
+    on:
+      create: printf '%s' "created:$AVANTI_TARGET" > "${marker}"
+      update: printf '%s' "updated:$AVANTI_TARGET" > "${marker}"
+`,
+      );
+
+      // First run: file is new → on.create fires
+      const { exitCode: e1 } = runAvanti(config, tmpDir);
+      expect(e1).toBe(0);
+      expect(readFileSync(marker, 'utf8')).toBe(
+        `created:${join(tmpDir, 'output.txt')}`,
+      );
+
+      // Second run: file exists, no content change → no hook fires
+      unlinkSync(marker);
+      const { exitCode: e2 } = runAvanti(config, tmpDir);
+      expect(e2).toBe(0);
+      expect(existsSync(marker)).toBe(false);
+
+      // Third run: content changed → on.update fires
+      writeFileSync(sourceFile, 'hello updated');
+      const { exitCode: e3 } = runAvanti(config, tmpDir);
+      expect(e3).toBe(0);
+      expect(readFileSync(marker, 'utf8')).toBe(
+        `updated:${join(tmpDir, 'output.txt')}`,
+      );
+    });
+
+    it.skipIf(!isWindows)(
+      'fires on.beforeCreate before writing (Windows)',
+      () => {
+        const sourceFile = join(tmpDir, 'source2.txt');
+        writeFileSync(sourceFile, 'data');
+        const marker = join(tmpDir, 'before_marker.txt');
+        const markerFwd = marker.replace(/\\/g, '/').replace(/'/g, "''");
+
+        const config = writeConfig(
+          tmpDir,
+          `files:
+  ./output2.txt:
+    src: ${sourceFile}
+    on:
+      beforeCreate: "[System.IO.File]::WriteAllText('${markerFwd}', 'before')"
+`,
+        );
+
+        const { exitCode } = runAvanti(config, tmpDir);
+        expect(exitCode).toBe(0);
+        expect(readFileSync(marker, 'utf8')).toBe('before');
+        expect(existsSync(join(tmpDir, 'output2.txt'))).toBe(true);
+      },
+    );
+
+    it.skipIf(!isWindows)(
+      'passes AVANTI_IS_NEW env var correctly (Windows)',
+      () => {
+        const sourceFile = join(tmpDir, 'source3.txt');
+        writeFileSync(sourceFile, 'data');
+        const marker = join(tmpDir, 'isnew_marker.txt');
+        const markerFwd = marker.replace(/\\/g, '/').replace(/'/g, "''");
+
+        const config = writeConfig(
+          tmpDir,
+          `files:
+  ./output3.txt:
+    src: ${sourceFile}
+    on:
+      beforeWrite: "[System.IO.File]::WriteAllText('${markerFwd}', $AVANTI_IS_NEW)"
+`,
+        );
+
+        const { exitCode: e1 } = runAvanti(config, tmpDir);
+        expect(e1).toBe(0);
+        expect(readFileSync(marker, 'utf8')).toBe('true');
+
+        writeFileSync(sourceFile, 'updated data');
+        const { exitCode: e2 } = runAvanti(config, tmpDir);
+        expect(e2).toBe(0);
+        expect(readFileSync(marker, 'utf8')).toBe('false');
+      },
+    );
+
+    it.skipIf(isWindows)('fires on.beforeCreate before writing', () => {
+      const sourceFile = join(tmpDir, 'source2.txt');
+      writeFileSync(sourceFile, 'data');
+      const marker = join(tmpDir, 'before_marker.txt');
+
+      const config = writeConfig(
+        tmpDir,
+        `files:
+  ./output2.txt:
+    src: ${sourceFile}
+    on:
+      beforeCreate: printf '%s' "before" > "${marker}"
+`,
+      );
+
+      const { exitCode } = runAvanti(config, tmpDir);
+      expect(exitCode).toBe(0);
+      expect(readFileSync(marker, 'utf8')).toBe('before');
+      expect(existsSync(join(tmpDir, 'output2.txt'))).toBe(true);
+    });
+
+    it.skipIf(isWindows)(
+      'fires on.beforeUpdate only on existing file changes',
+      () => {
+        const sourceFile = join(tmpDir, 'source_bu.txt');
+        writeFileSync(sourceFile, 'initial');
+        const marker = join(tmpDir, 'bu_marker.txt');
+
+        const config = writeConfig(
+          tmpDir,
+          `files:
+  ./output_bu.txt:
+    src: ${sourceFile}
+    on:
+      beforeCreate: printf '%s' "created" > "${marker}"
+      beforeUpdate: printf '%s' "updated" > "${marker}"
+`,
+        );
+
+        // First run: new file → beforeCreate fires, not beforeUpdate
+        const { exitCode: e1 } = runAvanti(config, tmpDir);
+        expect(e1).toBe(0);
+        expect(readFileSync(marker, 'utf8')).toBe('created');
+
+        // Second run: content changed → beforeUpdate fires, not beforeCreate
+        writeFileSync(sourceFile, 'changed');
+        const { exitCode: e2 } = runAvanti(config, tmpDir);
+        expect(e2).toBe(0);
+        expect(readFileSync(marker, 'utf8')).toBe('updated');
+      },
+    );
+
+    it.skipIf(isWindows)('passes AVANTI_IS_NEW env var correctly', () => {
+      const sourceFile = join(tmpDir, 'source3.txt');
+      writeFileSync(sourceFile, 'data');
+      const marker = join(tmpDir, 'isnew_marker.txt');
+
+      const config = writeConfig(
+        tmpDir,
+        `files:
+  ./output3.txt:
+    src: ${sourceFile}
+    on:
+      beforeWrite: printf '%s' "$AVANTI_IS_NEW" > "${marker}"
+`,
+      );
+
+      const { exitCode: e1 } = runAvanti(config, tmpDir);
+      expect(e1).toBe(0);
+      expect(readFileSync(marker, 'utf8')).toBe('true');
+
+      writeFileSync(sourceFile, 'updated data');
+      const { exitCode: e2 } = runAvanti(config, tmpDir);
+      expect(e2).toBe(0);
+      expect(readFileSync(marker, 'utf8')).toBe('false');
     });
   });
 
