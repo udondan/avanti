@@ -197,7 +197,7 @@ export function applyUpdatedShas(
             .map((item) => (isScalar(item) ? String(item.value) : null))
             .filter((f): f is string => f !== null && f.length > 0);
           if (filterArr.length > 0)
-            label += ` | filter:${JSON.stringify(filterArr)}`;
+            label += `\x00filter:${JSON.stringify(filterArr)}`;
         }
       }
 

@@ -11,7 +11,12 @@ import {
   SELF_KEY,
 } from '../config';
 import { evaluateConditions } from '../condition';
-import { fetchSource, FetchCache, SourceFetchRecord } from '../sources';
+import {
+  fetchSource,
+  FetchCache,
+  SourceFetchRecord,
+  formatSourceLabel,
+} from '../sources';
 import { sortByDependencies } from '../dependencies';
 import { applyReplace } from '../processors/replace';
 import { applyPost } from '../processors/post';
@@ -338,7 +343,7 @@ async function runFetchLoop(
 function printShaErrors(errors: ShaError[]): void {
   for (const e of errors) {
     console.error(
-      `SHA mismatch for ${e.sourceLabel}\n` +
+      `SHA mismatch for ${formatSourceLabel(e.sourceLabel)}\n` +
         `  expected: ${e.expectedSha}\n` +
         `  got:      ${e.observedSha}`,
     );

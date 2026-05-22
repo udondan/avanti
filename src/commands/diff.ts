@@ -10,7 +10,7 @@ import {
   resolveConfigPath,
   SELF_KEY,
 } from '../config';
-import { fetchSource, FetchCache } from '../sources';
+import { fetchSource, FetchCache, formatSourceLabel } from '../sources';
 import { sortByDependencies } from '../dependencies';
 import { applyReplace } from '../processors/replace';
 import { applyPost } from '../processors/post';
@@ -119,7 +119,7 @@ async function runDiffLoop(
       for (const rec of result.sourceRecords) {
         if (!rec.matched) {
           console.error(
-            `⚠  SHA mismatch for ${rec.sourceLabel}\n` +
+            `⚠  SHA mismatch for ${formatSourceLabel(rec.sourceLabel)}\n` +
               `   expected: ${rec.expectedSha}\n` +
               `   got:      ${rec.observedSha}`,
           );

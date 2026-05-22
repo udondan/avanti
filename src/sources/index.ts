@@ -165,14 +165,22 @@ export type FetchCache = Map<string, { files: Map<string, Buffer> }>;
 // sources (github:, gitlab:, etc.) keep variable references unresolved so the
 // label matches the literal YAML values that applyUpdatedShas reads for SHA
 // writeback. Plain-string sources resolve variables since they don't support
-// SHA pinning. A " | filter:[...]" suffix is appended when a filter is present
-// so two uses of the same source with different filters get distinct labels.
+// SHA pinning. When a filter is present a NUL-byte separator (\x00) is used
+// before "filter:<json>" so the label is unambiguous even if the base contains
+// the display string " | filter:" (e.g. a local path with that literal text).
+// Use formatSourceLabel() to convert to a human-readable form for display.
 function labelForSrc(src: FileSrc, vars: Variables): string {
   const base = baseLabelForSrc(src, vars);
   const filter = filterForSrc(src);
   if (filter && filter.length > 0)
-    return `${base} | filter:${JSON.stringify(filter)}`;
+    return `${base}\x00filter:${JSON.stringify(filter)}`;
   return base;
+}
+
+// formatSourceLabel converts an internal label (which may contain a NUL-byte
+// filter separator) into a human-readable string for log/error output.
+export function formatSourceLabel(label: string): string {
+  return label.replace('\x00filter:', ' | filter:');
 }
 
 function baseLabelForSrc(src: FileSrc, vars: Variables): string {

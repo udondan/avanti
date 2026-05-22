@@ -289,7 +289,7 @@ files:
           - file-a.txt
           - file-b.txt
 `);
-    const label = 'github:org/repo:dir/ | filter:["file-a.txt","file-b.txt"]';
+    const label = 'github:org/repo:dir/\x00filter:["file-a.txt","file-b.txt"]';
     writeUpdatedShas(cfg, new Map([[label, sha]]));
     const result = fs.readFileSync(cfg, 'utf8');
     expect(result).toContain(`sha: ${sha}`);
