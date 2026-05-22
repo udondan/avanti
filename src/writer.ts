@@ -61,6 +61,18 @@ export function sudoDelete(p: string, sudo: true | string): void {
   }
 }
 
+export function sudoFileExists(
+  sudo: true | string,
+  targetPath: string,
+): boolean {
+  const r = spawnSync(
+    'sudo',
+    [...sudoUserArgs(sudo), 'test', '-e', path.resolve(targetPath)],
+    { stdio: 'ignore' },
+  );
+  return r.status === 0;
+}
+
 export function sudoIsSymlink(
   sudo: true | string,
   targetPath: string,
@@ -179,11 +191,27 @@ function sudoWriteMv(t: SudoWriteTarget): void {
             '.avanti-tmp',
         );
         sudoRun(sudo, ['cp', '--', resolvedTarget, backupTmp]);
+        const backupIsDir = spawnSync(
+          'sudo',
+          [...sudoUserArgs(sudo), 'test', '-d', path.resolve(t.backupPath)],
+          { stdio: 'ignore' },
+        );
+        if (backupIsDir.status === 0) {
+          throw new Error(`backup path is a directory: ${t.backupPath}`);
+        }
         sudoRun(sudo, ['mv', '--', backupTmp, t.backupPath]);
         backupTmp = undefined; // renamed into place — no cleanup needed
       }
     }
 
+    const destIsDir = spawnSync(
+      'sudo',
+      [...sudoUserArgs(sudo), 'test', '-d', path.resolve(t.targetPath)],
+      { stdio: 'ignore' },
+    );
+    if (destIsDir.status === 0) {
+      throw new Error(`target path is a directory: ${t.targetPath}`);
+    }
     sudoRun(sudo, ['mv', '--', tmpFile, t.targetPath]);
 
     // Apply mode: explicit config value wins; existing dest mode is used as fallback
@@ -254,6 +282,14 @@ function sudoWriteInPlace(t: SudoWriteTarget): void {
             '.avanti-tmp',
         );
         sudoRun(sudo, ['cp', '--', resolvedTarget, backupTmp]);
+        const backupIsDir = spawnSync(
+          'sudo',
+          [...sudoUserArgs(sudo), 'test', '-d', path.resolve(t.backupPath)],
+          { stdio: 'ignore' },
+        );
+        if (backupIsDir.status === 0) {
+          throw new Error(`backup path is a directory: ${t.backupPath}`);
+        }
         sudoRun(sudo, ['mv', '--', backupTmp, t.backupPath]);
         backupTmp = undefined;
       }

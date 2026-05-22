@@ -146,8 +146,18 @@ export class HistoryManager {
       isFirstSeen = true;
       const existedBeforeAvanti = !isNew && fs.existsSync(targetPath);
       if (existedBeforeAvanti) {
-        const originalContent = fs.readFileSync(targetPath);
-        fs.writeFileSync(path.join(fileDir, 'v0'), originalContent);
+        try {
+          const originalContent = fs.readFileSync(targetPath);
+          fs.writeFileSync(path.join(fileDir, 'v0'), originalContent);
+        } catch (err) {
+          const code = (err as NodeJS.ErrnoException).code;
+          if (code !== 'EACCES' && code !== 'EPERM') {
+            throw err;
+          }
+          // File exists but is unreadable (e.g. root-owned 0600).
+          // Record that it existed without capturing v0 — stale cleanup
+          // still works; revert-to-original is unavailable for this file.
+        }
       }
       meta = {
         absolutePath: targetPath,

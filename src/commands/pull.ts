@@ -28,6 +28,7 @@ import {
   sudoAtomicWrite,
   sudoAuth,
   sudoDelete,
+  sudoFileExists,
   sudoIsSymlink,
   sudoRun,
   SudoWriteTarget,
@@ -909,9 +910,15 @@ export function pullCommand(): Command {
             const d = allDiffs[i];
             if (d.modeChange && !d.contentChanged) {
               if (writeTargets[i].sudo) {
-                // Use sudo for the symlink check: fs.lstatSync throws EACCES
-                // on paths inside root-owned directories (e.g. /root/).
+                // Use sudo for the symlink/existence checks: fs.lstatSync
+                // throws EACCES on paths inside root-owned directories.
+                // Skip chmod if the file has been deleted since diff
+                // computation (mirrors non-sudo throwIfNoEntry: false path).
                 if (
+                  sudoFileExists(
+                    writeTargets[i].sudo!,
+                    writeTargets[i].targetPath,
+                  ) &&
                   !sudoIsSymlink(
                     writeTargets[i].sudo!,
                     writeTargets[i].targetPath,
