@@ -826,6 +826,20 @@ export function pullCommand(): Command {
             );
           }
         }
+
+        // For tracked files whose sudo identity changed but whose content/mode
+        // did not, stageFileVersion is skipped above. Update meta.sudo directly
+        // so stale cleanup uses the correct sudo identity on the next pull.
+        for (let i = 0; i < writeTargets.length; i++) {
+          if (allDiffs[i].hasChanges) continue;
+          const currentMeta = history.getFileMeta(writeTargets[i].targetPath);
+          if (!currentMeta) continue;
+          const newSudo = writeTargets[i].sudo || undefined;
+          const oldSudo = currentMeta.sudo || undefined;
+          if (newSudo !== oldSudo) {
+            history.updateFileSudo(writeTargets[i].targetPath, newSudo);
+          }
+        }
       }
 
       try {

@@ -78,15 +78,17 @@ function getSudoFileMode(
   sudo: boolean | string,
   targetPath: string,
 ): string | undefined {
+  const absPath = path.resolve(targetPath); // ensure never starts with '-'
   const gnu = spawnSync(
     'sudo',
-    [...sudoUserArgs(sudo), 'stat', '-c', '%a', '--', targetPath],
+    [...sudoUserArgs(sudo), 'stat', '-c', '%a', '--', absPath],
     { stdio: ['ignore', 'pipe', 'ignore'] },
   );
   if (gnu.status === 0) return gnu.stdout.toString().trim() || undefined;
+  // BSD stat (macOS) does not support '--'; path.resolve() ensures no leading '-'
   const bsd = spawnSync(
     'sudo',
-    [...sudoUserArgs(sudo), 'stat', '-f', '%Lp', targetPath],
+    [...sudoUserArgs(sudo), 'stat', '-f', '%Lp', absPath],
     { stdio: ['ignore', 'pipe', 'ignore'] },
   );
   if (bsd.status === 0) return bsd.stdout.toString().trim() || undefined;
@@ -104,9 +106,15 @@ function sudoWriteMv(t: WriteTarget): void {
 
   // Use sudo mktemp for exclusive O_EXCL creation — prevents symlink/hardlink tricks
   // if the destination directory is writable by other users.
+  // path.resolve(dir) ensures the template is always an absolute path, so mktemp
+  // never misinterprets it as an option (macOS mktemp doesn't support '--').
   const mktempResult = spawnSync(
     'sudo',
-    [...sudoUserArgs(sudo), 'mktemp', path.join(dir, '.avanti-XXXXXXXXXX')],
+    [
+      ...sudoUserArgs(sudo),
+      'mktemp',
+      path.join(path.resolve(dir), '.avanti-XXXXXXXXXX'),
+    ],
     { stdio: ['ignore', 'pipe', 'inherit'] },
   );
   if (mktempResult.status !== 0 || mktempResult.error) {
