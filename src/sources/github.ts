@@ -532,9 +532,10 @@ function resolveRefViaCli(repo: string, ref: string, host?: string): string {
     throw new Error(
       `Failed to list tags for ${repo}: ${tagRes.stderr.trim() || 'gh exited with status ' + tagRes.status}`,
     );
-  if (!tagRes.stdout.trim())
+  const tagName = tagRes.stdout.trim();
+  if (!tagName || tagName === 'null')
     throw new Error(`No tags found for ${repo} (needed to resolve $recent)`);
-  return tagRes.stdout.trim();
+  return tagName;
 }
 
 interface GitHubAsset {
