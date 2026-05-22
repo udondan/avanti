@@ -269,7 +269,7 @@ async function findHighestSemverTagApi(
   repo: string,
   host?: string,
 ): Promise<string | null> {
-  const collected: string[] = [];
+  let best: string | null = null;
   const perPage = 100;
   for (let page = 1; ; page++) {
     const res = await fetchWithRetry(
@@ -282,10 +282,12 @@ async function findHighestSemverTagApi(
         `Failed to list tags for ${repo}: HTTP ${res.status}`,
       );
     const tags = (await res.json()) as Array<{ name: string }>;
-    collected.push(...tags.map((t) => t.name));
-    if (tags.length < perPage) break; // last page
+    const candidate = maxSemverTag(tags.map((t) => t.name));
+    if (candidate && (!best || maxSemverTag([best, candidate]) === candidate))
+      best = candidate;
+    if (tags.length < perPage) break;
   }
-  return maxSemverTag(collected);
+  return best;
 }
 
 async function findTagMatchingPatternApi(
