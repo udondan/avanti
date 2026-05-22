@@ -29,9 +29,17 @@ export function isRecentSentinel(ref: string | undefined): boolean {
 }
 
 /**
- * Parse a JS regex literal (/pattern/ or /pattern/flags) from a ref string.
- * Returns the compiled RegExp, or null if the ref is not a regex literal.
- * Throws if the pattern is syntactically invalid.
+ * Parse a regex pattern from a ref string of the form `/pattern/` or `/pattern/flags`.
+ * Returns the compiled RegExp, or null if the ref does not match that form.
+ * Throws if the pattern body or flags are syntactically invalid.
+ *
+ * Supported subset (intentional differences from JS regex literal syntax):
+ * - The pattern body must be non-empty: `//` is not recognised and returns null
+ *   (treated as a literal ref, since an empty pattern is not useful for tag matching).
+ * - The closing `/` is the last `/` in the string, so inner unescaped slashes are
+ *   absorbed into the pattern body (e.g. `/foo/bar/` → pattern `foo/bar`).
+ * - Stateful flags `g` and `y` are silently stripped because callers use `.test()`.
+ * - Any other unrecognised flags cause `new RegExp()` to throw a descriptive error.
  */
 export function parseRefPattern(ref: string): RegExp | null {
   const m = /^\/(.+)\/([a-z]*)$/.exec(ref);
