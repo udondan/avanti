@@ -165,13 +165,13 @@ export type FetchCache = Map<string, { files: Map<string, Buffer> }>;
 // sources (github:, gitlab:, etc.) keep variable references unresolved so the
 // label matches the literal YAML values that applyUpdatedShas reads for SHA
 // writeback. Plain-string sources resolve variables since they don't support
-// SHA pinning. A NUL-separated JSON-encoded filter suffix is appended so two
-// uses of the same source with different filters get distinct labels.
+// SHA pinning. A " | filter:[...]" suffix is appended when a filter is present
+// so two uses of the same source with different filters get distinct labels.
 function labelForSrc(src: FileSrc, vars: Variables): string {
   const base = baseLabelForSrc(src, vars);
   const filter = filterForSrc(src);
   if (filter && filter.length > 0)
-    return `${base}\x00filter:${JSON.stringify(filter)}`;
+    return `${base} | filter:${JSON.stringify(filter)}`;
   return base;
 }
 

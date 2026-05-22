@@ -276,6 +276,40 @@ files:
     expect(result).not.toBeNull();
     expect(result).toContain(`sha: ${sha}`);
   });
+
+  it('writes sha for a github source with filter suffix in the label', () => {
+    const sha = 'ff'.repeat(32);
+    const cfg = writeConfig(`files:
+  out/:
+    src:
+      - github:
+          repo: org/repo
+          file: dir/
+        filter:
+          - file-a.txt
+          - file-b.txt
+`);
+    const label = 'github:org/repo:dir/ | filter:["file-a.txt","file-b.txt"]';
+    writeUpdatedShas(cfg, new Map([[label, sha]]));
+    const result = fs.readFileSync(cfg, 'utf8');
+    expect(result).toContain(`sha: ${sha}`);
+  });
+
+  it('does not match a label without filter suffix when source has filter', () => {
+    const sha = 'dd'.repeat(32);
+    const cfg = writeConfig(`files:
+  out/:
+    src:
+      - github:
+          repo: org/repo
+          file: dir/
+        filter:
+          - file-a.txt
+`);
+    writeUpdatedShas(cfg, new Map([['github:org/repo:dir/', sha]]));
+    const result = fs.readFileSync(cfg, 'utf8');
+    expect(result).not.toContain(`sha:`);
+  });
 });
 
 // ---------------------------------------------------------------------------

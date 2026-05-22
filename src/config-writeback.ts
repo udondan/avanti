@@ -184,13 +184,13 @@ export function applyUpdatedShas(
       }
 
       if (label) {
-        const rawFilter = n.get('filter');
-        if (Array.isArray(rawFilter) && rawFilter.length > 0) {
-          const filterArr = (rawFilter as unknown[]).filter(
-            (f): f is string => typeof f === 'string',
-          );
+        const rawFilter = n.get('filter', true);
+        if (isSeq(rawFilter) && rawFilter.items.length > 0) {
+          const filterArr = rawFilter.items
+            .map((item) => (isScalar(item) ? String(item.value) : null))
+            .filter((f): f is string => f !== null && f.length > 0);
           if (filterArr.length > 0)
-            label += `\x00filter:${JSON.stringify(filterArr)}`;
+            label += ` | filter:${JSON.stringify(filterArr)}`;
         }
       }
 
