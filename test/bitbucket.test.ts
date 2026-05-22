@@ -115,16 +115,14 @@ describe('fetchBitbucket — ref resolution', () => {
     expect(mockFetch.mock.calls[1][0] as string).toContain('/src/v5.0.0/');
   });
 
-  it('falls back to mainbranch when $latest finds no tags', async () => {
-    const mockFetch = vi
-      .spyOn(globalThis, 'fetch')
-      .mockResolvedValueOnce(jsonResponse({ values: [] }))
-      .mockResolvedValueOnce(jsonResponse({ mainbranch: { name: 'main' } }))
-      .mockResolvedValueOnce(textResponse('content'));
+  it('throws when $latest finds no semver tags', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      jsonResponse({ values: [] }),
+    );
 
-    await fetchBitbucket('ws', 'repo', 'file.txt', '$latest');
-
-    expect(mockFetch.mock.calls[2][0] as string).toContain('/src/main/');
+    await expect(
+      fetchBitbucket('ws', 'repo', 'file.txt', '$latest'),
+    ).rejects.toThrow('No semver tags found');
   });
 
   it('throws when ref resolution request fails', async () => {
@@ -148,6 +146,81 @@ describe('fetchBitbucket — ref resolution', () => {
     expect(mockFetch.mock.calls[0][0] as string).toContain(
       'bb.internal.example.com',
     );
+  });
+
+  it('$latest picks the highest semver across multiple pages', async () => {
+    const mockFetch = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(
+        jsonResponse({
+          values: [{ name: 'v1.9.9' }, { name: 'nightly' }],
+          next: 'https://api.bitbucket.org/2.0/page2',
+        }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({ values: [{ name: 'v2.0.0' }, { name: 'v1.8.0' }] }),
+      )
+      .mockResolvedValueOnce(textResponse('content'));
+
+    await fetchBitbucket('ws', 'repo', 'file.txt', '$latest');
+
+    expect(mockFetch.mock.calls[2][0] as string).toContain('/src/v2.0.0/');
+  });
+
+  it('$recent sorts by target.date and returns newest', async () => {
+    const mockFetch = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(jsonResponse({ values: [{ name: 'nightly' }] }))
+      .mockResolvedValueOnce(textResponse('content'));
+
+    await fetchBitbucket('ws', 'repo', 'file.txt', '$recent');
+
+    expect(mockFetch.mock.calls[0][0] as string).toContain('sort=-target.date');
+    expect(mockFetch.mock.calls[1][0] as string).toContain('/src/nightly/');
+  });
+
+  it('throws when $recent finds no tags', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      jsonResponse({ values: [] }),
+    );
+
+    await expect(
+      fetchBitbucket('ws', 'repo', 'file.txt', '$recent'),
+    ).rejects.toThrow('No tags found');
+  });
+
+  it('throws when $recent tag request fails', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response('Unauthorized', { status: 401 }),
+    );
+
+    await expect(
+      fetchBitbucket('ws', 'repo', 'file.txt', '$recent'),
+    ).rejects.toThrow('Failed to resolve $recent');
+  });
+
+  it('pattern resolves to first matching tag by target.date order', async () => {
+    const mockFetch = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(
+        jsonResponse({ values: [{ name: 'v2.0.0' }, { name: 'v1.9.0' }] }),
+      )
+      .mockResolvedValueOnce(textResponse('content'));
+
+    await fetchBitbucket('ws', 'repo', 'file.txt', '/^v1\\./');
+
+    expect(mockFetch.mock.calls[0][0] as string).toContain('sort=-target.date');
+    expect(mockFetch.mock.calls[1][0] as string).toContain('/src/v1.9.0/');
+  });
+
+  it('throws when pattern matches no tags', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(() =>
+      Promise.resolve(jsonResponse({ values: [{ name: 'v2.0.0' }] })),
+    );
+
+    await expect(
+      fetchBitbucket('ws', 'repo', 'file.txt', '/^v99\\./'),
+    ).rejects.toThrow('No tags matching "/^v99\\./" found for ws/repo');
   });
 });
 

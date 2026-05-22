@@ -57,7 +57,7 @@ mise exec -- bunx vitest run test/config.test.ts
 
 1. `cli.ts` — Commander.js entry point; global flags: `--config`, `--working-dir`
 2. `config.ts` — Resolves and parses the config file; auto-detects `.avanti.yml`, `.avanti.yaml`, `avanti.yml`, `avanti.yaml` (case-insensitive) when no explicit `--config` path is given
-3. `variables.ts` — Validates and resolves `$varname` (config variables) and `$env:NAME` (env vars) in strings; `$latest` is a reserved sentinel for newest tag
+3. `variables.ts` — Validates and resolves `$varname` (config variables) and `$env:NAME` (env vars) in strings; `$latest` and `$recent` are reserved variable names (alongside `$self`); `/pattern/` is a ref syntax form handled by `ref.ts` and the per-source resolvers, not a variable name
 4. `sources/index.ts` — Orchestrates fetching across all source types
 5. `processors/` — Transforms fetched content (replacements, shell pipes, JSON/YAML merge)
 6. `diff.ts` — Computes and renders git-diff-style output

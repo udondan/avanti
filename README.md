@@ -107,7 +107,7 @@ avanti revert  # roll back instantly if something breaks
 - **TOML merging** — deep-merge multiple TOML sources with configurable conflict, array, and table strategies
 - **Variables** — define reusable values in a `variables:` block and reference them anywhere with `$name`; variables can be plain strings, `$env:NAME` environment variable references, or fetched from any remote/local source (the same source types as `files:`)
 - **Post-processing** — apply text replacements (string or regex) and/or pipe content through a shell script
-- **Release artifacts** — download release assets attached to a GitHub or GitLab release by tag, or use `$latest` for the newest release (GitLab prefers `package`-type links; falls back to all links)
+- **Release artifacts** — download release assets attached to a GitHub or GitLab release by tag, `$latest` (newest stable semver tag), `$recent` (most recently created/published tag), or `/pattern/[flags]` (GitLab prefers `package`-type links; falls back to all links)
 - **Directory sync** — recursively sync directories from GitLab/GitHub/Bitbucket/git/S3/local sources
 - **SHA pinning** — pin any remote source to a content fingerprint with `sha:`; use `avanti lock` to compute and write SHAs automatically; `avanti pull --accept-changes` reviews a mismatch and updates the pin
 - **`$self`** — avanti can manage its own config file; declare `$self` in `files:` and the fetched content becomes the active config for the rest of the run, including YAML/JSON merge from multiple sources
@@ -469,7 +469,7 @@ src:
   gitlab:
     project: group/repo          # GitLab project path
     file: path/to/file.txt       # file or directory in repo (mutually exclusive with release)
-    ref: main                    # branch, tag, or $latest (optional)
+    ref: main                    # branch, tag, $latest, $recent, or /pattern/ (optional)
     sha: abc123...               # optional SHA-256 fingerprint
     host: gitlab.mycompany.com   # override default gitlab.com (optional)
     via: cli                     # api, cli, or list (default: [api, cli])
@@ -478,7 +478,7 @@ src:
 src:
   gitlab:
     project: group/repo          # GitLab project path
-    release: v1.2.3              # release tag, or $latest (mutually exclusive with file)
+    release: v1.2.3              # release tag, $latest, $recent, or /pattern/ (mutually exclusive with file)
     sha: abc123...               # optional SHA-256 fingerprint
     host: gitlab.mycompany.com   # override default gitlab.com (optional)
     via: cli                     # api, cli, or list (default: [api, cli])
@@ -490,7 +490,7 @@ src:
   github:
     repo: owner/repo             # GitHub owner/repo
     file: path/to/file.txt       # file or directory in repo (mutually exclusive with release)
-    ref: main                    # branch, tag, or $latest (optional)
+    ref: main                    # branch, tag, $latest, $recent, or /pattern/ (optional)
     sha: abc123...               # optional SHA-256 fingerprint
     host: github.mycompany.com   # GitHub Enterprise Server hostname (optional)
     via: cli                     # api, cli, or list (default: [api, cli])
@@ -499,7 +499,7 @@ src:
 src:
   github:
     repo: owner/repo             # GitHub owner/repo
-    release: v1.2.3              # release tag, or $latest (mutually exclusive with file)
+    release: v1.2.3              # release tag, $latest, $recent, or /pattern/ (mutually exclusive with file)
     sha: abc123...               # optional SHA-256 fingerprint
     host: github.mycompany.com   # GitHub Enterprise Server hostname (optional)
     via: cli                     # api, cli, or list (default: [api, cli])
@@ -1414,7 +1414,21 @@ variables:
   registry_line: //$host/:_authToken=$token # both $host and $token are available
 ```
 
-`$latest` is a reserved keyword that resolves to the latest published version and cannot be used as a variable name. For GitLab it resolves to the latest tag sorted by semantic version (for `file:` sources) or the latest release (for `release:` sources, falling back to tags on older instances). For GitHub it resolves to the tag of the latest release (for both `file:` and `release:` sources); if the repository has no releases, it falls back to the most recently created tag. For Bitbucket it resolves to the latest tag sorted by name; if no tags exist, it falls back to the repository's default branch.
+The `ref` (and `release`) field accepts four forms:
+
+- **Literal** — a branch name, tag, or commit hash passed directly to the VCS (e.g. `main`, `v1.2.3`, `abc123`).
+- **`$latest`** — resolves to the newest **stable semver tag** (`vX.Y.Z` or `X.Y.Z`, no pre-release suffix), consistently across all providers. GitHub first checks the published "latest release" and accepts it when it is semver; all providers scan tags filtered by the semver pattern.
+- **`$recent`** — resolves to the most **recently created or published tag**, regardless of its name format. Use this when you want whatever was tagged last, even if it is a nightly or pre-release build. For `git:` remotes the ordering is determined by `git ls-remote` output rather than creation date (date-based ordering requires fetching tag objects and is not supported).
+- **`/pattern/[flags]`** — a regex pattern of the form `/body/` or `/body/flags` (e.g. `ref: /^v1\.\d+\.\d+$/`). Resolves to the first tag whose name matches the pattern, ordered newest-first on GitHub, GitLab, and Bitbucket. For `git:` remotes the match order follows `git ls-remote` output. Flags such as `i` are supported. Note: the pattern body must be non-empty — `//` is treated as a literal ref, not a match-all regex. The stateful flags `g` and `y` are silently stripped; any other unrecognised flag produces an error.
+
+| Form           | Meaning                                          |
+| -------------- | ------------------------------------------------ |
+| `ref: $latest` | Newest `vX.Y.Z` / `X.Y.Z` stable tag             |
+| `ref: $recent` | Most recently created/published tag (any format) |
+| `ref: /^v1\./` | Latest tag matching the regex                    |
+| `ref: main`    | Literal branch / tag / commit                    |
+
+`$latest`, `$recent`, and `$self` are reserved and cannot be used as variable names.
 
 When `ref` is omitted, all source types (GitHub, GitLab, Bitbucket, git) resolve to the repository's default branch.
 
