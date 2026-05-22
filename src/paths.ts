@@ -160,44 +160,52 @@ export function resolveFollowSymlink(
   if (!entry.followSymlink) return targetPath;
   const stat = fs.lstatSync(targetPath, { throwIfNoEntry: false });
   if (!stat?.isSymbolicLink()) return targetPath;
-  // Use readlinkSync + path.resolve rather than realpathSync so that dangling
-  // symlinks (target doesn't exist yet) are handled — realpathSync throws when
-  // any component of the resolved path is missing.
-  const linkTarget = fs.readlinkSync(targetPath);
-  let resolved = path.resolve(path.dirname(targetPath), linkTarget);
   // Normalize workingDir to its canonical path so the prefix check is stable
   // on platforms where the working directory is itself reached via a symlink
   // (e.g. macOS /var/folders → /private/var/folders).
   const realWorkingDir = fs.realpathSync(workingDir);
-  const resolvedStat = fs.lstatSync(resolved, { throwIfNoEntry: false });
-  if (resolvedStat) {
-    // Target exists — fully canonicalize to resolve any remaining symlink
-    // chains and platform aliases, then check for directories. The directory
-    // check must happen after realpathSync so that a symlink-to-directory is
-    // caught (lstatSync before canonicalization only shows isSymbolicLink()).
-    resolved = fs.realpathSync(resolved);
+  // Fast path: realpathSync resolves the entire chain atomically. It throws
+  // ENOENT when any component is missing (dangling symlink chain), in which
+  // case we fall through to manual resolution below.
+  try {
+    const resolved = fs.realpathSync(targetPath);
     if (fs.lstatSync(resolved).isDirectory()) {
       throw new Error(
         `followSymlink: "${targetPath}" resolves to a directory; refusing to write`,
       );
     }
-  } else {
-    // Dangling symlink — target doesn't exist yet. Canonicalize the deepest
-    // existing ancestor directory to catch intermediate symlinked dirs that
-    // could redirect writes outside the working directory even when the raw
-    // string path appears inside it (e.g. workingDir/out -> /etc).
-    let dir = path.dirname(resolved);
-    for (;;) {
-      if (fs.lstatSync(dir, { throwIfNoEntry: false })) {
-        const realDir = fs.realpathSync(dir);
-        assertWithinWorkingDir(realDir, realWorkingDir);
-        break;
-      }
-      const parent = path.dirname(dir);
-      if (parent === dir) break; // reached filesystem root without finding an existing dir
-      dir = parent;
-    }
+    assertWithinWorkingDir(resolved, realWorkingDir);
+    return resolved;
+  } catch (err: unknown) {
+    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
   }
-  assertWithinWorkingDir(resolved, realWorkingDir);
-  return resolved;
+  // Dangling symlink chain — follow links manually until we reach the
+  // non-existent endpoint (or detect a cycle).
+  let current = targetPath;
+  const seen = new Set<string>();
+  for (;;) {
+    if (seen.has(current)) break; // cycle — stop at current
+    seen.add(current);
+    const st = fs.lstatSync(current, { throwIfNoEntry: false });
+    if (!st) break; // non-existent endpoint
+    if (!st.isSymbolicLink()) break; // regular file/dir — stop here
+    const linkTarget = fs.readlinkSync(current);
+    current = path.resolve(path.dirname(current), linkTarget);
+  }
+  // Canonicalize the deepest existing ancestor directory to catch intermediate
+  // symlinked dirs that redirect writes outside the working directory even when
+  // the raw string path appears inside it (e.g. workingDir/out -> /etc).
+  let dir = path.dirname(current);
+  for (;;) {
+    if (fs.lstatSync(dir, { throwIfNoEntry: false })) {
+      const realDir = fs.realpathSync(dir);
+      assertWithinWorkingDir(realDir, realWorkingDir);
+      break;
+    }
+    const parent = path.dirname(dir);
+    if (parent === dir) break; // reached filesystem root
+    dir = parent;
+  }
+  assertWithinWorkingDir(current, realWorkingDir);
+  return current;
 }

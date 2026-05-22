@@ -148,6 +148,23 @@ describe('resolveFollowSymlink', () => {
   );
 
   it.skipIf(isWindows)(
+    'resolves a dangling symlink chain (A -> B -> nonexistent) within working dir',
+    () => {
+      const link2 = path.join(tmpDir, 'link2.txt');
+      const nonexistentTarget = path.join(tmpDir, 'will-be-created.txt');
+      fs.symlinkSync(nonexistentTarget, link2);
+      const link = path.join(tmpDir, 'link.txt');
+      fs.symlinkSync(link2, link);
+      const result = resolveFollowSymlink(
+        link,
+        { followSymlink: true },
+        tmpDir,
+      );
+      expect(result).toBe(nonexistentTarget);
+    },
+  );
+
+  it.skipIf(isWindows)(
     'throws when a dangling symlink escapes via an intermediate symlinked directory',
     () => {
       const outsideDir = fs.mkdtempSync(
