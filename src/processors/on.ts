@@ -41,7 +41,10 @@ export function runHook(
     const prelude = Object.keys(extraEnv)
       .map((k) => `$${k} = $env:${k};`)
       .join('');
-    resolvedScript = prelude + script;
+    // Wrap the user script in an inner & { } block so that param() declarations
+    // at the start of the user script remain the first statement of their scope.
+    // The prelude (env var mappings) lives in the outer scope provided by getShellArgs.
+    resolvedScript = prelude + '& {' + script + '}';
   }
   const { shell, args } = getShellArgs(resolvedScript);
   const result = spawnSync(shell, args, {

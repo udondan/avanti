@@ -767,6 +767,37 @@ describe('Integration', () => {
       expect(existsSync(join(tmpDir, 'output2.txt'))).toBe(true);
     });
 
+    it.skipIf(isWindows)(
+      'fires on.beforeUpdate only on existing file changes',
+      () => {
+        const sourceFile = join(tmpDir, 'source_bu.txt');
+        writeFileSync(sourceFile, 'initial');
+        const marker = join(tmpDir, 'bu_marker.txt');
+
+        const config = writeConfig(
+          tmpDir,
+          `files:
+  ./output_bu.txt:
+    src: ${sourceFile}
+    on:
+      beforeCreate: printf '%s' "created" > "${marker}"
+      beforeUpdate: printf '%s' "updated" > "${marker}"
+`,
+        );
+
+        // First run: new file → beforeCreate fires, not beforeUpdate
+        const { exitCode: e1 } = runAvanti(config, tmpDir);
+        expect(e1).toBe(0);
+        expect(readFileSync(marker, 'utf8')).toBe('created');
+
+        // Second run: content changed → beforeUpdate fires, not beforeCreate
+        writeFileSync(sourceFile, 'changed');
+        const { exitCode: e2 } = runAvanti(config, tmpDir);
+        expect(e2).toBe(0);
+        expect(readFileSync(marker, 'utf8')).toBe('updated');
+      },
+    );
+
     it.skipIf(isWindows)('passes AVANTI_IS_NEW env var correctly', () => {
       const sourceFile = join(tmpDir, 'source3.txt');
       writeFileSync(sourceFile, 'data');
