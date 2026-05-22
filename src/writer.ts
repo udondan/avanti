@@ -12,6 +12,8 @@ export interface WriteTarget {
   sudo?: boolean | string;
 }
 
+export type SudoWriteTarget = WriteTarget & { sudo: boolean | string };
+
 export function sudoUserArgs(sudo: boolean | string): string[] {
   return typeof sudo === 'string' ? ['-u', sudo] : [];
 }
@@ -36,7 +38,7 @@ export function sudoAuth(sudo: boolean | string = true): void {
 // earlier targets already written. This mirrors the shell-level constraint —
 // true batch atomicity would require a two-phase stage+rename via a privileged
 // helper, which is not implemented here.
-export function sudoAtomicWrite(targets: WriteTarget[]): void {
+export function sudoAtomicWrite(targets: SudoWriteTarget[]): void {
   const mvTargets = targets.filter((t) => !t.writeInPlace);
   const inPlaceTargets = targets.filter((t) => t.writeInPlace);
   for (const t of mvTargets) {
@@ -95,8 +97,8 @@ function getSudoFileMode(
   return undefined;
 }
 
-function sudoWriteMv(t: WriteTarget): void {
-  const sudo = t.sudo!;
+function sudoWriteMv(t: SudoWriteTarget): void {
+  const sudo = t.sudo;
   const dir = path.dirname(t.targetPath);
   sudoRun(sudo, ['mkdir', '-p', '--', dir]);
 
@@ -199,8 +201,8 @@ function sudoWriteMv(t: WriteTarget): void {
 // The risk is limited to directories writable by untrusted users; system directories
 // (e.g. /etc) are root-owned and not subject to this race. Use writeInPlace only
 // when the target directory is not writable by untrusted users.
-function sudoWriteInPlace(t: WriteTarget): void {
-  const sudo = t.sudo!;
+function sudoWriteInPlace(t: SudoWriteTarget): void {
+  const sudo = t.sudo;
   const dir = path.dirname(t.targetPath);
   sudoRun(sudo, ['mkdir', '-p', '--', dir]);
 

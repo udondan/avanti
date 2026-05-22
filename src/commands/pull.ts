@@ -30,6 +30,7 @@ import {
   sudoAuth,
   sudoDelete,
   sudoUserArgs,
+  SudoWriteTarget,
   WriteTarget,
 } from '../writer';
 import { FileDiff } from '../diff';
@@ -872,10 +873,11 @@ export function pullCommand(): Command {
 
         // Content writes go first so that if atomicWrite throws, no permissions
         // have been changed yet (minimises partial-apply surface).
+        const isSudoTarget = (t: WriteTarget): t is SudoWriteTarget => !!t.sudo;
         const regularChanged = changedTargets.filter((t) => !t.sudo);
-        const sudoChanged = changedTargets.filter((t) => t.sudo);
+        const sudoChanged = changedTargets.filter(isSudoTarget);
         const regularRestore = staleToRestore.filter((t) => !t.sudo);
-        const sudoRestore = staleToRestore.filter((t) => t.sudo);
+        const sudoRestore = staleToRestore.filter(isSudoTarget);
         const regularDelete = staleToDelete.filter(
           (p) => !staleDeleteSudo.has(p),
         );
