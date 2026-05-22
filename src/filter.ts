@@ -59,7 +59,11 @@ function _expandBraces(
   budget: { remaining: number; limit: number },
 ): string[] {
   const open = pattern.indexOf('{');
-  if (open === -1) return [pattern];
+  if (open === -1) {
+    if (--budget.remaining < 0)
+      throw new Error(`brace expansion exceeds ${budget.limit} entries`);
+    return [pattern];
+  }
 
   let depth = 0;
   let close = -1;
@@ -74,7 +78,11 @@ function _expandBraces(
     }
   }
 
-  if (close === -1) return [pattern];
+  if (close === -1) {
+    if (--budget.remaining < 0)
+      throw new Error(`brace expansion exceeds ${budget.limit} entries`);
+    return [pattern];
+  }
 
   const prefix = pattern.slice(0, open);
   const suffix = pattern.slice(close + 1);
@@ -84,15 +92,16 @@ function _expandBraces(
   // Only expand when there is at least one comma — {foo} without a comma stays
   // literal, matching src/paths.ts behaviour and avoiding accidental expansion
   // of {placeholder} tokens that users may intend as literal.
-  if (alternatives.length < 2) return [pattern];
+  if (alternatives.length < 2) {
+    if (--budget.remaining < 0)
+      throw new Error(`brace expansion exceeds ${budget.limit} entries`);
+    return [pattern];
+  }
 
   const results: string[] = [];
   for (const alt of alternatives) {
     for (const expanded of _expandBraces(prefix + alt + suffix, budget)) {
       results.push(expanded);
-      budget.remaining--;
-      if (budget.remaining < 0)
-        throw new Error(`brace expansion exceeds ${budget.limit} entries`);
     }
   }
   return results;
