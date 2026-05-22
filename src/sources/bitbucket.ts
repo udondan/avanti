@@ -45,8 +45,7 @@ async function listBitbucketTagsAll(
   const all: string[] = [];
   let url: string | null =
     `${getApiBase(host)}/repositories/${workspace}/${repo}/refs/tags?sort=${sort}&pagelen=100`;
-  let pages = 0;
-  while (url && pages < 5) {
+  while (url) {
     const res = await fetchWithRetry(url, { headers: apiHeaders() });
     if (!res.ok)
       throw new Error(
@@ -58,7 +57,6 @@ async function listBitbucketTagsAll(
     };
     all.push(...data.values.map((t) => t.name));
     url = data.next ?? null;
-    pages++;
   }
   return all;
 }
@@ -107,26 +105,15 @@ async function resolveRef(
       `${getApiBase(host)}/repositories/${workspace}/${repo}/refs/tags?sort=-target.date&pagelen=1`,
       { headers: apiHeaders() },
     );
-    if (tagsRes.ok) {
-      const data = (await tagsRes.json()) as {
-        values: Array<{ name: string }>;
-      };
-      if (data.values.length > 0) return data.values[0].name;
-    }
-    // No tags: fall back to default branch
-    const repoRes = await fetchWithRetry(
-      `${getApiBase(host)}/repositories/${workspace}/${repo}`,
-      { headers: apiHeaders() },
-    );
-    if (!repoRes.ok) {
+    if (!tagsRes.ok)
       throw new Error(
-        `Failed to resolve ref for ${workspace}/${repo}: HTTP ${repoRes.status}`,
+        `Failed to resolve $recent for ${workspace}/${repo}: HTTP ${tagsRes.status}`,
       );
-    }
-    const repoData = (await repoRes.json()) as {
-      mainbranch?: { name: string };
-    };
-    return repoData.mainbranch?.name ?? 'main';
+    const data = (await tagsRes.json()) as { values: Array<{ name: string }> };
+    if (data.values.length > 0) return data.values[0].name;
+    throw new Error(
+      `No tags found for ${workspace}/${repo} (needed to resolve $recent)`,
+    );
   }
 
   // Pattern: paginate tags sorted by target date, filter by regex

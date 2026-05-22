@@ -47,7 +47,7 @@ export interface GitLabFileSrc {
 export interface GitLabReleaseSrc {
   gitlab: {
     project: string;
-    /** Tag name, `$latest` (newest semver release), `$recent` (newest by date), or `/pattern/[flags]`. */
+    /** Tag name, `$latest` (newest semver release; falls back to semver tag scan if releases/latest is non-semver), `$recent` (newest by date), or `/pattern/[flags]`. */
     release: string;
     sha?: string;
     host?: string;

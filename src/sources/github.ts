@@ -271,7 +271,7 @@ async function findHighestSemverTagApi(
 ): Promise<string | null> {
   const collected: string[] = [];
   const perPage = 100;
-  for (let page = 1; page <= 5; page++) {
+  for (let page = 1; page <= 100; page++) {
     const res = await fetchWithRetry(
       `${getApiBase(host)}/repos/${repo}/tags?per_page=${perPage}&page=${page}`,
       { headers: apiHeaders() },
@@ -293,7 +293,7 @@ async function findTagMatchingPatternApi(
   pattern: RegExp,
   host?: string,
 ): Promise<string | null> {
-  for (let page = 1; page <= 5; page++) {
+  for (let page = 1; page <= 100; page++) {
     const res = await fetchWithRetry(
       `${getApiBase(host)}/repos/${repo}/tags?per_page=100&page=${page}`,
       { headers: apiHeaders() },

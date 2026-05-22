@@ -179,16 +179,24 @@ describe('fetchBitbucket — ref resolution', () => {
     expect(mockFetch.mock.calls[1][0] as string).toContain('/src/nightly/');
   });
 
-  it('$recent falls back to mainbranch when no tags exist', async () => {
-    const mockFetch = vi
-      .spyOn(globalThis, 'fetch')
-      .mockResolvedValueOnce(jsonResponse({ values: [] }))
-      .mockResolvedValueOnce(jsonResponse({ mainbranch: { name: 'main' } }))
-      .mockResolvedValueOnce(textResponse('content'));
+  it('throws when $recent finds no tags', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      jsonResponse({ values: [] }),
+    );
 
-    await fetchBitbucket('ws', 'repo', 'file.txt', '$recent');
+    await expect(
+      fetchBitbucket('ws', 'repo', 'file.txt', '$recent'),
+    ).rejects.toThrow('No tags found');
+  });
 
-    expect(mockFetch.mock.calls[2][0] as string).toContain('/src/main/');
+  it('throws when $recent tag request fails', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response('Unauthorized', { status: 401 }),
+    );
+
+    await expect(
+      fetchBitbucket('ws', 'repo', 'file.txt', '$recent'),
+    ).rejects.toThrow('Failed to resolve $recent');
   });
 
   it('pattern resolves to first matching tag by target.date order', async () => {
