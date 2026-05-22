@@ -403,8 +403,6 @@ async function resolveRef(
       throw e;
     }
     if (found !== null) return found;
-    if (withCliFallback && isGhAvailable())
-      return resolveRefViaCli(repo, ref!, host);
     throw new Error(`No tags matching "${ref}" found for ${repo}`);
   }
 
@@ -455,8 +453,6 @@ async function resolveRef(
       throw e;
     }
     if (found !== null) return found;
-    if (withCliFallback && isGhAvailable())
-      return resolveRefViaCli(repo, ref!, host);
     throw new Error(
       `No semver tags found for ${repo} (needed to resolve $latest)`,
     );

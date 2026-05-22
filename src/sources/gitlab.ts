@@ -235,8 +235,6 @@ async function resolveRef(
       throw e;
     }
     if (found !== null) return found;
-    if (withCliFallback && isGlabAvailable())
-      return resolveRefViaCli(project, ref, host);
     throw new Error(`No tags matching "${ref}" found for ${project}`);
   }
 
@@ -267,8 +265,6 @@ async function resolveRef(
     throw e;
   }
   if (found !== null) return found;
-  if (withCliFallback && isGlabAvailable())
-    return resolveRefViaCli(project, ref, host);
   throw new Error(
     `No semver tags found for ${project} (needed to resolve $latest)`,
   );
