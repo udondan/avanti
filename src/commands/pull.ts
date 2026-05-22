@@ -329,6 +329,11 @@ async function runFetchLoop(
           writeInPlace: entry.writeInPlace,
         });
         pendingWrites.set(effectivePath, content);
+        // Also index under the original symlink path so local source lookups
+        // using the symlink path (not the resolved real path) still find the
+        // pending content within the same fetch loop.
+        if (effectivePath !== targetPath!)
+          pendingWrites.set(targetPath!, content);
         if (result.sourceRecords.length > 0) {
           sourceRecordsByTarget.set(effectivePath, result.sourceRecords);
         }

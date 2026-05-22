@@ -201,6 +201,11 @@ async function runDiffLoop(
         );
         allDiffs.push(computeDiff(effectivePath, content, entry.mode));
         pendingWrites.set(effectivePath, content);
+        // Also index under the original symlink path so local source lookups
+        // using the symlink path (not the resolved real path) still find the
+        // pending content within the same diff loop.
+        if (effectivePath !== targetPath!)
+          pendingWrites.set(targetPath!, content);
       }
     } catch (err: unknown) {
       console.error(

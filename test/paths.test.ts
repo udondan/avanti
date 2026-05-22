@@ -85,6 +85,22 @@ describe('resolveFollowSymlink', () => {
   );
 
   it.skipIf(isWindows)(
+    'resolves a dangling symlink (target does not exist yet) within working dir',
+    () => {
+      const link = path.join(tmpDir, 'link.txt');
+      const nonexistentTarget = path.join(tmpDir, 'will-be-created.txt');
+      fs.symlinkSync(nonexistentTarget, link);
+      // Target doesn't exist — realpathSync would throw, but we should succeed
+      const result = resolveFollowSymlink(
+        link,
+        { followSymlink: true },
+        tmpDir,
+      );
+      expect(result).toBe(nonexistentTarget);
+    },
+  );
+
+  it.skipIf(isWindows)(
     'throws when symlink resolves to a path outside the working directory',
     () => {
       const outsideDir = fs.mkdtempSync(

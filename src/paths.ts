@@ -160,12 +160,26 @@ export function resolveFollowSymlink(
   if (!entry.followSymlink) return targetPath;
   const stat = fs.lstatSync(targetPath, { throwIfNoEntry: false });
   if (!stat?.isSymbolicLink()) return targetPath;
-  const resolved = fs.realpathSync(targetPath);
-  if (fs.lstatSync(resolved).isDirectory()) {
+  // Use readlinkSync + path.resolve rather than realpathSync so that dangling
+  // symlinks (target doesn't exist yet) are handled — realpathSync throws when
+  // any component of the resolved path is missing.
+  const linkTarget = fs.readlinkSync(targetPath);
+  let resolved = path.resolve(path.dirname(targetPath), linkTarget);
+  // If the target already exists, fully canonicalize to resolve any remaining
+  // symlink chains and platform aliases (e.g. macOS /var → /private/var).
+  const resolvedStat = fs.lstatSync(resolved, { throwIfNoEntry: false });
+  if (resolvedStat?.isDirectory()) {
     throw new Error(
       `followSymlink: "${targetPath}" resolves to a directory; refusing to write`,
     );
   }
-  assertWithinWorkingDir(resolved, workingDir);
+  if (resolvedStat) {
+    resolved = fs.realpathSync(resolved);
+  }
+  // Normalize workingDir to its canonical path so the prefix check is stable
+  // on platforms where the working directory is itself reached via a symlink
+  // (e.g. macOS /var/folders → /private/var/folders).
+  const realWorkingDir = fs.realpathSync(workingDir);
+  assertWithinWorkingDir(resolved, realWorkingDir);
   return resolved;
 }
