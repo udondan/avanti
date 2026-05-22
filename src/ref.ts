@@ -42,7 +42,7 @@ export function isRecentSentinel(ref: string | undefined): boolean {
  * - Any other unrecognised flags cause `new RegExp()` to throw a descriptive error.
  */
 export function parseRefPattern(ref: string): RegExp | null {
-  const m = /^\/(.+)\/([a-z]*)$/.exec(ref);
+  const m = /^\/(.+)\/([A-Za-z]*)$/.exec(ref);
   if (!m) return null;
   // Strip stateful flags (g=global, y=sticky) — callers use .test() in loops
   const flags = m[2].replace(/[gy]/g, '') || undefined;
