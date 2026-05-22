@@ -23,7 +23,7 @@ import { AvantiConfig, FileEntry, Variables } from '../types';
 import { HistoryManager } from '../history';
 import { resolveVariableSpec } from '../variables-remote';
 import { evaluateConditions } from '../condition';
-import { buildDateVars, buildFileVars } from '../variables';
+import { buildDateVars, buildFileVars, buildSystemVars } from '../variables';
 
 interface DiffLoopResult {
   allDiffs: FileDiff[];
@@ -51,6 +51,7 @@ async function runDiffLoop(
     vars['self'] = configPath;
   }
   Object.assign(vars, dateVars);
+  Object.assign(vars, buildSystemVars());
   const allDiffs: FileDiff[] = [];
   const pendingWrites = new Map<string, Buffer>();
   let hasError = false;

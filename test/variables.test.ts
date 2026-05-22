@@ -9,9 +9,11 @@ import {
   validateVariables,
   buildFileVars,
   buildDateVars,
+  buildSystemVars,
   resolveBackupCounter,
   assertBackupPathAllowed,
   resolveBackupPath,
+  RESERVED_VAR_NAMES,
 } from '../src/variables';
 import { resolveVariableSpec } from '../src/variables-remote';
 import { isWindows } from '../src/shell';
@@ -190,6 +192,9 @@ describe('validateVariables', () => {
     'basedir',
     'date',
     'datetime',
+    'os',
+    'arch',
+    'arch_go',
   ])('throws when "%s" is used as a variable name', (name) => {
     expect(() => validateVariables({ [name]: 'value' })).toThrow(
       `"${name}" is reserved`,
@@ -250,6 +255,81 @@ describe('buildDateVars', () => {
     const v = buildDateVars(now);
     expect(v.date).toBe('2026-01-02');
     expect(v.datetime).toBe('2026-01-02-03-04-05');
+  });
+});
+
+describe('buildSystemVars', () => {
+  it('returns an object with os, arch, and arch_go keys', () => {
+    const v = buildSystemVars();
+    expect(typeof v.os).toBe('string');
+    expect(typeof v.arch).toBe('string');
+    expect(typeof v.arch_go).toBe('string');
+  });
+
+  it('all three names are in RESERVED_VAR_NAMES', () => {
+    expect(RESERVED_VAR_NAMES.has('os')).toBe(true);
+    expect(RESERVED_VAR_NAMES.has('arch')).toBe(true);
+    expect(RESERVED_VAR_NAMES.has('arch_go')).toBe(true);
+  });
+
+  it('maps process.platform to a normalised $os value', () => {
+    const v = buildSystemVars();
+    const expected: Record<string, string> = {
+      darwin: 'darwin',
+      linux: 'linux',
+      win32: 'windows',
+    };
+    const platform = process.platform as string;
+    if (platform in expected) {
+      expect(v.os).toBe(expected[platform]);
+    } else {
+      expect(v.os).toBe(platform);
+    }
+  });
+
+  it('maps process.arch to a normalised $arch value', () => {
+    const v = buildSystemVars();
+    const expected: Record<string, string> = {
+      x64: 'x86_64',
+      arm64: 'arm64',
+      ia32: 'i686',
+      arm: 'arm',
+    };
+    const nodeArch = process.arch as string;
+    if (nodeArch in expected) {
+      expect(v.arch).toBe(expected[nodeArch]);
+    } else {
+      expect(v.arch).toBe(nodeArch);
+    }
+  });
+
+  it('maps process.arch to a normalised $arch_go value', () => {
+    const v = buildSystemVars();
+    const expected: Record<string, string> = {
+      x64: 'amd64',
+      arm64: 'arm64',
+      ia32: '386',
+      arm: 'arm',
+    };
+    const nodeArch = process.arch as string;
+    if (nodeArch in expected) {
+      expect(v.arch_go).toBe(expected[nodeArch]);
+    } else {
+      expect(v.arch_go).toBe(nodeArch);
+    }
+  });
+
+  it('resolves $os, $arch, $arch_go via resolveVars', () => {
+    const v = buildSystemVars();
+    expect(resolveVars('$os', v)).toBe(v.os as string);
+    expect(resolveVars('$arch', v)).toBe(v.arch as string);
+    expect(resolveVars('$arch_go', v)).toBe(v.arch_go as string);
+  });
+
+  it('resolves combined template string', () => {
+    const v = buildSystemVars();
+    const result = resolveVars('tool-$arch-$os.tar.gz', v);
+    expect(result).toBe(`tool-${v.arch as string}-${v.os as string}.tar.gz`);
   });
 });
 

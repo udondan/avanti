@@ -31,7 +31,12 @@ import { HistoryManager, PullLogFileRef, SourceShaRecord } from '../history';
 import { confirm } from '../prompt';
 import { applyUpdatedShas, writeUpdatedShas } from '../config-writeback';
 import { resolveVariableSpec } from '../variables-remote';
-import { buildDateVars, buildFileVars, resolveBackupPath } from '../variables';
+import {
+  buildDateVars,
+  buildFileVars,
+  buildSystemVars,
+  resolveBackupPath,
+} from '../variables';
 
 interface ShaError {
   sourceLabel: string;
@@ -81,6 +86,7 @@ async function runFetchLoop(
     vars['self'] = configPath;
   }
   Object.assign(vars, dateVars);
+  Object.assign(vars, buildSystemVars());
   const writeTargets: WriteTarget[] = [];
   const allDiffs: FileDiff[] = [];
   const shaErrors: ShaError[] = [];
