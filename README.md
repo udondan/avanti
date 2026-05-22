@@ -1306,6 +1306,33 @@ Dangling symlinks (a symlink chain whose endpoint does not yet exist) are suppor
 
 When the target path does not exist yet, or does not point to a symlink, `followSymlink` has no effect and the file is created or written normally.
 
+### Sudo
+
+Set `sudo: true` to write a file using elevated privileges (as root). Set `sudo: "username"` to write as a specific user via `sudo -u`:
+
+```yaml
+files:
+  /etc/ssh/sshd_config:
+    src:
+      github:
+        repo: org/system-configs
+        file: sshd_config
+    mode: '0600'
+    sudo: true
+
+  /var/www/html/index.html:
+    src: https://example.com/index.html
+    sudo: 'www-data'
+```
+
+avanti calls `sudo -v` once per distinct identity at the start of the write phase to prime the OS credential cache, so the user is prompted for their password at most once per pull session regardless of how many sudo-owned files are written.
+
+**Stale-file cleanup** — when a `sudo` entry is removed from the config, avanti uses the stored sudo identity to restore or delete the file during the next pull.
+
+**POSIX only** — `sudo` is silently ignored on Windows.
+
+**Limitations** — `sudo` is honored by `pull` only. The `revert` and `reset` commands use normal file operations and will fail on root-owned paths.
+
 ### Variables
 
 Define reusable values at the top level under `variables:`:
