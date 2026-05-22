@@ -177,14 +177,25 @@ export function resolveFollowSymlink(
     assertWithinWorkingDir(resolved, realWorkingDir);
     return resolved;
   } catch (err: unknown) {
-    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === 'ELOOP') {
+      throw new Error(
+        `followSymlink: "${targetPath}" contains a circular symlink`,
+        { cause: err },
+      );
+    }
+    if (code !== 'ENOENT') throw err;
   }
   // Dangling symlink chain — follow links manually until we reach the
   // non-existent endpoint (or detect a cycle).
   let current = targetPath;
   const seen = new Set<string>();
   for (;;) {
-    if (seen.has(current)) break; // cycle — stop at current
+    if (seen.has(current)) {
+      throw new Error(
+        `followSymlink: "${targetPath}" contains a circular symlink`,
+      );
+    }
     seen.add(current);
     const st = fs.lstatSync(current, { throwIfNoEntry: false });
     if (!st) break; // non-existent endpoint

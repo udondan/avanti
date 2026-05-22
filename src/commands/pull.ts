@@ -262,6 +262,12 @@ async function runFetchLoop(
                 buildFileVars(targetPath),
               )
             : vars;
+        // Resolve any symlink on the target path early so insert-mode tracking
+        // and all subsequent operations use the real file path consistently.
+        const effectivePath =
+          targetPath !== undefined
+            ? resolveFollowSymlink(targetPath, entry, workingDir)
+            : undefined;
 
         let content = rawContent;
         if (!isBinary(content)) {
@@ -281,21 +287,16 @@ async function runFetchLoop(
           if (entry.post) text = applyPost(text, entry.post, entryVars);
           if (entry.strategy === 'insert' && !isSelf) {
             const lastInserted =
-              history?.getInsertedFragment(targetPath!) ?? null;
+              history?.getInsertedFragment(effectivePath!) ?? null;
             if (
               lastInserted !== null &&
               rawText === lastInserted.raw &&
               text === lastInserted.processed &&
-              fs.existsSync(targetPath!)
+              fs.existsSync(effectivePath!)
             ) {
               skippedPaths.add(targetPath!); // keep stale detection from treating this as missing
-              // Also skip the resolved real path when followSymlink is in use.
-              const realForSkip = resolveFollowSymlink(
-                targetPath!,
-                entry,
-                workingDir,
-              );
-              if (realForSkip !== targetPath!) skippedPaths.add(realForSkip);
+              if (effectivePath !== targetPath!)
+                skippedPaths.add(effectivePath!);
               continue; // source and processed output unchanged — skip write entirely (no-op)
             }
             const processedText = text;
@@ -303,9 +304,9 @@ async function runFetchLoop(
               entry,
               processedText,
               lastInserted?.processed ?? null,
-              targetPath!,
+              effectivePath!,
             );
-            insertedFragments.set(targetPath!, {
+            insertedFragments.set(effectivePath!, {
               raw: rawText,
               processed: processedText,
             });
@@ -319,38 +320,35 @@ async function runFetchLoop(
             selfSourceRecords = result.sourceRecords;
           continue;
         }
-        const effectivePath = resolveFollowSymlink(
-          targetPath!,
-          entry,
-          workingDir,
-        );
-        const diff = computeDiff(effectivePath, content, entry.mode);
+        // effectivePath is always defined here: isSelf is false (we continued above),
+        // so targetPath was defined, and effectivePath = resolveFollowSymlink(targetPath, ...).
+        const ep = effectivePath!;
+        const diff = computeDiff(ep, content, entry.mode);
         allDiffs.push(diff);
         const backupPath =
           entry.backup && diff.hasChanges && !diff.isNew
             ? resolveBackupPath(
                 entry.backup,
-                effectivePath,
+                ep,
                 workingDir,
                 vars,
                 config.backup_roots ?? [],
               )
             : undefined;
         writeTargets.push({
-          targetPath: effectivePath,
+          targetPath: ep,
           content,
           mode: entry.mode,
           backupPath,
           writeInPlace: entry.writeInPlace,
         });
-        pendingWrites.set(effectivePath, content);
+        pendingWrites.set(ep, content);
         // Also index under the original symlink path so local source lookups
         // using the symlink path (not the resolved real path) still find the
         // pending content within the same fetch loop.
-        if (effectivePath !== targetPath!)
-          pendingWrites.set(targetPath!, content);
+        if (ep !== targetPath!) pendingWrites.set(targetPath!, content);
         if (result.sourceRecords.length > 0) {
-          sourceRecordsByTarget.set(effectivePath, result.sourceRecords);
+          sourceRecordsByTarget.set(ep, result.sourceRecords);
         }
       }
     } catch (err: unknown) {

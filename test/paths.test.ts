@@ -165,6 +165,22 @@ describe('resolveFollowSymlink', () => {
   );
 
   it.skipIf(isWindows)(
+    'throws when a dangling symlink chain contains a cycle',
+    () => {
+      // link.txt -> link2.txt -> link.txt (cycle, final target never exists)
+      // realpathSync throws ELOOP for fully-existing cycles, but manual
+      // traversal handles cycles where the chain also involves missing targets.
+      const link = path.join(tmpDir, 'link.txt');
+      const link2 = path.join(tmpDir, 'link2.txt');
+      fs.symlinkSync(link2, link);
+      fs.symlinkSync(link, link2);
+      expect(() =>
+        resolveFollowSymlink(link, { followSymlink: true }, tmpDir),
+      ).toThrow(/circular symlink/);
+    },
+  );
+
+  it.skipIf(isWindows)(
     'throws when a dangling symlink escapes via an intermediate symlinked directory',
     () => {
       const outsideDir = fs.mkdtempSync(
