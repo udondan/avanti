@@ -25,15 +25,18 @@ describe('expandTilde', () => {
 // Detect whether this process can create symlinks at runtime.
 // On Windows without SeCreateSymbolicLinkPrivilege, symlinkSync throws EPERM.
 const canCreateSymlinks = (() => {
+  let tmp: string | undefined;
   try {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'avanti-symtest-'));
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'avanti-symtest-'));
     const link = path.join(tmp, 'link');
     fs.symlinkSync(tmp, link);
-    fs.rmSync(link);
-    fs.rmdirSync(tmp);
     return true;
   } catch {
     return false;
+  } finally {
+    if (tmp !== undefined) {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
   }
 })();
 
