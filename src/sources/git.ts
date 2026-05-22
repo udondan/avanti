@@ -110,9 +110,10 @@ function resolveGitRef(repo: string, ref: string): string {
   const result = run('git', [
     'ls-remote',
     '--tags',
+    '--refs',
     sortArg,
     repo,
-    'refs/tags/*^{}',
+    'refs/tags/*',
   ]);
   if (result.status !== 0) {
     throw new Error(

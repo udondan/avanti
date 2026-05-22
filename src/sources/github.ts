@@ -326,7 +326,10 @@ function findTagMatchingPatternCli(
   ];
   verbose(`github: gh: gh ${args.join(' ')}`);
   const res = ghRun(args);
-  if (res.status !== 0) return null;
+  if (res.status !== 0)
+    throw new Error(
+      `Failed to list tags for ${repo}: ${res.stderr.trim() || 'gh exited with status ' + res.status}`,
+    );
   return (
     res.stdout
       .trim()
@@ -347,7 +350,10 @@ function findHighestSemverTagCli(repo: string, host?: string): string | null {
   ];
   verbose(`github: gh: gh ${args.join(' ')}`);
   const res = ghRun(args);
-  if (res.status !== 0) return null;
+  if (res.status !== 0)
+    throw new Error(
+      `Failed to list tags for ${repo}: ${res.stderr.trim() || 'gh exited with status ' + res.status}`,
+    );
   return maxSemverTag(res.stdout.trim().split('\n').filter(Boolean));
 }
 

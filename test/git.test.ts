@@ -245,7 +245,7 @@ describe('fetchGit — success paths', () => {
 describe('fetchGit — ref sentinel and pattern resolution', () => {
   function lsRemoteOutput(tags: string[]): string {
     return tags
-      .map((t, i) => `${'a'.repeat(39)}${i}\trefs/tags/${t}^{}`)
+      .map((t, i) => `${'a'.repeat(39)}${i}\trefs/tags/${t}`)
       .join('\n');
   }
 
@@ -267,6 +267,7 @@ describe('fetchGit — ref sentinel and pattern resolution', () => {
 
     const lsArgs = mockSpawnSync.mock.calls[0][1] as string[];
     expect(lsArgs).toContain('--sort=-version:refname');
+    expect(lsArgs).toContain('--refs');
     const cloneArgs = mockSpawnSync.mock.calls[1][1] as string[];
     expect(cloneArgs).toContain('v2.0.0');
   });

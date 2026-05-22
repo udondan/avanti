@@ -149,7 +149,10 @@ function findGitLabTagMatchingPatternCli(
   for (let page = 1; page <= 5; page++) {
     const endpoint = `projects/${encodeURIComponent(project)}/repository/tags?order_by=${sortBy}&sort=desc&per_page=100&page=${page}`;
     const res = glabApi(endpoint, host);
-    if (res.status !== 0) return null;
+    if (res.status !== 0)
+      throw new Error(
+        `Failed to list tags for ${project}: ${res.stderr.trim() || 'glab exited with status ' + res.status}`,
+      );
     const tags = JSON.parse(res.stdout) as Array<{ name: string }>;
     if (!tags.length) break;
     const found = tags.find((t) => pattern.test(t.name));
@@ -650,42 +653,49 @@ async function resolveReleaseTag(
 
   // $recent or pattern: paginate releases sorted by released_at desc
   if (isRecentSentinel(release) || pattern) {
-    let res: Response;
-    try {
-      res = await fetchWithRetry(
-        `https://${getHost(host)}/api/v4/projects/${encodeURIComponent(project)}/releases?order_by=released_at&sort=desc&per_page=${pattern ? 100 : 1}`,
-        { headers: apiHeaders() },
-      );
-    } catch (e) {
-      if (isNetworkError(e) && withCliFallback && isGlabAvailable()) {
-        verbose(`gitlab: HTTP fetch failed, falling back to glab`);
-        return resolveReleaseTagViaCli(project, release, host);
+    for (let page = 1; page <= 5; page++) {
+      let res: Response;
+      try {
+        res = await fetchWithRetry(
+          `https://${getHost(host)}/api/v4/projects/${encodeURIComponent(project)}/releases?order_by=released_at&sort=desc&per_page=100&page=${page}`,
+          { headers: apiHeaders() },
+        );
+      } catch (e) {
+        if (isNetworkError(e) && withCliFallback && isGlabAvailable()) {
+          verbose(`gitlab: HTTP fetch failed, falling back to glab`);
+          return resolveReleaseTagViaCli(project, release, host);
+        }
+        throw e;
       }
-      throw e;
-    }
-    if (res.ok) {
+      if (!res.ok) {
+        if (res.status === 404 || res.status === 403) {
+          if (withCliFallback && isGlabAvailable())
+            return resolveReleaseTagViaCli(project, release, host);
+          return resolveRef(project, release, host, transports);
+        }
+        if (
+          shouldFallback(res.status) &&
+          withCliFallback &&
+          isGlabAvailable()
+        ) {
+          return resolveReleaseTagViaCli(project, release, host);
+        }
+        throw new Error(
+          `Failed to resolve "${release}" release for ${project}: HTTP ${res.status}`,
+        );
+      }
       const releases = (await res.json()) as Array<{ tag_name: string }>;
       if (isRecentSentinel(release)) {
         if (releases.length) return releases[0].tag_name;
         return resolveRef(project, '$recent', host, transports);
       }
+      if (!releases.length) break;
       const found = releases.find((r) => pattern!.test(r.tag_name));
       if (found) return found.tag_name;
-      if (withCliFallback && isGlabAvailable())
-        return resolveReleaseTagViaCli(project, release, host);
-      throw new Error(`No releases matching "${release}" found for ${project}`);
     }
-    if (res.status === 404 || res.status === 403) {
-      if (withCliFallback && isGlabAvailable())
-        return resolveReleaseTagViaCli(project, release, host);
-      return resolveRef(project, release, host, transports);
-    }
-    if (shouldFallback(res.status) && withCliFallback && isGlabAvailable()) {
+    if (withCliFallback && isGlabAvailable())
       return resolveReleaseTagViaCli(project, release, host);
-    }
-    throw new Error(
-      `Failed to resolve "${release}" release for ${project}: HTTP ${res.status}`,
-    );
+    throw new Error(`No releases matching "${release}" found for ${project}`);
   }
 
   // $latest: use GitLab's releases/latest endpoint
@@ -704,21 +714,25 @@ async function resolveReleaseTag(
   }
   if (res.ok) {
     const rel = (await res.json()) as { tag_name: string };
-    return rel.tag_name;
+    // $latest must be a stable semver tag; if not, fall through to semver tag scan
+    if (SEMVER_PATTERN.test(rel.tag_name)) return rel.tag_name;
   }
-  // Releases endpoint unavailable (older GitLab) — fall back to tags
+  // Releases endpoint unavailable (older GitLab) or non-semver latest — fall back to tags
+  if (!res.ok && res.status !== 404 && res.status !== 403) {
+    if (shouldFallback(res.status) && withCliFallback && isGlabAvailable()) {
+      return resolveReleaseTagViaCli(project, release, host);
+    }
+    throw new Error(
+      `Failed to resolve $latest release for ${project}: HTTP ${res.status}`,
+    );
+  }
   if (res.status === 404 || res.status === 403) {
     if (withCliFallback && isGlabAvailable()) {
       return resolveReleaseTagViaCli(project, release, host);
     }
-    return resolveRef(project, '$latest', host, transports);
   }
-  if (shouldFallback(res.status) && withCliFallback && isGlabAvailable()) {
-    return resolveReleaseTagViaCli(project, release, host);
-  }
-  throw new Error(
-    `Failed to resolve $latest release for ${project}: HTTP ${res.status}`,
-  );
+  // Fallback to semver tag scan (also handles non-semver releases/latest)
+  return resolveRef(project, '$latest', host, transports);
 }
 
 function resolveReleaseTagViaCli(
@@ -772,12 +786,14 @@ function resolveReleaseTagViaCli(
   if (res.status === 0 && res.stdout.trim()) {
     try {
       const rel = JSON.parse(res.stdout) as { tag_name: string };
-      if (rel.tag_name) return rel.tag_name;
+      // $latest must be a stable semver tag; if not, fall through to semver tag scan
+      if (rel.tag_name && SEMVER_PATTERN.test(rel.tag_name))
+        return rel.tag_name;
     } catch {
       // fall through to tags
     }
   }
-  // Fall back to tags
+  // Fall back to semver tag scan (also handles non-semver releases/latest)
   const tagsEndpoint = `projects/${encodeURIComponent(project)}/repository/tags?order_by=version&sort=desc&per_page=1`;
   const tagRes = glabApi(tagsEndpoint, host);
   if (tagRes.status !== 0) {
