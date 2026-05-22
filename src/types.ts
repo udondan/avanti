@@ -269,6 +269,15 @@ export const VALID_TEMPLATE_ENGINES: TemplateEngine[] = [
   'eta',
 ];
 
+export interface OnHooks {
+  write?: string;
+  beforeWrite?: string;
+  beforeCreate?: string;
+  beforeUpdate?: string;
+  create?: string;
+  update?: string;
+}
+
 export interface FileEntry {
   src: FileSrc | FileSrc[];
   target: string;
@@ -277,7 +286,7 @@ export interface FileEntry {
   mode?: string;
   backup?: string;
   replace?: ReplaceRule[];
-  post?: string;
+  on?: OnHooks;
   template?: TemplateEngine | true;
   json?: JsonMergeOptions | boolean;
   yaml?: YamlMergeOptions | boolean;

@@ -19,7 +19,7 @@ import {
 } from '../sources';
 import { sortByDependencies } from '../dependencies';
 import { applyReplace } from '../processors/replace';
-import { applyPost } from '../processors/post';
+import { applyWriteHook, runHook } from '../processors/on';
 import { applyInsertMode } from '../processors/insert';
 import { isBinary } from '../binary';
 import { computeDiff, computeDeleteDiff, printDiffs } from '../diff';
@@ -41,7 +41,7 @@ import {
   resolveFollowSymlink,
   resolveTargetPath,
 } from '../paths';
-import { AvantiConfig, FileEntry, Variables } from '../types';
+import { AvantiConfig, FileEntry, OnHooks, Variables } from '../types';
 import { HistoryManager, PullLogFileRef, SourceShaRecord } from '../history';
 import { confirm } from '../prompt';
 import { applyUpdatedShas, writeUpdatedShas } from '../config-writeback';
@@ -60,9 +60,16 @@ interface ShaError {
   observedSha: string;
 }
 
+interface FileHookContext {
+  targetPath: string;
+  hooks: OnHooks;
+  isNew: boolean;
+}
+
 interface FetchLoopResult {
   writeTargets: WriteTarget[];
   allDiffs: FileDiff[];
+  fileHookContexts: FileHookContext[];
   hasError: boolean;
   shaErrors: ShaError[];
   sourceRecordsByTarget: Map<string, SourceFetchRecord[]>;
@@ -90,6 +97,7 @@ async function runFetchLoop(
     return {
       writeTargets: [],
       allDiffs: [],
+      fileHookContexts: [],
       hasError: true,
       shaErrors: [],
       sourceRecordsByTarget: new Map(),
@@ -105,6 +113,7 @@ async function runFetchLoop(
   Object.assign(vars, buildSystemVars());
   const writeTargets: WriteTarget[] = [];
   const allDiffs: FileDiff[] = [];
+  const fileHookContexts: FileHookContext[] = [];
   const shaErrors: ShaError[] = [];
   const seenShaErrorLabels = new Set<string>();
   const sourceRecordsByTarget = new Map<string, SourceFetchRecord[]>();
@@ -141,6 +150,7 @@ async function runFetchLoop(
       return {
         writeTargets,
         allDiffs,
+        fileHookContexts,
         hasError: true,
         shaErrors,
         sourceRecordsByTarget,
@@ -170,6 +180,7 @@ async function runFetchLoop(
     return {
       writeTargets: [],
       allDiffs: [],
+      fileHookContexts: [],
       hasError: true,
       shaErrors: [],
       sourceRecordsByTarget: new Map(),
@@ -323,7 +334,8 @@ async function runFetchLoop(
           }
           if (entry.replace?.length)
             text = applyReplace(text, entry.replace, entryVars);
-          if (entry.post) text = applyPost(text, entry.post, entryVars);
+          if (entry.on?.write)
+            text = applyWriteHook(text, entry.on.write, entryVars);
           if (entry.strategy === 'insert' && !isSelf) {
             const lastInserted =
               history?.getInsertedFragment(effectivePath!) ?? null;
@@ -382,6 +394,13 @@ async function runFetchLoop(
           writeInPlace: entry.writeInPlace,
           sudo: entry.sudo,
         });
+        if (entry.on && diff.hasChanges) {
+          fileHookContexts.push({
+            targetPath: ep,
+            hooks: entry.on,
+            isNew: diff.isNew,
+          });
+        }
         pendingWrites.set(ep, content);
         // Also index under the original symlink path so local source lookups
         // using the symlink path (not the resolved real path) still find the
@@ -408,6 +427,7 @@ async function runFetchLoop(
   return {
     writeTargets,
     allDiffs,
+    fileHookContexts,
     hasError,
     shaErrors,
     sourceRecordsByTarget,
@@ -478,6 +498,7 @@ export function pullCommand(): Command {
         history,
       );
       let { writeTargets, allDiffs, sourceRecordsByTarget } = firstPass;
+      let fileHookContexts = firstPass.fileHookContexts;
       let insertedFragments = firstPass.insertedFragments;
       let skippedPaths = firstPass.skippedPaths;
       let hasUnresolvableSkippedPath = firstPass.hasUnresolvableSkippedPath;
@@ -601,6 +622,7 @@ export function pullCommand(): Command {
             }
             writeTargets = second.writeTargets;
             allDiffs = second.allDiffs;
+            fileHookContexts = second.fileHookContexts;
             sourceRecordsByTarget = second.sourceRecordsByTarget;
             insertedFragments = second.insertedFragments;
             skippedPaths = second.skippedPaths;
@@ -801,6 +823,29 @@ export function pullCommand(): Command {
         }
       }
 
+      for (const ctx of fileHookContexts) {
+        const env = {
+          AVANTI_TARGET: ctx.targetPath,
+          AVANTI_IS_NEW: String(ctx.isNew),
+        };
+        const runNamedHook = (key: string, script: string): void => {
+          try {
+            runHook(script, env);
+          } catch (err: unknown) {
+            console.error(
+              `Hook ${key} failed for ${ctx.targetPath}: ${err instanceof Error ? err.message : String(err)}`,
+            );
+            process.exit(2);
+          }
+        };
+        if (ctx.hooks.beforeWrite)
+          runNamedHook('beforeWrite', ctx.hooks.beforeWrite);
+        if (ctx.isNew && ctx.hooks.beforeCreate)
+          runNamedHook('beforeCreate', ctx.hooks.beforeCreate);
+        if (!ctx.isNew && ctx.hooks.beforeUpdate)
+          runNamedHook('beforeUpdate', ctx.hooks.beforeUpdate);
+      }
+
       // Stage history versions before atomicWrite so v0 is captured before overwrite
       const stagedFileRefs: PullLogFileRef[] = [];
       if (pullId) {
@@ -846,6 +891,7 @@ export function pullCommand(): Command {
         }
       }
 
+      let postWriteError: string | null = null;
       try {
         const changedTargets = writeTargets.filter(
           (_, i) => allDiffs[i].hasChanges && allDiffs[i].contentChanged,
@@ -954,6 +1000,25 @@ export function pullCommand(): Command {
           staleToDelete.length +
           modeOnlyCount;
         console.log(`Wrote ${written} file(s).`);
+        for (const ctx of fileHookContexts) {
+          if (postWriteError !== null) break;
+          const env = {
+            AVANTI_TARGET: ctx.targetPath,
+            AVANTI_IS_NEW: String(ctx.isNew),
+          };
+          const runNamedPostHook = (key: string, script: string): void => {
+            if (postWriteError !== null) return;
+            try {
+              runHook(script, env);
+            } catch (err: unknown) {
+              postWriteError = `Hook ${key} failed for ${ctx.targetPath}: ${err instanceof Error ? err.message : String(err)}`;
+            }
+          };
+          if (ctx.isNew && ctx.hooks.create)
+            runNamedPostHook('create', ctx.hooks.create);
+          if (!ctx.isNew && ctx.hooks.update)
+            runNamedPostHook('update', ctx.hooks.update);
+        }
       } catch (err: unknown) {
         console.error(
           `Write failed: ${err instanceof Error ? err.message : String(err)}`,
@@ -1014,6 +1079,11 @@ export function pullCommand(): Command {
         } catch {
           console.warn('Warning: could not save pull history.');
         }
+      }
+
+      if (postWriteError !== null) {
+        console.error(postWriteError);
+        process.exit(2);
       }
     });
 }

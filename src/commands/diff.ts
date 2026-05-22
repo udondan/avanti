@@ -13,7 +13,7 @@ import {
 import { fetchSource, FetchCache, formatSourceLabel } from '../sources';
 import { sortByDependencies } from '../dependencies';
 import { applyReplace } from '../processors/replace';
-import { applyPost } from '../processors/post';
+import { applyWriteHook } from '../processors/on';
 import { applyInsertMode } from '../processors/insert';
 import { isBinary } from '../binary';
 import { computeDiff, computeDeleteDiff, printDiffs } from '../diff';
@@ -174,7 +174,8 @@ async function runDiffLoop(
           }
           if (entry.replace?.length)
             text = applyReplace(text, entry.replace, entryVars);
-          if (entry.post) text = applyPost(text, entry.post, entryVars);
+          if (entry.on?.write)
+            text = applyWriteHook(text, entry.on.write, entryVars);
           if (entry.strategy === 'insert' && !isSelf) {
             const lastInserted =
               history?.getInsertedFragment(effectivePath!) ?? null;
