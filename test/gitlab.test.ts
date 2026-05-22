@@ -271,6 +271,64 @@ describe('fetchGitLab — network-error fallback to glab', () => {
     ).rejects.toThrow('fetch failed');
   });
 
+  it('resolves $recent to the most recently updated tag via API', async () => {
+    vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify([{ name: 'nightly' }]), { status: 200 }),
+      )
+      .mockResolvedValueOnce(new Response('{}', { status: 200 }))
+      .mockResolvedValueOnce(
+        new Response(Buffer.from('nightly content'), { status: 200 }),
+      );
+
+    const result = await fetchGitLab('group/project', 'file.txt', '$recent');
+    expect(result.files.get('file.txt')?.toString('utf8')).toBe(
+      'nightly content',
+    );
+  });
+
+  it('throws when $recent finds no tags', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response(JSON.stringify([]), { status: 200 }),
+    );
+
+    await expect(
+      fetchGitLab('group/project', 'file.txt', '$recent'),
+    ).rejects.toThrow('No tags found');
+  });
+
+  it('resolves /pattern/ to the first matching tag via API', async () => {
+    vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify([{ name: 'v2.0.0' }, { name: 'v1.9.0' }]), {
+          status: 200,
+        }),
+      )
+      .mockResolvedValueOnce(new Response('{}', { status: 200 }))
+      .mockResolvedValueOnce(
+        new Response(Buffer.from('v1 content'), { status: 200 }),
+      );
+
+    const result = await fetchGitLab('group/project', 'file.txt', '/^v1\\./');
+    expect(result.files.get('file.txt')?.toString('utf8')).toBe('v1 content');
+  });
+
+  it('throws when /pattern/ matches no tags', async () => {
+    vi.spyOn(globalThis, 'fetch')
+      // page 1: one non-matching tag
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify([{ name: 'v2.0.0' }]), { status: 200 }),
+      )
+      // page 2: empty → terminates pagination
+      .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }));
+    // glab unavailable so the CLI fallback is not attempted
+    mockSpawnSync.mockReturnValue(makeGlabUnavailable());
+
+    await expect(
+      fetchGitLab('group/project', 'file.txt', '/^v99\\./'),
+    ).rejects.toThrow('No tags matching "/^v99\\./" found for group/project');
+  });
+
   it('falls back to glab for $latest ref resolution', async () => {
     vi.spyOn(globalThis, 'fetch').mockRejectedValue(
       new TypeError('fetch failed'),
@@ -279,14 +337,14 @@ describe('fetchGitLab — network-error fallback to glab', () => {
     // resolveRef catch: isGlabAvailable → glab --version
     // resolveRefViaCli: glab api …/tags → returns tag name
     // detectPathType catch: isGlabAvailable → glab --version
-    // detectPathTypeViaCli: glab api …/files/…?ref=v1.0 → status 0 = 'file'
+    // detectPathTypeViaCli: glab api …/files/…?ref=v1.0.0 → status 0 = 'file'
     // fetchFile catch: isGlabAvailable → glab --version
-    // fetchFileViaCli: glab api …/files/…/raw?ref=v1.0 → content
+    // fetchFileViaCli: glab api …/files/…/raw?ref=v1.0.0 → content
     mockSpawnSync
       .mockReturnValueOnce(makeGlabAvailable())
       .mockReturnValueOnce(
         makeSpawnResult({
-          stdout: JSON.stringify([{ name: 'v1.0' }]),
+          stdout: JSON.stringify([{ name: 'v1.0.0' }]),
           status: 0,
         }),
       )
@@ -400,6 +458,106 @@ describe('fetchGitLabRelease', () => {
 
     const result = await fetchGitLabRelease('group/project', '$latest');
     expect(result.files.get('release.bin')?.toString()).toBe('v3 content');
+  });
+
+  it('resolves $recent to the first release by date', async () => {
+    vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify([
+            { tag_name: 'nightly-20240101' },
+            { tag_name: 'v1.0.0' },
+          ]),
+          { status: 200 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            assets: {
+              links: [
+                {
+                  name: 'nightly.tar.gz',
+                  url: 'https://example.com/nightly.tar.gz',
+                  link_type: 'package',
+                },
+              ],
+            },
+          }),
+          { status: 200 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(Buffer.from('nightly content'), { status: 200 }),
+      );
+
+    const result = await fetchGitLabRelease('group/project', '$recent');
+    expect(result.files.get('nightly.tar.gz')?.toString()).toBe(
+      'nightly content',
+    );
+  });
+
+  it('resolves /pattern/ to the first matching release', async () => {
+    vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify([
+            { tag_name: 'nightly-20240101' },
+            { tag_name: 'v2.0.0' },
+            { tag_name: 'v1.0.0' },
+          ]),
+          { status: 200 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            assets: {
+              links: [
+                {
+                  name: 'v2.tar.gz',
+                  url: 'https://example.com/v2.tar.gz',
+                  link_type: 'package',
+                },
+              ],
+            },
+          }),
+          { status: 200 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(Buffer.from('v2 content'), { status: 200 }),
+      );
+
+    const result = await fetchGitLabRelease('group/project', '/^v2\\./');
+    expect(result.files.get('v2.tar.gz')?.toString()).toBe('v2 content');
+  });
+
+  it('throws when no releases match the pattern', async () => {
+    vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify([{ tag_name: 'nightly' }]), {
+          status: 200,
+        }),
+      )
+      .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }));
+
+    await expect(
+      fetchGitLabRelease('group/project', '/^stable-/', undefined, 'api'),
+    ).rejects.toThrow(
+      'No releases matching "/^stable-/" found for group/project',
+    );
+  });
+
+  it('throws when no releases exist for $recent', async () => {
+    vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }))
+      // $recent falls back to resolveRef('$recent') which lists tags — return empty
+      .mockResolvedValueOnce(new Response('', { status: 404 }));
+
+    await expect(
+      fetchGitLabRelease('group/project', '$recent'),
+    ).rejects.toThrow();
   });
 
   // CLI fallback tests live in test/gitlab-release-cli.test.ts (need vi.mock('fs'))

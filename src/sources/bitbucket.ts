@@ -1,6 +1,12 @@
 import { posix as path } from 'path';
 import { fetchWithRetry } from '../fetch';
 import { verbose } from '../logger';
+import {
+  isLatestSentinel,
+  isRecentSentinel,
+  maxSemverTag,
+  parseRefPattern,
+} from '../ref';
 
 export interface BitbucketResult {
   files: Map<string, Buffer>;
@@ -36,34 +42,89 @@ async function resolveRef(
   ref: string | undefined,
   host?: string,
 ): Promise<string> {
-  if (ref && ref !== '$latest') return ref;
+  const pattern = ref ? parseRefPattern(ref) : null;
+  if (!isLatestSentinel(ref) && !isRecentSentinel(ref) && !pattern && ref) {
+    return ref;
+  }
 
-  if (ref === '$latest') {
-    const tagsRes = await fetchWithRetry(
-      `${getApiBase(host)}/repositories/${workspace}/${repo}/refs/tags?sort=-name&pagelen=1`,
+  if (!ref) {
+    // No ref: return default branch
+    const repoRes = await fetchWithRetry(
+      `${getApiBase(host)}/repositories/${workspace}/${repo}`,
       { headers: apiHeaders() },
     );
-    if (tagsRes.ok) {
-      const data = (await tagsRes.json()) as {
-        values: Array<{ name: string }>;
-      };
-      if (data.values.length > 0) return data.values[0].name;
+    if (!repoRes.ok) {
+      throw new Error(
+        `Failed to resolve ref for ${workspace}/${repo}: HTTP ${repoRes.status}`,
+      );
     }
+    const repoData = (await repoRes.json()) as {
+      mainbranch?: { name: string };
+    };
+    return repoData.mainbranch?.name ?? 'main';
   }
 
-  const repoRes = await fetchWithRetry(
-    `${getApiBase(host)}/repositories/${workspace}/${repo}`,
-    { headers: apiHeaders() },
-  );
-  if (!repoRes.ok) {
+  // $latest: paginate tags and track the highest semver incrementally
+  if (isLatestSentinel(ref)) {
+    let best: string | null = null;
+    let url: string | null =
+      `${getApiBase(host)}/repositories/${workspace}/${repo}/refs/tags?sort=-name&pagelen=100`;
+    while (url) {
+      const res = await fetchWithRetry(url, { headers: apiHeaders() });
+      if (!res.ok)
+        throw new Error(
+          `Failed to list tags for ${workspace}/${repo}: HTTP ${res.status}`,
+        );
+      const data = (await res.json()) as {
+        values: Array<{ name: string }>;
+        next?: string;
+      };
+      const candidate = maxSemverTag(data.values.map((t) => t.name));
+      if (candidate && (!best || maxSemverTag([best, candidate]) === candidate))
+        best = candidate;
+      url = data.next ?? null;
+    }
+    if (best) return best;
     throw new Error(
-      `Failed to resolve ref for ${workspace}/${repo}: HTTP ${repoRes.status}`,
+      `No semver tags found for ${workspace}/${repo} (needed to resolve $latest)`,
     );
   }
-  const repoData = (await repoRes.json()) as {
-    mainbranch?: { name: string };
-  };
-  return repoData.mainbranch?.name ?? 'main';
+
+  // $recent: most recently committed tag (sort by target commit date)
+  if (isRecentSentinel(ref)) {
+    const tagsRes = await fetchWithRetry(
+      `${getApiBase(host)}/repositories/${workspace}/${repo}/refs/tags?sort=-target.date&pagelen=1`,
+      { headers: apiHeaders() },
+    );
+    if (!tagsRes.ok)
+      throw new Error(
+        `Failed to resolve $recent for ${workspace}/${repo}: HTTP ${tagsRes.status}`,
+      );
+    const data = (await tagsRes.json()) as { values: Array<{ name: string }> };
+    if (data.values.length > 0) return data.values[0].name;
+    throw new Error(
+      `No tags found for ${workspace}/${repo} (needed to resolve $recent)`,
+    );
+  }
+
+  // Pattern: paginate tags sorted by target date, short-circuit on first match
+  let patternUrl: string | null =
+    `${getApiBase(host)}/repositories/${workspace}/${repo}/refs/tags?sort=-target.date&pagelen=100`;
+  while (patternUrl) {
+    const res = await fetchWithRetry(patternUrl, { headers: apiHeaders() });
+    if (!res.ok)
+      throw new Error(
+        `Failed to list tags for ${workspace}/${repo}: HTTP ${res.status}`,
+      );
+    const data = (await res.json()) as {
+      values: Array<{ name: string }>;
+      next?: string;
+    };
+    const found = data.values.find((t) => pattern!.test(t.name));
+    if (found) return found.name;
+    patternUrl = data.next ?? null;
+  }
+  throw new Error(`No tags matching "${ref}" found for ${workspace}/${repo}`);
 }
 
 // Returns file content, or null if the path is a directory.
