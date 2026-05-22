@@ -279,6 +279,7 @@ export interface FileEntry {
   strategy?: 'replace' | 'insert';
   writeInPlace?: boolean;
   followSymlink?: boolean;
+  extract?: true | string[];
 }
 
 export interface VariableEntry {
