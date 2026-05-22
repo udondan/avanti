@@ -716,6 +716,18 @@ export function pullCommand(): Command {
             );
           }
         }
+        // Persist sudo identity changes even when content/mode is unchanged.
+        if (pullId) {
+          for (let i = 0; i < writeTargets.length; i++) {
+            const currentMeta = history.getFileMeta(writeTargets[i].targetPath);
+            if (!currentMeta) continue;
+            const newSudo = writeTargets[i].sudo || undefined;
+            const oldSudo = currentMeta.sudo || undefined;
+            if (newSudo !== oldSudo) {
+              history.updateFileSudo(writeTargets[i].targetPath, newSudo);
+            }
+          }
+        }
         console.log('Nothing to do.');
         process.exit(0);
       }
@@ -824,20 +836,6 @@ export function pullCommand(): Command {
             console.warn(
               `Warning: could not record history for ${writeTargets[i].targetPath}`,
             );
-          }
-        }
-
-        // For tracked files whose sudo identity changed but whose content/mode
-        // did not, stageFileVersion is skipped above. Update meta.sudo directly
-        // so stale cleanup uses the correct sudo identity on the next pull.
-        for (let i = 0; i < writeTargets.length; i++) {
-          if (allDiffs[i].hasChanges) continue;
-          const currentMeta = history.getFileMeta(writeTargets[i].targetPath);
-          if (!currentMeta) continue;
-          const newSudo = writeTargets[i].sudo || undefined;
-          const oldSudo = currentMeta.sudo || undefined;
-          if (newSudo !== oldSudo) {
-            history.updateFileSudo(writeTargets[i].targetPath, newSudo);
           }
         }
       }
@@ -964,6 +962,22 @@ export function pullCommand(): Command {
           console.warn(
             `Warning: could not update SHA values in config: ${err instanceof Error ? err.message : String(err)}`,
           );
+        }
+      }
+
+      // Update meta.sudo for tracked files whose sudo identity changed but
+      // content/mode did not — deferred until here so meta is only mutated
+      // after all writes have succeeded.
+      if (pullId) {
+        for (let i = 0; i < writeTargets.length; i++) {
+          if (allDiffs[i].hasChanges) continue;
+          const currentMeta = history.getFileMeta(writeTargets[i].targetPath);
+          if (!currentMeta) continue;
+          const newSudo = writeTargets[i].sudo || undefined;
+          const oldSudo = currentMeta.sudo || undefined;
+          if (newSudo !== oldSudo) {
+            history.updateFileSudo(writeTargets[i].targetPath, newSudo);
+          }
         }
       }
 
