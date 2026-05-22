@@ -1,7 +1,6 @@
 import { Command } from 'commander';
 import * as fs from 'fs';
 import * as path from 'path';
-import { spawnSync } from 'child_process';
 import {
   isRemoteConfigSpec,
   loadConfig,
@@ -29,7 +28,7 @@ import {
   sudoAtomicWrite,
   sudoAuth,
   sudoDelete,
-  sudoUserArgs,
+  sudoRun,
   SudoWriteTarget,
   WriteTarget,
 } from '../writer';
@@ -902,25 +901,12 @@ export function pullCommand(): Command {
               });
               if (lst && !lst.isSymbolicLink()) {
                 if (writeTargets[i].sudo) {
-                  const chmodResult = spawnSync(
-                    'sudo',
-                    [
-                      ...sudoUserArgs(writeTargets[i].sudo!),
-                      'chmod',
-                      '--',
-                      d.modeChange.to.toString(8).padStart(4, '0'),
-                      writeTargets[i].targetPath,
-                    ],
-                    { stdio: 'inherit' },
-                  );
-                  if (chmodResult.status !== 0 || chmodResult.error) {
-                    const detail = chmodResult.error
-                      ? chmodResult.error.message
-                      : `exit code ${chmodResult.status ?? 'unknown'}`;
-                    throw new Error(
-                      `sudo chmod failed for ${writeTargets[i].targetPath}: ${detail}`,
-                    );
-                  }
+                  sudoRun(writeTargets[i].sudo!, [
+                    'chmod',
+                    '--',
+                    d.modeChange.to.toString(8).padStart(4, '0'),
+                    writeTargets[i].targetPath,
+                  ]);
                 } else {
                   fs.chmodSync(writeTargets[i].targetPath, d.modeChange.to);
                 }
