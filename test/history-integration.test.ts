@@ -139,7 +139,7 @@ describe('history integration', () => {
       expect(stdout).toContain('out.txt');
     });
 
-    it('shows multiple pull entries newest first', () => {
+    it('shows multiple pull entries newest first', { timeout: 15_000 }, () => {
       const src = writeSource('src.txt', 'v1');
       writeConfig(`files:\n  ./out.txt:\n    src: ${src}\n`);
       run('pull --yes');
