@@ -481,6 +481,9 @@ src:
     sha: abc123...               # optional SHA-256 fingerprint
     host: gitlab.mycompany.com   # override default gitlab.com (optional)
     via: cli                     # api, cli, or list (default: [api, cli])
+  filter:                        # optional: keep only matching assets (see below)
+    - installer.deb
+    - checksums-{amd64,arm64}.txt
 
 src:
   github:
@@ -499,6 +502,10 @@ src:
     sha: abc123...               # optional SHA-256 fingerprint
     host: github.mycompany.com   # GitHub Enterprise Server hostname (optional)
     via: cli                     # api, cli, or list (default: [api, cli])
+  filter:                        # optional: keep only matching assets (see below)
+    - exact-match.png
+    - file-{a,b,c}.yml
+    - /^some.*\.jpg/
 
 src:
   bitbucket:
@@ -553,6 +560,33 @@ src:
 The optional `sha` field pins a source to a specific content fingerprint. When present, avanti verifies the SHA-256 of the raw fetched content matches before writing anything. This makes your config act as a selective lockfile — only sources you care about get pinned, and changes are surfaced explicitly rather than applied silently.
 
 Use `avanti lock` to compute and write SHA values automatically. Use `avanti pull --accept-changes` to review a mismatch and update the pinned SHA. Plain string sources (a bare local path or URL string) and `raw:` sources do not support `sha`. Use the explicit `path:` or `url:` map form to pin a local file or HTTP URL.
+
+#### Filter
+
+The optional `filter` field narrows which files are kept when a source returns multiple files (directory sources, release artifacts, S3 prefixes). It is supported on `path:`, `github:`, `gitlab:`, `bitbucket:`, `git:`, and `aws_s3:` sources.
+
+`filter` is a list of one or more patterns. A file is kept if **any** pattern matches its path relative to the source root (the filename for flat sources like release assets, or the relative path for directory sources). Paths are always matched using forward slashes (`/`) regardless of the platform — on Windows, write `subdir/file.yml`, not `subdir\file.yml`.
+
+| Pattern            | Matches                                                                                |
+| ------------------ | -------------------------------------------------------------------------------------- |
+| `exact.png`        | Exact string equality                                                                  |
+| `file-{a,b,c}.yml` | Brace-expanded alternatives — `file-a.yml`, `file-b.yml`, `file-c.yml`                 |
+| `/^some.*\.jpg/`   | JavaScript regular expression (delimited by `/`) tested against the full relative path |
+
+```yaml
+files:
+  assets/:
+    src:
+      github:
+        repo: owner/repo
+        release: $latest
+      filter:
+        - exact-match.png
+        - checksums-{amd64,arm64}.txt
+        - /^some.*\.jpg/
+```
+
+Variables are resolved in filter patterns before matching, so patterns like `$env:ARCH.tar.gz` or `$platform-release.zip` work as expected. An error is raised if the filter matches zero files, preventing silent misconfiguration. The `sha` fingerprint (if present) is computed over the filtered set.
 
 ### Directory Sources
 
@@ -1181,7 +1215,7 @@ files:
         to: $email # resolved to "you@example.com"
 ```
 
-Variables are resolved in every string field: target keys, `ref`, `exec` commands, HTTP URLs, local paths, `raw` content, `replace` rules (`from` and `to`), and `post` scripts.
+Variables are resolved in every string field: target keys, `ref`, `exec` commands, HTTP URLs, local paths, `raw` content, `filter` patterns, `replace` rules (`from` and `to`), and `post` scripts.
 
 For `raw:` sources, variables are resolved in the content itself. For all other source types (`http`, `local`, `github`, `gitlab`, `exec`), variables are only resolved in the fields that locate the source (URL, path, command) — not in the fetched content. Use a `replace:` rule if you need to substitute values in fetched content.
 

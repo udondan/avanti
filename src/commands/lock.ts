@@ -7,7 +7,7 @@ import {
   SELF_KEY,
 } from '../config';
 import { evaluateConditions } from '../condition';
-import { fetchSource } from '../sources';
+import { fetchSource, formatSourceLabel } from '../sources';
 import { buildEntryPreVars, expandTilde, resolveTargetPath } from '../paths';
 import { writeUpdatedShas } from '../config-writeback';
 import { resolveVariableSpec } from '../variables-remote';
@@ -118,7 +118,9 @@ export function lockCommand(): Command {
 
       if (pinned) {
         for (const [label, sha] of toPin) {
-          console.log(`  pinned  ${label}  ${sha.slice(0, 16)}`);
+          console.log(
+            `  pinned  ${formatSourceLabel(label)}  ${sha.slice(0, 16)}`,
+          );
         }
         console.log(`\nPinned ${toPin.size} source(s).`);
       } else {

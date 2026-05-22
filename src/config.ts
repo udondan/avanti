@@ -706,6 +706,35 @@ function parseConditionField(
   return result;
 }
 
+function parseFilter(
+  obj: Record<string, unknown>,
+  loc: string,
+): string[] | undefined {
+  if (obj['filter'] === undefined) return undefined;
+  if (!Array.isArray(obj['filter'])) {
+    throw new Error(`${loc}.filter: must be an array`);
+  }
+  if (obj['filter'].length === 0) {
+    throw new Error(`${loc}.filter: must not be an empty array`);
+  }
+  return (obj['filter'] as unknown[]).map((entry, i) => {
+    if (typeof entry !== 'string' || !entry) {
+      throw new Error(`${loc}.filter[${i}]: must be a non-empty string`);
+    }
+    if (entry.length > 2 && entry.startsWith('/') && entry.endsWith('/')) {
+      try {
+        new RegExp(entry.slice(1, -1));
+      } catch (err) {
+        throw new Error(
+          `${loc}.filter[${i}]: invalid regex: ${err instanceof Error ? err.message : String(err)}`,
+          { cause: err },
+        );
+      }
+    }
+    return entry;
+  });
+}
+
 function parseSingleSrc(raw: unknown, loc: string): FileSrc {
   // Plain string → http/https URL or local path
   if (typeof raw === 'string') {
@@ -731,6 +760,8 @@ function parseSingleSrc(raw: unknown, loc: string): FileSrc {
       }
       result.optional = obj['optional'];
     }
+    const pathFilter = parseFilter(obj, loc);
+    if (pathFilter !== undefined) result.filter = pathFilter;
     const pathSha = parseSha(obj['sha'], loc);
     if (pathSha !== undefined) result.sha = pathSha;
     const pathConds = parseConditionField(obj, loc);
@@ -858,6 +889,7 @@ function parseSingleSrc(raw: unknown, loc: string): FileSrc {
       throw new Error(`${loc}.gitlab.host: must be a non-empty string`);
     }
     const gitlabConds = parseConditionField(obj, loc);
+    const gitlabFilter = parseFilter(obj, loc);
     if (hasRelease) {
       return {
         gitlab: {
@@ -867,6 +899,7 @@ function parseSingleSrc(raw: unknown, loc: string): FileSrc {
           host: typeof g['host'] === 'string' ? g['host'] : undefined,
           via: parseVia(g['via'], `${loc}.gitlab`),
         },
+        ...(gitlabFilter !== undefined ? { filter: gitlabFilter } : {}),
         ...gitlabConds,
       };
     }
@@ -879,6 +912,7 @@ function parseSingleSrc(raw: unknown, loc: string): FileSrc {
         host: typeof g['host'] === 'string' ? g['host'] : undefined,
         via: parseVia(g['via'], `${loc}.gitlab`),
       },
+      ...(gitlabFilter !== undefined ? { filter: gitlabFilter } : {}),
       ...gitlabConds,
     };
   }
@@ -932,6 +966,7 @@ function parseSingleSrc(raw: unknown, loc: string): FileSrc {
       throw new Error(`${loc}.github.host: must be a non-empty string`);
     }
     const githubConds = parseConditionField(obj, loc);
+    const githubFilter = parseFilter(obj, loc);
     if (hasRelease) {
       return {
         github: {
@@ -941,6 +976,7 @@ function parseSingleSrc(raw: unknown, loc: string): FileSrc {
           host: typeof g['host'] === 'string' ? g['host'] : undefined,
           via: parseVia(g['via'], `${loc}.github`),
         },
+        ...(githubFilter !== undefined ? { filter: githubFilter } : {}),
         ...githubConds,
       };
     }
@@ -953,6 +989,7 @@ function parseSingleSrc(raw: unknown, loc: string): FileSrc {
         host: typeof g['host'] === 'string' ? g['host'] : undefined,
         via: parseVia(g['via'], `${loc}.github`),
       },
+      ...(githubFilter !== undefined ? { filter: githubFilter } : {}),
       ...githubConds,
     };
   }
@@ -979,6 +1016,7 @@ function parseSingleSrc(raw: unknown, loc: string): FileSrc {
       throw new Error(`${loc}.bitbucket.host: must be a non-empty string`);
     }
     const bitbucketConds = parseConditionField(obj, loc);
+    const bitbucketFilter = parseFilter(obj, loc);
     return {
       bitbucket: {
         workspace: b['workspace'],
@@ -988,6 +1026,7 @@ function parseSingleSrc(raw: unknown, loc: string): FileSrc {
         sha: parseSha(b['sha'], `${loc}.bitbucket`),
         host: typeof b['host'] === 'string' ? b['host'] : undefined,
       },
+      ...(bitbucketFilter !== undefined ? { filter: bitbucketFilter } : {}),
       ...bitbucketConds,
     };
   }
@@ -1005,6 +1044,7 @@ function parseSingleSrc(raw: unknown, loc: string): FileSrc {
       throw new Error(`${loc}.git.file: required string`);
     }
     const gitConds = parseConditionField(obj, loc);
+    const gitFilter = parseFilter(obj, loc);
     return {
       git: {
         repo: gt['repo'],
@@ -1012,6 +1052,7 @@ function parseSingleSrc(raw: unknown, loc: string): FileSrc {
         ref: typeof gt['ref'] === 'string' ? gt['ref'] : undefined,
         sha: parseSha(gt['sha'], `${loc}.git`),
       },
+      ...(gitFilter !== undefined ? { filter: gitFilter } : {}),
       ...gitConds,
     };
   }
@@ -1021,6 +1062,8 @@ function parseSingleSrc(raw: unknown, loc: string): FileSrc {
       throw new Error(`${loc}.aws_s3: must be a non-empty string (s3:// URI)`);
     }
     const result = { aws_s3: obj['aws_s3'] } as AwsS3Src;
+    const s3Filter = parseFilter(obj, loc);
+    if (s3Filter !== undefined) result.filter = s3Filter;
     const s3Sha = parseSha(obj['sha'], loc);
     if (s3Sha !== undefined) result.sha = s3Sha;
     const s3Conds = parseConditionField(obj, loc);

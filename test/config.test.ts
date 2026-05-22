@@ -2582,3 +2582,113 @@ files:
     );
   });
 });
+
+describe('filter field parsing', () => {
+  it('parses filter on a path src', async () => {
+    const f = writeTmp(`
+files:
+  out/:
+    src:
+      path: ./some-dir
+      filter:
+        - exact.txt
+        - file-{a,b}.yml
+        - /^some.*\\.jpg/
+`);
+    const cfg = await loadConfig(f);
+    const src = cfg.files['out/'].src as { path: string; filter?: string[] };
+    expect(src.filter).toEqual([
+      'exact.txt',
+      'file-{a,b}.yml',
+      '/^some.*\\.jpg/',
+    ]);
+  });
+
+  it('parses filter on a github release src', async () => {
+    const f = writeTmp(`
+files:
+  out/:
+    src:
+      github:
+        repo: owner/repo
+        release: v1.0
+      filter:
+        - exact.png
+`);
+    const cfg = await loadConfig(f);
+    const src = cfg.files['out/'].src as {
+      github: { release: string };
+      filter?: string[];
+    };
+    expect(src.filter).toEqual(['exact.png']);
+  });
+
+  it('parses filter on a gitlab file src', async () => {
+    const f = writeTmp(`
+files:
+  out/:
+    src:
+      gitlab:
+        project: group/repo
+        file: configs/
+      filter:
+        - /\\.yml$/
+`);
+    const cfg = await loadConfig(f);
+    const src = cfg.files['out/'].src as {
+      gitlab: { file: string };
+      filter?: string[];
+    };
+    expect(src.filter).toEqual(['/\\.yml$/']);
+  });
+
+  it('throws when filter is not an array', async () => {
+    const f = writeTmp(`
+files:
+  out/:
+    src:
+      path: ./dir
+      filter: exact.txt
+`);
+    await expect(loadConfig(f)).rejects.toThrow('filter: must be an array');
+  });
+
+  it('throws when filter is an empty array', async () => {
+    const f = writeTmp(`
+files:
+  out/:
+    src:
+      path: ./dir
+      filter: []
+`);
+    await expect(loadConfig(f)).rejects.toThrow(
+      'filter: must not be an empty array',
+    );
+  });
+
+  it('throws when a filter entry is not a string', async () => {
+    const f = writeTmp(`
+files:
+  out/:
+    src:
+      path: ./dir
+      filter:
+        - 42
+`);
+    await expect(loadConfig(f)).rejects.toThrow(
+      'filter[0]: must be a non-empty string',
+    );
+  });
+
+  it('throws when a regex filter entry is invalid', async () => {
+    const f = writeTmp(`
+files:
+  out/:
+    src:
+      path: ./dir
+      filter:
+        - /[invalid/
+`);
+    await expect(loadConfig(f)).rejects.toThrow('filter[0]: invalid regex');
+  });
+});

@@ -29,6 +29,7 @@ import { mergeJson, formatJson } from '../processors/json';
 import { mergeYaml, formatYaml } from '../processors/yaml';
 import { mergeToml, formatToml } from '../processors/toml';
 import { isBinary } from '../binary';
+import { applyFilter } from '../filter';
 
 const JSON_EXTENSIONS = new Set(['.json', '.jsonc']);
 const YAML_EXTENSIONS = new Set(['.yaml', '.yml']);
@@ -164,8 +165,25 @@ export type FetchCache = Map<string, { files: Map<string, Buffer> }>;
 // sources (github:, gitlab:, etc.) keep variable references unresolved so the
 // label matches the literal YAML values that applyUpdatedShas reads for SHA
 // writeback. Plain-string sources resolve variables since they don't support
-// SHA pinning.
+// SHA pinning. When a filter is present a NUL-byte separator (\x00) is used
+// before "filter:<json>" so the label is unambiguous even if the base contains
+// the display string " | filter:" (e.g. a local path with that literal text).
+// Use formatSourceLabel() to convert to a human-readable form for display.
 function labelForSrc(src: FileSrc, vars: Variables): string {
+  const base = baseLabelForSrc(src, vars);
+  const filter = filterForSrc(src);
+  if (filter && filter.length > 0)
+    return `${base}\x00filter:${JSON.stringify(filter)}`;
+  return base;
+}
+
+// formatSourceLabel converts an internal label (which may contain a NUL-byte
+// filter separator) into a human-readable string for log/error output.
+export function formatSourceLabel(label: string): string {
+  return label.replace('\x00filter:', ' | filter:');
+}
+
+function baseLabelForSrc(src: FileSrc, vars: Variables): string {
   if (typeof src === 'string') return resolveVars(src, vars);
   if ('github' in src) {
     const host = src.github.host ? `[${src.github.host}]` : '';
@@ -227,6 +245,7 @@ function labelForSrc(src: FileSrc, vars: Variables): string {
 // using variables are correctly distinguished when vars change between
 // stabilization iterations, and raw: sources are keyed by their content.
 function cacheKeyForSrc(src: FileSrc, vars: Variables): string {
+  let base: string;
   if (typeof src === 'string') return resolveVars(src, vars);
   if ('github' in src) {
     const resolvedHost = src.github.host
@@ -238,12 +257,12 @@ function cacheKeyForSrc(src: FileSrc, vars: Variables): string {
       : (src.github.via ?? 'api,cli');
     const via = viaStr === 'api,cli' ? '' : `(${viaStr})`;
     if ('release' in src.github) {
-      return `github${host}:${resolveVars(src.github.repo, vars)}:release:${resolveVars(src.github.release, vars)}${via}`;
+      base = `github${host}:${resolveVars(src.github.repo, vars)}:release:${resolveVars(src.github.release, vars)}${via}`;
+    } else {
+      const ref = src.github.ref ? `@${resolveVars(src.github.ref, vars)}` : '';
+      base = `github${host}:${resolveVars(src.github.repo, vars)}:${resolveVars(src.github.file, vars)}${ref}${via}`;
     }
-    const ref = src.github.ref ? `@${resolveVars(src.github.ref, vars)}` : '';
-    return `github${host}:${resolveVars(src.github.repo, vars)}:${resolveVars(src.github.file, vars)}${ref}${via}`;
-  }
-  if ('gitlab' in src) {
+  } else if ('gitlab' in src) {
     const resolvedHost = src.gitlab.host
       ? resolveVars(src.gitlab.host, vars).trim()
       : '';
@@ -253,12 +272,12 @@ function cacheKeyForSrc(src: FileSrc, vars: Variables): string {
       : (src.gitlab.via ?? 'api,cli');
     const via = viaStr === 'api,cli' ? '' : `(${viaStr})`;
     if ('release' in src.gitlab) {
-      return `gitlab${host}:${resolveVars(src.gitlab.project, vars)}:release:${resolveVars(src.gitlab.release, vars)}${via}`;
+      base = `gitlab${host}:${resolveVars(src.gitlab.project, vars)}:release:${resolveVars(src.gitlab.release, vars)}${via}`;
+    } else {
+      const ref = src.gitlab.ref ? `@${resolveVars(src.gitlab.ref, vars)}` : '';
+      base = `gitlab${host}:${resolveVars(src.gitlab.project, vars)}:${resolveVars(src.gitlab.file, vars)}${ref}${via}`;
     }
-    const ref = src.gitlab.ref ? `@${resolveVars(src.gitlab.ref, vars)}` : '';
-    return `gitlab${host}:${resolveVars(src.gitlab.project, vars)}:${resolveVars(src.gitlab.file, vars)}${ref}${via}`;
-  }
-  if ('bitbucket' in src) {
+  } else if ('bitbucket' in src) {
     const ref = src.bitbucket.ref
       ? `@${resolveVars(src.bitbucket.ref, vars)}`
       : '';
@@ -266,15 +285,15 @@ function cacheKeyForSrc(src: FileSrc, vars: Variables): string {
       ? resolveVars(src.bitbucket.host, vars).trim()
       : '';
     const host = resolvedHost ? `[${resolvedHost}]` : '';
-    return `bitbucket${host}:${resolveVars(src.bitbucket.workspace, vars)}/${resolveVars(src.bitbucket.repo, vars)}:${resolveVars(src.bitbucket.file, vars)}${ref}`;
-  }
-  if ('git' in src) {
+    base = `bitbucket${host}:${resolveVars(src.bitbucket.workspace, vars)}/${resolveVars(src.bitbucket.repo, vars)}:${resolveVars(src.bitbucket.file, vars)}${ref}`;
+  } else if ('git' in src) {
     const ref = src.git.ref ? `@${resolveVars(src.git.ref, vars)}` : '';
-    return `git:${resolveVars(src.git.repo, vars)}:${resolveVars(src.git.file, vars)}${ref}`;
-  }
-  if ('exec' in src) return `exec:${resolveVars(src.exec, vars)}`;
-  if ('aws_s3' in src) return `aws_s3:${resolveVars(src.aws_s3, vars)}`;
-  if ('aws_secrets_manager' in src) {
+    base = `git:${resolveVars(src.git.repo, vars)}:${resolveVars(src.git.file, vars)}${ref}`;
+  } else if ('exec' in src) {
+    return `exec:${resolveVars(src.exec, vars)}`;
+  } else if ('aws_s3' in src) {
+    base = `aws_s3:${resolveVars(src.aws_s3, vars)}`;
+  } else if ('aws_secrets_manager' in src) {
     const k =
       src.aws_secrets_manager.key !== undefined
         ? `#${resolveVars(src.aws_secrets_manager.key, vars)}`
@@ -284,26 +303,30 @@ function cacheKeyForSrc(src: FileSrc, vars: Variables): string {
         ? `@${resolveVars(src.aws_secrets_manager.region, vars)}`
         : '';
     return `aws_secrets_manager:${resolveVars(src.aws_secrets_manager.name, vars)}${k}${r}`;
-  }
-  if ('aws_systems_manager_parameter' in src) {
+  } else if ('aws_systems_manager_parameter' in src) {
     const r =
       src.aws_systems_manager_parameter.region !== undefined
         ? `@${resolveVars(src.aws_systems_manager_parameter.region, vars)}`
         : '';
     return `aws_systems_manager_parameter:${resolveVars(src.aws_systems_manager_parameter.name, vars)}${r}`;
-  }
-  if ('vault' in src) {
+  } else if ('vault' in src) {
     const field = src.vault.field
       ? `#${resolveVars(src.vault.field, vars)}`
       : '';
     return `vault:${resolveVars(src.vault.path, vars)}${field}`;
+  } else if ('http' in src) {
+    return `http:${resolveVars(src.http, vars)}`;
+  } else if ('path' in src) {
+    base = `path:${resolveVars(src.path, vars)}`;
+  } else if ('url' in src) {
+    return `url:${resolveVars(src.url, vars)}`;
+  } else if ('raw' in src) {
+    // raw: key includes the resolved content so distinct raw values don't collide
+    return `raw:${resolveVars(src.raw, vars)}`;
+  } else {
+    return JSON.stringify(src);
   }
-  if ('http' in src) return `http:${resolveVars(src.http, vars)}`;
-  if ('path' in src) return `path:${resolveVars(src.path, vars)}`;
-  if ('url' in src) return `url:${resolveVars(src.url, vars)}`;
-  // raw: key includes the resolved content so distinct raw values don't collide
-  if ('raw' in src) return `raw:${resolveVars(src.raw, vars)}`;
-  return JSON.stringify(src);
+  return base;
 }
 
 function expectedShaForSrc(src: FileSrc): string | undefined {
@@ -346,6 +369,17 @@ function buildRecord(
   };
 }
 
+function filterForSrc(src: FileSrc): string[] | undefined {
+  if (typeof src === 'string') return undefined;
+  if ('github' in src) return src.filter;
+  if ('gitlab' in src) return src.filter;
+  if ('bitbucket' in src) return src.filter;
+  if ('git' in src) return src.filter;
+  if ('aws_s3' in src) return src.filter;
+  if ('path' in src) return src.filter;
+  return undefined;
+}
+
 function computeFilesSha(files: Map<string, Buffer>): string {
   // Always include filename in the hash so a rename/path change affects the SHA
   // consistently, whether the source resolves to one file or many.
@@ -368,7 +402,9 @@ async function _fetchOneSrcRaw(
   vars: Variables,
 ): Promise<{ files: Map<string, Buffer>; skipped?: boolean }> {
   if (isVerbose())
-    verbose(`fetching source: ${redactUrl(labelForSrc(src, vars))}`);
+    verbose(
+      `fetching source: ${redactUrl(formatSourceLabel(labelForSrc(src, vars)))}`,
+    );
 
   if (typeof src === 'string') {
     const resolved = resolveVars(src, vars);
@@ -589,7 +625,10 @@ async function fetchOneSrc(
   let skipped: boolean | undefined;
 
   if (cached !== undefined) {
-    if (isVerbose()) verbose(`cache hit: ${redactUrl(labelForSrc(src, vars))}`);
+    if (isVerbose())
+      verbose(
+        `cache hit: ${redactUrl(formatSourceLabel(labelForSrc(src, vars)))}`,
+      );
     files = cached.files;
   } else {
     const raw = await _fetchOneSrcRaw(src, workingDir, vars);
@@ -601,6 +640,13 @@ async function fetchOneSrc(
   }
 
   if (skipped) return { files: new Map(), record: null, skipped: true };
+
+  const rawFilter = filterForSrc(src);
+  const filterPatterns = rawFilter?.map((p) => resolveVars(p, vars));
+  if (filterPatterns && filterPatterns.length > 0) {
+    files = applyFilter(files, filterPatterns);
+  }
+
   // Recompute record from the current source spec so expectedSha/matched
   // always reflect the caller's config iteration, not the first fetch.
   return { files, record: buildRecord(src, files, vars) };

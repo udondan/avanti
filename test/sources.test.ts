@@ -692,3 +692,85 @@ describe('fetchGit — path confinement', () => {
     expect(isAbsolute(n)).toBe(false);
   });
 });
+
+describe('fetchSource — filter on local directory', () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'avanti-filter-test-'));
+    writeFileSync(join(tmpDir, 'keep.txt'), 'keep');
+    writeFileSync(join(tmpDir, 'discard.txt'), 'discard');
+    writeFileSync(join(tmpDir, 'also-keep.yml'), 'yml');
+  });
+
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('keeps only exact-matched files', async () => {
+    const result = await fetchSource(
+      {
+        src: { path: tmpDir, filter: ['keep.txt'] },
+        target: 'out/',
+      },
+      tmpDir,
+    );
+    expect([...result.files.keys()]).toEqual(['keep.txt']);
+  });
+
+  it('keeps files matching a brace-expanded pattern', async () => {
+    const result = await fetchSource(
+      {
+        src: { path: tmpDir, filter: ['{keep,also-keep}.{txt,yml}'] },
+        target: 'out/',
+      },
+      tmpDir,
+    );
+    expect([...result.files.keys()].sort()).toEqual([
+      'also-keep.yml',
+      'keep.txt',
+    ]);
+  });
+
+  it('keeps files matching a regex pattern', async () => {
+    const result = await fetchSource(
+      {
+        src: { path: tmpDir, filter: ['/\\.yml$/'] },
+        target: 'out/',
+      },
+      tmpDir,
+    );
+    expect([...result.files.keys()]).toEqual(['also-keep.yml']);
+  });
+
+  it('SHA covers only filtered files', async () => {
+    const resultFiltered = await fetchSource(
+      {
+        src: { path: tmpDir, filter: ['keep.txt'] },
+        target: 'out/',
+      },
+      tmpDir,
+    );
+    const resultAll = await fetchSource(
+      { src: { path: tmpDir }, target: 'out/' },
+      tmpDir,
+    );
+    const shaFiltered = resultFiltered.sourceRecords[0]?.observedSha;
+    const shaAll = resultAll.sourceRecords[0]?.observedSha;
+    expect(shaFiltered).toBeDefined();
+    expect(shaAll).toBeDefined();
+    expect(shaFiltered).not.toBe(shaAll);
+  });
+
+  it('throws when filter matches no files', async () => {
+    await expect(
+      fetchSource(
+        {
+          src: { path: tmpDir, filter: ['nonexistent.txt'] },
+          target: 'out/',
+        },
+        tmpDir,
+      ),
+    ).rejects.toThrow('filter matched no files');
+  });
+});

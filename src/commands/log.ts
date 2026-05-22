@@ -3,6 +3,7 @@ import * as path from 'path';
 import { normalizeConfigKey, resolveConfigPath } from '../config';
 import { expandTilde } from '../paths';
 import { HistoryManager, PullLogEntry } from '../history';
+import { formatSourceLabel } from '../sources';
 
 export function logCommand(): Command {
   return new Command('log')
@@ -65,10 +66,10 @@ function showPullHistory(managers: HistoryManager[]): void {
           if (s.accepted && s.expectedSha) {
             const prevShort = s.expectedSha.slice(0, 16);
             console.log(
-              `    ${s.label}  sha:${shaShort}  ⚠ accepted (was: ${prevShort})`,
+              `    ${formatSourceLabel(s.label)}  sha:${shaShort}  ⚠ accepted (was: ${prevShort})`,
             );
           } else {
-            console.log(`    ${s.label}  sha:${shaShort}`);
+            console.log(`    ${formatSourceLabel(s.label)}  sha:${shaShort}`);
           }
         }
       }
@@ -126,10 +127,12 @@ function showFileHistory(
             if (s.accepted && s.expectedSha) {
               const prevShort = s.expectedSha.slice(0, 16);
               console.log(
-                `         ${s.label}  sha:${shaShort}  ⚠ accepted (was: ${prevShort})`,
+                `         ${formatSourceLabel(s.label)}  sha:${shaShort}  ⚠ accepted (was: ${prevShort})`,
               );
             } else {
-              console.log(`         ${s.label}  sha:${shaShort}`);
+              console.log(
+                `         ${formatSourceLabel(s.label)}  sha:${shaShort}`,
+              );
             }
           }
         }
