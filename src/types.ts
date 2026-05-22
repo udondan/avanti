@@ -78,7 +78,7 @@ export interface GitHubFileSrc {
 export interface GitHubReleaseSrc {
   github: {
     repo: string;
-    /** Tag name, `$latest` (newest semver release/tag), `$recent` (newest by date), or `/pattern/[flags]`. */
+    /** Tag name, `$latest` (newest stable semver tag), `$recent` (most recently created tag), or `/pattern/[flags]`. */
     release: string;
     sha?: string;
     host?: string;
