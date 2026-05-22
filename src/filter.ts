@@ -1,7 +1,8 @@
 type CompiledPattern =
   | { kind: 'exact'; value: string }
   | { kind: 'regex'; re: RegExp }
-  | { kind: 'brace'; expanded: Set<string> };
+  | { kind: 'brace'; expanded: Set<string> }
+  | { kind: 'prefix'; value: string };
 
 function compilePattern(pattern: string): CompiledPattern {
   if (pattern.length > 2 && pattern.startsWith('/') && pattern.endsWith('/')) {
@@ -9,13 +10,26 @@ function compilePattern(pattern: string): CompiledPattern {
     try {
       return { kind: 'regex', re: new RegExp(source) };
     } catch (err) {
-      throw new Error(
-        `filter pattern ${JSON.stringify(pattern)}: invalid regex`,
-        {
-          cause: err,
-        },
-      );
+      throw new Error(`pattern ${JSON.stringify(pattern)}: invalid regex`, {
+        cause: err,
+      });
     }
+  }
+  if (pattern.endsWith('/')) {
+    if (pattern.includes('{')) {
+      let expanded: string[];
+      try {
+        expanded = expandBraces(pattern, 2);
+      } catch {
+        expanded = ['', ''];
+      }
+      if (expanded.length > 1) {
+        throw new Error(
+          `pattern ${JSON.stringify(pattern)}: brace expansion is not supported in directory-prefix patterns (ending with "/"); use separate patterns instead, e.g. "core/" and "utils/" instead of "{core,utils}/"`,
+        );
+      }
+    }
+    return { kind: 'prefix', value: pattern };
   }
   if (pattern.includes('{')) {
     return { kind: 'brace', expanded: new Set(expandBraces(pattern)) };
@@ -26,6 +40,7 @@ function compilePattern(pattern: string): CompiledPattern {
 function matchesCompiled(key: string, compiled: CompiledPattern): boolean {
   if (compiled.kind === 'regex') return compiled.re.test(key);
   if (compiled.kind === 'brace') return compiled.expanded.has(key);
+  if (compiled.kind === 'prefix') return key.startsWith(compiled.value);
   return compiled.value === key;
 }
 
