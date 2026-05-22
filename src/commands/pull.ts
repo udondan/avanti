@@ -792,6 +792,29 @@ export function pullCommand(): Command {
         }
       }
 
+      for (const ctx of fileHookContexts) {
+        const env = {
+          AVANTI_TARGET: ctx.targetPath,
+          AVANTI_IS_NEW: String(ctx.isNew),
+        };
+        const runNamedHook = (key: string, script: string): void => {
+          try {
+            runHook(script, env);
+          } catch (err: unknown) {
+            console.error(
+              `Hook ${key} failed for ${ctx.targetPath}: ${err instanceof Error ? err.message : String(err)}`,
+            );
+            process.exit(2);
+          }
+        };
+        if (ctx.hooks.beforeWrite)
+          runNamedHook('beforeWrite', ctx.hooks.beforeWrite);
+        if (ctx.isNew && ctx.hooks.beforeCreate)
+          runNamedHook('beforeCreate', ctx.hooks.beforeCreate);
+        if (!ctx.isNew && ctx.hooks.beforeUpdate)
+          runNamedHook('beforeUpdate', ctx.hooks.beforeUpdate);
+      }
+
       // Stage history versions before atomicWrite so v0 is captured before overwrite
       const stagedFileRefs: PullLogFileRef[] = [];
       if (pullId) {
@@ -834,29 +857,6 @@ export function pullCommand(): Command {
             );
           }
         }
-      }
-
-      for (const ctx of fileHookContexts) {
-        const env = {
-          AVANTI_TARGET: ctx.targetPath,
-          AVANTI_IS_NEW: String(ctx.isNew),
-        };
-        const runNamedHook = (key: string, script: string): void => {
-          try {
-            runHook(script, env);
-          } catch (err: unknown) {
-            console.error(
-              `Hook ${key} failed for ${ctx.targetPath}: ${err instanceof Error ? err.message : String(err)}`,
-            );
-            process.exit(2);
-          }
-        };
-        if (ctx.hooks.beforeWrite)
-          runNamedHook('beforeWrite', ctx.hooks.beforeWrite);
-        if (ctx.isNew && ctx.hooks.beforeCreate)
-          runNamedHook('beforeCreate', ctx.hooks.beforeCreate);
-        if (!ctx.isNew && ctx.hooks.beforeUpdate)
-          runNamedHook('beforeUpdate', ctx.hooks.beforeUpdate);
       }
 
       try {
