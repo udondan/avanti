@@ -155,6 +155,7 @@ function findGitLabTagMatchingPatternCli(
       throw new Error(
         `Failed to list tags for ${project}: ${res.stderr.trim() || 'glab exited with status ' + res.status}`,
       );
+    if (!res.stdout.trim()) break;
     const tags = JSON.parse(res.stdout) as Array<{ name: string }>;
     const found = tags.find((t) => pattern.test(t.name));
     if (found) return found.name;
@@ -289,6 +290,10 @@ function resolveRefViaCli(project: string, ref: string, host?: string): string {
         `Failed to resolve $recent for ${project}: ${res.stderr}`,
       );
     }
+    if (!res.stdout.trim())
+      throw new Error(
+        `No tags found for ${project} (needed to resolve $recent)`,
+      );
     const tags = JSON.parse(res.stdout) as Array<{ name: string }>;
     if (!tags.length)
       throw new Error(
