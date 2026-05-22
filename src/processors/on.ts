@@ -14,10 +14,15 @@ export function applyWriteHook(
     input: content,
     encoding: 'utf8',
   });
-  if (result.error) {
+  // EPIPE means the child exited before reading all stdin — not a spawn failure.
+  // Only treat result.error as a spawn failure for real OS-level errors (ENOENT etc.).
+  if (
+    result.error &&
+    (result.error as NodeJS.ErrnoException).code !== 'EPIPE'
+  ) {
     throw new Error(`on.write script failed to spawn: ${result.error.message}`);
   }
-  if (result.status !== 0) {
+  if (result.status !== 0 || result.signal) {
     const stderr = result.stderr?.trim() ?? '';
     const detail = result.signal
       ? `killed by signal ${result.signal}`

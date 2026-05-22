@@ -628,6 +628,10 @@ describe('Integration', () => {
         writeFileSync(sourceFile, 'hello');
         const marker = join(tmpDir, 'marker.txt');
         const outPath = join(tmpDir, 'output.txt');
+        // Use forward slashes in paths embedded in YAML double-quoted strings to
+        // avoid YAML escape processing corrupting backslash sequences like \a, \t.
+        // PowerShell accepts forward slashes as path separators.
+        const markerFwd = marker.replace(/\\/g, '/');
 
         const config = writeConfig(
           tmpDir,
@@ -635,8 +639,8 @@ describe('Integration', () => {
   ./output.txt:
     src: ${sourceFile}
     on:
-      create: "[System.IO.File]::WriteAllText('${marker}', 'created:' + $AVANTI_TARGET)"
-      update: "[System.IO.File]::WriteAllText('${marker}', 'updated:' + $AVANTI_TARGET)"
+      create: "[System.IO.File]::WriteAllText('${markerFwd}', 'created:' + $AVANTI_TARGET)"
+      update: "[System.IO.File]::WriteAllText('${markerFwd}', 'updated:' + $AVANTI_TARGET)"
 `,
         );
 
@@ -700,6 +704,7 @@ describe('Integration', () => {
         const sourceFile = join(tmpDir, 'source2.txt');
         writeFileSync(sourceFile, 'data');
         const marker = join(tmpDir, 'before_marker.txt');
+        const markerFwd = marker.replace(/\\/g, '/');
 
         const config = writeConfig(
           tmpDir,
@@ -707,7 +712,7 @@ describe('Integration', () => {
   ./output2.txt:
     src: ${sourceFile}
     on:
-      beforeCreate: "[System.IO.File]::WriteAllText('${marker}', 'before')"
+      beforeCreate: "[System.IO.File]::WriteAllText('${markerFwd}', 'before')"
 `,
         );
 
@@ -724,6 +729,7 @@ describe('Integration', () => {
         const sourceFile = join(tmpDir, 'source3.txt');
         writeFileSync(sourceFile, 'data');
         const marker = join(tmpDir, 'isnew_marker.txt');
+        const markerFwd = marker.replace(/\\/g, '/');
 
         const config = writeConfig(
           tmpDir,
@@ -731,7 +737,7 @@ describe('Integration', () => {
   ./output3.txt:
     src: ${sourceFile}
     on:
-      beforeWrite: "[System.IO.File]::WriteAllText('${marker}', $AVANTI_IS_NEW)"
+      beforeWrite: "[System.IO.File]::WriteAllText('${markerFwd}', $AVANTI_IS_NEW)"
 `,
         );
 
