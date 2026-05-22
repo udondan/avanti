@@ -212,6 +212,49 @@ describe('JSON — array handling', () => {
   });
 });
 
+describe('JSON — property order preservation', () => {
+  it('key updated in new contribution keeps its original position', () => {
+    const targetPath = path.join(tmpDir, 'file.json');
+    fs.writeFileSync(targetPath, '{\n  "a": 99,\n  "b": 2,\n  "c": 3\n}\n');
+    const result = applyInsertMode(
+      makeEntry({ json: true }),
+      JSON.stringify({ a: 100 }),
+      JSON.stringify({ a: 99 }),
+      targetPath,
+    );
+    expect(result).toBe('{\n  "a": 100,\n  "b": 2,\n  "c": 3\n}\n');
+  });
+
+  it('nested key updated in new contribution keeps its original position', () => {
+    const targetPath = path.join(tmpDir, 'file.json');
+    fs.writeFileSync(
+      targetPath,
+      JSON.stringify({ config: { a: 99, userProp: 'x' } }, null, 2),
+    );
+    const result = applyInsertMode(
+      makeEntry({ json: true }),
+      JSON.stringify({ config: { a: 100 } }),
+      JSON.stringify({ config: { a: 99 } }),
+      targetPath,
+    );
+    const parsed = JSON.parse(result) as Record<string, unknown>;
+    expect(parsed).toEqual({ config: { a: 100, userProp: 'x' } });
+    expect(Object.keys(parsed['config'] as object)).toEqual(['a', 'userProp']);
+  });
+
+  it('top-level key order matches original file when key is updated', () => {
+    const targetPath = path.join(tmpDir, 'file.json');
+    fs.writeFileSync(targetPath, '{\n  "z": 1,\n  "a": 99,\n  "m": 3\n}\n');
+    const result = applyInsertMode(
+      makeEntry({ json: true }),
+      JSON.stringify({ a: 100 }),
+      JSON.stringify({ a: 99 }),
+      targetPath,
+    );
+    expect(result).toBe('{\n  "z": 1,\n  "a": 100,\n  "m": 3\n}\n');
+  });
+});
+
 // ── YAML ──────────────────────────────────────────────────────────────────────
 
 describe('YAML — first insert', () => {

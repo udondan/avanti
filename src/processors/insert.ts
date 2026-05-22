@@ -50,23 +50,27 @@ type CommentJsonValue = ReturnType<typeof parseJson>;
 function deepRemoveFromJsonObj(
   existing: Record<string, CommentJsonValue>,
   oldContrib: Record<string, unknown>,
+  newContrib: Record<string, unknown> | null = null,
 ): void {
   for (const key of Object.keys(oldContrib)) {
     if (!Object.hasOwn(existing, key)) continue;
     const oldVal = oldContrib[key];
     const curVal = existing[key];
+    const newVal = newContrib != null ? newContrib[key] : undefined;
 
     if (isPlainObject(oldVal) && isPlainObject(curVal)) {
-      deepRemoveFromJsonObj(curVal, oldVal);
-      if (Object.keys(curVal).length === 0) {
+      const nestedNew = isPlainObject(newVal) ? newVal : null;
+      deepRemoveFromJsonObj(curVal, oldVal, nestedNew);
+      if (Object.keys(curVal).length === 0 && newVal === undefined) {
         delete existing[key];
       }
     } else if (Array.isArray(oldVal) && Array.isArray(curVal)) {
       removeArrayContribution(curVal, oldVal);
-      if (curVal.length === 0) {
+      if (curVal.length === 0 && newVal === undefined) {
         delete existing[key];
       }
     } else {
+      if (newVal !== undefined) continue;
       if (deepEqual(curVal, oldVal)) {
         delete existing[key];
       }
@@ -199,7 +203,14 @@ function applyJsonInsert(
     try {
       const oldContrib = parseJson(lastProcessed) as Record<string, unknown>;
       if (isPlainObject(existingParsed) && isPlainObject(oldContrib)) {
-        deepRemoveFromJsonObj(existingParsed, oldContrib);
+        let newContrib: Record<string, unknown> | null = null;
+        try {
+          const p = parseJson(processedText);
+          if (isPlainObject(p)) newContrib = p;
+        } catch {
+          // unparseable processedText → null (old behaviour)
+        }
+        deepRemoveFromJsonObj(existingParsed, oldContrib, newContrib);
       }
     } catch {
       // Corrupted history fragment — skip key removal, fall through to merge
