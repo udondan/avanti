@@ -1421,12 +1421,12 @@ The `ref` (and `release`) field accepts four forms:
 - **`$recent`** — resolves to the most **recently created or published tag**, regardless of its name format. Use this when you want whatever was tagged last, even if it is a nightly or pre-release build. For `git:` remotes the ordering is determined by `git ls-remote` output rather than creation date (date-based ordering requires fetching tag objects and is not supported).
 - **`/pattern/[flags]`** — a JavaScript regex literal (e.g. `ref: /^v1\.\d+\.\d+$/`). Resolves to the first tag whose name matches the pattern, ordered newest-first on GitHub, GitLab, and Bitbucket. For `git:` remotes the match order follows `git ls-remote` output. Flags such as `i` are supported.
 
-| Form           | Meaning                                  |
-| -------------- | ---------------------------------------- |
-| `ref: $latest` | Newest `vX.Y.Z` / `X.Y.Z` stable tag     |
-| `ref: $recent` | Most recently published tag (any format) |
-| `ref: /^v1\./` | Latest tag matching the regex            |
-| `ref: main`    | Literal branch / tag / commit            |
+| Form           | Meaning                                          |
+| -------------- | ------------------------------------------------ |
+| `ref: $latest` | Newest `vX.Y.Z` / `X.Y.Z` stable tag             |
+| `ref: $recent` | Most recently created/published tag (any format) |
+| `ref: /^v1\./` | Latest tag matching the regex                    |
+| `ref: main`    | Literal branch / tag / commit                    |
 
 `$latest`, `$recent`, and `$self` are reserved and cannot be used as variable names.
 

@@ -125,7 +125,7 @@ function resolveGitRef(
     .filter(Boolean)
     .map((line) => {
       const ref = line.split('\t')[1] ?? '';
-      return ref.replace(/^refs\/tags\//, '').replace(/\^{}$/, '');
+      return ref.replace(/^refs\/tags\//, '').replace(/\^\{\}$/, '');
     })
     .filter(Boolean);
 
