@@ -31,6 +31,11 @@ export function sudoAuth(sudo: boolean | string = true): void {
   }
 }
 
+// Each target is written atomically (mktemp → tee → mv for mv-style; tee for
+// in-place), but the batch is NOT collectively atomic: a failure mid-way leaves
+// earlier targets already written. This mirrors the shell-level constraint —
+// true batch atomicity would require a two-phase stage+rename via a privileged
+// helper, which is not implemented here.
 export function sudoAtomicWrite(targets: WriteTarget[]): void {
   const mvTargets = targets.filter((t) => !t.writeInPlace);
   const inPlaceTargets = targets.filter((t) => t.writeInPlace);
@@ -120,7 +125,10 @@ function sudoWriteMv(t: WriteTarget): void {
       { input: t.content, stdio: ['pipe', 'ignore', 'inherit'] },
     );
     if (tee.status !== 0 || tee.error) {
-      throw new Error(`sudo write failed for ${t.targetPath}`);
+      const detail = tee.error
+        ? tee.error.message
+        : `exit code ${tee.status ?? 'unknown'}`;
+      throw new Error(`sudo write failed for ${t.targetPath}: ${detail}`);
     }
 
     if (t.backupPath) {
@@ -177,6 +185,12 @@ function sudoWriteMv(t: WriteTarget): void {
   }
 }
 
+// Security note: the preflight symlink/type checks and the subsequent sudo tee
+// are not atomic. An attacker who can write to the destination directory could
+// swap the path between the checks and the tee, redirecting the privileged write.
+// The risk is limited to directories writable by untrusted users; system directories
+// (e.g. /etc) are root-owned and not subject to this race. Use writeInPlace only
+// when the target directory is not writable by untrusted users.
 function sudoWriteInPlace(t: WriteTarget): void {
   const sudo = t.sudo!;
   const dir = path.dirname(t.targetPath);
@@ -252,7 +266,10 @@ function sudoWriteInPlace(t: WriteTarget): void {
       { input: t.content, stdio: ['pipe', 'ignore', 'inherit'] },
     );
     if (tee.status !== 0 || tee.error) {
-      throw new Error(`sudo write failed for ${t.targetPath}`);
+      const detail = tee.error
+        ? tee.error.message
+        : `exit code ${tee.status ?? 'unknown'}`;
+      throw new Error(`sudo write failed for ${t.targetPath}: ${detail}`);
     }
 
     if (t.mode) {
