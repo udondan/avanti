@@ -25,7 +25,12 @@ import { isBinary } from '../binary';
 import { computeDiff, computeDeleteDiff, printDiffs } from '../diff';
 import { atomicWrite, WriteTarget } from '../writer';
 import { FileDiff } from '../diff';
-import { buildEntryPreVars, expandTilde, resolveTargetPath } from '../paths';
+import {
+  buildEntryPreVars,
+  expandTilde,
+  resolveFollowSymlink,
+  resolveTargetPath,
+} from '../paths';
 import { AvantiConfig, FileEntry, Variables } from '../types';
 import { HistoryManager, PullLogFileRef, SourceShaRecord } from '../history';
 import { confirm } from '../prompt';
@@ -36,6 +41,7 @@ import {
   buildFileVars,
   buildSystemVars,
   resolveBackupPath,
+  resolveVars,
 } from '../variables';
 
 interface ShaError {
@@ -181,13 +187,31 @@ async function runFetchLoop(
           preVars,
         )
       ) {
+        let symlinkPath: string;
         try {
-          skippedPaths.add(resolveTargetPath(entry, '', workingDir, vars));
+          symlinkPath = resolveTargetPath(entry, '', workingDir, vars);
         } catch {
           console.warn(
             `Warning: skipped entry has an unresolvable target path — stale cleanup disabled for this run.`,
           );
           hasUnresolvableSkippedPath = true;
+          continue;
+        }
+        skippedPaths.add(symlinkPath);
+        // Also skip the resolved real path so stale cleanup doesn't treat
+        // the symlink target as unmanaged when followSymlink is in use.
+        // Skip for directory targets — resolveFollowSymlink throws on dir symlinks.
+        // resolveFollowSymlink security errors (escape/directory/cycle) are
+        // intentionally NOT caught here — they propagate as hard failures.
+        const resolvedTarget0 = entry.target
+          ? resolveVars(entry.target, vars)
+          : '';
+        if (
+          !resolvedTarget0.endsWith('/') &&
+          !resolvedTarget0.endsWith(path.sep)
+        ) {
+          const realPath = resolveFollowSymlink(symlinkPath, entry, workingDir);
+          if (realPath !== symlinkPath) skippedPaths.add(realPath);
         }
         continue;
       }
@@ -201,13 +225,31 @@ async function runFetchLoop(
       );
 
       if (result.allSkipped && !isSelf) {
+        let symlinkPath2: string;
         try {
-          skippedPaths.add(resolveTargetPath(entry, '', workingDir, vars));
+          symlinkPath2 = resolveTargetPath(entry, '', workingDir, vars);
         } catch {
           console.warn(
             `Warning: skipped entry has an unresolvable target path — stale cleanup disabled for this run.`,
           );
           hasUnresolvableSkippedPath = true;
+          continue;
+        }
+        skippedPaths.add(symlinkPath2);
+        // resolveFollowSymlink security errors propagate as hard failures.
+        const resolvedTarget2 = entry.target
+          ? resolveVars(entry.target, vars)
+          : '';
+        if (
+          !resolvedTarget2.endsWith('/') &&
+          !resolvedTarget2.endsWith(path.sep)
+        ) {
+          const realPath = resolveFollowSymlink(
+            symlinkPath2,
+            entry,
+            workingDir,
+          );
+          if (realPath !== symlinkPath2) skippedPaths.add(realPath);
         }
         continue;
       }
@@ -249,6 +291,12 @@ async function runFetchLoop(
                 buildFileVars(targetPath),
               )
             : vars;
+        // Resolve any symlink on the target path early so insert-mode tracking
+        // and all subsequent operations use the real file path consistently.
+        const effectivePath =
+          targetPath !== undefined
+            ? resolveFollowSymlink(targetPath, entry, workingDir)
+            : undefined;
 
         let content = rawContent;
         if (!isBinary(content)) {
@@ -268,14 +316,16 @@ async function runFetchLoop(
           if (entry.post) text = applyPost(text, entry.post, entryVars);
           if (entry.strategy === 'insert' && !isSelf) {
             const lastInserted =
-              history?.getInsertedFragment(targetPath!) ?? null;
+              history?.getInsertedFragment(effectivePath!) ?? null;
             if (
               lastInserted !== null &&
               rawText === lastInserted.raw &&
               text === lastInserted.processed &&
-              fs.existsSync(targetPath!)
+              fs.existsSync(effectivePath!)
             ) {
               skippedPaths.add(targetPath!); // keep stale detection from treating this as missing
+              if (effectivePath !== targetPath!)
+                skippedPaths.add(effectivePath!);
               continue; // source and processed output unchanged — skip write entirely (no-op)
             }
             const processedText = text;
@@ -283,9 +333,9 @@ async function runFetchLoop(
               entry,
               processedText,
               lastInserted?.processed ?? null,
-              targetPath!,
+              effectivePath!,
             );
-            insertedFragments.set(targetPath!, {
+            insertedFragments.set(effectivePath!, {
               raw: rawText,
               processed: processedText,
             });
@@ -299,28 +349,41 @@ async function runFetchLoop(
             selfSourceRecords = result.sourceRecords;
           continue;
         }
-        const diff = computeDiff(targetPath!, content, entry.mode);
+        // effectivePath is always defined here: isSelf is false (we continued above),
+        // so targetPath was defined, and effectivePath = resolveFollowSymlink(targetPath, ...).
+        const ep = effectivePath!;
+        const diff = computeDiff(ep, content, entry.mode);
         allDiffs.push(diff);
         const backupPath =
           entry.backup && diff.hasChanges && !diff.isNew
             ? resolveBackupPath(
                 entry.backup,
-                targetPath!,
+                ep,
                 workingDir,
                 vars,
                 config.backup_roots ?? [],
               )
             : undefined;
         writeTargets.push({
-          targetPath: targetPath!,
+          targetPath: ep,
           content,
           mode: entry.mode,
           backupPath,
           writeInPlace: entry.writeInPlace,
         });
-        pendingWrites.set(targetPath!, content);
+        pendingWrites.set(ep, content);
+        // Also index under the original symlink path so local source lookups
+        // using the symlink path (not the resolved real path) still find the
+        // pending content within the same fetch loop.
+        if (ep !== targetPath!) {
+          pendingWrites.set(targetPath!, content);
+          // Mark the symlink path as covered so stale detection doesn't treat
+          // a previously-tracked symlink path as stale when followSymlink is
+          // enabled on an entry that was first pulled without it.
+          skippedPaths.add(targetPath!);
+        }
         if (result.sourceRecords.length > 0) {
-          sourceRecordsByTarget.set(targetPath!, result.sourceRecords);
+          sourceRecordsByTarget.set(ep, result.sourceRecords);
         }
       }
     } catch (err: unknown) {
