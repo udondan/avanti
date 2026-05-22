@@ -115,16 +115,14 @@ describe('fetchBitbucket — ref resolution', () => {
     expect(mockFetch.mock.calls[1][0] as string).toContain('/src/v5.0.0/');
   });
 
-  it('falls back to mainbranch when $latest finds no tags', async () => {
-    const mockFetch = vi
-      .spyOn(globalThis, 'fetch')
-      .mockResolvedValueOnce(jsonResponse({ values: [] }))
-      .mockResolvedValueOnce(jsonResponse({ mainbranch: { name: 'main' } }))
-      .mockResolvedValueOnce(textResponse('content'));
+  it('throws when $latest finds no semver tags', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      jsonResponse({ values: [] }),
+    );
 
-    await fetchBitbucket('ws', 'repo', 'file.txt', '$latest');
-
-    expect(mockFetch.mock.calls[2][0] as string).toContain('/src/main/');
+    await expect(
+      fetchBitbucket('ws', 'repo', 'file.txt', '$latest'),
+    ).rejects.toThrow('No semver tags found');
   });
 
   it('throws when ref resolution request fails', async () => {

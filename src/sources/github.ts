@@ -536,9 +536,12 @@ function resolveRefViaCli(repo: string, ref: string, host?: string): string {
   ];
   verbose(`github: gh fallback: gh ${tagArgs.join(' ')}`);
   const tagRes = ghRun(tagArgs);
-  if (tagRes.status !== 0 || !tagRes.stdout.trim()) {
+  if (tagRes.status !== 0)
+    throw new Error(
+      `Failed to list tags for ${repo}: ${tagRes.stderr.trim() || 'gh exited with status ' + tagRes.status}`,
+    );
+  if (!tagRes.stdout.trim())
     throw new Error(`No releases or tags found for ${repo}`);
-  }
   return tagRes.stdout.trim();
 }
 

@@ -96,20 +96,9 @@ async function resolveRef(
     const tags = await listBitbucketTagsAll(workspace, repo, '-name', host);
     const found = maxSemverTag(tags);
     if (found) return found;
-    // No semver tag found: fall back to default branch
-    const repoRes = await fetchWithRetry(
-      `${getApiBase(host)}/repositories/${workspace}/${repo}`,
-      { headers: apiHeaders() },
+    throw new Error(
+      `No semver tags found for ${workspace}/${repo} (needed to resolve $latest)`,
     );
-    if (!repoRes.ok) {
-      throw new Error(
-        `Failed to resolve ref for ${workspace}/${repo}: HTTP ${repoRes.status}`,
-      );
-    }
-    const repoData = (await repoRes.json()) as {
-      mainbranch?: { name: string };
-    };
-    return repoData.mainbranch?.name ?? 'main';
   }
 
   // $recent: most recently committed tag (sort by target commit date)

@@ -746,7 +746,11 @@ function resolveReleaseTagViaCli(
     for (let page = 1; page <= 5; page++) {
       const endpoint = `projects/${encodeURIComponent(project)}/releases?order_by=released_at&sort=desc&per_page=100&page=${page}`;
       const res = glabApi(endpoint, host);
-      if (res.status !== 0 || !res.stdout.trim()) break;
+      if (res.status !== 0)
+        throw new Error(
+          `Failed to list releases for ${project}: ${res.stderr.trim() || 'glab exited with status ' + res.status}`,
+        );
+      if (!res.stdout.trim()) break;
       try {
         const releases = JSON.parse(res.stdout) as Array<{ tag_name: string }>;
         if (!releases.length) break;
