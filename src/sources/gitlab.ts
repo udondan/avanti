@@ -813,6 +813,10 @@ function resolveReleaseTagViaCli(
       `Failed to resolve $latest release for ${project}: ${tagRes.stderr}`,
     );
   }
+  if (!tagRes.stdout.trim())
+    throw new Error(
+      `No releases or tags found for ${project} (needed to resolve $latest)`,
+    );
   const tags = JSON.parse(tagRes.stdout) as Array<{ name: string }>;
   if (!tags.length) {
     throw new Error(
