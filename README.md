@@ -37,6 +37,7 @@ atomic rollbacks, and diff-before-apply safety.
   - [Scaffold Pattern](#scaffold-pattern)
   - [Backup](#backup)
   - [Write in Place](#write-in-place)
+  - [Follow Symlink](#follow-symlink)
   - [Variables](#variables)
   - [$self — Self-managing Config](#self--self-managing-config)
   - [Authentication](#authentication)
@@ -414,20 +415,21 @@ A brace group is only expanded when it contains **at least one comma** (e.g. `{f
 
 > **YAML quoting:** YAML treats `{` at the start of a plain key as a flow mapping. If the brace group is the first character of a key, quote it: `'{dev,prod}.yml':` or `"{dev,prod}.yml":`. Keys where the brace group appears after a path prefix (e.g. `config/{dev,prod}.yml`) do not need quoting.
 
-| Field          | Required | Description                                                                                                                                                                                                                                                                                    |
-| -------------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `src`          | Yes      | Source (see below). May be a single source or a **list** of sources to concatenate.                                                                                                                                                                                                            |
-| `if`           | No       | Condition object (or list of objects). All must pass for the entry to be processed. See [Conditions](#conditions).                                                                                                                                                                             |
-| `ifAny`        | No       | List of condition objects. At least one must pass. See [Conditions](#conditions).                                                                                                                                                                                                              |
-| `mode`         | No       | File permission mode. Use a quoted octal string (`"0755"`) or a YAML octal literal (`0o755`). Mode-only changes (content unchanged) are detected by `diff` and applied by `pull`. **POSIX only** — ignored on Windows.                                                                         |
-| `replace`      | No       | List of `{from, to}` replacement rules. `from` may be a plain string or `/pattern/flags` regex.                                                                                                                                                                                                |
-| `post`         | No       | Shell script. Content is piped via stdin; stdout is used as the result. Runs after `replace`.                                                                                                                                                                                                  |
-| `template`     | No       | Treat the fetched content as a template and render it with avanti config variables as context. See [Template Rendering](#template-rendering).                                                                                                                                                  |
-| `json`         | No       | JSON merge/format options (see below). When omitted, merging is auto-enabled if all sources have a `.json` or `.jsonc` extension. Use `true`/`false` to force on or off regardless of extension.                                                                                               |
-| `yaml`         | No       | YAML merge/format options (see below). When omitted, merging is auto-enabled if all sources have a `.yaml` or `.yml` extension. Use `true`/`false` to force on or off regardless of extension. Comments are preserved in merged output.                                                        |
-| `strategy`     | No       | Write strategy: `replace` _(default)_ — overwrite the target file entirely; `insert` — merge content into the existing file without clobbering unrelated content. See [Insert Mode](#insert-mode).                                                                                             |
-| `writeInPlace` | No       | If `true`, replaces file content in-place instead of using an atomic rename. Preserves the existing inode. **Not atomic** — use only when inode stability is required. See [Write in Place](#write-in-place).                                                                                  |
-| `extract`      | No       | Unpack an archive (`.zip`, `.tar`, `.tar.gz`, `.tgz`) downloaded from a single-file source before writing. Target must end with `"/"`. Use `true` to extract all files, or a list of patterns to extract only matching entries. Cannot be combined with a list `src`. See [Extract](#extract). |
+| Field           | Required | Description                                                                                                                                                                                                                                                                                    |
+| --------------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src`           | Yes      | Source (see below). May be a single source or a **list** of sources to concatenate.                                                                                                                                                                                                            |
+| `if`            | No       | Condition object (or list of objects). All must pass for the entry to be processed. See [Conditions](#conditions).                                                                                                                                                                             |
+| `ifAny`         | No       | List of condition objects. At least one must pass. See [Conditions](#conditions).                                                                                                                                                                                                              |
+| `mode`          | No       | File permission mode. Use a quoted octal string (`"0755"`) or a YAML octal literal (`0o755`). Mode-only changes (content unchanged) are detected by `diff` and applied by `pull`. **POSIX only** — ignored on Windows.                                                                         |
+| `replace`       | No       | List of `{from, to}` replacement rules. `from` may be a plain string or `/pattern/flags` regex.                                                                                                                                                                                                |
+| `post`          | No       | Shell script. Content is piped via stdin; stdout is used as the result. Runs after `replace`.                                                                                                                                                                                                  |
+| `template`      | No       | Treat the fetched content as a template and render it with avanti config variables as context. See [Template Rendering](#template-rendering).                                                                                                                                                  |
+| `json`          | No       | JSON merge/format options (see below). When omitted, merging is auto-enabled if all sources have a `.json` or `.jsonc` extension. Use `true`/`false` to force on or off regardless of extension.                                                                                               |
+| `yaml`          | No       | YAML merge/format options (see below). When omitted, merging is auto-enabled if all sources have a `.yaml` or `.yml` extension. Use `true`/`false` to force on or off regardless of extension. Comments are preserved in merged output.                                                        |
+| `strategy`      | No       | Write strategy: `replace` _(default)_ — overwrite the target file entirely; `insert` — merge content into the existing file without clobbering unrelated content. See [Insert Mode](#insert-mode).                                                                                             |
+| `writeInPlace`  | No       | If `true`, replaces file content in-place instead of using an atomic rename. Preserves the existing inode. **Not atomic** — use only when inode stability is required. See [Write in Place](#write-in-place).                                                                                  |
+| `followSymlink` | No       | If `true` and the target path is a symlink, writes the fetched content to the **symlink's target** (the real file) instead of replacing the symlink itself. The resolved target must be a regular file inside the working directory. See [Follow Symlink](#follow-symlink).                    |
+| `extract`       | No       | Unpack an archive (`.zip`, `.tar`, `.tar.gz`, `.tgz`) downloaded from a single-file source before writing. Target must end with `"/"`. Use `true` to extract all files, or a list of patterns to extract only matching entries. Cannot be combined with a list `src`. See [Extract](#extract). |
 
 ### Source Types
 
@@ -1236,6 +1238,30 @@ files:
 | Backup           | Yes               | Yes                          |
 
 > **Warning:** `writeInPlace: true` is **not atomic**. Between the truncate and the completed write, a concurrent reader will see empty or partial content. Use the default atomic rename when correctness under concurrent reads matters more than inode stability.
+
+### Follow Symlink
+
+By default, when the target path is a symlink avanti replaces the symlink itself — the symlink is overwritten with the fetched file content. Set `followSymlink: true` to write through the symlink: avanti resolves the symlink chain to its real file and writes the content there, leaving the symlink itself intact.
+
+```yaml
+files:
+  config/settings.json:
+    src:
+      github:
+        repo: org/shared-configs
+        file: settings.json
+    followSymlink: true
+```
+
+This is useful when a symlink is managed by another tool (e.g. a dotfile manager) and must not be replaced. avanti updates the real file's content while the symlink pointer remains unchanged.
+
+**Safety constraints** — avanti validates the resolved target before writing:
+
+- The resolved real file must be a **regular file**, not a directory.
+- The resolved path must remain **inside the working directory** — symlinks that escape (directly or through intermediate symlinked directories) are rejected.
+- **Circular symlinks** are detected and rejected.
+
+When the target path does not exist yet, or does not point to a symlink, `followSymlink` has no effect and the file is created or written normally.
 
 ### Variables
 
