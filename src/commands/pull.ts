@@ -882,9 +882,20 @@ export function pullCommand(): Command {
           (p) => !staleDeleteSudo.has(p),
         );
 
-        atomicWrite([...regularChanged, ...regularRestore], regularDelete);
+        atomicWrite([...regularChanged, ...regularRestore]);
         if (sudoChanged.length + sudoRestore.length > 0) {
           sudoAtomicWrite([...sudoChanged, ...sudoRestore]);
+        }
+        // Deletions are deferred until both write batches succeed so that
+        // stale files are not removed if a later write batch fails.
+        for (const p of regularDelete) {
+          try {
+            fs.rmSync(p, { force: true });
+          } catch (err) {
+            console.warn(
+              `Warning: could not delete ${p}: ${err instanceof Error ? err.message : String(err)}`,
+            );
+          }
         }
         for (const [p, sv] of staleDeleteSudo) {
           sudoDelete(p, sv);
