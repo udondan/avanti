@@ -740,8 +740,9 @@ function resolveReleaseTagViaCli(
   const pattern = parseRefPattern(release);
 
   if (pattern || isRecentSentinel(release)) {
+    const perPage = 100;
     for (let page = 1; ; page++) {
-      const endpoint = `projects/${encodeURIComponent(project)}/releases?order_by=released_at&sort=desc&per_page=100&page=${page}`;
+      const endpoint = `projects/${encodeURIComponent(project)}/releases?order_by=released_at&sort=desc&per_page=${perPage}&page=${page}`;
       const res = glabApi(endpoint, host);
       if (res.status !== 0)
         throw new Error(
@@ -750,12 +751,13 @@ function resolveReleaseTagViaCli(
       if (!res.stdout.trim()) break;
       try {
         const releases = JSON.parse(res.stdout) as Array<{ tag_name: string }>;
-        if (!releases.length) break;
         if (isRecentSentinel(release)) {
-          return releases[0].tag_name; // first on page 1 = most recent
+          if (releases.length) return releases[0].tag_name;
+          break;
         }
         const found = releases.find((r) => pattern!.test(r.tag_name));
         if (found) return found.tag_name;
+        if (releases.length < perPage) break;
       } catch (e) {
         if (e instanceof SyntaxError) break;
         throw e;
