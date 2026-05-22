@@ -106,7 +106,7 @@ function resolveGitRef(
 
   verbose(`git: listing remote tags for ${redactGitUrl(repo)}`);
   // ls-remote --sort is not reliably supported across Git versions and lacks
-  // creatordates for tag objects, so we fetch all refs and filter client-side.
+  // creatordates for tag objects, so we fetch all tags and filter client-side.
   const result = run('git', [
     'ls-remote',
     '--tags',
