@@ -16,10 +16,18 @@ function compilePattern(pattern: string): CompiledPattern {
     }
   }
   if (pattern.endsWith('/')) {
-    if (pattern.includes('{') && expandBraces(pattern).length > 1) {
-      throw new Error(
-        `pattern ${JSON.stringify(pattern)}: brace expansion is not supported in directory-prefix patterns (ending with "/"); use separate patterns instead, e.g. "core/" and "utils/" instead of "{core,utils}/"`,
-      );
+    if (pattern.includes('{')) {
+      let expanded: string[];
+      try {
+        expanded = expandBraces(pattern, 2);
+      } catch {
+        expanded = ['', ''];
+      }
+      if (expanded.length > 1) {
+        throw new Error(
+          `pattern ${JSON.stringify(pattern)}: brace expansion is not supported in directory-prefix patterns (ending with "/"); use separate patterns instead, e.g. "core/" and "utils/" instead of "{core,utils}/"`,
+        );
+      }
     }
     return { kind: 'prefix', value: pattern };
   }
