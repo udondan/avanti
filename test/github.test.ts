@@ -192,7 +192,7 @@ describe('fetchGitHub — network-error fallback to gh', () => {
     );
 
     // resolveRef network error → isGhAvailable → resolveRefViaCli('$recent')
-    //   resolveRefViaCli: releases/latest → 'nightly' (accepted as-is for $recent)
+    //   resolveRefViaCli: tags?per_page=1 → 'nightly' (most recently created tag)
     // fetchPathInfo network error → isGhAvailable → fetchPathInfoViaCli
     mockSpawnSync
       .mockReturnValueOnce(makeGhAvailable())
@@ -260,8 +260,8 @@ describe('fetchGitHub — ref sentinels and pattern', () => {
   it('$recent accepts any tag including non-semver', async () => {
     vi.spyOn(globalThis, 'fetch')
       .mockResolvedValueOnce(
-        // releases/latest → 'nightly' (accepted as-is for $recent)
-        new Response(JSON.stringify({ tag_name: 'nightly' }), { status: 200 }),
+        // tags?per_page=1 → 'nightly' (most recently created tag, any format)
+        new Response(JSON.stringify([{ name: 'nightly' }]), { status: 200 }),
       )
       .mockResolvedValueOnce(
         // fetchPathInfo
@@ -372,9 +372,9 @@ describe('fetchGitHubRelease', () => {
 
   it('resolves $recent before fetching release assets', async () => {
     vi.spyOn(globalThis, 'fetch')
-      // resolveRef: releases/latest → non-semver "nightly" tag; $recent accepts any tag format
+      // resolveRef: tags?per_page=1 → 'nightly' (most recently created tag, any format)
       .mockResolvedValueOnce(
-        new Response(JSON.stringify({ tag_name: 'nightly' }), { status: 200 }),
+        new Response(JSON.stringify([{ name: 'nightly' }]), { status: 200 }),
       )
       // fetchGitHubRelease: GET /releases/tags/nightly → assets
       .mockResolvedValueOnce(
