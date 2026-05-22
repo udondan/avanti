@@ -61,6 +61,18 @@ export function sudoDelete(p: string, sudo: boolean | string): void {
   }
 }
 
+export function sudoIsSymlink(
+  sudo: boolean | string,
+  targetPath: string,
+): boolean {
+  const r = spawnSync(
+    'sudo',
+    [...sudoUserArgs(sudo), 'test', '-L', path.resolve(targetPath)],
+    { stdio: 'ignore' },
+  );
+  return r.status === 0;
+}
+
 export function sudoRun(sudo: boolean | string, args: string[]): void {
   const r = spawnSync('sudo', [...sudoUserArgs(sudo), ...args], {
     stdio: 'inherit',

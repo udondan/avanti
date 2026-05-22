@@ -28,6 +28,7 @@ import {
   sudoAtomicWrite,
   sudoAuth,
   sudoDelete,
+  sudoIsSymlink,
   sudoRun,
   SudoWriteTarget,
   WriteTarget,
@@ -896,21 +897,31 @@ export function pullCommand(): Command {
           for (let i = 0; i < writeTargets.length; i++) {
             const d = allDiffs[i];
             if (d.modeChange && !d.contentChanged) {
-              const lst = fs.lstatSync(writeTargets[i].targetPath, {
-                throwIfNoEntry: false,
-              });
-              if (lst && !lst.isSymbolicLink()) {
-                if (writeTargets[i].sudo) {
+              if (writeTargets[i].sudo) {
+                // Use sudo for the symlink check: fs.lstatSync throws EACCES
+                // on paths inside root-owned directories (e.g. /root/).
+                if (
+                  !sudoIsSymlink(
+                    writeTargets[i].sudo!,
+                    writeTargets[i].targetPath,
+                  )
+                ) {
                   sudoRun(writeTargets[i].sudo!, [
                     'chmod',
                     '--',
                     d.modeChange.to.toString(8).padStart(4, '0'),
                     writeTargets[i].targetPath,
                   ]);
-                } else {
-                  fs.chmodSync(writeTargets[i].targetPath, d.modeChange.to);
+                  modeOnlyCount++;
                 }
-                modeOnlyCount++;
+              } else {
+                const lst = fs.lstatSync(writeTargets[i].targetPath, {
+                  throwIfNoEntry: false,
+                });
+                if (lst && !lst.isSymbolicLink()) {
+                  fs.chmodSync(writeTargets[i].targetPath, d.modeChange.to);
+                  modeOnlyCount++;
+                }
               }
             }
           }
