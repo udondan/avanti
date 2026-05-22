@@ -201,6 +201,37 @@ describe('resolveFollowSymlink', () => {
       }
     },
   );
+
+  it.skipIf(isWindows)(
+    'resolves a dangling symlink when workingDir is itself a symlinked directory',
+    () => {
+      // Exercises the macOS /var → /private/var alias pattern: workingDir is a
+      // non-canonical symlink path but the target is still inside the real tree.
+      const symlinkWorkingDir = path.join(
+        os.tmpdir(),
+        `avanti-wdlink-${process.pid}`,
+      );
+      fs.symlinkSync(tmpDir, symlinkWorkingDir);
+      try {
+        const link = path.join(symlinkWorkingDir, 'link.txt');
+        const nonexistentTarget = path.join(
+          symlinkWorkingDir,
+          'will-be-created.txt',
+        );
+        fs.symlinkSync(nonexistentTarget, link);
+        // workingDir is the symlink path — resolveFollowSymlink must not falsely
+        // throw "escapes working directory" for a valid in-tree dangling symlink.
+        const result = resolveFollowSymlink(
+          link,
+          { followSymlink: true },
+          symlinkWorkingDir,
+        );
+        expect(result).toBe(path.join(tmpDir, 'will-be-created.txt'));
+      } finally {
+        fs.rmSync(symlinkWorkingDir);
+      }
+    },
+  );
 });
 
 describe('expandBraces', () => {
