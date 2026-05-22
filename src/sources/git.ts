@@ -96,11 +96,13 @@ export function parseGitRemoteSpec(spec: string): {
   return { repo, file, ref };
 }
 
-function resolveGitRef(repo: string, ref: string): string {
-  const pattern = parseRefPattern(ref);
+function resolveGitRef(
+  repo: string,
+  ref: string,
+  pattern: RegExp | null,
+): string {
   const wantSemver = isLatestSentinel(ref);
   const wantRecent = isRecentSentinel(ref);
-  if (!wantSemver && !wantRecent && !pattern) return ref;
 
   verbose(`git: listing remote tags for ${redactGitUrl(repo)}`);
   // ls-remote --sort is not reliably supported across Git versions and lacks
@@ -162,10 +164,10 @@ export function fetchGit(repo: string, file: string, ref?: string): GitResult {
   try {
     const repoDir = path.join(tmpDir, 'repo');
 
+    const refPattern = ref ? parseRefPattern(ref) : null;
     const resolvedRef =
-      ref &&
-      (isLatestSentinel(ref) || isRecentSentinel(ref) || parseRefPattern(ref))
-        ? resolveGitRef(repo, ref)
+      ref && (isLatestSentinel(ref) || isRecentSentinel(ref) || refPattern)
+        ? resolveGitRef(repo, ref, refPattern)
         : ref;
 
     if (!resolvedRef || !looksLikeCommitHash(resolvedRef)) {

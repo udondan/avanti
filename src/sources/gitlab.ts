@@ -122,7 +122,7 @@ async function findGitLabTagMatchingPatternApi(
   host?: string,
   sortBy: 'updated' | 'version' = 'updated',
 ): Promise<string | null> {
-  for (let page = 1; page <= 100; page++) {
+  for (let page = 1; ; page++) {
     const res = await fetchWithRetry(
       `https://${getHost(host)}/api/v4/projects/${encodeURIComponent(project)}/repository/tags?order_by=${sortBy}&sort=desc&per_page=100&page=${page}`,
       { headers: apiHeaders() },
@@ -146,7 +146,7 @@ function findGitLabTagMatchingPatternCli(
   host?: string,
   sortBy: 'updated' | 'version' = 'updated',
 ): string | null {
-  for (let page = 1; page <= 100; page++) {
+  for (let page = 1; ; page++) {
     const endpoint = `projects/${encodeURIComponent(project)}/repository/tags?order_by=${sortBy}&sort=desc&per_page=100&page=${page}`;
     const res = glabApi(endpoint, host);
     if (res.status !== 0)
@@ -653,7 +653,7 @@ async function resolveReleaseTag(
 
   // $recent or pattern: paginate releases sorted by released_at desc
   if (isRecentSentinel(release) || pattern) {
-    for (let page = 1; page <= 100; page++) {
+    for (let page = 1; ; page++) {
       let res: Response;
       try {
         res = await fetchWithRetry(
@@ -743,7 +743,7 @@ function resolveReleaseTagViaCli(
   const pattern = parseRefPattern(release);
 
   if (pattern || isRecentSentinel(release)) {
-    for (let page = 1; page <= 100; page++) {
+    for (let page = 1; ; page++) {
       const endpoint = `projects/${encodeURIComponent(project)}/releases?order_by=released_at&sort=desc&per_page=100&page=${page}`;
       const res = glabApi(endpoint, host);
       if (res.status !== 0)

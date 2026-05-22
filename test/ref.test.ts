@@ -84,6 +84,20 @@ describe('parseRefPattern', () => {
     expect(parseRefPattern('//')).toBeNull();
   });
 
+  it('strips stateful g and y flags', () => {
+    const re = parseRefPattern('/^v\\d+/gi');
+    expect(re).not.toBeNull();
+    expect(re!.flags).not.toContain('g');
+    expect(re!.flags).toContain('i');
+  });
+
+  it('strips y flag while preserving other flags', () => {
+    const re = parseRefPattern('/^release/iy');
+    expect(re).not.toBeNull();
+    expect(re!.flags).not.toContain('y');
+    expect(re!.flags).toContain('i');
+  });
+
   it('throws on an invalid regex', () => {
     expect(() => parseRefPattern('/[invalid/')).toThrow('Invalid ref pattern');
   });

@@ -36,31 +36,6 @@ function apiHeaders(): Record<string, string> {
   return headers;
 }
 
-async function listBitbucketTagsAll(
-  workspace: string,
-  repo: string,
-  sort: string,
-  host?: string,
-): Promise<string[]> {
-  const all: string[] = [];
-  let url: string | null =
-    `${getApiBase(host)}/repositories/${workspace}/${repo}/refs/tags?sort=${sort}&pagelen=100`;
-  while (url) {
-    const res = await fetchWithRetry(url, { headers: apiHeaders() });
-    if (!res.ok)
-      throw new Error(
-        `Failed to list tags for ${workspace}/${repo}: HTTP ${res.status}`,
-      );
-    const data = (await res.json()) as {
-      values: Array<{ name: string }>;
-      next?: string;
-    };
-    all.push(...data.values.map((t) => t.name));
-    url = data.next ?? null;
-  }
-  return all;
-}
-
 async function resolveRef(
   workspace: string,
   repo: string,
@@ -89,11 +64,27 @@ async function resolveRef(
     return repoData.mainbranch?.name ?? 'main';
   }
 
-  // $latest: collect all tags, pick the highest semver
+  // $latest: paginate tags and track the highest semver incrementally
   if (isLatestSentinel(ref)) {
-    const tags = await listBitbucketTagsAll(workspace, repo, '-name', host);
-    const found = maxSemverTag(tags);
-    if (found) return found;
+    let best: string | null = null;
+    let url: string | null =
+      `${getApiBase(host)}/repositories/${workspace}/${repo}/refs/tags?sort=-name&pagelen=100`;
+    while (url) {
+      const res = await fetchWithRetry(url, { headers: apiHeaders() });
+      if (!res.ok)
+        throw new Error(
+          `Failed to list tags for ${workspace}/${repo}: HTTP ${res.status}`,
+        );
+      const data = (await res.json()) as {
+        values: Array<{ name: string }>;
+        next?: string;
+      };
+      const candidate = maxSemverTag(data.values.map((t) => t.name));
+      if (candidate && (!best || maxSemverTag([best, candidate]) === candidate))
+        best = candidate;
+      url = data.next ?? null;
+    }
+    if (best) return best;
     throw new Error(
       `No semver tags found for ${workspace}/${repo} (needed to resolve $latest)`,
     );
