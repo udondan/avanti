@@ -14,8 +14,7 @@ export function applyWriteHook(
     input: content,
     encoding: 'utf8',
   });
-  // EPIPE means the child exited before reading all stdin — not a spawn failure.
-  // Only treat result.error as a spawn failure for real OS-level errors (ENOENT etc.).
+  // Skip EPIPE: child exited before reading all stdin — not a true spawn failure.
   if (
     result.error &&
     (result.error as NodeJS.ErrnoException).code !== 'EPIPE'
@@ -32,11 +31,7 @@ export function applyWriteHook(
   return result.stdout;
 }
 
-// Side-effect hooks do not use avanti variable substitution — scripts are
-// passed to the shell verbatim. $AVANTI_TARGET and $AVANTI_IS_NEW are
-// available as process environment variables (set via extraEnv).
-// On Windows, a PowerShell prelude maps those variables to local PS variables
-// so that `$AVANTI_TARGET` works identically to Unix `$AVANTI_TARGET`.
+// Side-effect hooks: scripts are passed verbatim; $AVANTI_TARGET/$AVANTI_IS_NEW are env vars.
 export function runHook(
   script: string,
   extraEnv: Record<string, string> = {},
@@ -46,9 +41,7 @@ export function runHook(
     const prelude = Object.keys(extraEnv)
       .map((k) => `$${k} = $env:${k};`)
       .join('');
-    // Wrap the user script in an inner & { } block so that param() declarations
-    // at the start of the user script remain the first statement of their scope.
-    // The prelude (env var mappings) lives in the outer scope provided by getShellArgs.
+    // Inner & { } keeps param() as the first statement of its own scope.
     resolvedScript = prelude + '& {' + script + '}';
   }
   const { shell, args } = getShellArgs(resolvedScript);
