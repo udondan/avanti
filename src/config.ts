@@ -379,6 +379,11 @@ export function parseConfigContent(content: string): AvantiConfig {
           `files["${target}"].extract: cannot be used with a list of sources`,
         );
       }
+      if (!target.endsWith('/') && !target.endsWith(path.sep)) {
+        throw new Error(
+          `files["${target}"].extract: target must be a directory (end with "/") — archive extraction writes multiple files`,
+        );
+      }
       const rawExtract = e['extract'];
       if (rawExtract === true) {
         fileEntry.extract = true;

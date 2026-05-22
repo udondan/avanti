@@ -242,4 +242,33 @@ describe('applyFilter — prefix pattern', () => {
       'exact.txt',
     ]);
   });
+
+  it('throws for brace+prefix combos', () => {
+    const files = mapOf({ 'core/a.txt': '' });
+    expect(() => applyFilter(files, ['{core,utils}/'])).toThrow(
+      'brace expansion is not supported in directory-prefix patterns',
+    );
+  });
+});
+
+describe('extractArchive — path traversal protection', () => {
+  it('rejects tar entries with .. segments', async () => {
+    const buffer = await makeTarGz({ 'safe.txt': 'ok' });
+    const files = await extractArchive(buffer, 'release.tar.gz');
+    expect([...files.keys()]).toEqual(['safe.txt']);
+  });
+
+  it('rejects ZIP entries with .. segments via normalizePath guard', async () => {
+    const buffer = Buffer.from(TEST_ZIP_BASE64, 'base64');
+    const files = await extractArchive(buffer, 'test.zip');
+    const keys = [...files.keys()];
+    expect(keys.every((k) => !k.includes('..'))).toBe(true);
+  });
+
+  it('skips empty/dot-only normalized paths', async () => {
+    const buffer = await makeTarGz({ 'a.txt': 'hello' });
+    const files = await extractArchive(buffer, 'archive.tar.gz');
+    const keys = [...files.keys()];
+    expect(keys.every((k) => k !== '' && k !== '.')).toBe(true);
+  });
 });

@@ -14,8 +14,20 @@ export function detectArchiveFormat(filename: string): ArchiveFormat | null {
   return null;
 }
 
-function normalizePath(p: string): string {
-  return p.replace(/\\/g, '/').replace(/^\.\//, '');
+function normalizePath(p: string): string | null {
+  const normalized = p.replace(/\\/g, '/').replace(/^\.\//, '');
+  if (!normalized || normalized === '.') return null;
+  const segments = normalized.split('/');
+  if (
+    normalized.startsWith('/') ||
+    /^[A-Za-z]:/.test(normalized) ||
+    segments.includes('..')
+  ) {
+    throw new Error(
+      `Archive contains unsafe entry path "${p}" — rejecting to prevent path traversal`,
+    );
+  }
+  return normalized;
 }
 
 async function extractZip(buffer: Buffer): Promise<Map<string, Buffer>> {
@@ -23,7 +35,9 @@ async function extractZip(buffer: Buffer): Promise<Map<string, Buffer>> {
   const files = new Map<string, Buffer>();
   for (const entry of directory.files) {
     if (entry.type === 'Directory') continue;
-    files.set(normalizePath(entry.path), await entry.buffer());
+    const normalized = normalizePath(entry.path);
+    if (normalized === null) continue;
+    files.set(normalized, await entry.buffer());
   }
   return files;
 }
@@ -41,16 +55,26 @@ async function extractTar(buffer: Buffer): Promise<Map<string, Buffer>> {
         entry.resume();
         return;
       }
+      let normalized: string | null;
+      try {
+        normalized = normalizePath(entry.path);
+      } catch (err) {
+        reject(err instanceof Error ? err : new Error(String(err)));
+        return;
+      }
+      if (normalized === null) {
+        entry.resume();
+        return;
+      }
+      const key = normalized;
       const chunks: Buffer[] = [];
       entry.on('data', (chunk: Buffer) => chunks.push(chunk));
-      entry.on('end', () =>
-        files.set(normalizePath(entry.path), Buffer.concat(chunks)),
-      );
+      entry.on('end', () => files.set(key, Buffer.concat(chunks)));
       entry.on('error', reject);
     });
     parser.on('finish', resolve);
     parser.on('error', reject);
-    Readable.from(buffer).pipe(parser);
+    Readable.from([buffer]).pipe(parser);
   });
   return files;
 }
