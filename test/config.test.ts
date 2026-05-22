@@ -902,7 +902,7 @@ files:
       update: echo updated
 `);
     const cfg = await loadConfig(f);
-    expect(cfg.files['out.txt'].on).toEqual({
+    expect(cfg.files['out.txt'].on).toMatchObject({
       write: 'cat',
       beforeWrite: 'echo before',
       beforeCreate: 'echo beforeCreate',

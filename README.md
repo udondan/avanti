@@ -1014,9 +1014,9 @@ files:
     src: https://config.example.com/app.yml
     on:
       write: sed -e 's/v3/v4/g' # transform content
-      beforeCreate: mkdir -p $(dirname $AVANTI_TARGET)
+      beforeCreate: mkdir -p "$(dirname "$AVANTI_TARGET")"
       create: echo "Created $AVANTI_TARGET"
-      update: git add $AVANTI_TARGET
+      update: git add "$AVANTI_TARGET"
 ```
 
 ### Insert Mode
@@ -1502,7 +1502,7 @@ The `ref` (and `release`) field accepts four forms:
 
 When `ref` is omitted, all source types (GitHub, GitLab, Bitbucket, git) resolve to the repository's default branch.
 
-`$self` is a reserved keyword that expands to the absolute path of the active config file. It is injected automatically and cannot be used as a variable name. Use it anywhere a variable is valid — `exec:` commands, `replace:` rules, `exists:` conditions, `on:` hook scripts, or any source field:
+`$self` is a reserved keyword that expands to the absolute path of the active config file. It is injected automatically and cannot be used as a variable name. Use it anywhere a variable is valid — `exec:` commands, `replace:` rules, `exists:` conditions, `on.write` scripts, or any source field:
 
 ```yaml
 files:
@@ -1665,7 +1665,7 @@ files:
       arrays: concat
 ```
 
-`$self` supports all the same source types, `replace`, `on:` hooks, and YAML/JSON merge options as any other file entry. See [Self-managing Config](#self-managing-config) in the Use Cases section for a full worked example.
+`$self` supports all the same source types, `replace`, `on.write`, and YAML/JSON merge options as any other file entry. Lifecycle hooks (`on.beforeWrite`, `on.beforeCreate`, `on.beforeUpdate`, `on.create`, `on.update`) are not supported for `$self` — they require a confirmed write context that the config re-evaluation pass does not have. See [Self-managing Config](#self-managing-config) in the Use Cases section for a full worked example.
 
 ### Authentication
 

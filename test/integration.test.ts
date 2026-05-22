@@ -667,8 +667,8 @@ describe('Integration', () => {
   ./output.txt:
     src: ${sourceFile}
     on:
-      create: printf '%s' "created:$AVANTI_TARGET" > ${marker}
-      update: printf '%s' "updated:$AVANTI_TARGET" > ${marker}
+      create: printf '%s' "created:$AVANTI_TARGET" > "${marker}"
+      update: printf '%s' "updated:$AVANTI_TARGET" > "${marker}"
 `,
       );
 
@@ -757,7 +757,7 @@ describe('Integration', () => {
   ./output2.txt:
     src: ${sourceFile}
     on:
-      beforeCreate: printf '%s' "before" > ${marker}
+      beforeCreate: printf '%s' "before" > "${marker}"
 `,
       );
 
@@ -778,7 +778,7 @@ describe('Integration', () => {
   ./output3.txt:
     src: ${sourceFile}
     on:
-      beforeWrite: printf '%s' "$AVANTI_IS_NEW" > ${marker}
+      beforeWrite: printf '%s' "$AVANTI_IS_NEW" > "${marker}"
 `,
       );
 

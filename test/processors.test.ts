@@ -115,7 +115,7 @@ describe('runHook', () => {
         AVANTI_TARGET: '/some/path',
       });
     } else {
-      runHook(`printf '%s' "$AVANTI_TARGET" > ${out}`, {
+      runHook(`printf '%s' "$AVANTI_TARGET" > "${out}"`, {
         AVANTI_TARGET: '/some/path',
       });
     }
