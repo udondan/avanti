@@ -52,7 +52,7 @@ export function runHook(
   if (result.error) {
     throw new Error(`hook script failed to spawn: ${result.error.message}`);
   }
-  if (result.status !== 0) {
+  if (result.status !== 0 || result.signal) {
     const detail = result.signal
       ? `killed by signal ${result.signal}`
       : `exited with code ${result.status ?? 'null'}`;
