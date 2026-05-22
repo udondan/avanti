@@ -571,6 +571,7 @@ The optional `filter` field narrows which files are kept when a source returns m
 | Pattern            | Matches                                                                                |
 | ------------------ | -------------------------------------------------------------------------------------- |
 | `exact.png`        | Exact string equality                                                                  |
+| `subdir/`          | Directory prefix — all entries whose path starts with `subdir/`                        |
 | `file-{a,b,c}.yml` | Brace-expanded alternatives — `file-a.yml`, `file-b.yml`, `file-c.yml`                 |
 | `/^some.*\.jpg/`   | JavaScript regular expression (delimited by `/`) tested against the full relative path |
 
@@ -583,11 +584,14 @@ files:
         release: $latest
       filter:
         - exact-match.png
+        - dist/ # all files under dist/
         - checksums-{amd64,arm64}.txt
         - /^some.*\.jpg/
 ```
 
 Variables are resolved in filter patterns before matching, so patterns like `$env:ARCH.tar.gz` or `$platform-release.zip` work as expected. An error is raised if the filter matches zero files, preventing silent misconfiguration. The `sha` fingerprint (if present) is computed over the filtered set.
+
+> **Note:** brace expansion is not supported in directory-prefix patterns (patterns ending with `/`). Use separate patterns instead — e.g. `"core/"` and `"utils/"` rather than `"{core,utils}/"`.
 
 #### Extract
 

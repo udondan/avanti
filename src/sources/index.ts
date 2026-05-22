@@ -819,10 +819,25 @@ export async function fetchSource(
       );
     }
     const extracted = await extractArchive(archiveBuffer, archiveFilename);
-    resolvedFiles =
-      entry.extract === true
-        ? extracted
-        : applyFilter(extracted, entry.extract);
+    if (entry.extract === true) {
+      resolvedFiles = extracted;
+    } else {
+      try {
+        resolvedFiles = applyFilter(extracted, entry.extract);
+      } catch (err) {
+        if (
+          err instanceof Error &&
+          err.message.startsWith('filter matched no files')
+        ) {
+          const patterns = entry.extract;
+          throw new Error(
+            `extract matched no entries (${patterns.length} pattern${patterns.length === 1 ? '' : 's'}: ${patterns.map((p) => JSON.stringify(p)).join(', ')})`,
+            { cause: err },
+          );
+        }
+        throw err;
+      }
+    }
   }
 
   const singleResult = { files: resolvedFiles };

@@ -252,10 +252,63 @@ describe('applyFilter — prefix pattern', () => {
 });
 
 describe('extractArchive — path traversal protection', () => {
+  // Build a raw (uncompressed) tar buffer with arbitrary entry paths so we can
+  // inject paths that tar.create() would normally normalise away.
+  function makeDangerousTarBuffer(
+    entries: Array<{ path: string; content: string }>,
+  ): Buffer {
+    const blocks: Buffer[] = [];
+    for (const { path: entryPath, content } of entries) {
+      const header = Buffer.alloc(512, 0);
+      header.write(entryPath.slice(0, 100), 0, 'ascii');
+      header.write('0000644\0', 100, 'ascii');
+      header.write('0001750\0', 108, 'ascii');
+      header.write('0001750\0', 116, 'ascii');
+      const size = Buffer.byteLength(content);
+      header.write(size.toString(8).padStart(11, '0') + '\0', 124, 'ascii');
+      header.write(
+        Math.floor(Date.now() / 1000)
+          .toString(8)
+          .padStart(11, '0') + '\0',
+        136,
+        'ascii',
+      );
+      header.write('0', 156, 'ascii');
+      header.write('ustar\0', 257, 'ascii');
+      header.write('00', 263, 'ascii');
+      // Checksum: fill field with spaces, sum all bytes, then write octal
+      header.fill(0x20, 148, 156);
+      let sum = 0;
+      for (let i = 0; i < 512; i++) sum += header[i];
+      header.write(sum.toString(8).padStart(6, '0') + '\0 ', 148, 'ascii');
+      blocks.push(header);
+      if (size > 0) {
+        const contentBuf = Buffer.from(content, 'utf8');
+        const padded = Buffer.alloc(Math.ceil(size / 512) * 512, 0);
+        contentBuf.copy(padded);
+        blocks.push(padded);
+      }
+    }
+    blocks.push(Buffer.alloc(1024, 0));
+    return Buffer.concat(blocks);
+  }
+
   it('rejects tar entries with .. segments', async () => {
-    const buffer = await makeTarGz({ 'safe.txt': 'ok' });
-    const files = await extractArchive(buffer, 'release.tar.gz');
-    expect([...files.keys()]).toEqual(['safe.txt']);
+    const buffer = makeDangerousTarBuffer([
+      { path: '../evil.txt', content: 'malicious' },
+    ]);
+    await expect(extractArchive(buffer, 'archive.tar')).rejects.toThrow(
+      'path traversal',
+    );
+  });
+
+  it('rejects tar entries with absolute paths', async () => {
+    const buffer = makeDangerousTarBuffer([
+      { path: '/etc/passwd', content: 'secret' },
+    ]);
+    await expect(extractArchive(buffer, 'archive.tar')).rejects.toThrow(
+      'unsafe entry path',
+    );
   });
 
   it('rejects ZIP entries with .. segments via normalizePath guard', async () => {
