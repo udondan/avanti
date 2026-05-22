@@ -311,6 +311,8 @@ export function parseConfigContent(content: string): AvantiConfig {
     if (typeof e['post'] === 'string') fileEntry.post = e['post'];
     if (typeof e['writeInPlace'] === 'boolean')
       fileEntry.writeInPlace = e['writeInPlace'];
+    if (typeof e['followSymlink'] === 'boolean')
+      fileEntry.followSymlink = e['followSymlink'];
     if (e['strategy'] !== undefined) {
       if (e['strategy'] !== 'replace' && e['strategy'] !== 'insert') {
         throw new Error(

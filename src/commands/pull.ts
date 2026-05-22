@@ -25,7 +25,12 @@ import { isBinary } from '../binary';
 import { computeDiff, computeDeleteDiff, printDiffs } from '../diff';
 import { atomicWrite, WriteTarget } from '../writer';
 import { FileDiff } from '../diff';
-import { buildEntryPreVars, expandTilde, resolveTargetPath } from '../paths';
+import {
+  buildEntryPreVars,
+  expandTilde,
+  resolveFollowSymlink,
+  resolveTargetPath,
+} from '../paths';
 import { AvantiConfig, FileEntry, Variables } from '../types';
 import { HistoryManager, PullLogFileRef, SourceShaRecord } from '../history';
 import { confirm } from '../prompt';
@@ -299,28 +304,33 @@ async function runFetchLoop(
             selfSourceRecords = result.sourceRecords;
           continue;
         }
-        const diff = computeDiff(targetPath!, content, entry.mode);
+        const effectivePath = resolveFollowSymlink(
+          targetPath!,
+          entry,
+          workingDir,
+        );
+        const diff = computeDiff(effectivePath, content, entry.mode);
         allDiffs.push(diff);
         const backupPath =
           entry.backup && diff.hasChanges && !diff.isNew
             ? resolveBackupPath(
                 entry.backup,
-                targetPath!,
+                effectivePath,
                 workingDir,
                 vars,
                 config.backup_roots ?? [],
               )
             : undefined;
         writeTargets.push({
-          targetPath: targetPath!,
+          targetPath: effectivePath,
           content,
           mode: entry.mode,
           backupPath,
           writeInPlace: entry.writeInPlace,
         });
-        pendingWrites.set(targetPath!, content);
+        pendingWrites.set(effectivePath, content);
         if (result.sourceRecords.length > 0) {
-          sourceRecordsByTarget.set(targetPath!, result.sourceRecords);
+          sourceRecordsByTarget.set(effectivePath, result.sourceRecords);
         }
       }
     } catch (err: unknown) {

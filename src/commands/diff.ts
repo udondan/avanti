@@ -18,7 +18,12 @@ import { applyInsertMode } from '../processors/insert';
 import { isBinary } from '../binary';
 import { computeDiff, computeDeleteDiff, printDiffs } from '../diff';
 import { FileDiff } from '../diff';
-import { buildEntryPreVars, expandTilde, resolveTargetPath } from '../paths';
+import {
+  buildEntryPreVars,
+  expandTilde,
+  resolveFollowSymlink,
+  resolveTargetPath,
+} from '../paths';
 import { AvantiConfig, FileEntry, Variables } from '../types';
 import { HistoryManager } from '../history';
 import { resolveVariableSpec } from '../variables-remote';
@@ -189,8 +194,13 @@ async function runDiffLoop(
           selfMode = entry.mode;
           continue;
         }
-        allDiffs.push(computeDiff(targetPath!, content, entry.mode));
-        pendingWrites.set(targetPath!, content);
+        const effectivePath = resolveFollowSymlink(
+          targetPath!,
+          entry,
+          workingDir,
+        );
+        allDiffs.push(computeDiff(effectivePath, content, entry.mode));
+        pendingWrites.set(effectivePath, content);
       }
     } catch (err: unknown) {
       console.error(

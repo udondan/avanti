@@ -1,3 +1,4 @@
+import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { FileEntry, Variables } from './types';
@@ -145,4 +146,26 @@ function assertWithinWorkingDir(
       `Target path "${resolvedPath}" escapes working directory "${workingDir}".`,
     );
   }
+}
+
+// When followSymlink is true and targetPath is a symlink, resolves it to the
+// real file and verifies the real file is inside the working directory.
+// Returns targetPath unchanged when followSymlink is false/undefined, when the
+// path doesn't exist yet, or when the path is not a symlink.
+export function resolveFollowSymlink(
+  targetPath: string,
+  entry: { followSymlink?: boolean },
+  workingDir: string,
+): string {
+  if (!entry.followSymlink) return targetPath;
+  const stat = fs.lstatSync(targetPath, { throwIfNoEntry: false });
+  if (!stat?.isSymbolicLink()) return targetPath;
+  const resolved = fs.realpathSync(targetPath);
+  if (fs.lstatSync(resolved).isDirectory()) {
+    throw new Error(
+      `followSymlink: "${targetPath}" resolves to a directory; refusing to write`,
+    );
+  }
+  assertWithinWorkingDir(resolved, workingDir);
+  return resolved;
 }
