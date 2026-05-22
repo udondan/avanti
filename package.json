@@ -7,6 +7,7 @@
   },
   "main": "./dist/cli.js",
   "scripts": {
+    "prepare": "mise run install-hooks",
     "build": "tsc -p tsconfig.build.json && chmod +x dist/cli.js",
     "dev": "tsx src/cli.ts",
     "test": "vitest run",

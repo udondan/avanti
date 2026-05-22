@@ -3,6 +3,16 @@ import { Readable } from 'stream';
 import { Parser, ReadEntry } from 'tar';
 import unzipper from 'unzipper';
 
+interface UnzipEntry {
+  type: string;
+  path: string;
+  buffer: () => Promise<Buffer>;
+}
+
+interface UnzipDirectory {
+  files: UnzipEntry[];
+}
+
 export type ArchiveFormat = 'zip' | 'tar' | 'tar.gz' | 'tar.bz2' | 'tar.xz';
 
 export function detectArchiveFormat(filename: string): ArchiveFormat | null {
@@ -31,7 +41,7 @@ function normalizePath(p: string): string | null {
 }
 
 async function extractZip(buffer: Buffer): Promise<Map<string, Buffer>> {
-  const directory = await unzipper.Open.buffer(buffer);
+  const directory = (await unzipper.Open.buffer(buffer)) as UnzipDirectory;
   const files = new Map<string, Buffer>();
   for (const entry of directory.files) {
     if (entry.type === 'Directory') continue;
