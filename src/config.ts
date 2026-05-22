@@ -316,13 +316,13 @@ export function parseConfigContent(content: string): AvantiConfig {
     if (e['sudo'] !== undefined) {
       if (e['sudo'] === true) {
         fileEntry.sudo = true;
-      } else if (typeof e['sudo'] === 'string' && e['sudo']) {
-        if (e['sudo'].startsWith('-')) {
+      } else if (typeof e['sudo'] === 'string' && e['sudo'].trim()) {
+        if (e['sudo'].trim().startsWith('-')) {
           throw new Error(
             `files["${target}"].sudo: username must not start with '-'`,
           );
         }
-        fileEntry.sudo = e['sudo'];
+        fileEntry.sudo = e['sudo'].trim();
       } else if (e['sudo'] !== false) {
         throw new Error(
           `files["${target}"].sudo: must be true or a non-empty username string`,

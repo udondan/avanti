@@ -2772,4 +2772,27 @@ files:
       'files["config.yaml"].sudo: username must not start with \'-\'',
     );
   });
+
+  it('throws when username is whitespace-only', () => {
+    const f = writeTmp(`
+files:
+  config.yaml:
+    src: https://example.com/config.yaml
+    sudo: "   "
+`);
+    expect(() => parseConfigContent(fs.readFileSync(f, 'utf8'))).toThrow(
+      'files["config.yaml"].sudo: must be true or a non-empty username string',
+    );
+  });
+
+  it('trims whitespace from username', () => {
+    const f = writeTmp(`
+files:
+  config.yaml:
+    src: https://example.com/config.yaml
+    sudo: "  www-data  "
+`);
+    const config = parseConfigContent(fs.readFileSync(f, 'utf8'));
+    expect(config.files['config.yaml'].sudo).toBe('www-data');
+  });
 });
