@@ -24,12 +24,16 @@ describe('expandTilde', () => {
 
 // Detect whether this process can create symlinks at runtime.
 // On Windows without SeCreateSymbolicLinkPrivilege, symlinkSync throws EPERM.
+// Probe using a file symlink with an explicit 'file' type so the probe itself
+// works correctly on Windows (directory symlinks require extra privileges there).
 const canCreateSymlinks = (() => {
   let tmp: string | undefined;
   try {
     tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'avanti-symtest-'));
-    const link = path.join(tmp, 'link');
-    fs.symlinkSync(tmp, link);
+    const target = path.join(tmp, 'target.txt');
+    fs.writeFileSync(target, '');
+    const link = path.join(tmp, 'link.txt');
+    fs.symlinkSync(target, link, 'file');
     return true;
   } catch {
     return false;
@@ -90,7 +94,7 @@ describe('resolveFollowSymlink', () => {
       const real = path.join(tmpDir, 'real.txt');
       const link = path.join(tmpDir, 'link.txt');
       fs.writeFileSync(real, 'content');
-      fs.symlinkSync(real, link);
+      fs.symlinkSync(real, link, 'file');
       const result = resolveFollowSymlink(
         link,
         { followSymlink: true },
@@ -106,7 +110,7 @@ describe('resolveFollowSymlink', () => {
     () => {
       const link = path.join(tmpDir, 'link.txt');
       const nonexistentTarget = path.join(tmpDir, 'will-be-created.txt');
-      fs.symlinkSync(nonexistentTarget, link);
+      fs.symlinkSync(nonexistentTarget, link, 'file');
       // Target doesn't exist — realpathSync would throw, but we should succeed
       const result = resolveFollowSymlink(
         link,
@@ -127,7 +131,7 @@ describe('resolveFollowSymlink', () => {
         const outsideFile = path.join(outsideDir, 'secret.txt');
         fs.writeFileSync(outsideFile, 'secret');
         const link = path.join(tmpDir, 'escape.txt');
-        fs.symlinkSync(outsideFile, link);
+        fs.symlinkSync(outsideFile, link, 'file');
         expect(() =>
           resolveFollowSymlink(link, { followSymlink: true }, tmpDir),
         ).toThrow(/escapes working directory/);
@@ -143,7 +147,11 @@ describe('resolveFollowSymlink', () => {
       const subdir = path.join(tmpDir, 'subdir');
       fs.mkdirSync(subdir);
       const link = path.join(tmpDir, 'dirlink');
-      fs.symlinkSync(subdir, link);
+      fs.symlinkSync(
+        subdir,
+        link,
+        process.platform === 'win32' ? 'junction' : 'dir',
+      );
       expect(() =>
         resolveFollowSymlink(link, { followSymlink: true }, tmpDir),
       ).toThrow(/resolves to a directory/);
@@ -158,9 +166,17 @@ describe('resolveFollowSymlink', () => {
       const subdir = path.join(tmpDir, 'subdir');
       fs.mkdirSync(subdir);
       const intermediate = path.join(tmpDir, 'intermediate');
-      fs.symlinkSync(subdir, intermediate);
+      fs.symlinkSync(
+        subdir,
+        intermediate,
+        process.platform === 'win32' ? 'junction' : 'dir',
+      );
       const link = path.join(tmpDir, 'link.txt');
-      fs.symlinkSync(intermediate, link);
+      fs.symlinkSync(
+        intermediate,
+        link,
+        process.platform === 'win32' ? 'junction' : 'dir',
+      );
       expect(() =>
         resolveFollowSymlink(link, { followSymlink: true }, tmpDir),
       ).toThrow(/resolves to a directory/);
@@ -172,9 +188,9 @@ describe('resolveFollowSymlink', () => {
     () => {
       const link2 = path.join(tmpDir, 'link2.txt');
       const nonexistentTarget = path.join(tmpDir, 'will-be-created.txt');
-      fs.symlinkSync(nonexistentTarget, link2);
+      fs.symlinkSync(nonexistentTarget, link2, 'file');
       const link = path.join(tmpDir, 'link.txt');
-      fs.symlinkSync(link2, link);
+      fs.symlinkSync(link2, link, 'file');
       const result = resolveFollowSymlink(
         link,
         { followSymlink: true },
@@ -192,8 +208,8 @@ describe('resolveFollowSymlink', () => {
       // traversal handles cycles where the chain also involves missing targets.
       const link = path.join(tmpDir, 'link.txt');
       const link2 = path.join(tmpDir, 'link2.txt');
-      fs.symlinkSync(link2, link);
-      fs.symlinkSync(link, link2);
+      fs.symlinkSync(link2, link, 'file');
+      fs.symlinkSync(link, link2, 'file');
       expect(() =>
         resolveFollowSymlink(link, { followSymlink: true }, tmpDir),
       ).toThrow(/circular symlink/);
@@ -209,10 +225,14 @@ describe('resolveFollowSymlink', () => {
       try {
         // workingDir/out -> outsideDir (symlink to a directory outside working dir)
         const outLink = path.join(tmpDir, 'out');
-        fs.symlinkSync(outsideDir, outLink);
+        fs.symlinkSync(
+          outsideDir,
+          outLink,
+          process.platform === 'win32' ? 'junction' : 'dir',
+        );
         // link.txt -> workingDir/out/secret.txt (dangling, but out/ escapes)
         const link = path.join(tmpDir, 'link.txt');
-        fs.symlinkSync(path.join(tmpDir, 'out', 'secret.txt'), link);
+        fs.symlinkSync(path.join(tmpDir, 'out', 'secret.txt'), link, 'file');
         expect(() =>
           resolveFollowSymlink(link, { followSymlink: true }, tmpDir),
         ).toThrow(/escapes working directory/);
@@ -231,14 +251,18 @@ describe('resolveFollowSymlink', () => {
         os.tmpdir(),
         `avanti-wdlink-${process.pid}`,
       );
-      fs.symlinkSync(tmpDir, symlinkWorkingDir);
+      fs.symlinkSync(
+        tmpDir,
+        symlinkWorkingDir,
+        process.platform === 'win32' ? 'junction' : 'dir',
+      );
       try {
         const link = path.join(symlinkWorkingDir, 'link.txt');
         const nonexistentTarget = path.join(
           symlinkWorkingDir,
           'will-be-created.txt',
         );
-        fs.symlinkSync(nonexistentTarget, link);
+        fs.symlinkSync(nonexistentTarget, link, 'file');
         // workingDir is the symlink path — resolveFollowSymlink must not falsely
         // throw "escapes working directory" for a valid in-tree dangling symlink.
         const result = resolveFollowSymlink(
