@@ -153,6 +153,12 @@ async function runDiffLoop(
                 buildFileVars(targetPath),
               )
             : vars;
+        // Resolve any symlink early so insert-mode tracking and all subsequent
+        // operations use the real file path consistently.
+        const effectivePath =
+          targetPath !== undefined
+            ? resolveFollowSymlink(targetPath, entry, workingDir)
+            : undefined;
 
         let content = rawContent;
         if (!isBinary(content)) {
@@ -171,12 +177,12 @@ async function runDiffLoop(
           if (entry.post) text = applyPost(text, entry.post, entryVars);
           if (entry.strategy === 'insert' && !isSelf) {
             const lastInserted =
-              history?.getInsertedFragment(targetPath!) ?? null;
+              history?.getInsertedFragment(effectivePath!) ?? null;
             if (
               lastInserted !== null &&
               rawText === lastInserted.raw &&
               text === lastInserted.processed &&
-              fs.existsSync(targetPath!)
+              fs.existsSync(effectivePath!)
             ) {
               continue; // source and processed output unchanged — would be a no-op write, skip diff
             }
@@ -184,7 +190,7 @@ async function runDiffLoop(
               entry,
               text,
               lastInserted?.processed ?? null,
-              targetPath!,
+              effectivePath!,
             );
           }
           content = Buffer.from(text, 'utf8');
@@ -194,18 +200,14 @@ async function runDiffLoop(
           selfMode = entry.mode;
           continue;
         }
-        const effectivePath = resolveFollowSymlink(
-          targetPath!,
-          entry,
-          workingDir,
-        );
-        allDiffs.push(computeDiff(effectivePath, content, entry.mode));
-        pendingWrites.set(effectivePath, content);
+        // effectivePath is always defined here: isSelf is false (we continued above).
+        const ep = effectivePath!;
+        allDiffs.push(computeDiff(ep, content, entry.mode));
+        pendingWrites.set(ep, content);
         // Also index under the original symlink path so local source lookups
         // using the symlink path (not the resolved real path) still find the
         // pending content within the same diff loop.
-        if (effectivePath !== targetPath!)
-          pendingWrites.set(targetPath!, content);
+        if (ep !== targetPath!) pendingWrites.set(targetPath!, content);
       }
     } catch (err: unknown) {
       console.error(

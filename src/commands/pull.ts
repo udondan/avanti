@@ -346,7 +346,13 @@ async function runFetchLoop(
         // Also index under the original symlink path so local source lookups
         // using the symlink path (not the resolved real path) still find the
         // pending content within the same fetch loop.
-        if (ep !== targetPath!) pendingWrites.set(targetPath!, content);
+        if (ep !== targetPath!) {
+          pendingWrites.set(targetPath!, content);
+          // Mark the symlink path as covered so stale detection doesn't treat
+          // a previously-tracked symlink path as stale when followSymlink is
+          // enabled on an entry that was first pulled without it.
+          skippedPaths.add(targetPath!);
+        }
         if (result.sourceRecords.length > 0) {
           sourceRecordsByTarget.set(ep, result.sourceRecords);
         }
