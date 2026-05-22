@@ -284,6 +284,7 @@ export interface FileEntry {
   toml?: TomlMergeOptions | boolean;
   strategy?: 'replace' | 'insert';
   writeInPlace?: boolean;
+  extract?: true | string[];
 }
 
 export interface VariableEntry {
