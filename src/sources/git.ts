@@ -6,8 +6,8 @@ import { verbose } from '../logger';
 import {
   isLatestSentinel,
   isRecentSentinel,
+  maxSemverTag,
   parseRefPattern,
-  SEMVER_PATTERN,
 } from '../ref';
 
 export interface GitResult {
@@ -103,15 +103,12 @@ function resolveGitRef(repo: string, ref: string): string {
   if (!wantSemver && !wantRecent && !pattern) return ref;
 
   verbose(`git: listing remote tags for ${redactGitUrl(repo)}`);
-  // $latest: sort by version (semver-aware); $recent/pattern: sort by creation date
-  const sortArg = wantSemver
-    ? '--sort=-version:refname'
-    : '--sort=-creatordate';
+  // ls-remote --sort is not reliably supported across Git versions and lacks
+  // creatordates for tag objects, so we fetch all refs and filter client-side.
   const result = run('git', [
     'ls-remote',
     '--tags',
     '--refs',
-    sortArg,
     repo,
     'refs/tags/*',
   ]);
@@ -130,19 +127,20 @@ function resolveGitRef(repo: string, ref: string): string {
     })
     .filter(Boolean);
 
-  const filterFn = pattern
-    ? (n: string) => pattern.test(n)
-    : wantSemver
-      ? (n: string) => SEMVER_PATTERN.test(n)
-      : () => true;
-
-  const found = names.find(filterFn);
-  if (found) return found;
-
-  if (wantSemver)
+  // $latest: pick the highest semver tag using semantic comparison
+  if (wantSemver) {
+    const found = maxSemverTag(names);
+    if (found) return found;
     throw new Error(
       `No semver tags found for ${redactGitUrl(repo)} (needed to resolve $latest)`,
     );
+  }
+
+  // $recent / pattern: first match in ls-remote output order
+  const filterFn = pattern ? (n: string) => pattern.test(n) : () => true;
+  const found = names.find(filterFn);
+  if (found) return found;
+
   if (wantRecent)
     throw new Error(
       `No tags found for ${redactGitUrl(repo)} (needed to resolve $recent)`,

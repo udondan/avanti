@@ -34,7 +34,7 @@ export function isRecentSentinel(ref: string | undefined): boolean {
  * Throws if the pattern is syntactically invalid.
  */
 export function parseRefPattern(ref: string): RegExp | null {
-  const m = /^\/(.+)\/([gimsuy]*)$/.exec(ref);
+  const m = /^\/(.+)\/([gimsuvdy]*)$/.exec(ref);
   if (!m) return null;
   // Strip stateful flags (g=global, y=sticky) — callers use .test() in loops
   const flags = m[2].replace(/[gy]/g, '') || undefined;

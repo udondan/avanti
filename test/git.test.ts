@@ -249,7 +249,7 @@ describe('fetchGit — ref sentinel and pattern resolution', () => {
       .join('\n');
   }
 
-  it('$latest uses --sort=-version:refname and resolves to first semver tag', () => {
+  it('$latest resolves to the highest semver tag by semantic comparison', () => {
     mockSpawnSync
       .mockReturnValueOnce(
         makeSpawnResult({
@@ -266,13 +266,13 @@ describe('fetchGit — ref sentinel and pattern resolution', () => {
     ).toThrow('git clone failed: clone failed');
 
     const lsArgs = mockSpawnSync.mock.calls[0][1] as string[];
-    expect(lsArgs).toContain('--sort=-version:refname');
     expect(lsArgs).toContain('--refs');
+    expect(lsArgs).not.toContain('--sort=-version:refname');
     const cloneArgs = mockSpawnSync.mock.calls[1][1] as string[];
     expect(cloneArgs).toContain('v2.0.0');
   });
 
-  it('$recent uses --sort=-creatordate and resolves to first tag regardless of format', () => {
+  it('$recent resolves to the first tag in ls-remote output order', () => {
     mockSpawnSync
       .mockReturnValueOnce(
         makeSpawnResult({
@@ -289,7 +289,7 @@ describe('fetchGit — ref sentinel and pattern resolution', () => {
     ).toThrow('git clone failed: clone failed');
 
     const lsArgs = mockSpawnSync.mock.calls[0][1] as string[];
-    expect(lsArgs).toContain('--sort=-creatordate');
+    expect(lsArgs).not.toContain('--sort=-creatordate');
     const cloneArgs = mockSpawnSync.mock.calls[1][1] as string[];
     expect(cloneArgs).toContain('nightly');
   });
