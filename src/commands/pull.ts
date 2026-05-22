@@ -899,9 +899,12 @@ export function pullCommand(): Command {
                     ],
                     { stdio: 'inherit' },
                   );
-                  if (chmodResult.status !== 0) {
+                  if (chmodResult.status !== 0 || chmodResult.error) {
+                    const detail = chmodResult.error
+                      ? chmodResult.error.message
+                      : `exit code ${chmodResult.status ?? 'unknown'}`;
                     throw new Error(
-                      `sudo chmod failed for ${writeTargets[i].targetPath}`,
+                      `sudo chmod failed for ${writeTargets[i].targetPath}: ${detail}`,
                     );
                   }
                 } else {

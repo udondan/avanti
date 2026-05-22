@@ -59,7 +59,10 @@ function sudoRun(sudo: boolean | string, args: string[]): void {
     stdio: 'inherit',
   });
   if (r.status !== 0 || r.error) {
-    throw new Error(`sudo ${args.join(' ')} failed`);
+    const detail = r.error
+      ? r.error.message
+      : `exit code ${r.status ?? 'unknown'}`;
+    throw new Error(`sudo ${args.join(' ')} failed: ${detail}`);
   }
 }
 
@@ -94,13 +97,20 @@ function sudoWriteMv(t: WriteTarget): void {
   // Explicit config mode wins; existing dest mode used as fallback.
   const existingMode = t.mode ? undefined : getSudoFileMode(sudo, t.targetPath);
 
-  const tmpName =
-    '.' +
-    path.basename(t.targetPath) +
-    '.' +
-    crypto.randomBytes(8).toString('hex') +
-    '.avanti-tmp';
-  const tmpFile = path.join(dir, tmpName);
+  // Use sudo mktemp for exclusive O_EXCL creation — prevents symlink/hardlink tricks
+  // if the destination directory is writable by other users.
+  const mktempResult = spawnSync(
+    'sudo',
+    [...sudoUserArgs(sudo), 'mktemp', path.join(dir, '.avanti-XXXXXXXXXX')],
+    { stdio: ['ignore', 'pipe', 'inherit'] },
+  );
+  if (mktempResult.status !== 0 || mktempResult.error) {
+    const detail = mktempResult.error
+      ? mktempResult.error.message
+      : `exit code ${mktempResult.status ?? 'unknown'}`;
+    throw new Error(`sudo mktemp failed in ${dir}: ${detail}`);
+  }
+  const tmpFile = mktempResult.stdout.toString().trim();
   let backupTmp: string | undefined;
 
   try {

@@ -161,9 +161,8 @@ export class HistoryManager {
     const nextVersion = meta.currentVersion + 1;
     fs.writeFileSync(path.join(fileDir, `v${nextVersion}`), newContent);
 
-    fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2), 'utf8');
-
     if (isFirstSeen) {
+      fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2), 'utf8');
       const index = this.readIndex();
       index[targetPath] = slug;
       this.writeIndex(index);
