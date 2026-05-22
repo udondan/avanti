@@ -169,14 +169,12 @@ describe('fetchGitHub — network-error fallback to gh', () => {
       new TypeError('fetch failed'),
     );
 
-    // resolveRef catch (releases): isGhAvailable → gh --version
-    // resolveRefViaCli: gh api repos/.../releases/latest --jq .tag_name → 'v2.0'
-    //   (resolveRefViaCli also tries tags if releases returns empty; here releases returns a tag)
-    // fetchPathInfo catch: isGhAvailable → gh --version
-    // fetchPathInfoViaCli: gh api repos/.../contents/file.txt?ref=v2.0 → base64 content
+    // resolveRef network error → isGhAvailable → resolveRefViaCli('$latest')
+    //   resolveRefViaCli: releases/latest → 'v2.0.0' (semver, accepted)
+    // fetchPathInfo network error → isGhAvailable → fetchPathInfoViaCli
     mockSpawnSync
       .mockReturnValueOnce(makeGhAvailable())
-      .mockReturnValueOnce(makeSpawnResult({ stdout: 'v2.0\n', status: 0 }))
+      .mockReturnValueOnce(makeSpawnResult({ stdout: 'v2.0.0\n', status: 0 }))
       .mockReturnValueOnce(makeGhAvailable())
       .mockReturnValueOnce(
         makeSpawnResult({ stdout: b64('latest content'), status: 0 }),
@@ -186,6 +184,131 @@ describe('fetchGitHub — network-error fallback to gh', () => {
     expect(result.files.get('file.txt')?.toString('utf8')).toBe(
       'latest content',
     );
+  });
+
+  it('falls back to gh for $recent ref resolution', async () => {
+    vi.spyOn(globalThis, 'fetch').mockRejectedValue(
+      new TypeError('fetch failed'),
+    );
+
+    // resolveRef network error → isGhAvailable → resolveRefViaCli('$recent')
+    //   resolveRefViaCli: releases/latest → 'nightly' (accepted as-is for $recent)
+    // fetchPathInfo network error → isGhAvailable → fetchPathInfoViaCli
+    mockSpawnSync
+      .mockReturnValueOnce(makeGhAvailable())
+      .mockReturnValueOnce(makeSpawnResult({ stdout: 'nightly\n', status: 0 }))
+      .mockReturnValueOnce(makeGhAvailable())
+      .mockReturnValueOnce(
+        makeSpawnResult({ stdout: b64('recent content'), status: 0 }),
+      );
+
+    const result = await fetchGitHub('owner/repo', 'file.txt', '$recent');
+    expect(result.files.get('file.txt')?.toString('utf8')).toBe(
+      'recent content',
+    );
+  });
+});
+
+describe('fetchGitHub — ref sentinels and pattern', () => {
+  it('$latest resolves via releases/latest when tag is semver', async () => {
+    vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(
+        // resolveRef: releases/latest → v1.2.3 (semver ✓)
+        new Response(JSON.stringify({ tag_name: 'v1.2.3' }), { status: 200 }),
+      )
+      .mockResolvedValueOnce(
+        // fetchPathInfo
+        new Response(
+          JSON.stringify({ type: 'file', content: b64('semver content') }),
+          { status: 200 },
+        ),
+      );
+
+    const result = await fetchGitHub('owner/repo', 'file.txt', '$latest');
+    expect(result.files.get('file.txt')?.toString('utf8')).toBe(
+      'semver content',
+    );
+  });
+
+  it('$latest skips non-semver release tag and searches tags', async () => {
+    vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(
+        // releases/latest → 'nightly' (not semver)
+        new Response(JSON.stringify({ tag_name: 'nightly' }), { status: 200 }),
+      )
+      .mockResolvedValueOnce(
+        // tags page 1 → v1.2.3 (semver ✓)
+        new Response(
+          JSON.stringify([{ name: 'v1.2.3' }, { name: 'nightly' }]),
+          { status: 200 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        // fetchPathInfo
+        new Response(
+          JSON.stringify({ type: 'file', content: b64('stable content') }),
+          { status: 200 },
+        ),
+      );
+
+    const result = await fetchGitHub('owner/repo', 'file.txt', '$latest');
+    expect(result.files.get('file.txt')?.toString('utf8')).toBe(
+      'stable content',
+    );
+  });
+
+  it('$recent accepts any tag including non-semver', async () => {
+    vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(
+        // releases/latest → 'nightly' (accepted as-is for $recent)
+        new Response(JSON.stringify({ tag_name: 'nightly' }), { status: 200 }),
+      )
+      .mockResolvedValueOnce(
+        // fetchPathInfo
+        new Response(
+          JSON.stringify({ type: 'file', content: b64('nightly content') }),
+          { status: 200 },
+        ),
+      );
+
+    const result = await fetchGitHub('owner/repo', 'file.txt', '$recent');
+    expect(result.files.get('file.txt')?.toString('utf8')).toBe(
+      'nightly content',
+    );
+  });
+
+  it('pattern /^v1\\./ resolves to first matching tag', async () => {
+    vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(
+        // tags page 1 — v2.0.0 doesn't match, v1.9.0 does
+        new Response(JSON.stringify([{ name: 'v2.0.0' }, { name: 'v1.9.0' }]), {
+          status: 200,
+        }),
+      )
+      .mockResolvedValueOnce(
+        // fetchPathInfo
+        new Response(
+          JSON.stringify({ type: 'file', content: b64('v1 content') }),
+          { status: 200 },
+        ),
+      );
+
+    const result = await fetchGitHub('owner/repo', 'file.txt', '/^v1\\./');
+    expect(result.files.get('file.txt')?.toString('utf8')).toBe('v1 content');
+  });
+
+  it('throws when pattern matches no tags', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(() =>
+      Promise.resolve(
+        new Response(JSON.stringify([{ name: 'v2.0.0' }]), { status: 200 }),
+      ),
+    );
+    // gh is unavailable so the CLI fallback is not attempted
+    mockSpawnSync.mockReturnValue(makeGhUnavailable());
+
+    await expect(
+      fetchGitHub('owner/repo', 'file.txt', '/^v99\\./'),
+    ).rejects.toThrow('No tags matching "/^v99\\./" found for owner/repo');
   });
 });
 

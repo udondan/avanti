@@ -33,6 +33,7 @@ export interface GitLabFileSrc {
   gitlab: {
     project: string;
     file: string;
+    /** Branch, tag, commit, `$latest` (newest semver tag), `$recent` (newest tag), or `/pattern/[flags]`. */
     ref?: string;
     sha?: string;
     host?: string;
@@ -46,6 +47,7 @@ export interface GitLabFileSrc {
 export interface GitLabReleaseSrc {
   gitlab: {
     project: string;
+    /** Tag name, `$latest` (newest semver release), `$recent` (newest by date), or `/pattern/[flags]`. */
     release: string;
     sha?: string;
     host?: string;
@@ -62,6 +64,7 @@ export interface GitHubFileSrc {
   github: {
     repo: string;
     file: string;
+    /** Branch, tag, commit, `$latest` (newest semver tag), `$recent` (newest tag), or `/pattern/[flags]`. */
     ref?: string;
     sha?: string;
     host?: string;
@@ -75,6 +78,7 @@ export interface GitHubFileSrc {
 export interface GitHubReleaseSrc {
   github: {
     repo: string;
+    /** Tag name, `$latest` (newest semver release/tag), `$recent` (newest by date), or `/pattern/[flags]`. */
     release: string;
     sha?: string;
     host?: string;
@@ -105,6 +109,7 @@ export interface BitbucketSrc {
     workspace: string;
     repo: string;
     file: string;
+    /** Branch, tag, `$latest` (newest semver tag), `$recent` (newest tag), or `/pattern/[flags]`. */
     ref?: string;
     sha?: string;
     host?: string;
@@ -118,6 +123,7 @@ export interface GitSrc {
   git: {
     repo: string;
     file: string;
+    /** Branch, tag, commit, `$latest` (newest semver tag), `$recent` (newest tag), or `/pattern/[flags]`. */
     ref?: string;
     sha?: string;
   };

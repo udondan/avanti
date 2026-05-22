@@ -4,6 +4,12 @@ import * as os from 'os';
 import * as path from 'path';
 import { fetchWithRetry } from '../fetch';
 import { verbose } from '../logger';
+import {
+  isLatestSentinel,
+  isRecentSentinel,
+  parseRefPattern,
+  SEMVER_PATTERN,
+} from '../ref';
 import type { Via } from '../types';
 
 function normalizeVia(via?: Via | Via[]): Via[] {
@@ -258,26 +264,91 @@ function listTreeViaCli(
   return res.stdout.trim().split('\n').filter(Boolean);
 }
 
+async function findTagMatchingPatternApi(
+  repo: string,
+  pattern: RegExp,
+  host?: string,
+): Promise<string | null> {
+  for (let page = 1; page <= 5; page++) {
+    const res = await fetchWithRetry(
+      `${getApiBase(host)}/repos/${repo}/tags?per_page=100&page=${page}`,
+      { headers: apiHeaders() },
+    );
+    if (!res.ok) return null;
+    const tags = (await res.json()) as Array<{ name: string }>;
+    if (!tags.length) break;
+    const found = tags.find((t) => pattern.test(t.name));
+    if (found) return found.name;
+  }
+  return null;
+}
+
+function findTagMatchingPatternCli(
+  repo: string,
+  pattern: RegExp,
+  host?: string,
+): string | null {
+  const args = [
+    'api',
+    ...hostnameArgs(host),
+    '--paginate',
+    `repos/${repo}/tags`,
+    '--jq',
+    '.[].name',
+  ];
+  verbose(`github: gh: gh ${args.join(' ')}`);
+  const res = ghRun(args);
+  if (res.status !== 0) return null;
+  return (
+    res.stdout
+      .trim()
+      .split('\n')
+      .filter(Boolean)
+      .find((n) => pattern.test(n)) ?? null
+  );
+}
+
 async function resolveRef(
   repo: string,
   ref: string | undefined,
   host?: string,
   transports: Via[] = ['api', 'cli'],
 ): Promise<string> {
-  if (ref !== '$latest') return ref ?? 'HEAD';
+  const pattern = ref ? parseRefPattern(ref) : null;
+  if (!isLatestSentinel(ref) && !isRecentSentinel(ref) && !pattern) {
+    return ref ?? 'HEAD';
+  }
 
-  verbose(`github: resolving $latest for ${repo}`);
+  verbose(`github: resolving "${ref}" for ${repo}`);
 
   if (transports[0] === 'cli') {
     try {
-      return resolveRefViaCli(repo, host);
+      return resolveRefViaCli(repo, ref!, host);
     } catch (e) {
       if (!transports.includes('api')) throw e;
     }
   }
-
   const withCliFallback = transports[0] === 'api' && transports.includes('cli');
-  // Try latest release first
+
+  // Pattern: paginate tags and return first match
+  if (pattern) {
+    let found: string | null;
+    try {
+      found = await findTagMatchingPatternApi(repo, pattern, host);
+    } catch (e) {
+      if (isNetworkError(e) && withCliFallback && isGhAvailable()) {
+        verbose(`github: HTTP fetch failed, falling back to gh`);
+        return resolveRefViaCli(repo, ref!, host);
+      }
+      throw e;
+    }
+    if (found !== null) return found;
+    if (withCliFallback && isGhAvailable())
+      return resolveRefViaCli(repo, ref!, host);
+    throw new Error(`No tags matching "${ref}" found for ${repo}`);
+  }
+
+  // $latest or $recent: try releases/latest first
   let relRes: Response;
   try {
     relRes = await fetchWithRetry(
@@ -287,50 +358,84 @@ async function resolveRef(
   } catch (e) {
     if (isNetworkError(e) && withCliFallback && isGhAvailable()) {
       verbose(`github: HTTP fetch failed, falling back to gh`);
-      return resolveRefViaCli(repo, host);
+      return resolveRefViaCli(repo, ref!, host);
     }
     throw e;
   }
+
   if (relRes.ok) {
     const rel = (await relRes.json()) as { tag_name: string };
-    return rel.tag_name;
+    // $latest: only accept if the release tag looks like a stable semver tag
+    if (!isLatestSentinel(ref) || SEMVER_PATTERN.test(rel.tag_name)) {
+      return rel.tag_name;
+    }
+    // $latest with a non-semver release tag: fall through to tag pagination
+  } else if (relRes.status !== 404) {
+    if (shouldFallback(relRes.status) && withCliFallback && isGhAvailable()) {
+      return resolveRefViaCli(repo, ref!, host);
+    }
+    throw new Error(
+      `Failed to resolve "${ref}" for ${repo}: HTTP ${relRes.status}`,
+    );
   }
-  // No releases (404) — fall back to most recent tag
-  if (relRes.status === 404) {
-    let tagRes: Response;
+
+  // $latest: paginate tags filtered by SEMVER_PATTERN
+  if (isLatestSentinel(ref)) {
+    let found: string | null;
     try {
-      tagRes = await fetchWithRetry(
-        `${getApiBase(host)}/repos/${repo}/tags?per_page=1`,
-        { headers: apiHeaders() },
-      );
+      found = await findTagMatchingPatternApi(repo, SEMVER_PATTERN, host);
     } catch (e) {
       if (isNetworkError(e) && withCliFallback && isGhAvailable()) {
         verbose(`github: HTTP fetch failed, falling back to gh`);
-        return resolveRefViaCli(repo, host);
+        return resolveRefViaCli(repo, ref!, host);
       }
       throw e;
     }
-    if (tagRes.ok) {
-      const tags = (await tagRes.json()) as Array<{ name: string }>;
-      if (tags.length) return tags[0].name;
-      throw new Error(`No releases or tags found for ${repo}`);
-    }
-    if (shouldFallback(tagRes.status) && withCliFallback && isGhAvailable()) {
-      return resolveRefViaCli(repo, host);
-    }
+    if (found !== null) return found;
+    if (withCliFallback && isGhAvailable())
+      return resolveRefViaCli(repo, ref!, host);
     throw new Error(
-      `Failed to resolve $latest for ${repo}: HTTP ${tagRes.status}`,
+      `No semver tags found for ${repo} (needed to resolve $latest)`,
     );
   }
-  if (shouldFallback(relRes.status) && withCliFallback && isGhAvailable()) {
-    return resolveRefViaCli(repo, host);
+
+  // $recent and no releases (404): fall back to most recently created tag
+  let tagRes: Response;
+  try {
+    tagRes = await fetchWithRetry(
+      `${getApiBase(host)}/repos/${repo}/tags?per_page=1`,
+      { headers: apiHeaders() },
+    );
+  } catch (e) {
+    if (isNetworkError(e) && withCliFallback && isGhAvailable()) {
+      verbose(`github: HTTP fetch failed, falling back to gh`);
+      return resolveRefViaCli(repo, ref!, host);
+    }
+    throw e;
+  }
+  if (tagRes.ok) {
+    const tags = (await tagRes.json()) as Array<{ name: string }>;
+    if (tags.length) return tags[0].name;
+    throw new Error(`No releases or tags found for ${repo}`);
+  }
+  if (shouldFallback(tagRes.status) && withCliFallback && isGhAvailable()) {
+    return resolveRefViaCli(repo, ref!, host);
   }
   throw new Error(
-    `Failed to resolve $latest for ${repo}: HTTP ${relRes.status}`,
+    `Failed to resolve "${ref}" for ${repo}: HTTP ${tagRes.status}`,
   );
 }
 
-function resolveRefViaCli(repo: string, host?: string): string {
+function resolveRefViaCli(repo: string, ref: string, host?: string): string {
+  const pattern = parseRefPattern(ref);
+
+  if (pattern) {
+    const found = findTagMatchingPatternCli(repo, pattern, host);
+    if (found !== null) return found;
+    throw new Error(`No tags matching "${ref}" found for ${repo}`);
+  }
+
+  // Try releases/latest first
   const relArgs = [
     'api',
     ...hostnameArgs(host),
@@ -340,8 +445,21 @@ function resolveRefViaCli(repo: string, host?: string): string {
   ];
   verbose(`github: gh fallback: gh ${relArgs.join(' ')}`);
   const res = ghRun(relArgs);
-  if (res.status === 0 && res.stdout.trim()) return res.stdout.trim();
-  // Fall back to most recent tag
+  if (res.status === 0 && res.stdout.trim()) {
+    const tag = res.stdout.trim();
+    if (!isLatestSentinel(ref) || SEMVER_PATTERN.test(tag)) return tag;
+    // $latest with non-semver release: fall through to tag search
+  }
+
+  if (isLatestSentinel(ref)) {
+    const found = findTagMatchingPatternCli(repo, SEMVER_PATTERN, host);
+    if (found !== null) return found;
+    throw new Error(
+      `No semver tags found for ${repo} (needed to resolve $latest)`,
+    );
+  }
+
+  // $recent: most recently created tag
   const tagArgs = [
     'api',
     ...hostnameArgs(host),

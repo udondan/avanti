@@ -1,6 +1,12 @@
 import { posix as path } from 'path';
 import { fetchWithRetry } from '../fetch';
 import { verbose } from '../logger';
+import {
+  isLatestSentinel,
+  isRecentSentinel,
+  parseRefPattern,
+  SEMVER_PATTERN,
+} from '../ref';
 
 export interface BitbucketResult {
   files: Map<string, Buffer>;
@@ -30,15 +36,85 @@ function apiHeaders(): Record<string, string> {
   return headers;
 }
 
+async function findBitbucketTagMatchingPattern(
+  workspace: string,
+  repo: string,
+  pattern: RegExp,
+  host?: string,
+): Promise<string | null> {
+  let url: string | null =
+    `${getApiBase(host)}/repositories/${workspace}/${repo}/refs/tags?sort=-name&pagelen=100`;
+  let pages = 0;
+  while (url && pages < 5) {
+    const res = await fetchWithRetry(url, { headers: apiHeaders() });
+    if (!res.ok) return null;
+    const data = (await res.json()) as {
+      values: Array<{ name: string }>;
+      next?: string;
+    };
+    const found = data.values.find((t) => pattern.test(t.name));
+    if (found) return found.name;
+    url = data.next ?? null;
+    pages++;
+  }
+  return null;
+}
+
 async function resolveRef(
   workspace: string,
   repo: string,
   ref: string | undefined,
   host?: string,
 ): Promise<string> {
-  if (ref && ref !== '$latest') return ref;
+  const pattern = ref ? parseRefPattern(ref) : null;
+  if (!isLatestSentinel(ref) && !isRecentSentinel(ref) && !pattern && ref) {
+    return ref;
+  }
 
-  if (ref === '$latest') {
+  if (!ref) {
+    // No ref: return default branch
+    const repoRes = await fetchWithRetry(
+      `${getApiBase(host)}/repositories/${workspace}/${repo}`,
+      { headers: apiHeaders() },
+    );
+    if (!repoRes.ok) {
+      throw new Error(
+        `Failed to resolve ref for ${workspace}/${repo}: HTTP ${repoRes.status}`,
+      );
+    }
+    const repoData = (await repoRes.json()) as {
+      mainbranch?: { name: string };
+    };
+    return repoData.mainbranch?.name ?? 'main';
+  }
+
+  // $latest: paginate tags (sort=-name), filter by SEMVER_PATTERN
+  if (isLatestSentinel(ref)) {
+    const found = await findBitbucketTagMatchingPattern(
+      workspace,
+      repo,
+      SEMVER_PATTERN,
+      host,
+    );
+    if (found) return found;
+    // No semver tag found: fall back to default branch
+    const repoRes = await fetchWithRetry(
+      `${getApiBase(host)}/repositories/${workspace}/${repo}`,
+      { headers: apiHeaders() },
+    );
+    if (!repoRes.ok) {
+      throw new Error(
+        `Failed to resolve ref for ${workspace}/${repo}: HTTP ${repoRes.status}`,
+      );
+    }
+    const repoData = (await repoRes.json()) as {
+      mainbranch?: { name: string };
+    };
+    return repoData.mainbranch?.name ?? 'main';
+  }
+
+  // $recent: most recently created tag by name sort (first result)
+  if (isRecentSentinel(ref)) {
     const tagsRes = await fetchWithRetry(
       `${getApiBase(host)}/repositories/${workspace}/${repo}/refs/tags?sort=-name&pagelen=1`,
       { headers: apiHeaders() },
@@ -49,21 +125,31 @@ async function resolveRef(
       };
       if (data.values.length > 0) return data.values[0].name;
     }
+    // No tags: fall back to default branch
+    const repoRes = await fetchWithRetry(
+      `${getApiBase(host)}/repositories/${workspace}/${repo}`,
+      { headers: apiHeaders() },
+    );
+    if (!repoRes.ok) {
+      throw new Error(
+        `Failed to resolve ref for ${workspace}/${repo}: HTTP ${repoRes.status}`,
+      );
+    }
+    const repoData = (await repoRes.json()) as {
+      mainbranch?: { name: string };
+    };
+    return repoData.mainbranch?.name ?? 'main';
   }
 
-  const repoRes = await fetchWithRetry(
-    `${getApiBase(host)}/repositories/${workspace}/${repo}`,
-    { headers: apiHeaders() },
+  // Pattern: paginate tags, filter by regex
+  const found = await findBitbucketTagMatchingPattern(
+    workspace,
+    repo,
+    pattern!,
+    host,
   );
-  if (!repoRes.ok) {
-    throw new Error(
-      `Failed to resolve ref for ${workspace}/${repo}: HTTP ${repoRes.status}`,
-    );
-  }
-  const repoData = (await repoRes.json()) as {
-    mainbranch?: { name: string };
-  };
-  return repoData.mainbranch?.name ?? 'main';
+  if (found) return found;
+  throw new Error(`No tags matching "${ref}" found for ${workspace}/${repo}`);
 }
 
 // Returns file content, or null if the path is a directory.

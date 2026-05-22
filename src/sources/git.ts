@@ -3,6 +3,12 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { verbose } from '../logger';
+import {
+  isLatestSentinel,
+  isRecentSentinel,
+  parseRefPattern,
+  SEMVER_PATTERN,
+} from '../ref';
 
 export interface GitResult {
   files: Map<string, Buffer>;
@@ -90,6 +96,55 @@ export function parseGitRemoteSpec(spec: string): {
   return { repo, file, ref };
 }
 
+function resolveGitRef(repo: string, ref: string): string {
+  const pattern = parseRefPattern(ref);
+  const wantSemver = isLatestSentinel(ref);
+  const wantRecent = isRecentSentinel(ref);
+  if (!wantSemver && !wantRecent && !pattern) return ref;
+
+  verbose(`git: listing remote tags for ${redactGitUrl(repo)}`);
+  const result = run('git', [
+    'ls-remote',
+    '--tags',
+    '--sort=-version:refname',
+    repo,
+    'refs/tags/*^{}',
+  ]);
+  if (result.status !== 0) {
+    throw new Error(
+      `Failed to list tags for ${redactGitUrl(repo)}: ${result.stderr.trim()}`,
+    );
+  }
+  const names = result.stdout
+    .trim()
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => {
+      const ref = line.split('\t')[1] ?? '';
+      return ref.replace(/^refs\/tags\//, '').replace(/\^{}$/, '');
+    })
+    .filter(Boolean);
+
+  const filterFn = pattern
+    ? (n: string) => pattern.test(n)
+    : wantSemver
+      ? (n: string) => SEMVER_PATTERN.test(n)
+      : () => true;
+
+  const found = names.find(filterFn);
+  if (found) return found;
+
+  if (wantSemver)
+    throw new Error(
+      `No semver tags found for ${redactGitUrl(repo)} (needed to resolve $latest)`,
+    );
+  if (wantRecent)
+    throw new Error(
+      `No tags found for ${redactGitUrl(repo)} (needed to resolve $recent)`,
+    );
+  throw new Error(`No tags matching "${ref}" found for ${redactGitUrl(repo)}`);
+}
+
 export function fetchGit(repo: string, file: string, ref?: string): GitResult {
   const normalized = path.normalize(file);
   if (
@@ -104,9 +159,15 @@ export function fetchGit(repo: string, file: string, ref?: string): GitResult {
   try {
     const repoDir = path.join(tmpDir, 'repo');
 
-    if (!ref || !looksLikeCommitHash(ref)) {
+    const resolvedRef =
+      ref &&
+      (isLatestSentinel(ref) || isRecentSentinel(ref) || parseRefPattern(ref))
+        ? resolveGitRef(repo, ref)
+        : ref;
+
+    if (!resolvedRef || !looksLikeCommitHash(resolvedRef)) {
       const args = ['clone', '--depth', '1'];
-      if (ref) args.push('--branch', ref);
+      if (resolvedRef) args.push('--branch', resolvedRef);
       verbose(`git ${args.join(' ')} ${redactGitUrl(repo)} <tmpdir>`);
       args.push(repo, repoDir);
       const res = run('git', args);
@@ -119,11 +180,13 @@ export function fetchGit(repo: string, file: string, ref?: string): GitResult {
       if (cloneRes.status !== 0) {
         throw new Error(`git clone failed: ${cloneRes.stderr.trim()}`);
       }
-      verbose(`git checkout ${ref}`);
-      const checkoutRes = run('git', ['checkout', ref], { cwd: repoDir });
+      verbose(`git checkout ${resolvedRef}`);
+      const checkoutRes = run('git', ['checkout', resolvedRef], {
+        cwd: repoDir,
+      });
       if (checkoutRes.status !== 0) {
         throw new Error(
-          `git checkout ${ref} failed: ${checkoutRes.stderr.trim()}`,
+          `git checkout ${resolvedRef} failed: ${checkoutRes.stderr.trim()}`,
         );
       }
     }

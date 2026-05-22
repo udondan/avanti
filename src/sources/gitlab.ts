@@ -4,6 +4,7 @@ import * as os from 'os';
 import * as path from 'path';
 import { fetchWithRetry } from '../fetch';
 import { verbose } from '../logger';
+import { isLatestSentinel, isRecentSentinel, parseRefPattern } from '../ref';
 import type { Via } from '../types';
 
 function normalizeVia(via?: Via | Via[]): Via[] {
@@ -110,6 +111,37 @@ function glabApiBinary(
   return res;
 }
 
+async function findGitLabTagMatchingPatternApi(
+  project: string,
+  pattern: RegExp,
+  host?: string,
+): Promise<string | null> {
+  for (let page = 1; page <= 5; page++) {
+    const res = await fetchWithRetry(
+      `https://${getHost(host)}/api/v4/projects/${encodeURIComponent(project)}/repository/tags?order_by=updated&sort=desc&per_page=100&page=${page}`,
+      { headers: apiHeaders() },
+    );
+    if (!res.ok) return null;
+    const tags = (await res.json()) as Array<{ name: string }>;
+    if (!tags.length) break;
+    const found = tags.find((t) => pattern.test(t.name));
+    if (found) return found.name;
+  }
+  return null;
+}
+
+function findGitLabTagMatchingPatternCli(
+  project: string,
+  pattern: RegExp,
+  host?: string,
+): string | null {
+  const endpoint = `projects/${encodeURIComponent(project)}/repository/tags?order_by=updated&sort=desc&per_page=100`;
+  const res = glabApi(endpoint, host);
+  if (res.status !== 0) return null;
+  const tags = JSON.parse(res.stdout) as Array<{ name: string }>;
+  return tags.find((t) => pattern.test(t.name))?.name ?? null;
+}
+
 async function resolveRef(
   project: string,
   ref: string | undefined,
@@ -117,52 +149,124 @@ async function resolveRef(
   transports: Via[] = ['api', 'cli'],
 ): Promise<string> {
   if (ref === undefined || ref === '') return 'HEAD';
-  if (ref === '$latest') {
-    verbose(`gitlab: resolving $latest for ${project}`);
+  const pattern = parseRefPattern(ref);
+  if (!isLatestSentinel(ref) && !isRecentSentinel(ref) && !pattern) return ref;
 
-    if (transports[0] === 'cli') {
-      try {
-        return resolveRefViaCli(project, host);
-      } catch (e) {
-        if (!transports.includes('api')) throw e;
-      }
+  verbose(`gitlab: resolving "${ref}" for ${project}`);
+
+  if (transports[0] === 'cli') {
+    try {
+      return resolveRefViaCli(project, ref, host);
+    } catch (e) {
+      if (!transports.includes('api')) throw e;
     }
+  }
+  const withCliFallback = transports[0] === 'api' && transports.includes('cli');
 
-    const withCliFallback =
-      transports[0] === 'api' && transports.includes('cli');
+  // $recent: most-recently-updated tag (no semver filter)
+  if (isRecentSentinel(ref)) {
     let res: Response;
     try {
       res = await fetchWithRetry(
-        `https://${getHost(host)}/api/v4/projects/${encodeURIComponent(project)}/repository/tags?order_by=version&sort=desc&per_page=1`,
+        `https://${getHost(host)}/api/v4/projects/${encodeURIComponent(project)}/repository/tags?order_by=updated&sort=desc&per_page=1`,
         { headers: apiHeaders() },
       );
     } catch (e) {
       if (isNetworkError(e) && withCliFallback && isGlabAvailable()) {
         verbose(`gitlab: HTTP fetch failed, falling back to glab`);
-        return resolveRefViaCli(project, host);
+        return resolveRefViaCli(project, ref, host);
       }
       throw e;
     }
     if (!res.ok) {
       if (shouldFallback(res.status) && withCliFallback && isGlabAvailable()) {
-        return resolveRefViaCli(project, host);
+        return resolveRefViaCli(project, ref, host);
       }
       throw new Error(
-        `Failed to resolve $latest for ${project}: HTTP ${res.status}`,
+        `Failed to resolve $recent for ${project}: HTTP ${res.status}`,
       );
     }
     const tags = (await res.json()) as Array<{ name: string }>;
-    if (!tags.length) {
+    if (!tags.length)
       throw new Error(
-        `No tags found for ${project} (needed to resolve $latest)`,
+        `No tags found for ${project} (needed to resolve $recent)`,
       );
-    }
     return tags[0].name;
   }
-  return ref;
+
+  // Pattern: paginate tags sorted by most-recently-updated, filter by regex
+  if (pattern) {
+    let found: string | null;
+    try {
+      found = await findGitLabTagMatchingPatternApi(project, pattern, host);
+    } catch (e) {
+      if (isNetworkError(e) && withCliFallback && isGlabAvailable()) {
+        verbose(`gitlab: HTTP fetch failed, falling back to glab`);
+        return resolveRefViaCli(project, ref, host);
+      }
+      throw e;
+    }
+    if (found !== null) return found;
+    if (withCliFallback && isGlabAvailable())
+      return resolveRefViaCli(project, ref, host);
+    throw new Error(`No tags matching "${ref}" found for ${project}`);
+  }
+
+  // $latest: semver-sorted tags (GitLab's version ordering is semver-aware)
+  let res: Response;
+  try {
+    res = await fetchWithRetry(
+      `https://${getHost(host)}/api/v4/projects/${encodeURIComponent(project)}/repository/tags?order_by=version&sort=desc&per_page=1`,
+      { headers: apiHeaders() },
+    );
+  } catch (e) {
+    if (isNetworkError(e) && withCliFallback && isGlabAvailable()) {
+      verbose(`gitlab: HTTP fetch failed, falling back to glab`);
+      return resolveRefViaCli(project, ref, host);
+    }
+    throw e;
+  }
+  if (!res.ok) {
+    if (shouldFallback(res.status) && withCliFallback && isGlabAvailable()) {
+      return resolveRefViaCli(project, ref, host);
+    }
+    throw new Error(
+      `Failed to resolve $latest for ${project}: HTTP ${res.status}`,
+    );
+  }
+  const tags = (await res.json()) as Array<{ name: string }>;
+  if (!tags.length) {
+    throw new Error(`No tags found for ${project} (needed to resolve $latest)`);
+  }
+  return tags[0].name;
 }
 
-function resolveRefViaCli(project: string, host?: string): string {
+function resolveRefViaCli(project: string, ref: string, host?: string): string {
+  const pattern = parseRefPattern(ref);
+
+  if (pattern) {
+    const found = findGitLabTagMatchingPatternCli(project, pattern, host);
+    if (found !== null) return found;
+    throw new Error(`No tags matching "${ref}" found for ${project}`);
+  }
+
+  if (isRecentSentinel(ref)) {
+    const endpoint = `projects/${encodeURIComponent(project)}/repository/tags?order_by=updated&sort=desc&per_page=1`;
+    const res = glabApi(endpoint, host);
+    if (res.status !== 0) {
+      throw new Error(
+        `Failed to resolve $recent for ${project}: ${res.stderr}`,
+      );
+    }
+    const tags = JSON.parse(res.stdout) as Array<{ name: string }>;
+    if (!tags.length)
+      throw new Error(
+        `No tags found for ${project} (needed to resolve $recent)`,
+      );
+    return tags[0].name;
+  }
+
+  // $latest: semver-sorted
   const endpoint = `projects/${encodeURIComponent(project)}/repository/tags?order_by=version&sort=desc&per_page=1`;
   const res = glabApi(endpoint, host);
   if (res.status !== 0) {
@@ -498,19 +602,63 @@ async function resolveReleaseTag(
   host?: string,
   transports: Via[] = ['api', 'cli'],
 ): Promise<string> {
-  if (release !== '$latest') return release;
+  const pattern = parseRefPattern(release);
+  if (!isLatestSentinel(release) && !isRecentSentinel(release) && !pattern) {
+    return release;
+  }
 
-  verbose(`gitlab: resolving $latest release for ${project}`);
+  verbose(`gitlab: resolving "${release}" release for ${project}`);
 
   if (transports[0] === 'cli') {
     try {
-      return resolveReleaseTagViaCli(project, host);
+      return resolveReleaseTagViaCli(project, release, host);
     } catch (e) {
       if (!transports.includes('api')) throw e;
     }
   }
-
   const withCliFallback = transports[0] === 'api' && transports.includes('cli');
+
+  // $recent or pattern: paginate releases sorted by released_at desc
+  if (isRecentSentinel(release) || pattern) {
+    let res: Response;
+    try {
+      res = await fetchWithRetry(
+        `https://${getHost(host)}/api/v4/projects/${encodeURIComponent(project)}/releases?order_by=released_at&sort=desc&per_page=${pattern ? 100 : 1}`,
+        { headers: apiHeaders() },
+      );
+    } catch (e) {
+      if (isNetworkError(e) && withCliFallback && isGlabAvailable()) {
+        verbose(`gitlab: HTTP fetch failed, falling back to glab`);
+        return resolveReleaseTagViaCli(project, release, host);
+      }
+      throw e;
+    }
+    if (res.ok) {
+      const releases = (await res.json()) as Array<{ tag_name: string }>;
+      if (isRecentSentinel(release)) {
+        if (releases.length) return releases[0].tag_name;
+        return resolveRef(project, '$recent', host, transports);
+      }
+      const found = releases.find((r) => pattern!.test(r.tag_name));
+      if (found) return found.tag_name;
+      if (withCliFallback && isGlabAvailable())
+        return resolveReleaseTagViaCli(project, release, host);
+      throw new Error(`No releases matching "${release}" found for ${project}`);
+    }
+    if (res.status === 404 || res.status === 403) {
+      if (withCliFallback && isGlabAvailable())
+        return resolveReleaseTagViaCli(project, release, host);
+      return resolveRef(project, release, host, transports);
+    }
+    if (shouldFallback(res.status) && withCliFallback && isGlabAvailable()) {
+      return resolveReleaseTagViaCli(project, release, host);
+    }
+    throw new Error(
+      `Failed to resolve "${release}" release for ${project}: HTTP ${res.status}`,
+    );
+  }
+
+  // $latest: use GitLab's releases/latest endpoint
   let res: Response;
   try {
     res = await fetchWithRetry(
@@ -520,7 +668,7 @@ async function resolveReleaseTag(
   } catch (e) {
     if (isNetworkError(e) && withCliFallback && isGlabAvailable()) {
       verbose(`gitlab: HTTP fetch failed, falling back to glab`);
-      return resolveReleaseTagViaCli(project, host);
+      return resolveReleaseTagViaCli(project, release, host);
     }
     throw e;
   }
@@ -531,19 +679,64 @@ async function resolveReleaseTag(
   // Releases endpoint unavailable (older GitLab) — fall back to tags
   if (res.status === 404 || res.status === 403) {
     if (withCliFallback && isGlabAvailable()) {
-      return resolveReleaseTagViaCli(project, host);
+      return resolveReleaseTagViaCli(project, release, host);
     }
     return resolveRef(project, '$latest', host, transports);
   }
   if (shouldFallback(res.status) && withCliFallback && isGlabAvailable()) {
-    return resolveReleaseTagViaCli(project, host);
+    return resolveReleaseTagViaCli(project, release, host);
   }
   throw new Error(
     `Failed to resolve $latest release for ${project}: HTTP ${res.status}`,
   );
 }
 
-function resolveReleaseTagViaCli(project: string, host?: string): string {
+function resolveReleaseTagViaCli(
+  project: string,
+  release: string,
+  host?: string,
+): string {
+  const pattern = parseRefPattern(release);
+
+  if (pattern || isRecentSentinel(release)) {
+    const endpoint = `projects/${encodeURIComponent(project)}/releases?order_by=released_at&sort=desc&per_page=100`;
+    const res = glabApi(endpoint, host);
+    if (res.status === 0 && res.stdout.trim()) {
+      try {
+        const releases = JSON.parse(res.stdout) as Array<{ tag_name: string }>;
+        if (isRecentSentinel(release)) {
+          if (releases.length) return releases[0].tag_name;
+        } else {
+          const found = releases.find((r) => pattern!.test(r.tag_name));
+          if (found) return found.tag_name;
+          throw new Error(
+            `No releases matching "${release}" found for ${project}`,
+          );
+        }
+      } catch (e) {
+        if (e instanceof SyntaxError) {
+          // fall through to tags
+        } else throw e;
+      }
+    }
+    // Fall back to tags for $recent
+    const tagsEndpoint = `projects/${encodeURIComponent(project)}/repository/tags?order_by=updated&sort=desc&per_page=1`;
+    const tagRes = glabApi(tagsEndpoint, host);
+    if (tagRes.status !== 0) {
+      throw new Error(
+        `Failed to resolve "${release}" release for ${project}: ${tagRes.stderr}`,
+      );
+    }
+    const tags = JSON.parse(tagRes.stdout) as Array<{ name: string }>;
+    if (!tags.length) {
+      throw new Error(
+        `No releases or tags found for ${project} (needed to resolve ${release})`,
+      );
+    }
+    return tags[0].name;
+  }
+
+  // $latest
   const endpoint = `projects/${encodeURIComponent(project)}/releases/latest`;
   const res = glabApi(endpoint, host);
   if (res.status === 0 && res.stdout.trim()) {

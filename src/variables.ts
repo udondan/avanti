@@ -3,8 +3,8 @@ import * as os from 'os';
 import * as path from 'path';
 import { JsonValue, Variables, VariableSpec } from './types';
 
-// $latest is a special sentinel used by the GitLab source to resolve the newest tag.
-export const RESERVED_VARS = new Set(['latest']);
+// $latest and $recent are special sentinels for resolving tags across all git-hosting sources.
+export const RESERVED_VARS = new Set(['latest', 'recent']);
 
 // Names users cannot define as variables (passthrough-reserved + system-injected).
 export const RESERVED_VAR_NAMES = new Set([
