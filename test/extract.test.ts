@@ -252,6 +252,47 @@ describe('applyFilter — prefix pattern', () => {
 });
 
 describe('extractArchive — path traversal protection', () => {
+  // Build a minimal raw ZIP with arbitrary entry paths so we can inject paths
+  // that real zip tools would normally normalise away.
+  function makeDangerousZipBuffer(
+    entries: Array<{ path: string; content: string }>,
+  ): Buffer {
+    const localParts: Buffer[] = [];
+    const centralParts: Buffer[] = [];
+    let offset = 0;
+    for (const { path: name, content } of entries) {
+      const data = Buffer.from(content, 'utf8');
+      const nameBytes = Buffer.from(name, 'utf8');
+      const local = Buffer.alloc(30 + nameBytes.length);
+      local.writeUInt32LE(0x04034b50, 0);
+      local.writeUInt16LE(20, 4);
+      local.writeUInt32LE(data.length, 18);
+      local.writeUInt32LE(data.length, 22);
+      local.writeUInt16LE(nameBytes.length, 26);
+      nameBytes.copy(local, 30);
+      const central = Buffer.alloc(46 + nameBytes.length);
+      central.writeUInt32LE(0x02014b50, 0);
+      central.writeUInt16LE(20, 4);
+      central.writeUInt16LE(20, 6);
+      central.writeUInt32LE(data.length, 20);
+      central.writeUInt32LE(data.length, 24);
+      central.writeUInt16LE(nameBytes.length, 28);
+      central.writeUInt32LE(offset, 42);
+      nameBytes.copy(central, 46);
+      localParts.push(local, data);
+      centralParts.push(central);
+      offset += local.length + data.length;
+    }
+    const cd = Buffer.concat(centralParts);
+    const eocd = Buffer.alloc(22);
+    eocd.writeUInt32LE(0x06054b50, 0);
+    eocd.writeUInt16LE(entries.length, 8);
+    eocd.writeUInt16LE(entries.length, 10);
+    eocd.writeUInt32LE(cd.length, 12);
+    eocd.writeUInt32LE(offset, 16);
+    return Buffer.concat([...localParts, cd, eocd]);
+  }
+
   // Build a raw (uncompressed) tar buffer with arbitrary entry paths so we can
   // inject paths that tar.create() would normally normalise away.
   function makeDangerousTarBuffer(
@@ -312,52 +353,31 @@ describe('extractArchive — path traversal protection', () => {
   });
 
   it('rejects ZIP entries with .. segments', async () => {
-    // Build a minimal raw ZIP with a traversal path so we can inject paths
-    // that real zip tools would normally normalise away.
-    function makeDangerousZipBuffer(
-      entries: Array<{ path: string; content: string }>,
-    ): Buffer {
-      const localParts: Buffer[] = [];
-      const centralParts: Buffer[] = [];
-      let offset = 0;
-      for (const { path: name, content } of entries) {
-        const data = Buffer.from(content, 'utf8');
-        const nameBytes = Buffer.from(name, 'utf8');
-        const local = Buffer.alloc(30 + nameBytes.length);
-        local.writeUInt32LE(0x04034b50, 0);
-        local.writeUInt16LE(20, 4);
-        local.writeUInt32LE(data.length, 18);
-        local.writeUInt32LE(data.length, 22);
-        local.writeUInt16LE(nameBytes.length, 26);
-        nameBytes.copy(local, 30);
-        const central = Buffer.alloc(46 + nameBytes.length);
-        central.writeUInt32LE(0x02014b50, 0);
-        central.writeUInt16LE(20, 4);
-        central.writeUInt16LE(20, 6);
-        central.writeUInt32LE(data.length, 20);
-        central.writeUInt32LE(data.length, 24);
-        central.writeUInt16LE(nameBytes.length, 28);
-        central.writeUInt32LE(offset, 42);
-        nameBytes.copy(central, 46);
-        localParts.push(local, data);
-        centralParts.push(central);
-        offset += local.length + data.length;
-      }
-      const cd = Buffer.concat(centralParts);
-      const eocd = Buffer.alloc(22);
-      eocd.writeUInt32LE(0x06054b50, 0);
-      eocd.writeUInt16LE(entries.length, 8);
-      eocd.writeUInt16LE(entries.length, 10);
-      eocd.writeUInt32LE(cd.length, 12);
-      eocd.writeUInt32LE(offset, 16);
-      return Buffer.concat([...localParts, cd, eocd]);
-    }
-
     const buffer = makeDangerousZipBuffer([
       { path: '../evil.txt', content: 'malicious' },
     ]);
     await expect(extractArchive(buffer, 'archive.zip')).rejects.toThrow(
       'path traversal',
+    );
+  });
+
+  it('rejects ZIP entries with duplicate normalized paths', async () => {
+    const buffer = makeDangerousZipBuffer([
+      { path: 'foo.txt', content: 'first' },
+      { path: 'foo.txt', content: 'second' },
+    ]);
+    await expect(extractArchive(buffer, 'archive.zip')).rejects.toThrow(
+      'duplicate path',
+    );
+  });
+
+  it('rejects tar entries with duplicate normalized paths', async () => {
+    const buffer = makeDangerousTarBuffer([
+      { path: 'foo.txt', content: 'first' },
+      { path: 'foo.txt', content: 'second' },
+    ]);
+    await expect(extractArchive(buffer, 'archive.tar')).rejects.toThrow(
+      'duplicate path',
     );
   });
 

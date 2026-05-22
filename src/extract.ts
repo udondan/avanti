@@ -37,6 +37,11 @@ async function extractZip(buffer: Buffer): Promise<Map<string, Buffer>> {
     if (entry.type === 'Directory') continue;
     const normalized = normalizePath(entry.path);
     if (normalized === null) continue;
+    if (files.has(normalized)) {
+      throw new Error(
+        `Archive contains duplicate path "${normalized}" (original entry: "${entry.path}")`,
+      );
+    }
     files.set(normalized, await entry.buffer());
   }
   return files;
@@ -69,9 +74,20 @@ async function extractTar(buffer: Buffer): Promise<Map<string, Buffer>> {
         return;
       }
       const key = normalized;
+      const originalPath = entry.path;
       const chunks: Buffer[] = [];
       entry.on('data', (chunk: Buffer) => chunks.push(chunk));
-      entry.on('end', () => files.set(key, Buffer.concat(chunks)));
+      entry.on('end', () => {
+        if (files.has(key)) {
+          reject(
+            new Error(
+              `Archive contains duplicate path "${key}" (original entry: "${originalPath}")`,
+            ),
+          );
+          return;
+        }
+        files.set(key, Buffer.concat(chunks));
+      });
       entry.on('error', reject);
     });
     parser.on('finish', resolve);
