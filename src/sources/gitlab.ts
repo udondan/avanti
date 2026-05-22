@@ -651,11 +651,12 @@ async function resolveReleaseTag(
 
   // $recent or pattern: paginate releases sorted by released_at desc
   if (isRecentSentinel(release) || pattern) {
+    const perPage = 100;
     for (let page = 1; ; page++) {
       let res: Response;
       try {
         res = await fetchWithRetry(
-          `https://${getHost(host)}/api/v4/projects/${encodeURIComponent(project)}/releases?order_by=released_at&sort=desc&per_page=100&page=${page}`,
+          `https://${getHost(host)}/api/v4/projects/${encodeURIComponent(project)}/releases?order_by=released_at&sort=desc&per_page=${perPage}&page=${page}`,
           { headers: apiHeaders() },
         );
       } catch (e) {
@@ -687,9 +688,9 @@ async function resolveReleaseTag(
         if (releases.length) return releases[0].tag_name;
         return resolveRef(project, '$recent', host, transports);
       }
-      if (!releases.length) break;
       const found = releases.find((r) => pattern!.test(r.tag_name));
       if (found) return found.tag_name;
+      if (releases.length < perPage) break;
     }
     throw new Error(`No releases matching "${release}" found for ${project}`);
   }

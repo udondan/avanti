@@ -1417,7 +1417,7 @@ variables:
 The `ref` (and `release`) field accepts four forms:
 
 - **Literal** — a branch name, tag, or commit hash passed directly to the VCS (e.g. `main`, `v1.2.3`, `abc123`).
-- **`$latest`** — resolves to the newest **stable semver tag** (`vX.Y.Z` or `X.Y.Z`, no pre-release suffix), consistently across all providers. For GitLab and GitHub it first checks the published "latest release"; for all providers it falls back to scanning tags filtered by the semver pattern.
+- **`$latest`** — resolves to the newest **stable semver tag** (`vX.Y.Z` or `X.Y.Z`, no pre-release suffix), consistently across all providers. GitHub first checks the published "latest release" and accepts it when it is semver; all providers scan tags filtered by the semver pattern.
 - **`$recent`** — resolves to the most **recently created or published tag**, regardless of its name format. Use this when you want whatever was tagged last, even if it is a nightly or pre-release build. For `git:` remotes the ordering is determined by `git ls-remote` output rather than creation date (date-based ordering requires fetching tag objects and is not supported).
 - **`/pattern/[flags]`** — a JavaScript regex literal (e.g. `ref: /^v1\.\d+\.\d+$/`). Resolves to the first tag whose name matches the pattern, ordered newest-first on GitHub, GitLab, and Bitbucket. For `git:` remotes the match order follows `git ls-remote` output. Flags such as `i` are supported.
 
