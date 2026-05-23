@@ -935,10 +935,24 @@ export function pullCommand(): Command {
           const survivingRefs = lastFiles.filter(
             (ref) => !noopStalePaths.has(ref.absolutePath),
           );
+          // Refresh sudo on surviving refs: updateFileSudo() already wrote the
+          // new value to meta.json, but the refs here snapshot the old pull log.
+          // Re-hydrate from writeTargets so closePullSession records the correct
+          // identity for future stale cleanup.
+          const currentSudoByPath = new Map(
+            writeTargets.map((t) => [t.targetPath, t.sudo]),
+          );
+          const updatedSurvivingRefs = survivingRefs.map((ref) => {
+            if (currentSudoByPath.has(ref.absolutePath)) {
+              const s = currentSudoByPath.get(ref.absolutePath);
+              return { ...ref, sudo: s || undefined };
+            }
+            return ref;
+          });
           history.closePullSession(
             pullId,
             normalizeConfigKey(configPath),
-            survivingRefs,
+            updatedSurvivingRefs,
           );
         }
         console.log('Nothing to do.');
@@ -1038,10 +1052,15 @@ export function pullCommand(): Command {
         (_, i) => allDiffs[i].hasChanges && allDiffs[i].contentChanged,
       );
       // Only include stale restore targets whose diff still has changes (not
-      // suppressed by the idempotency check above).
+      // suppressed by the idempotency check above). Also include diffs where
+      // isNew is true: a missing file with empty v0 produces hasChanges=false
+      // ('' !== '' = false) but still needs to be written.
       const activeStaleRestoreIndices = staleToRestore
         .map((_, i) => i)
-        .filter((i) => staleDiffs[staleRestoreDiffIndices[i]]?.hasChanges);
+        .filter((i) => {
+          const d = staleDiffs[staleRestoreDiffIndices[i]];
+          return d?.hasChanges || d?.isNew;
+        });
       const activeStaleRestore = activeStaleRestoreIndices.map(
         (i) => staleToRestore[i],
       );

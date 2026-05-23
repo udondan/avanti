@@ -541,10 +541,11 @@ function sudoWriteInPlace(t: SudoWriteTarget): void {
   checkDirSafe(sudo, dir, trustedUids, 'destination');
 
   let backupTmp: string | undefined;
+  const resolvedTarget = path.resolve(t.targetPath);
+  let preTeeMode: string | undefined;
+  let modeApplied = false;
 
   try {
-    const resolvedTarget = path.resolve(t.targetPath);
-
     if (t.backupPath) {
       const isSymlink = spawnSync(
         'sudo',
@@ -654,14 +655,11 @@ function sudoWriteInPlace(t: SudoWriteTarget): void {
 
     // For existing files, temporarily ensure owner-write so tee can open the
     // file even when its current mode has no write bit (e.g. 0400/0444 set on
-    // a previous pull). When no explicit t.mode is given, capture the current
-    // mode first so it can be restored after tee; otherwise effectiveMode is
-    // applied below and the captured value is discarded.
-    let savedPreTeeMode: string | undefined;
+    // a previous pull). Always capture the pre-tee mode so we can restore it
+    // in the finally block if tee fails (preventing a file from remaining more
+    // permissive than it was before the attempted write).
     if (!isNewFile) {
-      if (effectiveMode === undefined) {
-        savedPreTeeMode = getSudoFileMode(sudo, resolvedTarget);
-      }
+      preTeeMode = getSudoFileMode(sudo, resolvedTarget);
       sudoRun(sudo, ['chmod', 'u+w', '--', resolvedTarget]);
     }
 
@@ -679,14 +677,25 @@ function sudoWriteInPlace(t: SudoWriteTarget): void {
       throw new Error(`sudo write failed for ${t.targetPath}: ${detail}`);
     }
 
-    // Apply mode AFTER tee. effectiveMode wins; fall back to the saved original
-    // mode when no explicit mode is configured (restores what chmod u+w changed).
+    // Apply mode AFTER tee. effectiveMode wins; fall back to the captured
+    // pre-tee mode when no explicit mode is configured (undoes the u+w chmod).
     if (effectiveMode !== undefined) {
       sudoRun(sudo, ['chmod', '--', effectiveMode, resolvedTarget]);
-    } else if (savedPreTeeMode !== undefined) {
-      sudoRun(sudo, ['chmod', '--', savedPreTeeMode, resolvedTarget]);
+      modeApplied = true;
+    } else if (preTeeMode !== undefined) {
+      sudoRun(sudo, ['chmod', '--', preTeeMode, resolvedTarget]);
+      modeApplied = true;
     }
   } finally {
+    // If tee threw before modeApplied was set, restore the pre-tee mode so
+    // the file does not stay more permissive after a failed pull.
+    if (preTeeMode !== undefined && !modeApplied) {
+      try {
+        sudoRun(sudo, ['chmod', '--', preTeeMode, resolvedTarget]);
+      } catch {
+        // best-effort mode restore
+      }
+    }
     if (backupTmp) {
       try {
         sudoRun(sudo, ['rm', '-f', '--', backupTmp]);
