@@ -80,7 +80,8 @@ export function computeDiff(
   let oldBuf: Buffer;
   let isUnreadable = false;
   try {
-    isNew = !fs.existsSync(targetPath);
+    const stat = fs.lstatSync(targetPath, { throwIfNoEntry: false });
+    isNew = stat === undefined;
     oldBuf = isNew ? Buffer.alloc(0) : fs.readFileSync(targetPath);
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code;

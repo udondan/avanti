@@ -194,19 +194,16 @@ function sudoWriteMv(t: SudoWriteTarget): void {
         );
         sudoRun(sudo, ['cp', '--', resolvedTarget, backupTmp]);
         const resolvedBackup = path.resolve(t.backupPath);
+        // test -d follows symlinks, so this also catches symlinks-to-directories.
+        // mv into a symlink-to-directory moves the file inside the directory rather
+        // than replacing the symlink, which would silently write to the wrong place.
         const backupIsDir =
           spawnSync(
             'sudo',
             [...sudoUserArgs(sudo), 'test', '-d', resolvedBackup],
             { stdio: 'ignore' },
           ).status === 0;
-        const backupIsSymlink =
-          spawnSync(
-            'sudo',
-            [...sudoUserArgs(sudo), 'test', '-L', resolvedBackup],
-            { stdio: 'ignore' },
-          ).status === 0;
-        if (backupIsDir && !backupIsSymlink) {
+        if (backupIsDir) {
           throw new Error(`backup path is a directory: ${t.backupPath}`);
         }
         sudoRun(sudo, ['mv', '--', backupTmp, t.backupPath]);
@@ -215,15 +212,14 @@ function sudoWriteMv(t: SudoWriteTarget): void {
     }
 
     const resolvedTarget = path.resolve(t.targetPath);
+    // test -d follows symlinks, so this also catches symlinks-to-directories.
+    // mv into a symlink-to-directory moves the file inside the directory rather
+    // than replacing the symlink, which would silently write to the wrong place.
     const destIsDir =
       spawnSync('sudo', [...sudoUserArgs(sudo), 'test', '-d', resolvedTarget], {
         stdio: 'ignore',
       }).status === 0;
-    const destIsSymlink =
-      spawnSync('sudo', [...sudoUserArgs(sudo), 'test', '-L', resolvedTarget], {
-        stdio: 'ignore',
-      }).status === 0;
-    if (destIsDir && !destIsSymlink) {
+    if (destIsDir) {
       throw new Error(`target path is a directory: ${t.targetPath}`);
     }
     sudoRun(sudo, ['mv', '--', tmpFile, t.targetPath]);
@@ -297,19 +293,16 @@ function sudoWriteInPlace(t: SudoWriteTarget): void {
         );
         sudoRun(sudo, ['cp', '--', resolvedTarget, backupTmp]);
         const resolvedBackup = path.resolve(t.backupPath);
+        // test -d follows symlinks, so this also catches symlinks-to-directories.
+        // mv into a symlink-to-directory moves the file inside the directory rather
+        // than replacing the symlink, which would silently write to the wrong place.
         const backupIsDir =
           spawnSync(
             'sudo',
             [...sudoUserArgs(sudo), 'test', '-d', resolvedBackup],
             { stdio: 'ignore' },
           ).status === 0;
-        const backupIsSymlink =
-          spawnSync(
-            'sudo',
-            [...sudoUserArgs(sudo), 'test', '-L', resolvedBackup],
-            { stdio: 'ignore' },
-          ).status === 0;
-        if (backupIsDir && !backupIsSymlink) {
+        if (backupIsDir) {
           throw new Error(`backup path is a directory: ${t.backupPath}`);
         }
         sudoRun(sudo, ['mv', '--', backupTmp, t.backupPath]);
