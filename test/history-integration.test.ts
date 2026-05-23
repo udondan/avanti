@@ -1,5 +1,6 @@
 import { execSync } from 'child_process';
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -472,6 +473,61 @@ describe('history integration', () => {
       // out-dir-b should be restored to original since it existed before avanti
       expect(readOutput('out-dir-b')).toBe('original b');
     });
+  });
+
+  describe('sudo stale-file cleanup', () => {
+    it(
+      'uses stored sudo identity to delete a stale file removed from config',
+      { timeout: 25_000 },
+      () => {
+        // sudo is not available on Windows
+        if (process.platform === 'win32') return;
+
+        // Create a fake sudo binary that logs all invocations and passes real
+        // commands through. sudo -v (the auth-cache refresh) exits 0 immediately
+        // so no real privilege escalation is attempted.
+        const fakeSudoLog = join(tmpDir, 'sudo-calls.log');
+        const fakeSudoDir = join(tmpDir, 'fake-sudo');
+        mkdirSync(fakeSudoDir, { recursive: true });
+        const fakeSudoBin = join(fakeSudoDir, 'sudo');
+        writeFileSync(
+          fakeSudoBin,
+          // Intercept stat calls used by the ancestor safety checks and return
+          // safe values (mode 755, UID 0) so the test works under world-writable
+          // tmpdir on Linux. All other commands are passed through unchanged.
+          `#!/bin/sh\necho "$@" >> "${fakeSudoLog}"\n[ "$1" = "-v" ] && exit 0\nif [ "$1" = "stat" ]; then\n  case "$*" in\n    *%u*) echo "0"; exit 0 ;;\n    *%a*|*%Lp*) echo "755"; exit 0 ;;\n  esac\nfi\nexec "$@"\n`,
+        );
+        chmodSync(fakeSudoBin, 0o755);
+
+        const sudoEnv = { PATH: `${fakeSudoDir}:${process.env.PATH ?? ''}` };
+
+        // Pull with sudo: true — the file is tracked with its sudo identity.
+        const src = writeSource('src.txt', 'privileged content');
+        writeConfig(
+          `files:\n  ./sudo-managed.txt:\n    src: ${src}\n    sudo: true\n`,
+        );
+        run('pull --yes', sudoEnv);
+
+        const targetFile = join(tmpDir, 'sudo-managed.txt');
+        expect(existsSync(targetFile)).toBe(true);
+        // Confirm that sudo was actually invoked during the write (tee writes content).
+        expect(existsSync(fakeSudoLog)).toBe(true);
+        const pullCalls = readFileSync(fakeSudoLog, 'utf8');
+        expect(pullCalls).toContain('tee');
+
+        // Remove the entry from config and reset the call log.
+        // The next pull's stale-cleanup should use the stored sudo identity to delete.
+        rmSync(fakeSudoLog);
+        writeConfig('files: {}');
+        run('pull --yes', sudoEnv);
+
+        // Stale cleanup must have called sudo rm to remove the tracked file.
+        expect(existsSync(fakeSudoLog)).toBe(true);
+        const cleanupCalls = readFileSync(fakeSudoLog, 'utf8');
+        expect(cleanupCalls).toContain('rm');
+        expect(existsSync(targetFile)).toBe(false);
+      },
+    );
   });
 
   describe('graceful degradation', () => {

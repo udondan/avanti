@@ -10,6 +10,7 @@ export interface FileHistoryMeta {
   firstSeenAt: string;
   existedBeforeAvanti: boolean;
   currentVersion: number;
+  sudo?: true | string;
   insertedFragment?: {
     raw: string;
     processed: string;
@@ -35,6 +36,7 @@ export interface PullLogFileRef {
   slug: string;
   version: number;
   wasNew: boolean;
+  sudo?: true | string;
   sources?: SourceShaRecord[];
 }
 
@@ -128,6 +130,8 @@ export class HistoryManager {
     newContent: Buffer,
     isNew: boolean,
     sources?: SourceShaRecord[],
+    sudo?: true | string,
+    v0Override?: Buffer,
   ): { version: number; fileRef: PullLogFileRef } {
     const slug = sha256(targetPath);
     const fileDir = path.join(this.filesDir, slug);
@@ -141,10 +145,29 @@ export class HistoryManager {
       meta = JSON.parse(fs.readFileSync(metaPath, 'utf8')) as FileHistoryMeta;
     } else {
       isFirstSeen = true;
-      const existedBeforeAvanti = !isNew && fs.existsSync(targetPath);
+      let existedBeforeAvanti = !isNew;
       if (existedBeforeAvanti) {
-        const originalContent = fs.readFileSync(targetPath);
-        fs.writeFileSync(path.join(fileDir, 'v0'), originalContent);
+        try {
+          const originalContent = fs.readFileSync(targetPath);
+          fs.writeFileSync(path.join(fileDir, 'v0'), originalContent);
+        } catch (err) {
+          const code = (err as NodeJS.ErrnoException).code;
+          if (code !== 'EACCES' && code !== 'EPERM' && code !== 'ENOENT') {
+            throw err;
+          }
+          if (v0Override !== undefined) {
+            fs.writeFileSync(path.join(fileDir, 'v0'), v0Override);
+          } else if (code === 'ENOENT') {
+            // Dangling symlink: lstatSync saw the symlink but readFileSync
+            // followed it to a missing target. No usable original content
+            // existed, so don't claim the file predated avanti — stale cleanup
+            // will delete the avanti-written file rather than warn-and-leave.
+            existedBeforeAvanti = false;
+          }
+          // EACCES/EPERM without override: file exists but is unreadable. Keep
+          // existedBeforeAvanti=true so stale cleanup warns and leaves the file
+          // rather than deleting it (safer than destroying an unreadable file).
+        }
       }
       meta = {
         absolutePath: targetPath,
@@ -160,7 +183,6 @@ export class HistoryManager {
 
     if (isFirstSeen) {
       fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2), 'utf8');
-
       const index = this.readIndex();
       index[targetPath] = slug;
       this.writeIndex(index);
@@ -171,6 +193,7 @@ export class HistoryManager {
       slug,
       version: nextVersion,
       wasNew: isNew,
+      ...(sudo ? { sudo } : {}),
       ...(sources !== undefined && { sources }),
     };
 
@@ -189,6 +212,7 @@ export class HistoryManager {
           fs.readFileSync(metaPath, 'utf8'),
         ) as FileHistoryMeta;
         meta.currentVersion = ref.version;
+        meta.sudo = ref.sudo || undefined;
         fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2), 'utf8');
       }
     }
