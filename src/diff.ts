@@ -18,7 +18,7 @@ export interface FileDiff {
 export function computeDeleteDiff(targetPath: string): FileDiff {
   let oldBuf: Buffer;
   try {
-    if (!fs.existsSync(targetPath)) {
+    if (fs.lstatSync(targetPath, { throwIfNoEntry: false }) === undefined) {
       return {
         targetPath,
         isNew: false,

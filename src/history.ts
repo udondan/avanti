@@ -144,7 +144,7 @@ export class HistoryManager {
       meta = JSON.parse(fs.readFileSync(metaPath, 'utf8')) as FileHistoryMeta;
     } else {
       isFirstSeen = true;
-      const existedBeforeAvanti = !isNew && fs.existsSync(targetPath);
+      const existedBeforeAvanti = !isNew;
       if (existedBeforeAvanti) {
         try {
           const originalContent = fs.readFileSync(targetPath);
