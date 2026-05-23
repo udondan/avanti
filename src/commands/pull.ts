@@ -1100,21 +1100,6 @@ export function pullCommand(): Command {
             );
           }
         }
-        // For tracked files whose content is unchanged, meta.sudo is not updated
-        // by stageFileVersion (which only runs for changed files). Sync the sudo
-        // field here so stale cleanup uses the correct privileges if the sudo
-        // setting changes without a content change.
-        for (let i = 0; i < writeTargets.length; i++) {
-          if (
-            !allDiffs[i].contentChanged &&
-            history.getFileMeta(writeTargets[i].targetPath)
-          ) {
-            history.updateFileSudo(
-              writeTargets[i].targetPath,
-              writeTargets[i].sudo,
-            );
-          }
-        }
       }
 
       let postWriteError: string | null = null;
@@ -1231,6 +1216,26 @@ export function pullCommand(): Command {
           `Write failed: ${err instanceof Error ? err.message : String(err)}`,
         );
         process.exit(2);
+      }
+
+      // For tracked files whose content is unchanged, meta.sudo is not updated
+      // by stageFileVersion (which only runs for changed files). Sync the sudo
+      // field here so stale cleanup uses the correct privileges if the sudo
+      // setting changes without a content change. Deferred until after all
+      // writes succeed so that a failed write does not corrupt the stored sudo
+      // identity for the last successful pull.
+      if (historyAvailable) {
+        for (let i = 0; i < writeTargets.length; i++) {
+          if (
+            !allDiffs[i].contentChanged &&
+            history.getFileMeta(writeTargets[i].targetPath)
+          ) {
+            history.updateFileSudo(
+              writeTargets[i].targetPath,
+              writeTargets[i].sudo,
+            );
+          }
+        }
       }
 
       // Save inserted fragments to history for future idempotency detection
