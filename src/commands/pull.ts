@@ -694,6 +694,8 @@ export function pullCommand(): Command {
       const staleDeleteSudo = new Map<string, true | string>();
       const staleToRestore: WriteTarget[] = [];
       const staleDiffs: FileDiff[] = [];
+      // Parallel array: staleDiffs index for each staleToRestore entry
+      const staleRestoreDiffIndices: number[] = [];
 
       if (historyAvailable && !hasUnresolvableSkippedPath) {
         const lastFiles = history.getLastPullFiles();
@@ -721,6 +723,7 @@ export function pullCommand(): Command {
                 content: original,
                 sudo: meta.sudo,
               });
+              staleRestoreDiffIndices.push(staleDiffs.length);
               staleDiffs.push(computeDiff(ref.absolutePath, original));
             } else {
               console.warn(
@@ -748,6 +751,13 @@ export function pullCommand(): Command {
       for (let i = 0; i < writeTargets.length; i++) {
         if (allDiffs[i].isUnreadable && writeTargets[i].sudo) {
           unreadableSudoValues.add(writeTargets[i].sudo!);
+        }
+      }
+      // Also auth for unreadable stale restore targets that need sudo.
+      for (let i = 0; i < staleToRestore.length; i++) {
+        const diffIdx = staleRestoreDiffIndices[i];
+        if (staleDiffs[diffIdx]?.isUnreadable && staleToRestore[i].sudo) {
+          unreadableSudoValues.add(staleToRestore[i].sudo!);
         }
       }
       for (const sv of unreadableSudoValues) {
@@ -778,6 +788,24 @@ export function pullCommand(): Command {
               ...allDiffs[i],
               contentChanged: false,
               hasChanges: allDiffs[i].modeChange !== undefined,
+            };
+          }
+        }
+      }
+      // Same idempotency check for stale restore targets: if the current file
+      // content already matches the v0 original, suppress the redundant write.
+      for (let i = 0; i < staleToRestore.length; i++) {
+        const diffIdx = staleRestoreDiffIndices[i];
+        if (staleDiffs[diffIdx]?.isUnreadable && staleToRestore[i].sudo) {
+          const current = sudoRead(
+            staleToRestore[i].sudo!,
+            staleToRestore[i].targetPath,
+          );
+          if (current !== null && current.equals(staleToRestore[i].content)) {
+            staleDiffs[diffIdx] = {
+              ...staleDiffs[diffIdx],
+              contentChanged: false,
+              hasChanges: staleDiffs[diffIdx].modeChange !== undefined,
             };
           }
         }

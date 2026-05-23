@@ -33,6 +33,19 @@ export function computeDeleteDiff(targetPath: string): FileDiff {
     oldBuf = fs.readFileSync(targetPath);
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code;
+    if (code === 'ENOENT') {
+      // Dangling symlink — lstatSync saw the symlink but readFileSync followed
+      // it to a non-existent target. Treat as a binary delete (no diff available).
+      return {
+        targetPath,
+        isNew: false,
+        isDelete: true,
+        hasChanges: true,
+        contentChanged: true,
+        patch: '',
+        isBinary: true,
+      };
+    }
     if (code !== 'EACCES' && code !== 'EPERM') throw err;
     // File exists but is unreadable (e.g. root-owned 0600).
     return {
@@ -105,9 +118,17 @@ export function computeDiff(
         oldBuf = fs.readFileSync(targetPath);
       } catch (err) {
         const code = (err as NodeJS.ErrnoException).code;
-        if (code !== 'EACCES' && code !== 'EPERM') throw err;
-        // File exists but is unreadable (e.g. root-owned 0600).
-        isUnreadable = true;
+        if (code === 'ENOENT') {
+          // Dangling symlink — lstatSync saw the symlink but readFileSync
+          // followed it to a non-existent target. Treat as empty content:
+          // the diff will show the full new content being written.
+          // isUnreadable stays false; oldBuf stays empty Buffer.
+        } else if (code === 'EACCES' || code === 'EPERM') {
+          // File exists but is unreadable (e.g. root-owned 0600).
+          isUnreadable = true;
+        } else {
+          throw err;
+        }
       }
     }
   }
