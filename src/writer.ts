@@ -1,6 +1,5 @@
 import * as crypto from 'crypto';
 import * as fs from 'fs';
-import * as os from 'os';
 import * as path from 'path';
 import { spawnSync } from 'child_process';
 
@@ -51,51 +50,17 @@ export function sudoAtomicWrite(targets: SudoWriteTarget[]): void {
 }
 
 export function sudoRead(sudo: true | string, filePath: string): Buffer | null {
-  // Copy to a temp file then read with fs.readFileSync to avoid spawnSync's
-  // maxBuffer cap — matches fs.readFileSync behaviour (no arbitrary size limit).
-  //
-  // Create the temp file as the CURRENT USER before the privileged cp. When cp
-  // writes into an already-existing file it preserves ownership, so tmpFile
-  // stays owned by us throughout — no chown or chmod needed after the copy,
-  // and fs.unlinkSync always succeeds (we own the file).
-  //
-  // Root sudo:       mode 0600 — root can write to any file regardless of mode.
-  // Named-user sudo: mode 0622 — owner rw, others-write (NOT others-read).
-  //                  The named user can overwrite but cannot read; only the
-  //                  owner (current process) reads. chmodSync is used instead of
-  //                  openSync's mode argument to bypass umask (which would strip
-  //                  the others-write bit and prevent the cp from succeeding).
+  // Use sudo cat with piped stdout — no temp file, no world-writable surface,
+  // no TOCTOU. maxBuffer is set high enough to cover any config file avanti
+  // would manage (individual config files are always well under 100 MB).
   const absPath = path.resolve(filePath);
-  const tmpFile = path.join(
-    os.tmpdir(),
-    `.avanti-sudoread-${crypto.randomBytes(8).toString('hex')}`,
+  const result = spawnSync(
+    'sudo',
+    [...sudoUserArgs(sudo), 'cat', '--', absPath],
+    { stdio: ['ignore', 'pipe', 'inherit'], maxBuffer: 100 * 1024 * 1024 },
   );
-  try {
-    const fd = fs.openSync(tmpFile, 'w', 0o600);
-    fs.closeSync(fd);
-    if (sudo !== true) {
-      fs.chmodSync(tmpFile, 0o622);
-    }
-  } catch {
-    return null;
-  }
-  try {
-    const cp = spawnSync(
-      'sudo',
-      [...sudoUserArgs(sudo), 'cp', '--', absPath, tmpFile],
-      { stdio: 'inherit' },
-    );
-    if (cp.status !== 0 || cp.error) return null;
-    return fs.readFileSync(tmpFile);
-  } catch {
-    return null;
-  } finally {
-    try {
-      fs.unlinkSync(tmpFile);
-    } catch {
-      // best-effort — rarely fails since we own the file
-    }
-  }
+  if (result.status !== 0 || result.error) return null;
+  return result.stdout;
 }
 
 export function sudoDelete(p: string, sudo: true | string): boolean {
@@ -366,15 +331,17 @@ function sudoWriteInPlace(t: SudoWriteTarget): void {
   // symlink/type preflight and the subsequent sudo tee are not atomic, so an
   // attacker who can write to the directory could swap the path between the
   // checks and the tee, redirecting the privileged write. System directories
-  // (e.g. /etc, /usr/local/etc) are root-owned and not at risk; reject only
-  // world-writable directories (mode bit 0o002). Use the mv-style write
-  // (writeInPlace: false) for targets in untrusted directories.
+  // (e.g. /etc, /usr/local/etc) are owned by root with mode 0755, so the only
+  // writer is root — safe. Reject directories writable by non-owners (group-
+  // write bit 0o020 or others-write bit 0o002): any member of the directory's
+  // group or any local user could race between the test checks and sudo tee.
+  // Use mv-style writes (writeInPlace: false) for targets in such directories.
   const dirModeStr = getSudoFileMode(sudo, dir);
   if (dirModeStr) {
     const dirMode = parseInt(dirModeStr, 8);
-    if (!isNaN(dirMode) && dirMode & 0o002) {
+    if (!isNaN(dirMode) && dirMode & 0o022) {
       throw new Error(
-        `writeInPlace: parent directory ${dir} is world-writable; ` +
+        `writeInPlace: parent directory ${dir} is group- or world-writable; ` +
           `sudo writeInPlace cannot be used safely here due to TOCTOU risk. ` +
           `Remove writeInPlace: true to use atomic mv-style writes instead.`,
       );
