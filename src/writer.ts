@@ -256,7 +256,7 @@ function sudoWriteMv(t: SudoWriteTarget): void {
         throw new Error(`target path is a directory: ${t.targetPath}`);
       }
     }
-    sudoRun(sudo, ['mv', '--', tmpFile, t.targetPath]);
+    sudoRun(sudo, ['mv', '--', tmpFile, resolvedTarget]);
 
     // Apply mode: explicit config value wins; existing dest mode is used as fallback
     // for updates so sudo mv doesn't silently change permissions. For new files with
@@ -268,7 +268,7 @@ function sudoWriteMv(t: SudoWriteTarget): void {
     const mask = process.umask();
     const defaultMode = (0o666 & ~mask).toString(8).padStart(4, '0');
     const effectiveMode = t.mode ?? existingMode ?? defaultMode;
-    sudoRun(sudo, ['chmod', '--', effectiveMode, t.targetPath]);
+    sudoRun(sudo, ['chmod', '--', effectiveMode, resolvedTarget]);
   } finally {
     try {
       sudoRun(sudo, ['rm', '-f', '--', tmpFile]);
@@ -408,7 +408,7 @@ function sudoWriteInPlace(t: SudoWriteTarget): void {
     const isNewFile = existsCheck.status !== 0;
     const effectiveMode = t.mode ?? (isNewFile ? defaultMode : undefined);
     if (effectiveMode !== undefined) {
-      sudoRun(sudo, ['chmod', '--', effectiveMode, t.targetPath]);
+      sudoRun(sudo, ['chmod', '--', effectiveMode, resolvedTarget]);
     }
   } finally {
     if (backupTmp) {
