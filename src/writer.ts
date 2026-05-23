@@ -385,41 +385,49 @@ function sudoWriteInPlace(t: SudoWriteTarget): void {
   const dir = path.dirname(t.targetPath);
   sudoRun(sudo, ['mkdir', '-p', '--', dir]);
 
-  // Reject writeInPlace when the parent directory could be raced: the
-  // symlink/type preflight and the subsequent sudo tee are not atomic, so any
-  // user who can write to the directory could swap the path between the checks
-  // and the tee, redirecting the privileged write.
-  // Two independent checks:
-  // 1. Mode bits: reject group-write (0o020) or others-write (0o002).
-  //    Any group member or local user could race.
-  // 2. Owner UID: reject when the owner is not a trusted identity for this
-  //    sudo operation. The directory owner can always write to their own
-  //    directory (0o200 owner-write, present on nearly all directories) and
-  //    could race even when group/other bits are clear.
-  //    Trusted UIDs: root (0) for sudo:true; root and the named user's UID
-  //    for sudo:"username".
-  // Use mv-style writes (writeInPlace: false) for targets in untrusted dirs.
-  const dirModeStr = getSudoFileMode(sudo, dir);
-  if (dirModeStr) {
-    const dirMode = parseInt(dirModeStr, 8);
-    if (!isNaN(dirMode) && dirMode & 0o022) {
-      throw new Error(
-        `writeInPlace: parent directory ${dir} is group- or world-writable; ` +
-          `sudo writeInPlace cannot be used safely here due to TOCTOU risk. ` +
-          `Remove writeInPlace: true to use atomic mv-style writes instead.`,
-      );
-    }
+  // Reject writeInPlace when any ancestor directory (from / down to dir) could
+  // be raced. Checking only the immediate parent is insufficient: a symlink
+  // anywhere in the path (e.g. /tmp/link/file where /tmp is world-writable)
+  // can be swapped between the preflight checks and the sudo tee, redirecting
+  // the privileged write. Validate every ancestor so that a world-writable or
+  // untrusted directory anywhere in the path is detected and rejected.
+  // Two checks per ancestor:
+  // 1. Mode bits: group-write (0o020) or others-write (0o002) allow any member
+  //    of the group or any local user to swap a component → reject.
+  // 2. Owner UID: the directory owner can always modify its contents and could
+  //    race even when group/other write bits are clear.
+  //    Trusted UIDs: root (0) for sudo:true; root + named user for sudo:"name".
+  // Use mv-style writes (writeInPlace: false) for targets in untrusted paths.
+  const trustedUids = new Set<number>([0]);
+  if (typeof sudo === 'string') {
+    const namedUid = getUserUid(sudo);
+    if (namedUid !== undefined) trustedUids.add(namedUid);
   }
-  const dirOwnerUid = getSudoOwnerUid(sudo, dir);
-  if (dirOwnerUid !== undefined) {
-    const trustedUids = new Set<number>([0]);
-    if (typeof sudo === 'string') {
-      const namedUid = getUserUid(sudo);
-      if (namedUid !== undefined) trustedUids.add(namedUid);
+  // Collect every ancestor from / to dir (inclusive), without resolving
+  // symlinks (path.resolve only canonicalises . and .., not symlink targets).
+  const ancestors: string[] = [];
+  let anc = path.resolve(t.targetPath);
+  while (true) {
+    anc = path.dirname(anc);
+    ancestors.unshift(anc);
+    if (anc === path.dirname(anc)) break; // reached filesystem root
+  }
+  for (const ancestor of ancestors) {
+    const ancModeStr = getSudoFileMode(sudo, ancestor);
+    if (ancModeStr) {
+      const ancMode = parseInt(ancModeStr, 8);
+      if (!isNaN(ancMode) && ancMode & 0o022) {
+        throw new Error(
+          `writeInPlace: ancestor directory ${ancestor} is group- or world-writable; ` +
+            `sudo writeInPlace cannot be used safely here due to TOCTOU risk. ` +
+            `Remove writeInPlace: true to use atomic mv-style writes instead.`,
+        );
+      }
     }
-    if (!trustedUids.has(dirOwnerUid)) {
+    const ancOwnerUid = getSudoOwnerUid(sudo, ancestor);
+    if (ancOwnerUid !== undefined && !trustedUids.has(ancOwnerUid)) {
       throw new Error(
-        `writeInPlace: parent directory ${dir} is owned by UID ${dirOwnerUid}, ` +
+        `writeInPlace: ancestor directory ${ancestor} is owned by UID ${ancOwnerUid}, ` +
           `not a trusted identity for this sudo operation; ` +
           `sudo writeInPlace cannot be used safely here due to TOCTOU risk. ` +
           `Remove writeInPlace: true to use atomic mv-style writes instead.`,
