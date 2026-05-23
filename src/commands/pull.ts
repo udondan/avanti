@@ -754,7 +754,8 @@ export function pullCommand(): Command {
           staleToRestore.some((t) => t.sudo) ||
           staleDeleteSudo.size > 0)
       ) {
-        throw new Error('sudo is not supported on Windows');
+        console.error('sudo is not supported on Windows');
+        process.exit(2);
       }
 
       // Authenticate early for unreadable sudo files so we can read their actual
@@ -776,7 +777,14 @@ export function pullCommand(): Command {
       }
       const authenticatedSudoIds = new Set<true | string>();
       for (const sv of unreadableSudoValues) {
-        sudoAuth(sv);
+        try {
+          sudoAuth(sv);
+        } catch (err: unknown) {
+          console.error(
+            `sudo authentication failed: ${err instanceof Error ? err.message : String(err)}`,
+          );
+          process.exit(2);
+        }
         authenticatedSudoIds.add(sv);
       }
       // For entries where lstatSync failed (parent directory not searchable),
@@ -1042,7 +1050,14 @@ export function pullCommand(): Command {
       // so a single pull session never re-prompts for the same identity.
       for (const sv of sudoValues) {
         if (!authenticatedSudoIds.has(sv)) {
-          sudoAuth(sv);
+          try {
+            sudoAuth(sv);
+          } catch (err: unknown) {
+            console.error(
+              `sudo authentication failed: ${err instanceof Error ? err.message : String(err)}`,
+            );
+            process.exit(2);
+          }
           authenticatedSudoIds.add(sv);
         }
       }
