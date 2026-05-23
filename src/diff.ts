@@ -208,6 +208,43 @@ export function computeDiff(
   };
 }
 
+/** Build a new-file FileDiff from content without reading disk. Used when
+ *  lstatFailed initially but sudo confirms the file does not yet exist. */
+export function buildNewFileDiff(
+  targetPath: string,
+  newContent: Buffer,
+  modeChange?: { from: number; to: number },
+): FileDiff {
+  if (isBinary(newContent)) {
+    return {
+      targetPath,
+      isNew: true,
+      hasChanges: true,
+      contentChanged: true,
+      patch: '',
+      isBinary: true,
+      modeChange,
+    };
+  }
+  const newText = newContent.toString('utf8');
+  const patch = createTwoFilesPatch(
+    '/dev/null',
+    targetPath,
+    '',
+    newText,
+    '',
+    'new file',
+  );
+  return {
+    targetPath,
+    isNew: true,
+    hasChanges: true,
+    contentChanged: true,
+    patch,
+    modeChange,
+  };
+}
+
 export function formatDiff(diff: FileDiff): string {
   if (!diff.hasChanges) return '';
 
@@ -232,12 +269,11 @@ export function formatDiff(diff: FileDiff): string {
   }
 
   if (diff.isUnreadable) {
-    const oldPath = diff.isDelete ? diff.targetPath : diff.targetPath;
     const newPath = diff.isDelete ? '/dev/null' : diff.targetPath;
     const label = diff.isDelete
       ? 'file deleted (unreadable — no diff available)'
       : 'file updated (existing content unreadable — diff unavailable)';
-    let out = chalk.bold(`--- ${oldPath}\n+++ ${newPath}`) + '\n';
+    let out = chalk.bold(`--- ${diff.targetPath}\n+++ ${newPath}`) + '\n';
     if (diff.modeChange) out += modeFrom + '\n' + modeTo + '\n';
     out += chalk.cyan(`@@ ${label} @@`);
     return out;

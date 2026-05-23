@@ -22,7 +22,13 @@ import { applyReplace } from '../processors/replace';
 import { applyWriteHook, runHook } from '../processors/on';
 import { applyInsertMode } from '../processors/insert';
 import { isBinary } from '../binary';
-import { computeDiff, computeDeleteDiff, printDiffs } from '../diff';
+import {
+  buildNewFileDiff,
+  computeDiff,
+  computeDeleteDiff,
+  FileDiff,
+  printDiffs,
+} from '../diff';
 import {
   atomicWrite,
   getSudoFileMode,
@@ -36,7 +42,6 @@ import {
   SudoWriteTarget,
   WriteTarget,
 } from '../writer';
-import { FileDiff } from '../diff';
 import {
   buildEntryPreVars,
   expandTilde,
@@ -693,6 +698,8 @@ export function pullCommand(): Command {
       const staleToDelete: string[] = [];
       // Maps path → sudo identity for stale files that need privileged deletion
       const staleDeleteSudo = new Map<string, true | string>();
+      // Maps path → staleDiffs index so we can check hasChanges before auth/write
+      const staleDeleteDiffIndex = new Map<string, number>();
       const staleToRestore: WriteTarget[] = [];
       const staleDiffs: FileDiff[] = [];
       // Parallel array: staleDiffs index for each staleToRestore entry
@@ -734,13 +741,19 @@ export function pullCommand(): Command {
           } else {
             staleToDelete.push(ref.absolutePath);
             if (meta.sudo) staleDeleteSudo.set(ref.absolutePath, meta.sudo);
+            staleDeleteDiffIndex.set(ref.absolutePath, staleDiffs.length);
             staleDiffs.push(computeDeleteDiff(ref.absolutePath));
           }
         }
       }
 
       // Windows does not have sudo; fail before any authentication attempt.
-      if (process.platform === 'win32' && writeTargets.some((t) => t.sudo)) {
+      if (
+        process.platform === 'win32' &&
+        (writeTargets.some((t) => t.sudo) ||
+          staleToRestore.some((t) => t.sudo) ||
+          staleDeleteSudo.size > 0)
+      ) {
         throw new Error('sudo is not supported on Windows');
       }
 
@@ -761,8 +774,10 @@ export function pullCommand(): Command {
           unreadableSudoValues.add(staleToRestore[i].sudo!);
         }
       }
+      const authenticatedSudoIds = new Set<true | string>();
       for (const sv of unreadableSudoValues) {
         sudoAuth(sv);
+        authenticatedSudoIds.add(sv);
       }
       // For entries where lstatSync failed (parent directory not searchable),
       // use sudoFileExists to determine whether the file actually exists so
@@ -789,7 +804,17 @@ export function pullCommand(): Command {
               }
             }
           }
-          allDiffs[i] = { ...allDiffs[i], isNew, modeChange };
+          if (isNew) {
+            // File confirmed absent — rebuild as a proper new-file diff so
+            // formatDiff shows the actual content instead of "unreadable".
+            allDiffs[i] = buildNewFileDiff(
+              allDiffs[i].targetPath,
+              writeTargets[i].content,
+              modeChange,
+            );
+          } else {
+            allDiffs[i] = { ...allDiffs[i], isNew, modeChange };
+          }
           // Propagate corrected isNew to the hook context so lifecycle hooks
           // receive the correct AVANTI_IS_NEW value.
           const hookIdx = fileHookContexts.findIndex(
@@ -809,18 +834,22 @@ export function pullCommand(): Command {
             writeTargets[i].targetPath,
           );
           if (current !== null && current.equals(writeTargets[i].content)) {
+            const updatedHasChanges = allDiffs[i].modeChange !== undefined;
             allDiffs[i] = {
               ...allDiffs[i],
               contentChanged: false,
-              hasChanges: allDiffs[i].modeChange !== undefined,
+              hasChanges: updatedHasChanges,
             };
-            // Content is unchanged — remove the hook context so hooks don't
-            // fire spuriously if other files in the same pull do have changes.
-            const hookIdx = fileHookContexts.findIndex(
-              (ctx) => ctx.targetPath === writeTargets[i].targetPath,
-            );
-            if (hookIdx >= 0) {
-              fileHookContexts.splice(hookIdx, 1);
+            // Only remove hook context when the diff is a true no-op (no mode
+            // change either). A mode-only change still triggers before/afterUpdate
+            // hooks, so the context must remain for those cases.
+            if (!updatedHasChanges) {
+              const hookIdx = fileHookContexts.findIndex(
+                (ctx) => ctx.targetPath === writeTargets[i].targetPath,
+              );
+              if (hookIdx >= 0) {
+                fileHookContexts.splice(hookIdx, 1);
+              }
             }
           }
         }
@@ -974,13 +1003,27 @@ export function pullCommand(): Command {
       const changedTargets = writeTargets.filter(
         (_, i) => allDiffs[i].hasChanges && allDiffs[i].contentChanged,
       );
+      // Only include stale restore targets whose diff still has changes (not
+      // suppressed by the idempotency check above).
+      const activeStaleRestoreIndices = staleToRestore
+        .map((_, i) => i)
+        .filter((i) => staleDiffs[staleRestoreDiffIndices[i]]?.hasChanges);
+      const activeStaleRestore = activeStaleRestoreIndices.map(
+        (i) => staleToRestore[i],
+      );
+
       const sudoValues = new Set<true | string>(
-        [...changedTargets, ...staleToRestore]
+        [...changedTargets, ...activeStaleRestore]
           .map((t) => t.sudo)
           .filter(Boolean) as (true | string)[],
       );
-      for (const sv of staleDeleteSudo.values()) {
-        sudoValues.add(sv);
+      // Only include stale delete sudo identities when the delete diff still
+      // has changes (file wasn't already absent at diff time).
+      for (const [p, sv] of staleDeleteSudo) {
+        const idx = staleDeleteDiffIndex.get(p);
+        if (idx !== undefined && staleDiffs[idx].hasChanges) {
+          sudoValues.add(sv);
+        }
       }
       for (let i = 0; i < writeTargets.length; i++) {
         if (
@@ -991,8 +1034,13 @@ export function pullCommand(): Command {
           sudoValues.add(writeTargets[i].sudo!);
         }
       }
+      // Skip identities already authenticated in the early unreadable-file pass
+      // so a single pull session never re-prompts for the same identity.
       for (const sv of sudoValues) {
-        sudoAuth(sv);
+        if (!authenticatedSudoIds.has(sv)) {
+          sudoAuth(sv);
+          authenticatedSudoIds.add(sv);
+        }
       }
 
       // Stage history versions before atomicWrite so v0 is captured before overwrite
@@ -1078,8 +1126,9 @@ export function pullCommand(): Command {
         const isSudoTarget = (t: WriteTarget): t is SudoWriteTarget => !!t.sudo;
         const regularChanged = changedTargets.filter((t) => !t.sudo);
         const sudoChanged = changedTargets.filter(isSudoTarget);
-        const regularRestore = staleToRestore.filter((t) => !t.sudo);
-        const sudoRestore = staleToRestore.filter(isSudoTarget);
+        // Only restore entries whose diff still has changes (no-op restores filtered out)
+        const regularRestore = activeStaleRestore.filter((t) => !t.sudo);
+        const sudoRestore = activeStaleRestore.filter(isSudoTarget);
         const regularDelete = staleToDelete.filter(
           (p) => !staleDeleteSudo.has(p),
         );
@@ -1147,7 +1196,7 @@ export function pullCommand(): Command {
         }
         const written =
           changedTargets.length +
-          staleToRestore.length +
+          activeStaleRestore.length +
           staleToDelete.length +
           modeOnlyCount;
         console.log(`Wrote ${written} file(s).`);

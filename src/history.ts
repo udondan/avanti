@@ -152,9 +152,11 @@ export class HistoryManager {
           fs.writeFileSync(path.join(fileDir, 'v0'), originalContent);
         } catch (err) {
           const code = (err as NodeJS.ErrnoException).code;
-          if (code !== 'EACCES' && code !== 'EPERM') {
+          if (code !== 'EACCES' && code !== 'EPERM' && code !== 'ENOENT') {
             throw err;
           }
+          // ENOENT: dangling symlink (lstatSync saw it, readFileSync followed
+          // it to a missing target). Treat like unreadable — v0 not captured.
           if (v0Override !== undefined) {
             fs.writeFileSync(path.join(fileDir, 'v0'), v0Override);
           }

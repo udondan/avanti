@@ -118,7 +118,7 @@ export function getSudoFileMode(
   const absPath = path.resolve(targetPath); // ensure never starts with '-'
   const gnu = spawnSync(
     'sudo',
-    [...sudoUserArgs(sudo), 'stat', '-c', '%a', '--', absPath],
+    [...sudoUserArgs(sudo), 'stat', '-L', '-c', '%a', '--', absPath],
     { stdio: ['ignore', 'pipe', 'ignore'] },
   );
   if (gnu.status === 0) return gnu.stdout.toString().trim() || undefined;
@@ -213,7 +213,8 @@ function sudoWriteMv(t: SudoWriteTarget): void {
           throw new Error(`sudo mktemp failed in ${backupDir}: ${detail}`);
         }
         backupTmp = mktempBackup.stdout.toString().trim();
-        sudoRun(sudo, ['cp', '--', resolvedTarget, backupTmp]);
+        // -p preserves the source file's mode bits on the backup copy.
+        sudoRun(sudo, ['cp', '-p', '--', resolvedTarget, backupTmp]);
         const resolvedBackup = path.resolve(t.backupPath);
         // test -d follows symlinks, so this also catches symlinks-to-directories.
         // mv into a symlink-to-directory moves the file inside the directory rather
@@ -233,15 +234,27 @@ function sudoWriteMv(t: SudoWriteTarget): void {
     }
 
     const resolvedTarget = path.resolve(t.targetPath);
-    // test -d follows symlinks, so this also catches symlinks-to-directories.
-    // mv into a symlink-to-directory moves the file inside the directory rather
-    // than replacing the symlink, which would silently write to the wrong place.
-    const destIsDir =
-      spawnSync('sudo', [...sudoUserArgs(sudo), 'test', '-d', resolvedTarget], {
+    // If the destination is a symlink (to anything, including a directory),
+    // remove it first so that mv replaces the symlink entry rather than moving
+    // tmpFile inside the symlink's target directory — matching rename(2) semantics
+    // used by the non-sudo atomicWrite path.
+    const destIsSymlink =
+      spawnSync('sudo', [...sudoUserArgs(sudo), 'test', '-L', resolvedTarget], {
         stdio: 'ignore',
       }).status === 0;
-    if (destIsDir) {
-      throw new Error(`target path is a directory: ${t.targetPath}`);
+    if (destIsSymlink) {
+      sudoRun(sudo, ['rm', '-f', '--', resolvedTarget]);
+    } else {
+      // Only throw for a real directory (not through a symlink).
+      const destIsDir =
+        spawnSync(
+          'sudo',
+          [...sudoUserArgs(sudo), 'test', '-d', resolvedTarget],
+          { stdio: 'ignore' },
+        ).status === 0;
+      if (destIsDir) {
+        throw new Error(`target path is a directory: ${t.targetPath}`);
+      }
     }
     sudoRun(sudo, ['mv', '--', tmpFile, t.targetPath]);
 
@@ -321,7 +334,8 @@ function sudoWriteInPlace(t: SudoWriteTarget): void {
           throw new Error(`sudo mktemp failed in ${backupDir}: ${detail}`);
         }
         backupTmp = mktempBackup.stdout.toString().trim();
-        sudoRun(sudo, ['cp', '--', resolvedTarget, backupTmp]);
+        // -p preserves the source file's mode bits on the backup copy.
+        sudoRun(sudo, ['cp', '-p', '--', resolvedTarget, backupTmp]);
         const resolvedBackup = path.resolve(t.backupPath);
         // test -d follows symlinks, so this also catches symlinks-to-directories.
         // mv into a symlink-to-directory moves the file inside the directory rather

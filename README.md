@@ -1312,7 +1312,8 @@ Set `sudo: true` to write a file using elevated privileges (as root). Set `sudo:
 
 ```yaml
 files:
-  /etc/ssh/sshd_config:
+  sshd_config:
+    target: /etc/ssh/sshd_config
     src:
       github:
         repo: org/system-configs
@@ -1320,9 +1321,16 @@ files:
     mode: '0600'
     sudo: true
 
-  /var/www/html/index.html:
+  index_html:
+    target: /var/www/html/index.html
     src: https://example.com/index.html
     sudo: 'www-data'
+```
+
+Targets outside the working directory require either an explicit `target:` field (as shown above) or running avanti with `--working-dir /`:
+
+```sh
+avanti pull --working-dir /
 ```
 
 avanti calls `sudo -v` once per distinct identity at the start of the write phase to prime the OS credential cache, so the user is prompted for their password once per distinct sudo identity per pull session, regardless of how many files share that identity.
