@@ -386,6 +386,25 @@ export class HistoryManager {
     return fs.existsSync(this.pullsLogPath);
   }
 
+  /** Update only the sudo field on a tracked file's meta without staging a new version.
+   *  Used when the file content is unchanged but the sudo setting changed in the config. */
+  updateFileSudo(absolutePath: string, sudo: true | string | undefined): void {
+    try {
+      const index = this.readIndex();
+      const slug = index[absolutePath];
+      if (!slug) return;
+      const metaPath = path.join(this.filesDir, slug, 'meta.json');
+      if (!fs.existsSync(metaPath)) return;
+      const meta = JSON.parse(
+        fs.readFileSync(metaPath, 'utf8'),
+      ) as FileHistoryMeta;
+      meta.sudo = sudo;
+      fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2), 'utf8');
+    } catch {
+      // non-fatal
+    }
+  }
+
   static findByWorkingDir(workingDir: string): HistoryManager[] {
     const projectsDir = path.join(defaultBaseDir(), 'projects');
     if (!fs.existsSync(projectsDir)) return [];

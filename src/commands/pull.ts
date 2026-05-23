@@ -378,23 +378,7 @@ async function runFetchLoop(
         // effectivePath is always defined here: isSelf is false (we continued above),
         // so targetPath was defined, and effectivePath = resolveFollowSymlink(targetPath, ...).
         const ep = effectivePath!;
-        let diff = computeDiff(ep, content, entry.mode);
-        // Unreadable sudo targets cannot be diffed against live content. Compare
-        // against the last recorded history version so repeated pulls of an
-        // unchanged file do not trigger spurious rewrites.
-        if (diff.isUnreadable && !diff.isNew && entry.sudo && history) {
-          const meta = history.getFileMeta(ep);
-          if (meta && meta.currentVersion > 0) {
-            const last = history.readVersion(ep, meta.currentVersion);
-            if (last !== null && last.equals(content)) {
-              diff = {
-                ...diff,
-                contentChanged: false,
-                hasChanges: diff.modeChange !== undefined,
-              };
-            }
-          }
-        }
+        const diff = computeDiff(ep, content, entry.mode);
         allDiffs.push(diff);
         const backupPath =
           entry.backup && diff.hasChanges && !diff.isNew
@@ -892,6 +876,19 @@ export function pullCommand(): Command {
         sudoAuth(sv);
       }
 
+      // For entries where lstatSync itself failed (parent directory not searchable),
+      // use sudoFileExists to determine whether the file actually exists. Correct
+      // isNew so that history records existedBeforeAvanti correctly.
+      for (let i = 0; i < writeTargets.length; i++) {
+        if (allDiffs[i].lstatFailed && writeTargets[i].sudo) {
+          const exists = sudoFileExists(
+            writeTargets[i].sudo!,
+            writeTargets[i].targetPath,
+          );
+          allDiffs[i] = { ...allDiffs[i], isNew: !exists };
+        }
+      }
+
       // Stage history versions before atomicWrite so v0 is captured before overwrite
       const stagedFileRefs: PullLogFileRef[] = [];
       if (pullId) {
@@ -946,6 +943,21 @@ export function pullCommand(): Command {
           } catch {
             console.warn(
               `Warning: could not record history for ${writeTargets[i].targetPath}`,
+            );
+          }
+        }
+        // For tracked files whose content is unchanged, meta.sudo is not updated
+        // by stageFileVersion (which only runs for changed files). Sync the sudo
+        // field here so stale cleanup uses the correct privileges if the sudo
+        // setting changes without a content change.
+        for (let i = 0; i < writeTargets.length; i++) {
+          if (
+            !allDiffs[i].hasChanges &&
+            history.getFileMeta(writeTargets[i].targetPath)
+          ) {
+            history.updateFileSudo(
+              writeTargets[i].targetPath,
+              writeTargets[i].sudo,
             );
           }
         }

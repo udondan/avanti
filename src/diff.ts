@@ -12,6 +12,9 @@ export interface FileDiff {
   patch: string;
   isBinary?: boolean;
   isUnreadable?: boolean;
+  /** True when lstatSync threw EACCES/EPERM (parent directory not searchable),
+   *  meaning existence cannot be determined without elevated privileges. */
+  lstatFailed?: boolean;
   modeChange?: { from: number; to: number };
 }
 
@@ -76,21 +79,37 @@ export function computeDiff(
   newContent: Buffer,
   desiredMode?: string,
 ): FileDiff {
-  let isNew: boolean;
-  let oldBuf: Buffer;
+  let isNew = false;
+  let oldBuf: Buffer = Buffer.alloc(0);
   let isUnreadable = false;
+  let lstatFailed = false;
+
+  let stat: ReturnType<typeof fs.lstatSync> | undefined;
   try {
-    const stat = fs.lstatSync(targetPath, { throwIfNoEntry: false });
-    isNew = stat === undefined;
-    oldBuf = isNew ? Buffer.alloc(0) : fs.readFileSync(targetPath);
+    stat = fs.lstatSync(targetPath, { throwIfNoEntry: false });
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code;
     if (code !== 'EACCES' && code !== 'EPERM') throw err;
-    // File exists but is unreadable (e.g. root-owned 0600). Keep isNew=false
-    // so history correctly records existedBeforeAvanti and backups are made.
-    isNew = false;
+    // lstatSync failed — parent directory not searchable. Existence is unknown;
+    // treat as existing (conservative). pull.ts uses sudoFileExists to verify
+    // the true state after authenticating.
+    lstatFailed = true;
     isUnreadable = true;
-    oldBuf = Buffer.alloc(0);
+    isNew = false;
+  }
+
+  if (!lstatFailed) {
+    isNew = stat === undefined;
+    if (!isNew) {
+      try {
+        oldBuf = fs.readFileSync(targetPath);
+      } catch (err) {
+        const code = (err as NodeJS.ErrnoException).code;
+        if (code !== 'EACCES' && code !== 'EPERM') throw err;
+        // File exists but is unreadable (e.g. root-owned 0600).
+        isUnreadable = true;
+      }
+    }
   }
 
   let modeChange: { from: number; to: number } | undefined;
@@ -121,6 +140,7 @@ export function computeDiff(
       contentChanged: true,
       patch: '',
       isUnreadable: true,
+      ...(lstatFailed && { lstatFailed: true }),
       modeChange,
     };
   }
