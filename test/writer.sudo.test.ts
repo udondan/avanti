@@ -19,6 +19,9 @@ vi.mock('fs', async () => {
   const actual = await vi.importActual<typeof import('fs')>('fs');
   return {
     ...actual,
+    openSync: vi.fn(actual.openSync),
+    closeSync: vi.fn(actual.closeSync),
+    chmodSync: vi.fn(actual.chmodSync),
     readFileSync: vi.fn(actual.readFileSync),
     unlinkSync: vi.fn(actual.unlinkSync),
   };
@@ -111,19 +114,28 @@ describe('sudoAuth', () => {
 });
 
 describe('sudoRead', () => {
+  const mockOpenSync = vi.mocked(fs.openSync);
+  const mockCloseSync = vi.mocked(fs.closeSync);
+  const mockChmodSync = vi.mocked(fs.chmodSync);
   const mockReadFileSync = vi.mocked(fs.readFileSync);
   const mockUnlinkSync = vi.mocked(fs.unlinkSync);
 
   beforeEach(() => {
+    mockOpenSync.mockReset();
+    mockCloseSync.mockReset();
+    mockChmodSync.mockReset();
     mockReadFileSync.mockReset();
     mockUnlinkSync.mockReset();
+    // Simulate successful temp-file creation by default.
+    mockOpenSync.mockReturnValue(3);
+    mockCloseSync.mockImplementation(() => {});
+    mockChmodSync.mockImplementation(() => {});
+    mockUnlinkSync.mockImplementation(() => {});
   });
 
   it('returns buffer on success', () => {
-    // cp and chown succeed; readFileSync returns the file content.
     mockSpawnSync.mockReturnValue(okResult());
     mockReadFileSync.mockReturnValue(Buffer.from('hello'));
-    mockUnlinkSync.mockImplementation(() => {});
     const result = sudoRead(true, '/etc/passwd');
     expect(result?.toString()).toBe('hello');
   });
@@ -136,14 +148,27 @@ describe('sudoRead', () => {
   it('uses cp with -u args for named user', () => {
     mockSpawnSync.mockReturnValue(okResult());
     mockReadFileSync.mockReturnValue(Buffer.from('data'));
-    mockUnlinkSync.mockImplementation(() => {});
     sudoRead('nobody', '/tmp/file');
-    // First spawnSync call must be the privileged cp with -u nobody.
+    // spawnSync call must be the privileged cp with -u nobody.
     expect(mockSpawnSync).toHaveBeenCalledWith(
       'sudo',
       expect.arrayContaining(['-u', 'nobody', 'cp', '--']),
       expect.any(Object),
     );
+  });
+
+  it('calls chmodSync for named-user sudo (not for root)', () => {
+    mockSpawnSync.mockReturnValue(okResult());
+    mockReadFileSync.mockReturnValue(Buffer.from('data'));
+    sudoRead('nobody', '/tmp/file');
+    expect(mockChmodSync).toHaveBeenCalledWith(expect.any(String), 0o622);
+  });
+
+  it('does not call chmodSync for root sudo', () => {
+    mockSpawnSync.mockReturnValue(okResult());
+    mockReadFileSync.mockReturnValue(Buffer.from('data'));
+    sudoRead(true, '/etc/passwd');
+    expect(mockChmodSync).not.toHaveBeenCalled();
   });
 });
 

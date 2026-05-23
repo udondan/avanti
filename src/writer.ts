@@ -53,37 +53,39 @@ export function sudoAtomicWrite(targets: SudoWriteTarget[]): void {
 export function sudoRead(sudo: true | string, filePath: string): Buffer | null {
   // Copy to a temp file then read with fs.readFileSync to avoid spawnSync's
   // maxBuffer cap — matches fs.readFileSync behaviour (no arbitrary size limit).
+  //
+  // Create the temp file as the CURRENT USER before the privileged cp. When cp
+  // writes into an already-existing file it preserves ownership, so tmpFile
+  // stays owned by us throughout — no chown or chmod needed after the copy,
+  // and fs.unlinkSync always succeeds (we own the file).
+  //
+  // Root sudo:       mode 0600 — root can write to any file regardless of mode.
+  // Named-user sudo: mode 0622 — owner rw, others-write (NOT others-read).
+  //                  The named user can overwrite but cannot read; only the
+  //                  owner (current process) reads. chmodSync is used instead of
+  //                  openSync's mode argument to bypass umask (which would strip
+  //                  the others-write bit and prevent the cp from succeeding).
   const absPath = path.resolve(filePath);
   const tmpFile = path.join(
     os.tmpdir(),
     `.avanti-sudoread-${crypto.randomBytes(8).toString('hex')}`,
   );
   try {
+    const fd = fs.openSync(tmpFile, 'w', 0o600);
+    fs.closeSync(fd);
+    if (sudo !== true) {
+      fs.chmodSync(tmpFile, 0o622);
+    }
+  } catch {
+    return null;
+  }
+  try {
     const cp = spawnSync(
       'sudo',
       [...sudoUserArgs(sudo), 'cp', '--', absPath, tmpFile],
-      {
-        stdio: 'inherit',
-      },
+      { stdio: 'inherit' },
     );
     if (cp.status !== 0 || cp.error) return null;
-    // Make the temp copy readable by the current process.
-    // Root sudo: chown to current UID using the already-authenticated root
-    // identity — avoids leaving the file world-readable even briefly.
-    // Named-user sudo: chmod o+r using the SAME authenticated identity so we
-    // never introduce an implicit root sudo call that was not pre-authenticated.
-    const uid = process.getuid?.();
-    if (uid !== undefined && sudo === true) {
-      spawnSync('sudo', ['chown', String(uid), '--', tmpFile], {
-        stdio: 'inherit',
-      });
-    } else {
-      spawnSync(
-        'sudo',
-        [...sudoUserArgs(sudo), 'chmod', 'o+r', '--', tmpFile],
-        { stdio: 'inherit' },
-      );
-    }
     return fs.readFileSync(tmpFile);
   } catch {
     return null;
@@ -91,11 +93,7 @@ export function sudoRead(sudo: true | string, filePath: string): Buffer | null {
     try {
       fs.unlinkSync(tmpFile);
     } catch {
-      try {
-        spawnSync('sudo', ['rm', '-f', '--', tmpFile], { stdio: 'ignore' });
-      } catch {
-        // best-effort cleanup
-      }
+      // best-effort — rarely fails since we own the file
     }
   }
 }
