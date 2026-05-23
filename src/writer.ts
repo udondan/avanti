@@ -59,7 +59,17 @@ export function sudoRead(sudo: true | string, filePath: string): Buffer | null {
     [...sudoUserArgs(sudo), 'cat', '--', absPath],
     { stdio: ['ignore', 'pipe', 'inherit'], maxBuffer: 100 * 1024 * 1024 },
   );
-  if (result.status !== 0 || result.error) return null;
+  if (result.error) {
+    // Distinguish buffer overflow (file too large to manage via sudo) from a
+    // normal read failure (e.g. file absent, permission denied by sudo policy).
+    if (result.error.message.includes('maxBuffer length exceeded')) {
+      throw new Error(
+        `${filePath} exceeds the 100 MiB sudo read limit — avanti is designed for config files, not large binaries`,
+      );
+    }
+    return null;
+  }
+  if (result.status !== 0) return null;
   return result.stdout;
 }
 
