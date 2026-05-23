@@ -1,5 +1,6 @@
 import * as crypto from 'crypto';
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 import { spawnSync } from 'child_process';
 
@@ -50,12 +51,46 @@ export function sudoAtomicWrite(targets: SudoWriteTarget[]): void {
 }
 
 export function sudoRead(sudo: true | string, filePath: string): Buffer | null {
-  const r = spawnSync('sudo', [...sudoUserArgs(sudo), 'cat', '--', filePath], {
-    stdio: ['ignore', 'pipe', 'inherit'],
-    maxBuffer: 100 * 1024 * 1024,
-  });
-  if (r.status !== 0 || r.error || !r.stdout) return null;
-  return r.stdout;
+  // Copy to a temp file then read with fs.readFileSync to avoid spawnSync's
+  // maxBuffer cap — matches fs.readFileSync behaviour (no arbitrary size limit).
+  const absPath = path.resolve(filePath);
+  const tmpFile = path.join(
+    os.tmpdir(),
+    `.avanti-sudoread-${crypto.randomBytes(8).toString('hex')}`,
+  );
+  try {
+    const cp = spawnSync(
+      'sudo',
+      [...sudoUserArgs(sudo), 'cp', '--', absPath, tmpFile],
+      {
+        stdio: 'inherit',
+      },
+    );
+    if (cp.status !== 0 || cp.error) return null;
+    // chown to current process UID so fs.readFileSync can read it.
+    const uid = process.getuid?.();
+    if (uid !== undefined) {
+      spawnSync('sudo', ['chown', String(uid), '--', tmpFile], {
+        stdio: 'inherit',
+      });
+    } else {
+      // Windows fallback (sudo is unsupported there but keep the path safe).
+      spawnSync('sudo', ['chmod', 'a+r', '--', tmpFile], { stdio: 'inherit' });
+    }
+    return fs.readFileSync(tmpFile);
+  } catch {
+    return null;
+  } finally {
+    try {
+      fs.unlinkSync(tmpFile);
+    } catch {
+      try {
+        spawnSync('sudo', ['rm', '-f', '--', tmpFile], { stdio: 'ignore' });
+      } catch {
+        // best-effort cleanup
+      }
+    }
+  }
 }
 
 export function sudoDelete(p: string, sudo: true | string): void {
@@ -415,6 +450,27 @@ function sudoWriteInPlace(t: SudoWriteTarget): void {
       }
     }
 
+    const isNewFile = existsCheck.status !== 0;
+    // eslint-disable-next-line @typescript-eslint/no-deprecated
+    const mask = process.umask();
+    const defaultMode = (0o666 & ~mask).toString(8).padStart(4, '0');
+    const effectiveMode = t.mode ?? (isNewFile ? defaultMode : undefined);
+
+    if (isNewFile && effectiveMode !== undefined) {
+      // Pre-create the file with the correct mode before tee writes to it.
+      // Without this, tee creates the file using the sudo user's default umask
+      // (e.g. 0644) and the content is briefly accessible before chmod runs.
+      // install(1) creates the destination with the given mode atomically.
+      // resolvedTarget is always absolute so no '--' needed after '-m <mode>'.
+      sudoRun(sudo, [
+        'install',
+        '-m',
+        effectiveMode,
+        '/dev/null',
+        resolvedTarget,
+      ]);
+    }
+
     // No '--' before resolvedTarget: BSD tee(1) on macOS does not support '--',
     // and the path is always absolute (path.resolve) so it cannot start with '-'.
     const tee = spawnSync(
@@ -429,15 +485,11 @@ function sudoWriteInPlace(t: SudoWriteTarget): void {
       throw new Error(`sudo write failed for ${t.targetPath}: ${detail}`);
     }
 
-    // Apply mode: explicit config value wins; for new files with no explicit mode,
-    // derive from process umask so sudo and non-sudo writes produce the same
-    // default permissions. Existing files keep their current mode unchanged.
-    // eslint-disable-next-line @typescript-eslint/no-deprecated
-    const mask = process.umask();
-    const defaultMode = (0o666 & ~mask).toString(8).padStart(4, '0');
-    const isNewFile = existsCheck.status !== 0;
-    const effectiveMode = t.mode ?? (isNewFile ? defaultMode : undefined);
-    if (effectiveMode !== undefined) {
+    // Apply mode: explicit config value wins; for existing files with no
+    // explicit mode, keep their current mode unchanged. New files were
+    // pre-created above with effectiveMode, so chmod only runs for existing
+    // files with an explicit mode change.
+    if (!isNewFile && effectiveMode !== undefined) {
       sudoRun(sudo, ['chmod', '--', effectiveMode, resolvedTarget]);
     }
   } finally {

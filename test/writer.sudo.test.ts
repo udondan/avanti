@@ -1,3 +1,4 @@
+import * as fs from 'fs';
 import * as path from 'path';
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import {
@@ -13,6 +14,15 @@ import {
 vi.mock('child_process', () => ({
   spawnSync: vi.fn(),
 }));
+
+vi.mock('fs', async () => {
+  const actual = await vi.importActual<typeof import('fs')>('fs');
+  return {
+    ...actual,
+    readFileSync: vi.fn(actual.readFileSync),
+    unlinkSync: vi.fn(actual.unlinkSync),
+  };
+});
 
 import { spawnSync, type SpawnSyncReturns } from 'child_process';
 import type { MockInstance } from 'vitest';
@@ -101,23 +111,37 @@ describe('sudoAuth', () => {
 });
 
 describe('sudoRead', () => {
+  const mockReadFileSync = vi.mocked(fs.readFileSync);
+  const mockUnlinkSync = vi.mocked(fs.unlinkSync);
+
+  beforeEach(() => {
+    mockReadFileSync.mockReset();
+    mockUnlinkSync.mockReset();
+  });
+
   it('returns buffer on success', () => {
-    mockSpawnSync.mockReturnValue(okResult('hello'));
+    // cp and chown succeed; readFileSync returns the file content.
+    mockSpawnSync.mockReturnValue(okResult());
+    mockReadFileSync.mockReturnValue(Buffer.from('hello'));
+    mockUnlinkSync.mockImplementation(() => {});
     const result = sudoRead(true, '/etc/passwd');
     expect(result?.toString()).toBe('hello');
   });
 
-  it('returns null on failure', () => {
+  it('returns null when cp fails', () => {
     mockSpawnSync.mockReturnValue(failResult());
     expect(sudoRead(true, '/etc/passwd')).toBeNull();
   });
 
-  it('uses -u args for named user', () => {
-    mockSpawnSync.mockReturnValue(okResult('data'));
+  it('uses cp with -u args for named user', () => {
+    mockSpawnSync.mockReturnValue(okResult());
+    mockReadFileSync.mockReturnValue(Buffer.from('data'));
+    mockUnlinkSync.mockImplementation(() => {});
     sudoRead('nobody', '/tmp/file');
+    // First spawnSync call must be the privileged cp with -u nobody.
     expect(mockSpawnSync).toHaveBeenCalledWith(
       'sudo',
-      ['-u', 'nobody', 'cat', '--', '/tmp/file'],
+      expect.arrayContaining(['-u', 'nobody', 'cp', '--']),
       expect.any(Object),
     );
   });
