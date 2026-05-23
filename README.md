@@ -1339,7 +1339,11 @@ avanti calls `sudo -v` once per distinct identity to prime the OS credential cac
 
 **POSIX only** — `pull` errors on Windows when any file has `sudo` set. Use an `if: { os: [linux, mac] }` condition to gate `sudo` entries in cross-platform configs.
 
-**Limitations** — `sudo` is honored by `pull` only. The `revert` and `reset` commands use normal file operations and will fail on root-owned paths.
+**Limitations:**
+
+- `sudo` is honored by `pull` only. The `revert` and `reset` commands use normal file operations and will fail on root-owned paths.
+- `strategy: insert` cannot be combined with `sudo` — insert mode reads the existing file without privilege escalation, which silently treats an unreadable privileged file as absent. avanti rejects this combination at config parse time.
+- `backup` paths for `sudo` entries must be accessible without elevated privileges (the backup directory must be readable and searchable by the current user). avanti resolves and validates the backup path before escalating, so a root-owned backup directory will cause an error even when the target file itself is written via sudo.
 
 ### Variables
 
