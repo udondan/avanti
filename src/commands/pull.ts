@@ -744,6 +744,9 @@ export function pullCommand(): Command {
             );
           }
         }
+        if (process.platform === 'win32' && writeTargets.some((t) => t.sudo)) {
+          throw new Error('sudo is not supported on Windows');
+        }
         // Persist sudo identity changes even when content/mode is unchanged.
         if (pullId) {
           for (let i = 0; i < writeTargets.length; i++) {
@@ -755,9 +758,6 @@ export function pullCommand(): Command {
               history.updateFileSudo(writeTargets[i].targetPath, newSudo);
             }
           }
-        }
-        if (process.platform === 'win32' && writeTargets.some((t) => t.sudo)) {
-          throw new Error('sudo is not supported on Windows');
         }
         console.log('Nothing to do.');
         process.exit(0);
