@@ -1327,7 +1327,7 @@ files:
     sudo: 'www-data'
 ```
 
-Targets outside the working directory require either an explicit `target:` field (as shown above) or running avanti with `--working-dir /`:
+Absolute target paths (e.g. `/etc/ssh/sshd_config`) require `--working-dir /`. Use the `target:` field to specify where the file should be written:
 
 ```sh
 avanti pull --working-dir /

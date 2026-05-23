@@ -242,16 +242,126 @@ describe('sudoAtomicWrite — mv path', () => {
     }
   });
 
-  it('replaces a symlink-to-dir by removing it first before mv', () => {
-    const calls: string[][] = [];
-    const resolvedLink = path.resolve('/etc/link');
+  it.skipIf(process.platform === 'linux')(
+    'on macOS/BSD, removes symlink-to-dir before mv',
+    () => {
+      const calls: string[][] = [];
+      const resolvedLink = path.resolve('/etc/link');
+      mockSpawnSync.mockImplementation(
+        (_cmd: unknown, args: readonly string[]) => {
+          calls.push([...args]);
+          if (args.includes('mktemp')) return okResult('/etc/.avanti-tmp');
+          if (args.includes('stat')) return okResult('');
+          // -L: is a symlink
+          if (args.includes('-L') && args.some((a) => a === resolvedLink))
+            return okResult();
+          // -d: symlink target is a directory
+          if (args.includes('-d') && args.some((a) => a === resolvedLink))
+            return okResult();
+          return okResult();
+        },
+      );
+
+      const target: SudoWriteTarget = {
+        targetPath: '/etc/link',
+        content: Buffer.from('data'),
+        sudo: true,
+      };
+      sudoAtomicWrite([target]);
+      const flat = calls.map((a) => a.join(' '));
+      const rmIdx = flat.findIndex(
+        (c) => c.includes('rm') && c.includes(resolvedLink),
+      );
+      const mvIdx = flat.findIndex(
+        (c) => c.includes('mv') && c.includes(resolvedLink),
+      );
+      expect(rmIdx).toBeGreaterThanOrEqual(0);
+      expect(mvIdx).toBeGreaterThan(rmIdx);
+    },
+  );
+
+  it.skipIf(process.platform !== 'linux')(
+    'on Linux, symlinks are replaced atomically without pre-rm (mv -T)',
+    () => {
+      const calls: string[][] = [];
+      const resolvedLink = path.resolve('/etc/link');
+      mockSpawnSync.mockImplementation(
+        (_cmd: unknown, args: readonly string[]) => {
+          calls.push([...args]);
+          if (args.includes('mktemp')) return okResult('/etc/.avanti-tmp');
+          if (args.includes('stat')) return okResult('');
+          // -L: is a symlink
+          if (args.includes('-L') && args.some((a) => a === resolvedLink))
+            return okResult();
+          return okResult();
+        },
+      );
+
+      const target: SudoWriteTarget = {
+        targetPath: '/etc/link',
+        content: Buffer.from('data'),
+        sudo: true,
+      };
+      sudoAtomicWrite([target]);
+      const flat = calls.map((a) => a.join(' '));
+      // No pre-rm on Linux: mv -T replaces the symlink atomically
+      expect(
+        flat.some((c) => c.includes('rm') && c.includes(resolvedLink)),
+      ).toBe(false);
+      const mvIdx = flat.findIndex(
+        (c) => c.includes('mv') && c.includes('-T') && c.includes(resolvedLink),
+      );
+      expect(mvIdx).toBeGreaterThanOrEqual(0);
+    },
+  );
+});
+
+describe('sudoAtomicWrite writeInPlace', () => {
+  const isWindows = process.platform === 'win32';
+
+  beforeEach(() => {
+    mockSpawnSync.mockReset();
+  });
+
+  afterEach(() => {
+    mockSpawnSync.mockReset();
+  });
+
+  it.skipIf(isWindows)(
+    'writeInPlace: calls sudo tee with resolved path',
+    () => {
+      const calls: string[][] = [];
+      const resolvedTarget = path.resolve('/etc/test.conf');
+      mockSpawnSync.mockImplementation(
+        (_cmd: unknown, args: readonly string[]) => {
+          calls.push([...args]);
+          // -L: not a symlink
+          if (args.includes('-L')) return failResult();
+          // -e: file does not exist (new file)
+          if (args.includes('-e')) return failResult();
+          return okResult();
+        },
+      );
+
+      const target: SudoWriteTarget = {
+        targetPath: '/etc/test.conf',
+        content: Buffer.from('hello'),
+        sudo: true,
+        writeInPlace: true,
+      };
+      sudoAtomicWrite([target]);
+      const flat = calls.map((a) => a.join(' '));
+      expect(
+        flat.some((c) => c.includes('tee') && c.includes(resolvedTarget)),
+      ).toBe(true);
+    },
+  );
+
+  it.skipIf(isWindows)('writeInPlace: rejects symlinks', () => {
     mockSpawnSync.mockImplementation(
       (_cmd: unknown, args: readonly string[]) => {
-        calls.push([...args]);
-        if (args.includes('mktemp')) return okResult('/etc/.avanti-tmp');
-        if (args.includes('stat')) return okResult('');
-        if (args.includes('-L') && args.some((a) => a === resolvedLink))
-          return okResult();
+        // -L: is a symlink
+        if (args.includes('-L')) return okResult();
         return okResult();
       },
     );
@@ -260,16 +370,34 @@ describe('sudoAtomicWrite — mv path', () => {
       targetPath: '/etc/link',
       content: Buffer.from('data'),
       sudo: true,
+      writeInPlace: true,
     };
-    sudoAtomicWrite([target]);
-    const flat = calls.map((a) => a.join(' '));
-    const rmIdx = flat.findIndex(
-      (c) => c.includes('rm') && c.includes(resolvedLink),
+    expect(() => sudoAtomicWrite([target])).toThrow(
+      'is a symlink; refusing to follow',
     );
-    const mvIdx = flat.findIndex(
-      (c) => c.includes('mv') && c.includes(resolvedLink),
+  });
+
+  it.skipIf(isWindows)('writeInPlace: rejects non-regular files', () => {
+    mockSpawnSync.mockImplementation(
+      (_cmd: unknown, args: readonly string[]) => {
+        // -L: not a symlink
+        if (args.includes('-L')) return failResult();
+        // -e: file exists
+        if (args.includes('-e')) return okResult();
+        // -f: not a regular file (e.g. FIFO)
+        if (args.includes('-f')) return failResult();
+        return okResult();
+      },
     );
-    expect(rmIdx).toBeGreaterThanOrEqual(0);
-    expect(mvIdx).toBeGreaterThan(rmIdx);
+
+    const target: SudoWriteTarget = {
+      targetPath: '/etc/fifo',
+      content: Buffer.from('data'),
+      sudo: true,
+      writeInPlace: true,
+    };
+    expect(() => sudoAtomicWrite([target])).toThrow(
+      'is not a regular file; refusing to write',
+    );
   });
 });

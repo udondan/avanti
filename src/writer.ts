@@ -253,16 +253,27 @@ function sudoWriteMv(t: SudoWriteTarget): void {
     }
 
     const resolvedTarget = path.resolve(t.targetPath);
-    // If the destination is a symlink (to anything, including a directory),
-    // remove it first so that mv replaces the symlink entry rather than moving
-    // tmpFile inside the symlink's target directory — matching rename(2) semantics
-    // used by the non-sudo atomicWrite path.
     const destIsSymlink =
       spawnSync('sudo', [...sudoUserArgs(sudo), 'test', '-L', resolvedTarget], {
         stdio: 'ignore',
       }).status === 0;
     if (destIsSymlink) {
-      sudoRun(sudo, ['rm', '-f', '--', resolvedTarget]);
+      // Linux: sudoMv uses mv -T which atomically replaces any path including
+      // symlinks — rename(2) is used directly, no pre-rm needed.
+      // macOS/BSD: mv follows symlinks-to-directories and would move tmpFile
+      // inside the symlink target instead of replacing the symlink. Pre-rm
+      // only that case; symlinks-to-files are replaced atomically by rename(2).
+      if (process.platform !== 'linux') {
+        const destSymlinkIsDir =
+          spawnSync(
+            'sudo',
+            [...sudoUserArgs(sudo), 'test', '-d', resolvedTarget],
+            { stdio: 'ignore' },
+          ).status === 0;
+        if (destSymlinkIsDir) {
+          sudoRun(sudo, ['rm', '-f', '--', resolvedTarget]);
+        }
+      }
     } else {
       // Only throw for a real directory (not through a symlink).
       const destIsDir =
