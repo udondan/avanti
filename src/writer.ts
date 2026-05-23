@@ -108,6 +108,25 @@ export function sudoRun(sudo: true | string, args: string[]): void {
   }
 }
 
+// Performs a privileged rename of src to dst. On Linux, GNU mv -T is used so
+// mv refuses to move src *inside* dst when dst is a directory — preventing a
+// TOCTOU race where dst is swapped for a directory after the precheck. BSD mv
+// (macOS) does not support -T, so the flag is omitted on non-Linux platforms.
+function sudoMv(sudo: true | string, src: string, dst: string): void {
+  const atomicFlag = process.platform === 'linux' ? ['-T'] : [];
+  const r = spawnSync(
+    'sudo',
+    [...sudoUserArgs(sudo), 'mv', ...atomicFlag, '--', src, dst],
+    { stdio: 'inherit' },
+  );
+  if (r.status !== 0 || r.error) {
+    const detail = r.error
+      ? r.error.message
+      : `exit code ${r.status ?? 'unknown'}`;
+    throw new Error(`sudo mv failed for ${dst}: ${detail}`);
+  }
+}
+
 // Returns the existing file's permission bits as an octal string via sudo stat,
 // trying GNU stat (-c %a) then BSD/macOS stat (-f %Lp). Returns undefined when
 // the file does not exist or the mode cannot be determined.
@@ -228,7 +247,7 @@ function sudoWriteMv(t: SudoWriteTarget): void {
         if (backupIsDir) {
           throw new Error(`backup path is a directory: ${t.backupPath}`);
         }
-        sudoRun(sudo, ['mv', '--', backupTmp, t.backupPath]);
+        sudoMv(sudo, backupTmp, resolvedBackup);
         backupTmp = undefined; // renamed into place — no cleanup needed
       }
     }
@@ -256,7 +275,7 @@ function sudoWriteMv(t: SudoWriteTarget): void {
         throw new Error(`target path is a directory: ${t.targetPath}`);
       }
     }
-    sudoRun(sudo, ['mv', '--', tmpFile, resolvedTarget]);
+    sudoMv(sudo, tmpFile, resolvedTarget);
 
     // Apply mode: explicit config value wins; existing dest mode is used as fallback
     // for updates so sudo mv doesn't silently change permissions. For new files with
@@ -349,7 +368,7 @@ function sudoWriteInPlace(t: SudoWriteTarget): void {
         if (backupIsDir) {
           throw new Error(`backup path is a directory: ${t.backupPath}`);
         }
-        sudoRun(sudo, ['mv', '--', backupTmp, t.backupPath]);
+        sudoMv(sudo, backupTmp, resolvedBackup);
         backupTmp = undefined;
       }
     }

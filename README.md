@@ -1333,7 +1333,7 @@ Targets outside the working directory require either an explicit `target:` field
 avanti pull --working-dir /
 ```
 
-avanti calls `sudo -v` once per distinct identity at the start of the write phase to prime the OS credential cache, so the user is prompted for their password once per distinct sudo identity per pull session, regardless of how many files share that identity.
+avanti calls `sudo -v` once per distinct identity to prime the OS credential cache, so the user is prompted for their password at most once per distinct sudo identity per pull session. Authentication happens as early as needed: if any sudo target is unreadable by the current user (e.g. a root-owned file), avanti authenticates before reading that file to compare it for the diff — so a password prompt may appear before the diff is displayed or the user is asked to confirm. For files that are already readable, authentication is deferred until just before the write phase.
 
 **Stale-file cleanup** — when a `sudo` entry is removed from the config, avanti uses the stored sudo identity to restore or delete the file during the next pull.
 
