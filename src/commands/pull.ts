@@ -1120,6 +1120,10 @@ export function pullCommand(): Command {
       let postWriteError: string | null = null;
       const effectivelyDeleted = new Set<string>();
       const effectivelyRestored = new Set<string>();
+      // Tracks all stale paths fully resolved this pull — including no-ops
+      // (file already gone, or already matches v0). Used to prune old refs
+      // from history so stale cleanup does not repeat on subsequent pulls.
+      const effectivelyCleaned = new Set<string>();
       try {
         // changedTargets and sudoValues already computed above; auth already done.
 
@@ -1143,15 +1147,33 @@ export function pullCommand(): Command {
         // failure so if we reach here all restores were written successfully).
         for (const t of activeStaleRestore) {
           effectivelyRestored.add(t.targetPath);
+          effectivelyCleaned.add(t.targetPath);
+        }
+        // No-op stale restores (file already matches v0) are also cleaned —
+        // mark them so their refs are removed from history and the cleanup
+        // does not repeat on subsequent pulls.
+        const activeStaleRestorePaths = new Set(
+          activeStaleRestore.map((t) => t.targetPath),
+        );
+        for (const t of staleToRestore) {
+          if (!activeStaleRestorePaths.has(t.targetPath)) {
+            effectivelyCleaned.add(t.targetPath);
+          }
         }
         // Deletions are deferred until both write batches succeed so that
         // stale files are not removed if a later write batch fails.
         for (const p of regularDelete) {
           const idx = staleDeleteDiffIndex.get(p);
-          if (idx === undefined || !staleDiffs[idx].hasChanges) continue;
+          if (idx === undefined) continue;
+          if (!staleDiffs[idx].hasChanges) {
+            // File is already gone — no-op, but still clean up its history ref.
+            effectivelyCleaned.add(p);
+            continue;
+          }
           try {
             fs.rmSync(p, { force: true });
             effectivelyDeleted.add(p);
+            effectivelyCleaned.add(p);
           } catch (err) {
             console.warn(
               `Warning: could not delete ${p}: ${err instanceof Error ? err.message : String(err)}`,
@@ -1160,10 +1182,13 @@ export function pullCommand(): Command {
         }
         for (const [p, sv] of staleDeleteSudo) {
           const idx = staleDeleteDiffIndex.get(p);
-          if (idx !== undefined && staleDiffs[idx].hasChanges) {
-            if (sudoDelete(p, sv)) {
-              effectivelyDeleted.add(p);
-            }
+          if (idx === undefined) continue;
+          if (!staleDiffs[idx].hasChanges) {
+            // File is already gone — no-op, but still clean up its history ref.
+            effectivelyCleaned.add(p);
+          } else if (sudoDelete(p, sv)) {
+            effectivelyDeleted.add(p);
+            effectivelyCleaned.add(p);
           }
         }
 
@@ -1294,21 +1319,14 @@ export function pullCommand(): Command {
       // attempt the same delete/restore again on every run.
       if (
         pullId &&
-        (stagedFileRefs.length > 0 ||
-          effectivelyDeleted.size > 0 ||
-          effectivelyRestored.size > 0)
+        (stagedFileRefs.length > 0 || effectivelyCleaned.size > 0)
       ) {
         try {
           let refsToRecord = stagedFileRefs;
-          if (
-            (effectivelyDeleted.size > 0 || effectivelyRestored.size > 0) &&
-            historyAvailable
-          ) {
+          if (effectivelyCleaned.size > 0 && historyAvailable) {
             const lastFiles = history.getLastPullFiles();
             const survivingRefs = lastFiles.filter(
-              (ref) =>
-                !effectivelyDeleted.has(ref.absolutePath) &&
-                !effectivelyRestored.has(ref.absolutePath),
+              (ref) => !effectivelyCleaned.has(ref.absolutePath),
             );
             const stagedPaths = new Set(
               stagedFileRefs.map((r) => r.absolutePath),
