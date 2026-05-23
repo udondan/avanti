@@ -1337,7 +1337,7 @@ avanti calls `sudo -v` once per distinct identity to prime the OS credential cac
 
 **Stale-file cleanup** — when a `sudo` entry is removed from the config, avanti uses the stored sudo identity to restore or delete the file during the next pull.
 
-**POSIX only** — `pull` errors on Windows when any file has `sudo` set. Use an `if: os: [linux, mac]` condition to gate `sudo` entries in cross-platform configs.
+**POSIX only** — `pull` errors on Windows when any file has `sudo` set. Use an `if: { os: [linux, mac] }` condition to gate `sudo` entries in cross-platform configs.
 
 **Limitations** — `sudo` is honored by `pull` only. The `revert` and `reset` commands use normal file operations and will fail on root-owned paths.
 

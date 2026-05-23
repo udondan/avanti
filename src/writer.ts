@@ -404,11 +404,11 @@ function sudoWriteInPlace(t: SudoWriteTarget): void {
       }
     }
 
-    // No '--' before t.targetPath: BSD tee(1) on macOS does not support '--',
-    // and the path is always absolute so it cannot start with '-'.
+    // No '--' before resolvedTarget: BSD tee(1) on macOS does not support '--',
+    // and the path is always absolute (path.resolve) so it cannot start with '-'.
     const tee = spawnSync(
       'sudo',
-      [...sudoUserArgs(sudo), 'tee', t.targetPath],
+      [...sudoUserArgs(sudo), 'tee', resolvedTarget],
       { input: t.content, stdio: ['pipe', 'ignore', 'inherit'] },
     );
     if (tee.status !== 0 || tee.error) {
