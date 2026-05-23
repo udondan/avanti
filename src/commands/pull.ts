@@ -812,6 +812,10 @@ export function pullCommand(): Command {
               writeTargets[i].content,
               modeChange,
             );
+            // Clear backupPath: it was set assuming the file existed (conservative
+            // lstatFailed default). Since the file is actually new, there is
+            // nothing to back up and the backup should not be created.
+            writeTargets[i] = { ...writeTargets[i], backupPath: undefined };
           } else {
             allDiffs[i] = { ...allDiffs[i], isNew, modeChange };
           }

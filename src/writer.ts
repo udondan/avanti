@@ -134,6 +134,48 @@ function sudoMv(sudo: true | string, src: string, dst: string): void {
   }
 }
 
+// Returns the UID of the file/directory owner via sudo stat, trying GNU stat
+// (-c %u) then BSD/macOS stat (-f %u). Returns undefined when the path does
+// not exist or the UID cannot be determined.
+function getSudoOwnerUid(
+  sudo: true | string,
+  targetPath: string,
+): number | undefined {
+  const absPath = path.resolve(targetPath);
+  const gnu = spawnSync(
+    'sudo',
+    [...sudoUserArgs(sudo), 'stat', '-L', '-c', '%u', '--', absPath],
+    { stdio: ['ignore', 'pipe', 'ignore'] },
+  );
+  if (gnu.status === 0) {
+    const uid = parseInt(gnu.stdout.toString().trim(), 10);
+    if (!isNaN(uid)) return uid;
+  }
+  const bsd = spawnSync(
+    'sudo',
+    [...sudoUserArgs(sudo), 'stat', '-f', '%u', absPath],
+    { stdio: ['ignore', 'pipe', 'ignore'] },
+  );
+  if (bsd.status === 0) {
+    const uid = parseInt(bsd.stdout.toString().trim(), 10);
+    if (!isNaN(uid)) return uid;
+  }
+  return undefined;
+}
+
+// Returns the UID of the named OS user using `id -u`. Returns undefined when
+// the user does not exist or the UID cannot be determined.
+function getUserUid(username: string): number | undefined {
+  const r = spawnSync('id', ['-u', username], {
+    stdio: ['ignore', 'pipe', 'ignore'],
+  });
+  if (r.status === 0) {
+    const uid = parseInt(r.stdout.toString().trim(), 10);
+    if (!isNaN(uid)) return uid;
+  }
+  return undefined;
+}
+
 // Returns the existing file's permission bits as an octal string via sudo stat,
 // trying GNU stat (-c %a) then BSD/macOS stat (-f %Lp). Returns undefined when
 // the file does not exist or the mode cannot be determined.
@@ -327,21 +369,42 @@ function sudoWriteInPlace(t: SudoWriteTarget): void {
   const dir = path.dirname(t.targetPath);
   sudoRun(sudo, ['mkdir', '-p', '--', dir]);
 
-  // Reject writeInPlace when the parent directory is world-writable: the
-  // symlink/type preflight and the subsequent sudo tee are not atomic, so an
-  // attacker who can write to the directory could swap the path between the
-  // checks and the tee, redirecting the privileged write. System directories
-  // (e.g. /etc, /usr/local/etc) are owned by root with mode 0755, so the only
-  // writer is root — safe. Reject directories writable by non-owners (group-
-  // write bit 0o020 or others-write bit 0o002): any member of the directory's
-  // group or any local user could race between the test checks and sudo tee.
-  // Use mv-style writes (writeInPlace: false) for targets in such directories.
+  // Reject writeInPlace when the parent directory could be raced: the
+  // symlink/type preflight and the subsequent sudo tee are not atomic, so any
+  // user who can write to the directory could swap the path between the checks
+  // and the tee, redirecting the privileged write.
+  // Two independent checks:
+  // 1. Mode bits: reject group-write (0o020) or others-write (0o002).
+  //    Any group member or local user could race.
+  // 2. Owner UID: reject when the owner is not a trusted identity for this
+  //    sudo operation. The directory owner can always write to their own
+  //    directory (0o200 owner-write, present on nearly all directories) and
+  //    could race even when group/other bits are clear.
+  //    Trusted UIDs: root (0) for sudo:true; root and the named user's UID
+  //    for sudo:"username".
+  // Use mv-style writes (writeInPlace: false) for targets in untrusted dirs.
   const dirModeStr = getSudoFileMode(sudo, dir);
   if (dirModeStr) {
     const dirMode = parseInt(dirModeStr, 8);
     if (!isNaN(dirMode) && dirMode & 0o022) {
       throw new Error(
         `writeInPlace: parent directory ${dir} is group- or world-writable; ` +
+          `sudo writeInPlace cannot be used safely here due to TOCTOU risk. ` +
+          `Remove writeInPlace: true to use atomic mv-style writes instead.`,
+      );
+    }
+  }
+  const dirOwnerUid = getSudoOwnerUid(sudo, dir);
+  if (dirOwnerUid !== undefined) {
+    const trustedUids = new Set<number>([0]);
+    if (typeof sudo === 'string') {
+      const namedUid = getUserUid(sudo);
+      if (namedUid !== undefined) trustedUids.add(namedUid);
+    }
+    if (!trustedUids.has(dirOwnerUid)) {
+      throw new Error(
+        `writeInPlace: parent directory ${dir} is owned by UID ${dirOwnerUid}, ` +
+          `not a trusted identity for this sudo operation; ` +
           `sudo writeInPlace cannot be used safely here due to TOCTOU risk. ` +
           `Remove writeInPlace: true to use atomic mv-style writes instead.`,
       );
