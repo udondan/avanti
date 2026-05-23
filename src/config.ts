@@ -373,6 +373,14 @@ export function parseConfigContent(content: string): AvantiConfig {
       }
       fileEntry.strategy = e['strategy'];
     }
+    if (fileEntry.strategy === 'insert' && fileEntry.sudo) {
+      throw new Error(
+        `files["${target}"]: strategy "insert" cannot be combined with sudo — ` +
+          `insert mode reads the existing file without privilege escalation, ` +
+          `which silently treats an unreadable privileged file as absent. ` +
+          `Use a non-insert strategy, or manage the file without sudo.`,
+      );
+    }
 
     if (e['replace'] !== undefined) {
       if (!Array.isArray(e['replace'])) {
