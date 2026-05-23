@@ -250,6 +250,29 @@ function checkDirSafe(
   }
 }
 
+// Walks every ancestor of targetPath (from the filesystem root down to its
+// parent directory) and calls checkDirSafe on each. A single writable or
+// untrusted-owned ancestor anywhere in the path is sufficient for a race:
+// an attacker can swap that component to a symlink between the sudo preflight
+// checks and the sudo mktemp/tee/mv, redirecting the privileged write.
+function checkAncestorsSafe(
+  sudo: true | string,
+  targetPath: string,
+  trustedUids: Set<number>,
+  label: string,
+): void {
+  const ancestors: string[] = [];
+  let anc = path.resolve(targetPath);
+  while (true) {
+    anc = path.dirname(anc);
+    ancestors.unshift(anc);
+    if (anc === path.dirname(anc)) break; // reached filesystem root
+  }
+  for (const ancestor of ancestors) {
+    checkDirSafe(sudo, ancestor, trustedUids, `${label} ancestor`);
+  }
+}
+
 function sudoWriteMv(t: SudoWriteTarget): void {
   const sudo = t.sudo;
   const dir = path.dirname(t.targetPath);
@@ -267,14 +290,12 @@ function sudoWriteMv(t: SudoWriteTarget): void {
   // backup dir.
   const trustedUids = buildTrustedUids(sudo);
 
-  // Reject destination directories that are group-/world-writable or owned by
-  // an untrusted UID. mktemp creates the file exclusively (O_EXCL), but the
-  // path is then reopened by a separate sudo tee process. A user who can write
-  // in the directory (via mode bits) or who owns the directory (and therefore
-  // controls its entries regardless of mode) could rename the temp entry to a
-  // symlink in the window between mktemp and tee, redirecting the privileged
-  // write to an arbitrary location.
-  checkDirSafe(sudo, path.resolve(dir), trustedUids, 'destination');
+  // Reject any ancestor of the destination path that is group-/world-writable
+  // or owned by an untrusted UID. A single vulnerable ancestor is sufficient
+  // for a TOCTOU attack: an attacker who controls that directory can rename one
+  // of its children to a symlink between the sudo preflight checks and the
+  // subsequent sudo mktemp/tee/mv, redirecting the privileged write.
+  checkAncestorsSafe(sudo, t.targetPath, trustedUids, 'destination');
 
   // Use sudo mktemp for exclusive O_EXCL creation — prevents symlink/hardlink tricks
   // if the destination directory is writable by other users.
@@ -329,9 +350,9 @@ function sudoWriteMv(t: SudoWriteTarget): void {
       if (isFile) {
         const backupDir = path.dirname(t.backupPath);
         sudoRun(sudo, ['mkdir', '-p', '--', backupDir]);
-        // Reject backup directories that are group-/world-writable or owned by
-        // an untrusted UID — same race as for the main temp file above.
-        checkDirSafe(sudo, path.resolve(backupDir), trustedUids, 'backup');
+        // Reject any ancestor of the backup path that is group-/world-writable
+        // or owned by an untrusted UID — same race as for the main temp file.
+        checkAncestorsSafe(sudo, t.backupPath, trustedUids, 'backup');
         // Use sudo mktemp so the backup temp is created with O_EXCL under
         // the privileged identity, preventing a symlink race in the backup
         // directory. path.resolve(backupDir) guarantees an absolute template.
@@ -522,9 +543,9 @@ function sudoWriteInPlace(t: SudoWriteTarget): void {
       if (isFile) {
         const backupDir = path.dirname(t.backupPath);
         sudoRun(sudo, ['mkdir', '-p', '--', backupDir]);
-        // Reject backup directories that are group-/world-writable or owned by
-        // an untrusted UID — same race as for the main temp file above.
-        checkDirSafe(sudo, path.resolve(backupDir), trustedUids, 'backup');
+        // Reject any ancestor of the backup path that is group-/world-writable
+        // or owned by an untrusted UID — same race as for the main temp file.
+        checkAncestorsSafe(sudo, t.backupPath, trustedUids, 'backup');
         // Use sudo mktemp for O_EXCL creation — prevents symlink race in backupDir.
         const mktempBackup = spawnSync(
           'sudo',
