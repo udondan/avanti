@@ -917,6 +917,30 @@ export function pullCommand(): Command {
             }
           }
         }
+        // Prune no-op stale refs from the pull log. When all diffs are clean,
+        // every stale entry (delete or restore) was already resolved outside of
+        // avanti (file manually deleted, or content already matches v0). Without
+        // this, those refs remain in the last-pull log and can incorrectly flag
+        // a future file at the same path as stale.
+        if (
+          pullId &&
+          historyAvailable &&
+          (staleToDelete.length > 0 || staleToRestore.length > 0)
+        ) {
+          const noopStalePaths = new Set<string>([
+            ...staleToDelete,
+            ...staleToRestore.map((t) => t.targetPath),
+          ]);
+          const lastFiles = history.getLastPullFiles();
+          const survivingRefs = lastFiles.filter(
+            (ref) => !noopStalePaths.has(ref.absolutePath),
+          );
+          history.closePullSession(
+            pullId,
+            normalizeConfigKey(configPath),
+            survivingRefs,
+          );
+        }
         console.log('Nothing to do.');
         process.exit(0);
       }

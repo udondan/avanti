@@ -652,6 +652,19 @@ function sudoWriteInPlace(t: SudoWriteTarget): void {
       sudoRun(sudo, ['install', '-m', '0600', '/dev/null', resolvedTarget]);
     }
 
+    // For existing files, temporarily ensure owner-write so tee can open the
+    // file even when its current mode has no write bit (e.g. 0400/0444 set on
+    // a previous pull). When no explicit t.mode is given, capture the current
+    // mode first so it can be restored after tee; otherwise effectiveMode is
+    // applied below and the captured value is discarded.
+    let savedPreTeeMode: string | undefined;
+    if (!isNewFile) {
+      if (effectiveMode === undefined) {
+        savedPreTeeMode = getSudoFileMode(sudo, resolvedTarget);
+      }
+      sudoRun(sudo, ['chmod', 'u+w', '--', resolvedTarget]);
+    }
+
     // No '--' before resolvedTarget: BSD tee(1) on macOS does not support '--',
     // and the path is always absolute (path.resolve) so it cannot start with '-'.
     const tee = spawnSync(
@@ -666,11 +679,12 @@ function sudoWriteInPlace(t: SudoWriteTarget): void {
       throw new Error(`sudo write failed for ${t.targetPath}: ${detail}`);
     }
 
-    // Apply mode AFTER tee. Doing it before would break named-user writes
-    // when the requested mode removes the owner's write bit (e.g. 0400):
-    // chmod then tee would fail because tee can no longer open the file.
+    // Apply mode AFTER tee. effectiveMode wins; fall back to the saved original
+    // mode when no explicit mode is configured (restores what chmod u+w changed).
     if (effectiveMode !== undefined) {
       sudoRun(sudo, ['chmod', '--', effectiveMode, resolvedTarget]);
+    } else if (savedPreTeeMode !== undefined) {
+      sudoRun(sudo, ['chmod', '--', savedPreTeeMode, resolvedTarget]);
     }
   } finally {
     if (backupTmp) {
