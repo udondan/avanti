@@ -1,3 +1,4 @@
+import * as path from 'path';
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import {
   sudoAuth,
@@ -66,8 +67,10 @@ describe('sudoUserArgs', () => {
   });
 });
 
+const isWindows = process.platform === 'win32';
+
 describe('sudoAuth', () => {
-  it('calls sudo -v for root', () => {
+  it.skipIf(isWindows)('calls sudo -v for root', () => {
     mockSpawnSync.mockReturnValue(okResult());
     sudoAuth(true);
     expect(mockSpawnSync).toHaveBeenCalledWith(
@@ -77,7 +80,7 @@ describe('sudoAuth', () => {
     );
   });
 
-  it('calls sudo -u <name> -v for a named user', () => {
+  it.skipIf(isWindows)('calls sudo -u <name> -v for a named user', () => {
     mockSpawnSync.mockReturnValue(okResult());
     sudoAuth('nobody');
     expect(mockSpawnSync).toHaveBeenCalledWith(
@@ -89,7 +92,11 @@ describe('sudoAuth', () => {
 
   it('throws when sudo -v fails', () => {
     mockSpawnSync.mockReturnValue(failResult());
-    expect(() => sudoAuth()).toThrow('sudo authentication failed');
+    if (isWindows) {
+      expect(() => sudoAuth()).toThrow('sudo is not supported on Windows');
+    } else {
+      expect(() => sudoAuth()).toThrow('sudo authentication failed');
+    }
   });
 });
 
@@ -237,12 +244,13 @@ describe('sudoAtomicWrite — mv path', () => {
 
   it('replaces a symlink-to-dir by removing it first before mv', () => {
     const calls: string[][] = [];
+    const resolvedLink = path.resolve('/etc/link');
     mockSpawnSync.mockImplementation(
       (_cmd: unknown, args: readonly string[]) => {
         calls.push([...args]);
         if (args.includes('mktemp')) return okResult('/etc/.avanti-tmp');
         if (args.includes('stat')) return okResult('');
-        if (args.includes('-L') && args.some((a) => a.includes('/etc/link')))
+        if (args.includes('-L') && args.some((a) => a === resolvedLink))
           return okResult();
         return okResult();
       },
@@ -256,10 +264,10 @@ describe('sudoAtomicWrite — mv path', () => {
     sudoAtomicWrite([target]);
     const flat = calls.map((a) => a.join(' '));
     const rmIdx = flat.findIndex(
-      (c) => c.includes('rm') && c.includes('/etc/link'),
+      (c) => c.includes('rm') && c.includes(resolvedLink),
     );
     const mvIdx = flat.findIndex(
-      (c) => c.includes('mv') && c.includes('/etc/link'),
+      (c) => c.includes('mv') && c.includes(resolvedLink),
     );
     expect(rmIdx).toBeGreaterThanOrEqual(0);
     expect(mvIdx).toBeGreaterThan(rmIdx);
