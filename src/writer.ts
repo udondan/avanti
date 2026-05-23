@@ -52,6 +52,7 @@ export function sudoAtomicWrite(targets: SudoWriteTarget[]): void {
 export function sudoRead(sudo: true | string, filePath: string): Buffer | null {
   const r = spawnSync('sudo', [...sudoUserArgs(sudo), 'cat', '--', filePath], {
     stdio: ['ignore', 'pipe', 'inherit'],
+    maxBuffer: 100 * 1024 * 1024,
   });
   if (r.status !== 0 || r.error || !r.stdout) return null;
   return r.stdout;
