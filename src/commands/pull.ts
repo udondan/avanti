@@ -1103,7 +1103,7 @@ export function pullCommand(): Command {
       }
 
       let postWriteError: string | null = null;
-      let effectivelyDeleted = new Set<string>();
+      const effectivelyDeleted = new Set<string>();
       try {
         // changedTargets and sudoValues already computed above; auth already done.
 
@@ -1126,8 +1126,11 @@ export function pullCommand(): Command {
         // Deletions are deferred until both write batches succeed so that
         // stale files are not removed if a later write batch fails.
         for (const p of regularDelete) {
+          const idx = staleDeleteDiffIndex.get(p);
+          if (idx === undefined || !staleDiffs[idx].hasChanges) continue;
           try {
             fs.rmSync(p, { force: true });
+            effectivelyDeleted.add(p);
           } catch (err) {
             console.warn(
               `Warning: could not delete ${p}: ${err instanceof Error ? err.message : String(err)}`,
@@ -1137,7 +1140,9 @@ export function pullCommand(): Command {
         for (const [p, sv] of staleDeleteSudo) {
           const idx = staleDeleteDiffIndex.get(p);
           if (idx !== undefined && staleDiffs[idx].hasChanges) {
-            sudoDelete(p, sv);
+            if (sudoDelete(p, sv)) {
+              effectivelyDeleted.add(p);
+            }
           }
         }
 
@@ -1183,12 +1188,6 @@ export function pullCommand(): Command {
             }
           }
         }
-        effectivelyDeleted = new Set(
-          staleToDelete.filter((p) => {
-            const idx = staleDeleteDiffIndex.get(p);
-            return idx !== undefined && staleDiffs[idx].hasChanges;
-          }),
-        );
         const deletedCount = effectivelyDeleted.size;
         const written =
           changedTargets.length +
@@ -1285,8 +1284,24 @@ export function pullCommand(): Command {
             const stagedPaths = new Set(
               stagedFileRefs.map((r) => r.absolutePath),
             );
+            // Refresh the sudo field on surviving refs from the current
+            // writeTargets config. Without this, closePullSession writes the
+            // old sudo value back to meta.json, overwriting the correct value
+            // already set by the updateFileSudo call above.
+            const currentSudoByPath = new Map(
+              writeTargets.map((t) => [t.targetPath, t.sudo]),
+            );
+            const updatedSurvivingRefs = survivingRefs.map((ref) => {
+              if (currentSudoByPath.has(ref.absolutePath)) {
+                const s = currentSudoByPath.get(ref.absolutePath);
+                return { ...ref, sudo: s || undefined };
+              }
+              return ref;
+            });
             refsToRecord = [
-              ...survivingRefs.filter((r) => !stagedPaths.has(r.absolutePath)),
+              ...updatedSurvivingRefs.filter(
+                (r) => !stagedPaths.has(r.absolutePath),
+              ),
               ...stagedFileRefs,
             ];
           }

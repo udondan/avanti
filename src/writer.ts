@@ -98,7 +98,7 @@ export function sudoRead(sudo: true | string, filePath: string): Buffer | null {
   }
 }
 
-export function sudoDelete(p: string, sudo: true | string): void {
+export function sudoDelete(p: string, sudo: true | string): boolean {
   const r = spawnSync('sudo', [...sudoUserArgs(sudo), 'rm', '-f', '--', p], {
     stdio: 'inherit',
   });
@@ -107,7 +107,9 @@ export function sudoDelete(p: string, sudo: true | string): void {
       ? r.error.message
       : `exit code ${r.status ?? 'unknown'}`;
     console.warn(`Warning: could not delete ${p}: ${detail}`);
+    return false;
   }
+  return true;
 }
 
 export function sudoFileExists(
@@ -487,6 +489,10 @@ function sudoWriteInPlace(t: SudoWriteTarget): void {
         '/dev/null',
         resolvedTarget,
       ]);
+    } else if (!isNewFile && effectiveMode !== undefined) {
+      // Apply mode BEFORE tee so that new content is never briefly exposed with
+      // the old (more permissive) file permissions during the write window.
+      sudoRun(sudo, ['chmod', '--', effectiveMode, resolvedTarget]);
     }
 
     // No '--' before resolvedTarget: BSD tee(1) on macOS does not support '--',
@@ -501,14 +507,6 @@ function sudoWriteInPlace(t: SudoWriteTarget): void {
         ? tee.error.message
         : `exit code ${tee.status ?? 'unknown'}`;
       throw new Error(`sudo write failed for ${t.targetPath}: ${detail}`);
-    }
-
-    // Apply mode: explicit config value wins; for existing files with no
-    // explicit mode, keep their current mode unchanged. New files were
-    // pre-created above with effectiveMode, so chmod only runs for existing
-    // files with an explicit mode change.
-    if (!isNewFile && effectiveMode !== undefined) {
-      sudoRun(sudo, ['chmod', '--', effectiveMode, resolvedTarget]);
     }
   } finally {
     if (backupTmp) {
