@@ -7,6 +7,7 @@ import {
   sudoRead,
   sudoFileExists,
   sudoUserArgs,
+  sudoRun,
   SudoWriteTarget,
 } from '../src/writer';
 
@@ -402,5 +403,40 @@ describe('sudoAtomicWrite writeInPlace', () => {
     expect(() => sudoAtomicWrite([target])).toThrow(
       'is not a regular file; refusing to write',
     );
+  });
+});
+
+describe('sudoRun — mode-only chmod path', () => {
+  it.skipIf(isWindows)(
+    'calls sudo chmod with padded octal mode for root',
+    () => {
+      mockSpawnSync.mockReturnValue(okResult());
+      sudoRun(true, ['chmod', '--', '0644', '/etc/test.conf']);
+      expect(mockSpawnSync).toHaveBeenCalledWith(
+        'sudo',
+        ['chmod', '--', '0644', '/etc/test.conf'],
+        expect.any(Object),
+      );
+    },
+  );
+
+  it.skipIf(isWindows)(
+    'calls sudo -u <user> chmod for named-user mode-only change',
+    () => {
+      mockSpawnSync.mockReturnValue(okResult());
+      sudoRun('nobody', ['chmod', '--', '0644', '/etc/test.conf']);
+      expect(mockSpawnSync).toHaveBeenCalledWith(
+        'sudo',
+        ['-u', 'nobody', 'chmod', '--', '0644', '/etc/test.conf'],
+        expect.any(Object),
+      );
+    },
+  );
+
+  it('throws when sudo chmod fails', () => {
+    mockSpawnSync.mockReturnValue(failResult());
+    expect(() =>
+      sudoRun(true, ['chmod', '--', '0644', '/etc/test.conf']),
+    ).toThrow();
   });
 });

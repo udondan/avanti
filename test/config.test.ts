@@ -2869,4 +2869,17 @@ files:
     const config = parseConfigContent(fs.readFileSync(f, 'utf8'));
     expect(config.files['config.yaml'].sudo).toBe('www-data');
   });
+
+  it('throws when strategy: "insert" is combined with sudo', () => {
+    const f = writeTmp(`
+files:
+  config.yaml:
+    src: https://example.com/config.yaml
+    strategy: insert
+    sudo: true
+`);
+    expect(() => parseConfigContent(fs.readFileSync(f, 'utf8'))).toThrow(
+      'strategy "insert" cannot be combined with sudo',
+    );
+  });
 });
