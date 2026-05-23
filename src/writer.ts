@@ -337,6 +337,22 @@ function sudoWriteMv(t: SudoWriteTarget): void {
     }
     sudoMv(sudo, tmpFile, resolvedTarget);
 
+    // On non-Linux, mv lacks -T so it silently moves the temp file *inside* dst
+    // if dst was swapped for a directory between the precheck and the rename.
+    // Verify the target landed as a regular file to detect this race.
+    if (process.platform !== 'linux') {
+      const landed = spawnSync(
+        'sudo',
+        [...sudoUserArgs(sudo), 'test', '-f', resolvedTarget],
+        { stdio: 'ignore' },
+      );
+      if (landed.status !== 0) {
+        throw new Error(
+          `sudo mv: file did not land at expected path ${t.targetPath} (destination may have been swapped)`,
+        );
+      }
+    }
+
     // Apply mode: explicit config value wins; existing dest mode is used as fallback
     // for updates so sudo mv doesn't silently change permissions. For new files with
     // no explicit mode, derive from the process umask (0o666 & ~umask) so sudo and
@@ -507,22 +523,15 @@ function sudoWriteInPlace(t: SudoWriteTarget): void {
     const effectiveMode = t.mode ?? (isNewFile ? defaultMode : undefined);
 
     if (isNewFile && effectiveMode !== undefined) {
-      // Pre-create the file with the correct mode before tee writes to it.
-      // Without this, tee creates the file using the sudo user's default umask
-      // (e.g. 0644) and the content is briefly accessible before chmod runs.
-      // install(1) creates the destination with the given mode atomically.
-      // resolvedTarget is always absolute so no '--' needed after '-m <mode>'.
-      sudoRun(sudo, [
-        'install',
-        '-m',
-        effectiveMode,
-        '/dev/null',
-        resolvedTarget,
-      ]);
-    } else if (!isNewFile && effectiveMode !== undefined) {
-      // Apply mode BEFORE tee so that new content is never briefly exposed with
-      // the old (more permissive) file permissions during the write window.
-      sudoRun(sudo, ['chmod', '--', effectiveMode, resolvedTarget]);
+      // Pre-create with an owner-writable mode so tee can write regardless of
+      // the requested final mode. Using the final mode directly would break
+      // named-user (sudo:"user") writes when that mode removes the write bit
+      // (e.g. 0400 or 0444): install creates the file then the subsequent
+      // sudo -u user tee cannot open it for writing. Creating with 0600 keeps
+      // the window minimal (only owner can read/write during the tee phase)
+      // while ensuring tee always succeeds. The final mode is applied after.
+      // resolvedTarget is always absolute so no '--' needed after '-m'.
+      sudoRun(sudo, ['install', '-m', '0600', '/dev/null', resolvedTarget]);
     }
 
     // No '--' before resolvedTarget: BSD tee(1) on macOS does not support '--',
@@ -537,6 +546,13 @@ function sudoWriteInPlace(t: SudoWriteTarget): void {
         ? tee.error.message
         : `exit code ${tee.status ?? 'unknown'}`;
       throw new Error(`sudo write failed for ${t.targetPath}: ${detail}`);
+    }
+
+    // Apply mode AFTER tee. Doing it before would break named-user writes
+    // when the requested mode removes the owner's write bit (e.g. 0400):
+    // chmod then tee would fail because tee can no longer open the file.
+    if (effectiveMode !== undefined) {
+      sudoRun(sudo, ['chmod', '--', effectiveMode, resolvedTarget]);
     }
   } finally {
     if (backupTmp) {

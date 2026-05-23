@@ -780,9 +780,7 @@ export function pullCommand(): Command {
         try {
           sudoAuth(sv);
         } catch (err: unknown) {
-          console.error(
-            `sudo authentication failed: ${err instanceof Error ? err.message : String(err)}`,
-          );
+          console.error(err instanceof Error ? err.message : String(err));
           process.exit(2);
         }
         authenticatedSudoIds.add(sv);
@@ -1053,9 +1051,7 @@ export function pullCommand(): Command {
           try {
             sudoAuth(sv);
           } catch (err: unknown) {
-            console.error(
-              `sudo authentication failed: ${err instanceof Error ? err.message : String(err)}`,
-            );
+            console.error(err instanceof Error ? err.message : String(err));
             process.exit(2);
           }
           authenticatedSudoIds.add(sv);
@@ -1123,6 +1119,7 @@ export function pullCommand(): Command {
 
       let postWriteError: string | null = null;
       const effectivelyDeleted = new Set<string>();
+      const effectivelyRestored = new Set<string>();
       try {
         // changedTargets and sudoValues already computed above; auth already done.
 
@@ -1141,6 +1138,11 @@ export function pullCommand(): Command {
         atomicWrite([...regularChanged, ...regularRestore]);
         if (sudoChanged.length + sudoRestore.length > 0) {
           sudoAtomicWrite([...sudoChanged, ...sudoRestore]);
+        }
+        // Mark all active stale restores as completed (atomicWrite throws on
+        // failure so if we reach here all restores were written successfully).
+        for (const t of activeStaleRestore) {
+          effectivelyRestored.add(t.targetPath);
         }
         // Deletions are deferred until both write batches succeed so that
         // stale files are not removed if a later write batch fails.
@@ -1285,20 +1287,28 @@ export function pullCommand(): Command {
         }
       }
 
-      // Record to pulls.jsonl when files were staged OR stale files were deleted.
-      // For stale-delete-only runs, merge surviving refs from the last pull so
-      // the deleted paths are no longer listed — without this, subsequent pulls
-      // see the same deleted files in the last-pull log and try to re-delete them.
+      // Record to pulls.jsonl when files were staged OR stale files were
+      // deleted/restored. For stale-only runs, merge surviving refs from the
+      // last pull so the cleaned-up paths are no longer listed — without this,
+      // subsequent pulls see the same stale files in the last-pull log and
+      // attempt the same delete/restore again on every run.
       if (
         pullId &&
-        (stagedFileRefs.length > 0 || effectivelyDeleted.size > 0)
+        (stagedFileRefs.length > 0 ||
+          effectivelyDeleted.size > 0 ||
+          effectivelyRestored.size > 0)
       ) {
         try {
           let refsToRecord = stagedFileRefs;
-          if (effectivelyDeleted.size > 0 && historyAvailable) {
+          if (
+            (effectivelyDeleted.size > 0 || effectivelyRestored.size > 0) &&
+            historyAvailable
+          ) {
             const lastFiles = history.getLastPullFiles();
             const survivingRefs = lastFiles.filter(
-              (ref) => !effectivelyDeleted.has(ref.absolutePath),
+              (ref) =>
+                !effectivelyDeleted.has(ref.absolutePath) &&
+                !effectivelyRestored.has(ref.absolutePath),
             );
             const stagedPaths = new Set(
               stagedFileRefs.map((r) => r.absolutePath),
