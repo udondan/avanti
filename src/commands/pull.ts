@@ -928,19 +928,6 @@ export function pullCommand(): Command {
             );
           }
         }
-        // Even when content is unchanged, the sudo setting on a tracked file
-        // may have changed in the config. Persist the updated identity so that
-        // future stale cleanup uses the correct privileges.
-        if (historyAvailable) {
-          for (let i = 0; i < writeTargets.length; i++) {
-            if (history.getFileMeta(writeTargets[i].targetPath)) {
-              history.updateFileSudo(
-                writeTargets[i].targetPath,
-                writeTargets[i].sudo,
-              );
-            }
-          }
-        }
         // Prune no-op stale refs from the pull log. When all diffs are clean,
         // every stale entry (delete or restore) was already resolved outside of
         // avanti (file manually deleted, or content already matches v0). Without
@@ -959,24 +946,14 @@ export function pullCommand(): Command {
           const survivingRefs = lastFiles.filter(
             (ref) => !noopStalePaths.has(ref.absolutePath),
           );
-          // Refresh sudo on surviving refs: updateFileSudo() already wrote the
-          // new value to meta.json, but the refs here snapshot the old pull log.
-          // Re-hydrate from writeTargets so closePullSession records the correct
-          // identity for future stale cleanup.
-          const currentSudoByPath = new Map(
-            writeTargets.map((t) => [t.targetPath, t.sudo]),
-          );
-          const updatedSurvivingRefs = survivingRefs.map((ref) => {
-            if (currentSudoByPath.has(ref.absolutePath)) {
-              const s = currentSudoByPath.get(ref.absolutePath);
-              return { ...ref, sudo: s || undefined };
-            }
-            return ref;
-          });
+          // Preserve existing sudo on surviving refs — no file was written, so
+          // the on-disk ownership reflects the previous write identity, not the
+          // current config. Overwriting here would let stale cleanup run with
+          // the wrong privileges for a file it never re-wrote.
           history.closePullSession(
             pullId,
             normalizeConfigKey(configPath),
-            updatedSurvivingRefs,
+            survivingRefs,
           );
         }
         console.log('Nothing to do.');
@@ -1338,25 +1315,11 @@ export function pullCommand(): Command {
         process.exit(2);
       }
 
-      // For tracked files whose content is unchanged, meta.sudo is not updated
-      // by stageFileVersion (which only runs for changed files). Sync the sudo
-      // field here so stale cleanup uses the correct privileges if the sudo
-      // setting changes without a content change. Deferred until after all
-      // writes succeed so that a failed write does not corrupt the stored sudo
-      // identity for the last successful pull.
-      if (historyAvailable) {
-        for (let i = 0; i < writeTargets.length; i++) {
-          if (
-            !allDiffs[i].contentChanged &&
-            history.getFileMeta(writeTargets[i].targetPath)
-          ) {
-            history.updateFileSudo(
-              writeTargets[i].targetPath,
-              writeTargets[i].sudo,
-            );
-          }
-        }
-      }
+      // meta.sudo is updated by stageFileVersion for every file that was
+      // actually written. No extra sync needed here: updating meta.sudo for
+      // no-op targets would overwrite the privilege identity from the last
+      // real write with a config value that was never applied to the file,
+      // causing stale cleanup to run with the wrong credentials.
 
       // Save inserted fragments to history for future idempotency detection
       if (historyAvailable && insertedFragments.size > 0) {
@@ -1402,24 +1365,12 @@ export function pullCommand(): Command {
             const stagedPaths = new Set(
               stagedFileRefs.map((r) => r.absolutePath),
             );
-            // Refresh the sudo field on surviving refs from the current
-            // writeTargets config. Without this, closePullSession writes the
-            // old sudo value back to meta.json, overwriting the correct value
-            // already set by the updateFileSudo call above.
-            const currentSudoByPath = new Map(
-              writeTargets.map((t) => [t.targetPath, t.sudo]),
-            );
-            const updatedSurvivingRefs = survivingRefs.map((ref) => {
-              if (currentSudoByPath.has(ref.absolutePath)) {
-                const s = currentSudoByPath.get(ref.absolutePath);
-                return { ...ref, sudo: s || undefined };
-              }
-              return ref;
-            });
+            // Preserve existing sudo on surviving refs — these files were not
+            // rewritten this pull, so their on-disk ownership reflects the
+            // previous write identity. Replacing with the current config value
+            // would let stale cleanup run with the wrong privileges.
             refsToRecord = [
-              ...updatedSurvivingRefs.filter(
-                (r) => !stagedPaths.has(r.absolutePath),
-              ),
+              ...survivingRefs.filter((r) => !stagedPaths.has(r.absolutePath)),
               ...stagedFileRefs,
             ];
           }
