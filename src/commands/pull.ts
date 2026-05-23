@@ -1106,7 +1106,7 @@ export function pullCommand(): Command {
         // setting changes without a content change.
         for (let i = 0; i < writeTargets.length; i++) {
           if (
-            !allDiffs[i].hasChanges &&
+            !allDiffs[i].contentChanged &&
             history.getFileMeta(writeTargets[i].targetPath)
           ) {
             history.updateFileSudo(
@@ -1149,7 +1149,10 @@ export function pullCommand(): Command {
           }
         }
         for (const [p, sv] of staleDeleteSudo) {
-          sudoDelete(p, sv);
+          const idx = staleDeleteDiffIndex.get(p);
+          if (idx !== undefined && staleDiffs[idx].hasChanges) {
+            sudoDelete(p, sv);
+          }
         }
 
         // Mode-only changes: apply chmod directly (POSIX only — mode bits are
@@ -1194,10 +1197,14 @@ export function pullCommand(): Command {
             }
           }
         }
+        const deletedCount = staleToDelete.filter((p) => {
+          const idx = staleDeleteDiffIndex.get(p);
+          return idx !== undefined && staleDiffs[idx].hasChanges;
+        }).length;
         const written =
           changedTargets.length +
           activeStaleRestore.length +
-          staleToDelete.length +
+          deletedCount +
           modeOnlyCount;
         console.log(`Wrote ${written} file(s).`);
         for (const ctx of fileHookContexts) {

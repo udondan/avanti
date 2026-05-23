@@ -145,7 +145,7 @@ export class HistoryManager {
       meta = JSON.parse(fs.readFileSync(metaPath, 'utf8')) as FileHistoryMeta;
     } else {
       isFirstSeen = true;
-      const existedBeforeAvanti = !isNew;
+      let existedBeforeAvanti = !isNew;
       if (existedBeforeAvanti) {
         try {
           const originalContent = fs.readFileSync(targetPath);
@@ -155,13 +155,18 @@ export class HistoryManager {
           if (code !== 'EACCES' && code !== 'EPERM' && code !== 'ENOENT') {
             throw err;
           }
-          // ENOENT: dangling symlink (lstatSync saw it, readFileSync followed
-          // it to a missing target). Treat like unreadable — v0 not captured.
           if (v0Override !== undefined) {
             fs.writeFileSync(path.join(fileDir, 'v0'), v0Override);
+          } else if (code === 'ENOENT') {
+            // Dangling symlink: lstatSync saw the symlink but readFileSync
+            // followed it to a missing target. No usable original content
+            // existed, so don't claim the file predated avanti — stale cleanup
+            // will delete the avanti-written file rather than warn-and-leave.
+            existedBeforeAvanti = false;
           }
-          // else: file exists but is unreadable and no sudo fallback available;
-          // revert-to-original will be unavailable for this file.
+          // EACCES/EPERM without override: file exists but is unreadable. Keep
+          // existedBeforeAvanti=true so stale cleanup warns and leaves the file
+          // rather than deleting it (safer than destroying an unreadable file).
         }
       }
       meta = {
