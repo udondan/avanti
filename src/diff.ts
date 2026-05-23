@@ -269,14 +269,21 @@ export function formatDiff(diff: FileDiff): string {
   }
 
   if (diff.isUnreadable) {
-    const newPath = diff.isDelete ? '/dev/null' : diff.targetPath;
-    const label = diff.isDelete
-      ? 'file deleted (unreadable — no diff available)'
-      : 'file updated (existing content unreadable — diff unavailable)';
-    let out = chalk.bold(`--- ${diff.targetPath}\n+++ ${newPath}`) + '\n';
-    if (diff.modeChange) out += modeFrom + '\n' + modeTo + '\n';
-    out += chalk.cyan(`@@ ${label} @@`);
-    return out;
+    // If content was confirmed unchanged via sudo re-read (contentChanged=false),
+    // fall through to mode-only rendering so the diff accurately shows only
+    // the permission change rather than the "unreadable content" placeholder.
+    if (!diff.contentChanged && diff.modeChange) {
+      // intentional fall-through to mode-only block below
+    } else {
+      const newPath = diff.isDelete ? '/dev/null' : diff.targetPath;
+      const label = diff.isDelete
+        ? 'file deleted (unreadable — no diff available)'
+        : 'file updated (existing content unreadable — diff unavailable)';
+      let out = chalk.bold(`--- ${diff.targetPath}\n+++ ${newPath}`) + '\n';
+      if (diff.modeChange) out += modeFrom + '\n' + modeTo + '\n';
+      out += chalk.cyan(`@@ ${label} @@`);
+      return out;
+    }
   }
 
   if (diff.isBinary) {
