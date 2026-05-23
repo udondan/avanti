@@ -164,11 +164,12 @@ function sudoWriteMv(t: SudoWriteTarget): void {
   let backupTmp: string | undefined;
 
   try {
-    const tee = spawnSync(
-      'sudo',
-      [...sudoUserArgs(sudo), 'tee', '--', tmpFile],
-      { input: t.content, stdio: ['pipe', 'ignore', 'inherit'] },
-    );
+    // No '--' before tmpFile: BSD tee(1) on macOS does not support '--', and
+    // the mktemp-generated path is always absolute so it cannot start with '-'.
+    const tee = spawnSync('sudo', [...sudoUserArgs(sudo), 'tee', tmpFile], {
+      input: t.content,
+      stdio: ['pipe', 'ignore', 'inherit'],
+    });
     if (tee.status !== 0 || tee.error) {
       const detail = tee.error
         ? tee.error.message
@@ -193,14 +194,25 @@ function sudoWriteMv(t: SudoWriteTarget): void {
       if (isFile) {
         const backupDir = path.dirname(t.backupPath);
         sudoRun(sudo, ['mkdir', '-p', '--', backupDir]);
-        backupTmp = path.join(
-          backupDir,
-          '.' +
-            path.basename(t.backupPath) +
-            '.' +
-            crypto.randomBytes(8).toString('hex') +
-            '.avanti-tmp',
+        // Use sudo mktemp so the backup temp is created with O_EXCL under
+        // the privileged identity, preventing a symlink race in the backup
+        // directory. path.resolve(backupDir) guarantees an absolute template.
+        const mktempBackup = spawnSync(
+          'sudo',
+          [
+            ...sudoUserArgs(sudo),
+            'mktemp',
+            path.join(path.resolve(backupDir), '.avanti-backup-XXXXXXXXXX'),
+          ],
+          { stdio: ['ignore', 'pipe', 'inherit'] },
         );
+        if (mktempBackup.status !== 0 || mktempBackup.error) {
+          const detail = mktempBackup.error
+            ? mktempBackup.error.message
+            : `exit code ${mktempBackup.status ?? 'unknown'}`;
+          throw new Error(`sudo mktemp failed in ${backupDir}: ${detail}`);
+        }
+        backupTmp = mktempBackup.stdout.toString().trim();
         sudoRun(sudo, ['cp', '--', resolvedTarget, backupTmp]);
         const resolvedBackup = path.resolve(t.backupPath);
         // test -d follows symlinks, so this also catches symlinks-to-directories.
@@ -292,14 +304,23 @@ function sudoWriteInPlace(t: SudoWriteTarget): void {
       if (isFile) {
         const backupDir = path.dirname(t.backupPath);
         sudoRun(sudo, ['mkdir', '-p', '--', backupDir]);
-        backupTmp = path.join(
-          backupDir,
-          '.' +
-            path.basename(t.backupPath) +
-            '.' +
-            crypto.randomBytes(8).toString('hex') +
-            '.avanti-tmp',
+        // Use sudo mktemp for O_EXCL creation — prevents symlink race in backupDir.
+        const mktempBackup = spawnSync(
+          'sudo',
+          [
+            ...sudoUserArgs(sudo),
+            'mktemp',
+            path.join(path.resolve(backupDir), '.avanti-backup-XXXXXXXXXX'),
+          ],
+          { stdio: ['ignore', 'pipe', 'inherit'] },
         );
+        if (mktempBackup.status !== 0 || mktempBackup.error) {
+          const detail = mktempBackup.error
+            ? mktempBackup.error.message
+            : `exit code ${mktempBackup.status ?? 'unknown'}`;
+          throw new Error(`sudo mktemp failed in ${backupDir}: ${detail}`);
+        }
+        backupTmp = mktempBackup.stdout.toString().trim();
         sudoRun(sudo, ['cp', '--', resolvedTarget, backupTmp]);
         const resolvedBackup = path.resolve(t.backupPath);
         // test -d follows symlinks, so this also catches symlinks-to-directories.
@@ -350,9 +371,11 @@ function sudoWriteInPlace(t: SudoWriteTarget): void {
       }
     }
 
+    // No '--' before t.targetPath: BSD tee(1) on macOS does not support '--',
+    // and the path is always absolute so it cannot start with '-'.
     const tee = spawnSync(
       'sudo',
-      [...sudoUserArgs(sudo), 'tee', '--', t.targetPath],
+      [...sudoUserArgs(sudo), 'tee', t.targetPath],
       { input: t.content, stdio: ['pipe', 'ignore', 'inherit'] },
     );
     if (tee.status !== 0 || tee.error) {

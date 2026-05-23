@@ -682,7 +682,10 @@ export function pullCommand(): Command {
                 ...writeTargets[existingIdx],
                 content: selfBuf,
                 mode: resolvedSelfMode,
-                sudo: currentSelfSudo,
+                // Fall back to the existing target's sudo identity when $self
+                // doesn't specify one, so a privileged config file keeps its
+                // write privileges after $self stabilization.
+                sudo: currentSelfSudo ?? writeTargets[existingIdx].sudo,
               };
               allDiffs[existingIdx] = computeDiff(
                 configPath,
