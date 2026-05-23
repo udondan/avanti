@@ -25,6 +25,7 @@ import { isBinary } from '../binary';
 import { computeDiff, computeDeleteDiff, printDiffs } from '../diff';
 import {
   atomicWrite,
+  getSudoFileMode,
   sudoAtomicWrite,
   sudoAuth,
   sudoDelete,
@@ -765,14 +766,38 @@ export function pullCommand(): Command {
       }
       // For entries where lstatSync failed (parent directory not searchable),
       // use sudoFileExists to determine whether the file actually exists so
-      // existedBeforeAvanti is recorded correctly.
+      // existedBeforeAvanti is recorded correctly. Also compute modeChange now
+      // that we have sudo access (computeDiff could not stat the file pre-auth).
       for (let i = 0; i < writeTargets.length; i++) {
         if (allDiffs[i].lstatFailed && writeTargets[i].sudo) {
           const exists = sudoFileExists(
             writeTargets[i].sudo!,
             writeTargets[i].targetPath,
           );
-          allDiffs[i] = { ...allDiffs[i], isNew: !exists };
+          const isNew = !exists;
+          let modeChange = allDiffs[i].modeChange;
+          if (exists && writeTargets[i].mode) {
+            const curModeStr = getSudoFileMode(
+              writeTargets[i].sudo!,
+              writeTargets[i].targetPath,
+            );
+            if (curModeStr !== undefined) {
+              const desired = parseInt(writeTargets[i].mode!, 8);
+              const cur = parseInt(curModeStr, 8);
+              if (!isNaN(desired) && !isNaN(cur) && desired !== cur) {
+                modeChange = { from: cur, to: desired };
+              }
+            }
+          }
+          allDiffs[i] = { ...allDiffs[i], isNew, modeChange };
+          // Propagate corrected isNew to the hook context so lifecycle hooks
+          // receive the correct AVANTI_IS_NEW value.
+          const hookIdx = fileHookContexts.findIndex(
+            (ctx) => ctx.targetPath === writeTargets[i].targetPath,
+          );
+          if (hookIdx >= 0) {
+            fileHookContexts[hookIdx] = { ...fileHookContexts[hookIdx], isNew };
+          }
         }
       }
       // Post-auth idempotency: compare current file content via sudo against the
@@ -789,6 +814,14 @@ export function pullCommand(): Command {
               contentChanged: false,
               hasChanges: allDiffs[i].modeChange !== undefined,
             };
+            // Content is unchanged — remove the hook context so hooks don't
+            // fire spuriously if other files in the same pull do have changes.
+            const hookIdx = fileHookContexts.findIndex(
+              (ctx) => ctx.targetPath === writeTargets[i].targetPath,
+            );
+            if (hookIdx >= 0) {
+              fileHookContexts.splice(hookIdx, 1);
+            }
           }
         }
       }

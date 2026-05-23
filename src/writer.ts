@@ -111,7 +111,7 @@ export function sudoRun(sudo: true | string, args: string[]): void {
 // Returns the existing file's permission bits as an octal string via sudo stat,
 // trying GNU stat (-c %a) then BSD/macOS stat (-f %Lp). Returns undefined when
 // the file does not exist or the mode cannot be determined.
-function getSudoFileMode(
+export function getSudoFileMode(
   sudo: true | string,
   targetPath: string,
 ): string | undefined {
