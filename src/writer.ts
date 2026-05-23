@@ -293,6 +293,10 @@ function sudoWriteMv(t: SudoWriteTarget): void {
   // Safe to create the destination directory now that all existing ancestors
   // have been validated.
   sudoRun(sudo, ['mkdir', '-p', '--', dir]);
+  // Re-validate the destination directory itself: if it was just created by
+  // sudo mkdir, it could have group/world-write bits from the system umask or
+  // default ACLs. The subsequent mktemp must not land in a writable staging dir.
+  checkDirSafe(sudo, dir, trustedUids, 'destination');
 
   // Capture existing mode before writing so we can restore it after mv.
   // Explicit config mode wins; existing dest mode used as fallback.
@@ -354,6 +358,9 @@ function sudoWriteMv(t: SudoWriteTarget): void {
         // root-owned directories in an untrusted path.
         checkAncestorsSafe(sudo, t.backupPath, trustedUids, 'backup');
         sudoRun(sudo, ['mkdir', '-p', '--', backupDir]);
+        // Re-validate the backup directory after mkdir: it may have been newly
+        // created with group/world-write bits from the system umask.
+        checkDirSafe(sudo, backupDir, trustedUids, 'backup');
         // Use sudo mktemp so the backup temp is created with O_EXCL under
         // the privileged identity, preventing a symlink race in the backup
         // directory. path.resolve(backupDir) guarantees an absolute template.
@@ -529,6 +536,9 @@ function sudoWriteInPlace(t: SudoWriteTarget): void {
   // Safe to create the destination directory now that all existing ancestors
   // have been validated.
   sudoRun(sudo, ['mkdir', '-p', '--', dir]);
+  // Re-validate the destination directory itself after mkdir: a newly-created
+  // directory could have group/world-write bits from the system umask.
+  checkDirSafe(sudo, dir, trustedUids, 'destination');
 
   let backupTmp: string | undefined;
 
@@ -553,6 +563,9 @@ function sudoWriteInPlace(t: SudoWriteTarget): void {
         // Validate backup ancestors BEFORE privileged mkdir.
         checkAncestorsSafe(sudo, t.backupPath, trustedUids, 'backup');
         sudoRun(sudo, ['mkdir', '-p', '--', backupDir]);
+        // Re-validate the backup directory after mkdir: newly-created dirs may
+        // have group/world-write bits from the system umask.
+        checkDirSafe(sudo, backupDir, trustedUids, 'backup');
         // Use sudo mktemp for O_EXCL creation — prevents symlink race in backupDir.
         const mktempBackup = spawnSync(
           'sudo',

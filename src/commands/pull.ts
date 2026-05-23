@@ -1323,7 +1323,7 @@ export function pullCommand(): Command {
       ) {
         try {
           let refsToRecord = stagedFileRefs;
-          if (effectivelyCleaned.size > 0 && historyAvailable) {
+          if (historyAvailable) {
             const lastFiles = history.getLastPullFiles();
             const survivingRefs = lastFiles.filter(
               (ref) => !effectivelyCleaned.has(ref.absolutePath),
