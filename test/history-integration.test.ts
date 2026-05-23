@@ -492,7 +492,10 @@ describe('history integration', () => {
         const fakeSudoBin = join(fakeSudoDir, 'sudo');
         writeFileSync(
           fakeSudoBin,
-          `#!/bin/sh\necho "$@" >> "${fakeSudoLog}"\n[ "$1" = "-v" ] && exit 0\nexec "$@"\n`,
+          // Intercept stat calls used by the ancestor safety checks and return
+          // safe values (mode 755, UID 0) so the test works under world-writable
+          // tmpdir on Linux. All other commands are passed through unchanged.
+          `#!/bin/sh\necho "$@" >> "${fakeSudoLog}"\n[ "$1" = "-v" ] && exit 0\nif [ "$1" = "stat" ]; then\n  case "$*" in\n    *%u*) echo "0"; exit 0 ;;\n    *%a*|*%Lp*) echo "755"; exit 0 ;;\n  esac\nfi\nexec "$@"\n`,
         );
         chmodSync(fakeSudoBin, 0o755);
 
