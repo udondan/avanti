@@ -293,10 +293,11 @@ function sudoWriteMv(t: SudoWriteTarget): void {
   // Safe to create the destination directory now that all existing ancestors
   // have been validated.
   sudoRun(sudo, ['mkdir', '-p', '--', dir]);
-  // Re-validate the destination directory itself: if it was just created by
-  // sudo mkdir, it could have group/world-write bits from the system umask or
-  // default ACLs. The subsequent mktemp must not land in a writable staging dir.
-  checkDirSafe(sudo, dir, trustedUids, 'destination');
+  // Re-validate the full ancestor chain after mkdir: when mkdir -p created
+  // intermediate directories, those new dirs were not covered by the pre-mkdir
+  // checkAncestorsSafe above (they didn't exist then). Re-running it validates
+  // every level, including any newly created intermediates and the final dir.
+  checkAncestorsSafe(sudo, t.targetPath, trustedUids, 'destination');
 
   // Capture existing mode before writing so we can restore it after mv.
   // Explicit config mode wins; existing dest mode used as fallback.
@@ -358,9 +359,11 @@ function sudoWriteMv(t: SudoWriteTarget): void {
         // root-owned directories in an untrusted path.
         checkAncestorsSafe(sudo, t.backupPath, trustedUids, 'backup');
         sudoRun(sudo, ['mkdir', '-p', '--', backupDir]);
-        // Re-validate the backup directory after mkdir: it may have been newly
-        // created with group/world-write bits from the system umask.
-        checkDirSafe(sudo, backupDir, trustedUids, 'backup');
+        // Re-validate the full backup ancestor chain after mkdir: intermediate
+        // directories created by mkdir -p were not checked before (they didn't
+        // exist). Re-running checkAncestorsSafe covers all levels including
+        // newly created intermediates and the final backupDir.
+        checkAncestorsSafe(sudo, t.backupPath, trustedUids, 'backup');
         // Use sudo mktemp so the backup temp is created with O_EXCL under
         // the privileged identity, preventing a symlink race in the backup
         // directory. path.resolve(backupDir) guarantees an absolute template.
@@ -536,9 +539,11 @@ function sudoWriteInPlace(t: SudoWriteTarget): void {
   // Safe to create the destination directory now that all existing ancestors
   // have been validated.
   sudoRun(sudo, ['mkdir', '-p', '--', dir]);
-  // Re-validate the destination directory itself after mkdir: a newly-created
-  // directory could have group/world-write bits from the system umask.
-  checkDirSafe(sudo, dir, trustedUids, 'destination');
+  // Re-validate the full ancestor chain after mkdir: intermediate directories
+  // created by mkdir -p were not covered by the pre-mkdir checkAncestorsSafe
+  // (they didn't exist then). Re-running it validates all levels including
+  // any newly created intermediates and the final destination directory.
+  checkAncestorsSafe(sudo, t.targetPath, trustedUids, 'destination');
 
   let backupTmp: string | undefined;
   const resolvedTarget = path.resolve(t.targetPath);
@@ -564,9 +569,11 @@ function sudoWriteInPlace(t: SudoWriteTarget): void {
         // Validate backup ancestors BEFORE privileged mkdir.
         checkAncestorsSafe(sudo, t.backupPath, trustedUids, 'backup');
         sudoRun(sudo, ['mkdir', '-p', '--', backupDir]);
-        // Re-validate the backup directory after mkdir: newly-created dirs may
-        // have group/world-write bits from the system umask.
-        checkDirSafe(sudo, backupDir, trustedUids, 'backup');
+        // Re-validate the full backup ancestor chain after mkdir: intermediate
+        // directories created by mkdir -p were not covered before (they didn't
+        // exist). Re-running covers all levels including newly created
+        // intermediates and the final backupDir.
+        checkAncestorsSafe(sudo, t.backupPath, trustedUids, 'backup');
         // Use sudo mktemp for O_EXCL creation — prevents symlink race in backupDir.
         const mktempBackup = spawnSync(
           'sudo',
