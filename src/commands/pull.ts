@@ -885,7 +885,12 @@ export function pullCommand(): Command {
 
       const hasChanges =
         allDiffs.some((d) => d.hasChanges) ||
-        staleDiffs.some((d) => d.hasChanges);
+        staleDiffs.some((d) => d.hasChanges) ||
+        // A stale restore where the original v0 is empty and the file is
+        // missing produces hasChanges=false ('' !== '' = false) but isNew=true.
+        // Without this, the early-exit below fires before activeStaleRestore is
+        // computed and the file is never recreated.
+        staleDiffs.some((d) => d.isNew);
       printDiffs([...allDiffs, ...staleDiffs]);
 
       // Show SHA mismatch summary when using --accept-changes
