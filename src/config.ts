@@ -349,6 +349,22 @@ export function parseConfigContent(content: string): AvantiConfig {
       fileEntry.writeInPlace = e['writeInPlace'];
     if (typeof e['followSymlink'] === 'boolean')
       fileEntry.followSymlink = e['followSymlink'];
+    if (e['sudo'] !== undefined) {
+      if (e['sudo'] === true) {
+        fileEntry.sudo = true;
+      } else if (typeof e['sudo'] === 'string' && e['sudo'].trim()) {
+        if (e['sudo'].trim().startsWith('-')) {
+          throw new Error(
+            `files["${target}"].sudo: username must not start with '-'`,
+          );
+        }
+        fileEntry.sudo = e['sudo'].trim();
+      } else if (e['sudo'] !== false) {
+        throw new Error(
+          `files["${target}"].sudo: must be true or a non-empty username string`,
+        );
+      }
+    }
     if (e['strategy'] !== undefined) {
       if (e['strategy'] !== 'replace' && e['strategy'] !== 'insert') {
         throw new Error(
@@ -356,6 +372,14 @@ export function parseConfigContent(content: string): AvantiConfig {
         );
       }
       fileEntry.strategy = e['strategy'];
+    }
+    if (fileEntry.strategy === 'insert' && fileEntry.sudo) {
+      throw new Error(
+        `files["${target}"]: strategy "insert" cannot be combined with sudo — ` +
+          `insert mode reads the existing file without privilege escalation, ` +
+          `which silently treats an unreadable privileged file as absent. ` +
+          `Use a non-insert strategy, or manage the file without sudo.`,
+      );
     }
 
     if (e['replace'] !== undefined) {

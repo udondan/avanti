@@ -22,9 +22,26 @@ import { applyReplace } from '../processors/replace';
 import { applyWriteHook, runHook } from '../processors/on';
 import { applyInsertMode } from '../processors/insert';
 import { isBinary } from '../binary';
-import { computeDiff, computeDeleteDiff, printDiffs } from '../diff';
-import { atomicWrite, WriteTarget } from '../writer';
-import { FileDiff } from '../diff';
+import {
+  buildNewFileDiff,
+  computeDiff,
+  computeDeleteDiff,
+  FileDiff,
+  printDiffs,
+} from '../diff';
+import {
+  atomicWrite,
+  getSudoFileMode,
+  sudoAtomicWrite,
+  sudoAuth,
+  sudoDelete,
+  sudoFileExists,
+  sudoIsSymlink,
+  sudoRead,
+  sudoRun,
+  SudoWriteTarget,
+  WriteTarget,
+} from '../writer';
 import {
   buildEntryPreVars,
   expandTilde,
@@ -68,6 +85,7 @@ interface FetchLoopResult {
   insertedFragments: Map<string, { raw: string; processed: string }>;
   selfContent?: string;
   selfMode?: string;
+  selfSudo?: true | string;
   selfSourceRecords?: SourceFetchRecord[];
 }
 
@@ -117,6 +135,7 @@ async function runFetchLoop(
   let hasError = false;
   let selfContent: string | undefined;
   let selfMode: string | undefined;
+  let selfSudo: true | string | undefined;
   let selfSourceRecords: SourceFetchRecord[] | undefined;
 
   let hasSelf = SELF_KEY in config.files;
@@ -357,6 +376,7 @@ async function runFetchLoop(
         if (isSelf) {
           selfContent = content.toString('utf8');
           selfMode = entry.mode;
+          selfSudo = entry.sudo || undefined;
           if (result.sourceRecords.length > 0)
             selfSourceRecords = result.sourceRecords;
           continue;
@@ -382,6 +402,7 @@ async function runFetchLoop(
           mode: entry.mode,
           backupPath,
           writeInPlace: entry.writeInPlace,
+          sudo: entry.sudo,
         });
         if (entry.on && diff.hasChanges) {
           fileHookContexts.push({
@@ -425,6 +446,7 @@ async function runFetchLoop(
     insertedFragments,
     selfContent,
     selfMode,
+    selfSudo,
     selfSourceRecords,
   };
 }
@@ -512,6 +534,7 @@ export function pullCommand(): Command {
         let prevSelfContent: string | undefined;
         let currentSelfContent = firstPass.selfContent;
         let currentSelfMode = firstPass.selfMode;
+        let currentSelfSudo = firstPass.selfSudo;
         let currentSelfSourceRecords = firstPass.selfSourceRecords;
         let stableConfig: AvantiConfig | undefined;
 
@@ -576,6 +599,7 @@ export function pullCommand(): Command {
           prevSelfContent = currentSelfContent;
           currentSelfContent = next.selfContent;
           currentSelfMode = next.selfMode;
+          currentSelfSudo = next.selfSudo;
           currentSelfSourceRecords = next.selfSourceRecords;
         }
 
@@ -638,6 +662,7 @@ export function pullCommand(): Command {
                 targetPath: configPath,
                 content: selfBuf,
                 mode: currentSelfMode,
+                sudo: currentSelfSudo,
               });
               allDiffs.push(computeDiff(configPath, selfBuf, currentSelfMode));
             } else {
@@ -647,6 +672,10 @@ export function pullCommand(): Command {
                 ...writeTargets[existingIdx],
                 content: selfBuf,
                 mode: resolvedSelfMode,
+                // Fall back to the existing target's sudo identity when $self
+                // doesn't specify one, so a privileged config file keeps its
+                // write privileges after $self stabilization.
+                sudo: currentSelfSudo ?? writeTargets[existingIdx].sudo,
               };
               allDiffs[existingIdx] = computeDiff(
                 configPath,
@@ -667,8 +696,14 @@ export function pullCommand(): Command {
 
       // Detect stale files: present in last pull but no longer in current source fetch
       const staleToDelete: string[] = [];
+      // Maps path → sudo identity for stale files that need privileged deletion
+      const staleDeleteSudo = new Map<string, true | string>();
+      // Maps path → staleDiffs index so we can check hasChanges before auth/write
+      const staleDeleteDiffIndex = new Map<string, number>();
       const staleToRestore: WriteTarget[] = [];
       const staleDiffs: FileDiff[] = [];
+      // Parallel array: staleDiffs index for each staleToRestore entry
+      const staleRestoreDiffIndices: number[] = [];
 
       if (historyAvailable && !hasUnresolvableSkippedPath) {
         const lastFiles = history.getLastPullFiles();
@@ -694,12 +729,180 @@ export function pullCommand(): Command {
               staleToRestore.push({
                 targetPath: ref.absolutePath,
                 content: original,
+                sudo: meta.sudo,
               });
-              staleDiffs.push(computeDiff(ref.absolutePath, original));
+              staleRestoreDiffIndices.push(staleDiffs.length);
+              const staleDiff = computeDiff(ref.absolutePath, original);
+              // A missing file with empty v0 produces isNew=true but
+              // hasChanges=false and an empty patch, so formatDiff returns ''.
+              // Rebuild as a proper new-file diff so the confirmation output
+              // shows the recreate action and the patch is consistent.
+              staleDiffs.push(
+                staleDiff.isNew
+                  ? buildNewFileDiff(ref.absolutePath, original)
+                  : staleDiff,
+              );
+            } else {
+              console.warn(
+                `Warning: cannot restore original for ${ref.absolutePath} — v0 was never captured (file was unreadable at first pull). Leaving file unchanged.`,
+              );
             }
           } else {
             staleToDelete.push(ref.absolutePath);
+            if (meta.sudo) staleDeleteSudo.set(ref.absolutePath, meta.sudo);
+            staleDeleteDiffIndex.set(ref.absolutePath, staleDiffs.length);
             staleDiffs.push(computeDeleteDiff(ref.absolutePath));
+          }
+        }
+      }
+
+      // Windows does not have sudo; fail before any authentication attempt.
+      if (
+        process.platform === 'win32' &&
+        (writeTargets.some((t) => t.sudo) ||
+          staleToRestore.some((t) => t.sudo) ||
+          staleDeleteSudo.size > 0)
+      ) {
+        console.error('sudo is not supported on Windows');
+        process.exit(2);
+      }
+
+      // Authenticate early for unreadable sudo files so we can read their actual
+      // content before deciding whether anything changed. Without this, every pull
+      // would show unreadable files as "changed" (we can't diff without reading),
+      // and "Nothing to do." could never be reported on a re-run.
+      const unreadableSudoValues = new Set<true | string>();
+      for (let i = 0; i < writeTargets.length; i++) {
+        if (allDiffs[i].isUnreadable && writeTargets[i].sudo) {
+          unreadableSudoValues.add(writeTargets[i].sudo!);
+        }
+      }
+      // Also auth for unreadable stale restore targets that need sudo.
+      for (let i = 0; i < staleToRestore.length; i++) {
+        const diffIdx = staleRestoreDiffIndices[i];
+        if (staleDiffs[diffIdx]?.isUnreadable && staleToRestore[i].sudo) {
+          unreadableSudoValues.add(staleToRestore[i].sudo!);
+        }
+      }
+      const authenticatedSudoIds = new Set<true | string>();
+      for (const sv of unreadableSudoValues) {
+        try {
+          sudoAuth(sv);
+        } catch (err: unknown) {
+          console.error(err instanceof Error ? err.message : String(err));
+          process.exit(2);
+        }
+        authenticatedSudoIds.add(sv);
+      }
+      // For entries where lstatSync failed (parent directory not searchable),
+      // use sudoFileExists to determine whether the file actually exists so
+      // existedBeforeAvanti is recorded correctly. Also compute modeChange now
+      // that we have sudo access (computeDiff could not stat the file pre-auth).
+      for (let i = 0; i < writeTargets.length; i++) {
+        if (allDiffs[i].lstatFailed && writeTargets[i].sudo) {
+          const exists = sudoFileExists(
+            writeTargets[i].sudo!,
+            writeTargets[i].targetPath,
+          );
+          const isNew = !exists;
+          let modeChange = allDiffs[i].modeChange;
+          if (exists && writeTargets[i].mode) {
+            const curModeStr = getSudoFileMode(
+              writeTargets[i].sudo!,
+              writeTargets[i].targetPath,
+            );
+            if (curModeStr !== undefined) {
+              const desired = parseInt(writeTargets[i].mode!, 8);
+              const cur = parseInt(curModeStr, 8);
+              if (!isNaN(desired) && !isNaN(cur) && desired !== cur) {
+                modeChange = { from: cur, to: desired };
+              }
+            }
+          }
+          if (isNew) {
+            // File confirmed absent — rebuild as a proper new-file diff so
+            // formatDiff shows the actual content instead of "unreadable".
+            allDiffs[i] = buildNewFileDiff(
+              allDiffs[i].targetPath,
+              writeTargets[i].content,
+              modeChange,
+            );
+            // Clear backupPath: it was set assuming the file existed (conservative
+            // lstatFailed default). Since the file is actually new, there is
+            // nothing to back up and the backup should not be created.
+            writeTargets[i] = { ...writeTargets[i], backupPath: undefined };
+          } else {
+            allDiffs[i] = { ...allDiffs[i], isNew, modeChange };
+          }
+          // Propagate corrected isNew to the hook context so lifecycle hooks
+          // receive the correct AVANTI_IS_NEW value.
+          const hookIdx = fileHookContexts.findIndex(
+            (ctx) => ctx.targetPath === writeTargets[i].targetPath,
+          );
+          if (hookIdx >= 0) {
+            fileHookContexts[hookIdx] = { ...fileHookContexts[hookIdx], isNew };
+          }
+        }
+      }
+      // Post-auth idempotency: compare current file content via sudo against the
+      // desired content. If they match, suppress the write for this entry.
+      for (let i = 0; i < writeTargets.length; i++) {
+        if (allDiffs[i].isUnreadable && writeTargets[i].sudo) {
+          // Skip idempotency read for symlinks: sudoRead follows symlinks and
+          // the write path replaces or refuses them; reading through a symlink
+          // here would compare against the wrong content.
+          if (
+            sudoIsSymlink(writeTargets[i].sudo!, writeTargets[i].targetPath)
+          ) {
+            continue;
+          }
+          const current = sudoRead(
+            writeTargets[i].sudo!,
+            writeTargets[i].targetPath,
+          );
+          if (current !== null && current.equals(writeTargets[i].content)) {
+            const updatedHasChanges = allDiffs[i].modeChange !== undefined;
+            allDiffs[i] = {
+              ...allDiffs[i],
+              contentChanged: false,
+              hasChanges: updatedHasChanges,
+            };
+            // Only remove hook context when the diff is a true no-op (no mode
+            // change either). A mode-only change still triggers before/afterUpdate
+            // hooks, so the context must remain for those cases.
+            if (!updatedHasChanges) {
+              const hookIdx = fileHookContexts.findIndex(
+                (ctx) => ctx.targetPath === writeTargets[i].targetPath,
+              );
+              if (hookIdx >= 0) {
+                fileHookContexts.splice(hookIdx, 1);
+              }
+            }
+          }
+        }
+      }
+      // Same idempotency check for stale restore targets: if the current file
+      // content already matches the v0 original, suppress the redundant write.
+      for (let i = 0; i < staleToRestore.length; i++) {
+        const diffIdx = staleRestoreDiffIndices[i];
+        if (staleDiffs[diffIdx]?.isUnreadable && staleToRestore[i].sudo) {
+          // Skip idempotency read for symlinks: sudoRead follows symlinks and
+          // could read an unintended privileged file before write-path checks run.
+          if (
+            sudoIsSymlink(staleToRestore[i].sudo!, staleToRestore[i].targetPath)
+          ) {
+            continue;
+          }
+          const current = sudoRead(
+            staleToRestore[i].sudo!,
+            staleToRestore[i].targetPath,
+          );
+          if (current !== null && current.equals(staleToRestore[i].content)) {
+            staleDiffs[diffIdx] = {
+              ...staleDiffs[diffIdx],
+              contentChanged: false,
+              hasChanges: staleDiffs[diffIdx].modeChange !== undefined,
+            };
           }
         }
       }
@@ -724,6 +927,34 @@ export function pullCommand(): Command {
               fragment.processed,
             );
           }
+        }
+        // Prune no-op stale refs from the pull log. When all diffs are clean,
+        // every stale entry (delete or restore) was already resolved outside of
+        // avanti (file manually deleted, or content already matches v0). Without
+        // this, those refs remain in the last-pull log and can incorrectly flag
+        // a future file at the same path as stale.
+        if (
+          pullId &&
+          historyAvailable &&
+          (staleToDelete.length > 0 || staleToRestore.length > 0)
+        ) {
+          const noopStalePaths = new Set<string>([
+            ...staleToDelete,
+            ...staleToRestore.map((t) => t.targetPath),
+          ]);
+          const lastFiles = history.getLastPullFiles();
+          const survivingRefs = lastFiles.filter(
+            (ref) => !noopStalePaths.has(ref.absolutePath),
+          );
+          // Preserve existing sudo on surviving refs — no file was written, so
+          // the on-disk ownership reflects the previous write identity, not the
+          // current config. Overwriting here would let stale cleanup run with
+          // the wrong privileges for a file it never re-wrote.
+          history.closePullSession(
+            pullId,
+            normalizeConfigKey(configPath),
+            survivingRefs,
+          );
         }
         console.log('Nothing to do.');
         process.exit(0);
@@ -815,6 +1046,62 @@ export function pullCommand(): Command {
           runNamedHook('beforeUpdate', ctx.hooks.beforeUpdate);
       }
 
+      // Compute write batches and authenticate before staging so that sudo is
+      // available for v0 capture of unreadable first-seen files (history must
+      // record the original content before it is overwritten).
+      const changedTargets = writeTargets.filter(
+        (_, i) => allDiffs[i].hasChanges && allDiffs[i].contentChanged,
+      );
+      // Only include stale restore targets whose diff still has changes (not
+      // suppressed by the idempotency check above). Also include diffs where
+      // isNew is true: a missing file with empty v0 produces hasChanges=false
+      // ('' !== '' = false) but still needs to be written.
+      const activeStaleRestoreIndices = staleToRestore
+        .map((_, i) => i)
+        .filter((i) => {
+          const d = staleDiffs[staleRestoreDiffIndices[i]];
+          return d?.hasChanges || d?.isNew;
+        });
+      const activeStaleRestore = activeStaleRestoreIndices.map(
+        (i) => staleToRestore[i],
+      );
+
+      const sudoValues = new Set<true | string>(
+        [...changedTargets, ...activeStaleRestore]
+          .map((t) => t.sudo)
+          .filter(Boolean) as (true | string)[],
+      );
+      // Only include stale delete sudo identities when the delete diff still
+      // has changes (file wasn't already absent at diff time).
+      for (const [p, sv] of staleDeleteSudo) {
+        const idx = staleDeleteDiffIndex.get(p);
+        if (idx !== undefined && staleDiffs[idx].hasChanges) {
+          sudoValues.add(sv);
+        }
+      }
+      for (let i = 0; i < writeTargets.length; i++) {
+        if (
+          allDiffs[i].modeChange &&
+          !allDiffs[i].contentChanged &&
+          writeTargets[i].sudo
+        ) {
+          sudoValues.add(writeTargets[i].sudo!);
+        }
+      }
+      // Skip identities already authenticated in the early unreadable-file pass
+      // so a single pull session never re-prompts for the same identity.
+      for (const sv of sudoValues) {
+        if (!authenticatedSudoIds.has(sv)) {
+          try {
+            sudoAuth(sv);
+          } catch (err: unknown) {
+            console.error(err instanceof Error ? err.message : String(err));
+            process.exit(2);
+          }
+          authenticatedSudoIds.add(sv);
+        }
+      }
+
       // Stage history versions before atomicWrite so v0 is captured before overwrite
       const stagedFileRefs: PullLogFileRef[] = [];
       if (pullId) {
@@ -843,12 +1130,31 @@ export function pullCommand(): Command {
                       acceptedShaLabels.has(r.sourceLabel),
                   }))
                 : undefined;
+            // For a first-seen unreadable sudo file, capture v0 via sudo so
+            // revert-to-original works even when the invoking user cannot read
+            // the file directly.
+            let v0Override: Buffer | undefined;
+            if (
+              allDiffs[i].isUnreadable &&
+              !allDiffs[i].isNew &&
+              writeTargets[i].sudo &&
+              !history.getFileMeta(targetPath) &&
+              // Refuse symlinks: sudoRead follows them and could read an
+              // unintended privileged file before write-path checks run,
+              // persisting arbitrary content into the user's history.
+              !sudoIsSymlink(writeTargets[i].sudo!, targetPath)
+            ) {
+              v0Override =
+                sudoRead(writeTargets[i].sudo!, targetPath) ?? undefined;
+            }
             const { fileRef } = history.stageFileVersion(
               pullId,
               targetPath,
               writeTargets[i].content,
               allDiffs[i].isNew,
               sourceShaRecords,
+              writeTargets[i].sudo,
+              v0Override,
             );
             stagedFileRefs.push(fileRef);
           } catch {
@@ -860,13 +1166,80 @@ export function pullCommand(): Command {
       }
 
       let postWriteError: string | null = null;
+      const effectivelyDeleted = new Set<string>();
+      const effectivelyRestored = new Set<string>();
+      // Tracks all stale paths fully resolved this pull — including no-ops
+      // (file already gone, or already matches v0). Used to prune old refs
+      // from history so stale cleanup does not repeat on subsequent pulls.
+      const effectivelyCleaned = new Set<string>();
       try {
-        const changedTargets = writeTargets.filter(
-          (_, i) => allDiffs[i].hasChanges && allDiffs[i].contentChanged,
-        );
+        // changedTargets and sudoValues already computed above; auth already done.
+
         // Content writes go first so that if atomicWrite throws, no permissions
         // have been changed yet (minimises partial-apply surface).
-        atomicWrite([...changedTargets, ...staleToRestore], staleToDelete);
+        const isSudoTarget = (t: WriteTarget): t is SudoWriteTarget => !!t.sudo;
+        const regularChanged = changedTargets.filter((t) => !t.sudo);
+        const sudoChanged = changedTargets.filter(isSudoTarget);
+        // Only restore entries whose diff still has changes (no-op restores filtered out)
+        const regularRestore = activeStaleRestore.filter((t) => !t.sudo);
+        const sudoRestore = activeStaleRestore.filter(isSudoTarget);
+        const regularDelete = staleToDelete.filter(
+          (p) => !staleDeleteSudo.has(p),
+        );
+
+        atomicWrite([...regularChanged, ...regularRestore]);
+        if (sudoChanged.length + sudoRestore.length > 0) {
+          sudoAtomicWrite([...sudoChanged, ...sudoRestore]);
+        }
+        // Mark all active stale restores as completed (atomicWrite throws on
+        // failure so if we reach here all restores were written successfully).
+        for (const t of activeStaleRestore) {
+          effectivelyRestored.add(t.targetPath);
+          effectivelyCleaned.add(t.targetPath);
+        }
+        // No-op stale restores (file already matches v0) are also cleaned —
+        // mark them so their refs are removed from history and the cleanup
+        // does not repeat on subsequent pulls.
+        const activeStaleRestorePaths = new Set(
+          activeStaleRestore.map((t) => t.targetPath),
+        );
+        for (const t of staleToRestore) {
+          if (!activeStaleRestorePaths.has(t.targetPath)) {
+            effectivelyCleaned.add(t.targetPath);
+          }
+        }
+        // Deletions are deferred until both write batches succeed so that
+        // stale files are not removed if a later write batch fails.
+        for (const p of regularDelete) {
+          const idx = staleDeleteDiffIndex.get(p);
+          if (idx === undefined) continue;
+          if (!staleDiffs[idx].hasChanges) {
+            // File is already gone — no-op, but still clean up its history ref.
+            effectivelyCleaned.add(p);
+            continue;
+          }
+          try {
+            fs.rmSync(p, { force: true });
+            effectivelyDeleted.add(p);
+            effectivelyCleaned.add(p);
+          } catch (err) {
+            console.warn(
+              `Warning: could not delete ${p}: ${err instanceof Error ? err.message : String(err)}`,
+            );
+          }
+        }
+        for (const [p, sv] of staleDeleteSudo) {
+          const idx = staleDeleteDiffIndex.get(p);
+          if (idx === undefined) continue;
+          if (!staleDiffs[idx].hasChanges) {
+            // File is already gone — no-op, but still clean up its history ref.
+            effectivelyCleaned.add(p);
+          } else if (sudoDelete(p, sv)) {
+            effectivelyDeleted.add(p);
+            effectivelyCleaned.add(p);
+          }
+        }
+
         // Mode-only changes: apply chmod directly (POSIX only — mode bits are
         // not meaningful on Windows so modeChange is never set there).
         let modeOnlyCount = 0;
@@ -874,20 +1247,46 @@ export function pullCommand(): Command {
           for (let i = 0; i < writeTargets.length; i++) {
             const d = allDiffs[i];
             if (d.modeChange && !d.contentChanged) {
-              const lst = fs.lstatSync(writeTargets[i].targetPath, {
-                throwIfNoEntry: false,
-              });
-              if (lst && !lst.isSymbolicLink()) {
-                fs.chmodSync(writeTargets[i].targetPath, d.modeChange.to);
-                modeOnlyCount++;
+              if (writeTargets[i].sudo) {
+                // Use sudo for the symlink/existence checks: fs.lstatSync
+                // throws EACCES on paths inside root-owned directories.
+                // Skip chmod if the file has been deleted since diff
+                // computation (mirrors non-sudo throwIfNoEntry: false path).
+                if (
+                  sudoFileExists(
+                    writeTargets[i].sudo!,
+                    writeTargets[i].targetPath,
+                  ) &&
+                  !sudoIsSymlink(
+                    writeTargets[i].sudo!,
+                    writeTargets[i].targetPath,
+                  )
+                ) {
+                  sudoRun(writeTargets[i].sudo!, [
+                    'chmod',
+                    '--',
+                    d.modeChange.to.toString(8).padStart(4, '0'),
+                    writeTargets[i].targetPath,
+                  ]);
+                  modeOnlyCount++;
+                }
+              } else {
+                const lst = fs.lstatSync(writeTargets[i].targetPath, {
+                  throwIfNoEntry: false,
+                });
+                if (lst && !lst.isSymbolicLink()) {
+                  fs.chmodSync(writeTargets[i].targetPath, d.modeChange.to);
+                  modeOnlyCount++;
+                }
               }
             }
           }
         }
+        const deletedCount = effectivelyDeleted.size;
         const written =
           changedTargets.length +
-          staleToRestore.length +
-          staleToDelete.length +
+          activeStaleRestore.length +
+          deletedCount +
           modeOnlyCount;
         console.log(`Wrote ${written} file(s).`);
         for (const ctx of fileHookContexts) {
@@ -916,6 +1315,12 @@ export function pullCommand(): Command {
         process.exit(2);
       }
 
+      // meta.sudo is updated by stageFileVersion for every file that was
+      // actually written. No extra sync needed here: updating meta.sudo for
+      // no-op targets would overwrite the privilege identity from the last
+      // real write with a config value that was never applied to the file,
+      // causing stale cleanup to run with the wrong credentials.
+
       // Save inserted fragments to history for future idempotency detection
       if (historyAvailable && insertedFragments.size > 0) {
         for (const [targetPath, fragment] of insertedFragments) {
@@ -941,14 +1346,38 @@ export function pullCommand(): Command {
         }
       }
 
-      // Only record to pulls.jsonl if at least one file was staged (written or
-      // SHA-accepted via --accept-changes with no content diff)
-      if (pullId && stagedFileRefs.length > 0) {
+      // Record to pulls.jsonl when files were staged OR stale files were
+      // deleted/restored. For stale-only runs, merge surviving refs from the
+      // last pull so the cleaned-up paths are no longer listed — without this,
+      // subsequent pulls see the same stale files in the last-pull log and
+      // attempt the same delete/restore again on every run.
+      if (
+        pullId &&
+        (stagedFileRefs.length > 0 || effectivelyCleaned.size > 0)
+      ) {
         try {
+          let refsToRecord = stagedFileRefs;
+          if (historyAvailable) {
+            const lastFiles = history.getLastPullFiles();
+            const survivingRefs = lastFiles.filter(
+              (ref) => !effectivelyCleaned.has(ref.absolutePath),
+            );
+            const stagedPaths = new Set(
+              stagedFileRefs.map((r) => r.absolutePath),
+            );
+            // Preserve existing sudo on surviving refs — these files were not
+            // rewritten this pull, so their on-disk ownership reflects the
+            // previous write identity. Replacing with the current config value
+            // would let stale cleanup run with the wrong privileges.
+            refsToRecord = [
+              ...survivingRefs.filter((r) => !stagedPaths.has(r.absolutePath)),
+              ...stagedFileRefs,
+            ];
+          }
           history.closePullSession(
             pullId,
             normalizeConfigKey(configPath),
-            stagedFileRefs,
+            refsToRecord,
           );
         } catch {
           console.warn('Warning: could not save pull history.');

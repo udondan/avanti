@@ -11,20 +11,53 @@ export interface FileDiff {
   contentChanged: boolean;
   patch: string;
   isBinary?: boolean;
+  isUnreadable?: boolean;
+  /** True when lstatSync threw EACCES/EPERM (parent directory not searchable),
+   *  meaning existence cannot be determined without elevated privileges. */
+  lstatFailed?: boolean;
   modeChange?: { from: number; to: number };
 }
 
 export function computeDeleteDiff(targetPath: string): FileDiff {
-  if (!fs.existsSync(targetPath)) {
+  let oldBuf: Buffer;
+  try {
+    if (fs.lstatSync(targetPath, { throwIfNoEntry: false }) === undefined) {
+      return {
+        targetPath,
+        isNew: false,
+        hasChanges: false,
+        contentChanged: false,
+        patch: '',
+      };
+    }
+    oldBuf = fs.readFileSync(targetPath);
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === 'ENOENT') {
+      // Dangling symlink — lstatSync saw the symlink but readFileSync followed
+      // it to a non-existent target. Treat as a binary delete (no diff available).
+      return {
+        targetPath,
+        isNew: false,
+        isDelete: true,
+        hasChanges: true,
+        contentChanged: true,
+        patch: '',
+        isBinary: true,
+      };
+    }
+    if (code !== 'EACCES' && code !== 'EPERM') throw err;
+    // File exists but is unreadable (e.g. root-owned 0600).
     return {
       targetPath,
       isNew: false,
-      hasChanges: false,
-      contentChanged: false,
+      isDelete: true,
+      hasChanges: true,
+      contentChanged: true,
       patch: '',
+      isUnreadable: true,
     };
   }
-  const oldBuf = fs.readFileSync(targetPath);
   if (isBinary(oldBuf)) {
     return {
       targetPath,
@@ -59,21 +92,78 @@ export function computeDiff(
   newContent: Buffer,
   desiredMode?: string,
 ): FileDiff {
-  const isNew = !fs.existsSync(targetPath);
-  const oldBuf = isNew ? Buffer.alloc(0) : fs.readFileSync(targetPath);
+  let isNew = false;
+  let oldBuf: Buffer = Buffer.alloc(0);
+  let isUnreadable = false;
+  let lstatFailed = false;
+
+  let stat: ReturnType<typeof fs.lstatSync> | undefined;
+  try {
+    stat = fs.lstatSync(targetPath, { throwIfNoEntry: false });
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code !== 'EACCES' && code !== 'EPERM') throw err;
+    // lstatSync failed — parent directory not searchable. Existence is unknown;
+    // treat as existing (conservative). pull.ts uses sudoFileExists to verify
+    // the true state after authenticating.
+    lstatFailed = true;
+    isUnreadable = true;
+    isNew = false;
+  }
+
+  if (!lstatFailed) {
+    isNew = stat === undefined;
+    if (!isNew) {
+      try {
+        oldBuf = fs.readFileSync(targetPath);
+      } catch (err) {
+        const code = (err as NodeJS.ErrnoException).code;
+        if (code === 'ENOENT') {
+          // Dangling symlink — lstatSync saw the symlink but readFileSync
+          // followed it to a non-existent target. Treat as empty content:
+          // the diff will show the full new content being written.
+          // isUnreadable stays false; oldBuf stays empty Buffer.
+        } else if (code === 'EACCES' || code === 'EPERM') {
+          // File exists but is unreadable (e.g. root-owned 0600).
+          isUnreadable = true;
+        } else {
+          throw err;
+        }
+      }
+    }
+  }
 
   let modeChange: { from: number; to: number } | undefined;
   if (!isNew && desiredMode && process.platform !== 'win32') {
     const desired = parseInt(desiredMode, 8);
     if (!isNaN(desired)) {
-      const stat = fs.lstatSync(targetPath, { throwIfNoEntry: false });
-      if (stat !== undefined && !stat.isSymbolicLink()) {
-        const current = stat.mode & 0o7777;
-        if (desired !== current) {
-          modeChange = { from: current, to: desired };
+      try {
+        const stat = fs.lstatSync(targetPath, { throwIfNoEntry: false });
+        if (stat !== undefined && !stat.isSymbolicLink()) {
+          const current = stat.mode & 0o7777;
+          if (desired !== current) {
+            modeChange = { from: current, to: desired };
+          }
         }
+      } catch (err) {
+        const code = (err as NodeJS.ErrnoException).code;
+        if (code !== 'EACCES' && code !== 'EPERM') throw err;
+        // Cannot stat unreadable file — skip mode detection.
       }
     }
+  }
+
+  if (isUnreadable) {
+    return {
+      targetPath,
+      isNew: false,
+      hasChanges: true,
+      contentChanged: true,
+      patch: '',
+      isUnreadable: true,
+      ...(lstatFailed && { lstatFailed: true }),
+      modeChange,
+    };
   }
 
   const binary = isBinary(newContent) || isBinary(oldBuf);
@@ -108,7 +198,51 @@ export function computeDiff(
       )
     : '';
 
-  return { targetPath, isNew, hasChanges, contentChanged, patch, modeChange };
+  return {
+    targetPath,
+    isNew,
+    hasChanges,
+    contentChanged,
+    patch,
+    modeChange,
+  };
+}
+
+/** Build a new-file FileDiff from content without reading disk. Used when
+ *  lstatFailed initially but sudo confirms the file does not yet exist. */
+export function buildNewFileDiff(
+  targetPath: string,
+  newContent: Buffer,
+  modeChange?: { from: number; to: number },
+): FileDiff {
+  if (isBinary(newContent)) {
+    return {
+      targetPath,
+      isNew: true,
+      hasChanges: true,
+      contentChanged: true,
+      patch: '',
+      isBinary: true,
+      modeChange,
+    };
+  }
+  const newText = newContent.toString('utf8');
+  const patch = createTwoFilesPatch(
+    '/dev/null',
+    targetPath,
+    '',
+    newText,
+    '',
+    'new file',
+  );
+  return {
+    targetPath,
+    isNew: true,
+    hasChanges: true,
+    contentChanged: true,
+    patch,
+    modeChange,
+  };
 }
 
 export function formatDiff(diff: FileDiff): string {
@@ -132,6 +266,24 @@ export function formatDiff(diff: FileDiff): string {
     modeTo = chalk.green(
       `+new mode ${diff.modeChange.to.toString(8).padStart(6, '0')}`,
     );
+  }
+
+  if (diff.isUnreadable) {
+    // If content was confirmed unchanged via sudo re-read (contentChanged=false),
+    // fall through to mode-only rendering so the diff accurately shows only
+    // the permission change rather than the "unreadable content" placeholder.
+    if (!diff.contentChanged && diff.modeChange) {
+      // intentional fall-through to mode-only block below
+    } else {
+      const newPath = diff.isDelete ? '/dev/null' : diff.targetPath;
+      const label = diff.isDelete
+        ? 'file deleted (unreadable — no diff available)'
+        : 'file updated (existing content unreadable — diff unavailable)';
+      let out = chalk.bold(`--- ${diff.targetPath}\n+++ ${newPath}`) + '\n';
+      if (diff.modeChange) out += modeFrom + '\n' + modeTo + '\n';
+      out += chalk.cyan(`@@ ${label} @@`);
+      return out;
+    }
   }
 
   if (diff.isBinary) {
