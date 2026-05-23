@@ -1325,7 +1325,7 @@ files:
     sudo: 'www-data'
 ```
 
-avanti calls `sudo -v` once per distinct identity at the start of the write phase to prime the OS credential cache, so the user is prompted for their password at most once per pull session regardless of how many sudo-owned files are written.
+avanti calls `sudo -v` once per distinct identity at the start of the write phase to prime the OS credential cache, so the user is prompted for their password once per distinct sudo identity per pull session, regardless of how many files share that identity.
 
 **Stale-file cleanup** — when a `sudo` entry is removed from the config, avanti uses the stored sudo identity to restore or delete the file during the next pull.
 
