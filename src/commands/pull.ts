@@ -734,12 +734,12 @@ export function pullCommand(): Command {
               staleRestoreDiffIndices.push(staleDiffs.length);
               const staleDiff = computeDiff(ref.absolutePath, original);
               // A missing file with empty v0 produces isNew=true but
-              // hasChanges=false ('' !== '' = false). Mark it as hasChanges so
-              // printDiffs shows the recreate action and it passes the hasChanges
-              // gate without a separate staleDiffs.some(d => d.isNew) check.
+              // hasChanges=false and an empty patch, so formatDiff returns ''.
+              // Rebuild as a proper new-file diff so the confirmation output
+              // shows the recreate action and the patch is consistent.
               staleDiffs.push(
                 staleDiff.isNew
-                  ? { ...staleDiff, hasChanges: true }
+                  ? buildNewFileDiff(ref.absolutePath, original)
                   : staleDiff,
               );
             } else {
