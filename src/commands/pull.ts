@@ -79,6 +79,7 @@ interface FetchLoopResult {
   insertedFragments: Map<string, { raw: string; processed: string }>;
   selfContent?: string;
   selfMode?: string;
+  selfSudo?: true | string;
   selfSourceRecords?: SourceFetchRecord[];
 }
 
@@ -128,6 +129,7 @@ async function runFetchLoop(
   let hasError = false;
   let selfContent: string | undefined;
   let selfMode: string | undefined;
+  let selfSudo: true | string | undefined;
   let selfSourceRecords: SourceFetchRecord[] | undefined;
 
   let hasSelf = SELF_KEY in config.files;
@@ -368,6 +370,7 @@ async function runFetchLoop(
         if (isSelf) {
           selfContent = content.toString('utf8');
           selfMode = entry.mode;
+          selfSudo = entry.sudo || undefined;
           if (result.sourceRecords.length > 0)
             selfSourceRecords = result.sourceRecords;
           continue;
@@ -384,7 +387,11 @@ async function runFetchLoop(
           if (meta && meta.currentVersion > 0) {
             const last = history.readVersion(ep, meta.currentVersion);
             if (last !== null && last.equals(content)) {
-              diff = { ...diff, hasChanges: false, contentChanged: false };
+              diff = {
+                ...diff,
+                contentChanged: false,
+                hasChanges: diff.modeChange !== undefined,
+              };
             }
           }
         }
@@ -449,6 +456,7 @@ async function runFetchLoop(
     insertedFragments,
     selfContent,
     selfMode,
+    selfSudo,
     selfSourceRecords,
   };
 }
@@ -536,6 +544,7 @@ export function pullCommand(): Command {
         let prevSelfContent: string | undefined;
         let currentSelfContent = firstPass.selfContent;
         let currentSelfMode = firstPass.selfMode;
+        let currentSelfSudo = firstPass.selfSudo;
         let currentSelfSourceRecords = firstPass.selfSourceRecords;
         let stableConfig: AvantiConfig | undefined;
 
@@ -600,6 +609,7 @@ export function pullCommand(): Command {
           prevSelfContent = currentSelfContent;
           currentSelfContent = next.selfContent;
           currentSelfMode = next.selfMode;
+          currentSelfSudo = next.selfSudo;
           currentSelfSourceRecords = next.selfSourceRecords;
         }
 
@@ -662,6 +672,7 @@ export function pullCommand(): Command {
                 targetPath: configPath,
                 content: selfBuf,
                 mode: currentSelfMode,
+                sudo: currentSelfSudo,
               });
               allDiffs.push(computeDiff(configPath, selfBuf, currentSelfMode));
             } else {
@@ -671,6 +682,7 @@ export function pullCommand(): Command {
                 ...writeTargets[existingIdx],
                 content: selfBuf,
                 mode: resolvedSelfMode,
+                sudo: currentSelfSudo,
               };
               allDiffs[existingIdx] = computeDiff(
                 configPath,
