@@ -662,12 +662,21 @@ function sudoWriteInPlace(t: SudoWriteTarget): void {
 
     // For existing files, temporarily ensure owner-write so tee can open the
     // file even when its current mode has no write bit (e.g. 0400/0444 set on
-    // a previous pull). Always capture the pre-tee mode so we can restore it
-    // in the finally block if tee fails (preventing a file from remaining more
-    // permissive than it was before the attempted write).
+    // a previous pull). For named-user sudo, chmod u+w may fail when the target
+    // file is owned by a different account (e.g. root:www-data 0664 — www-data
+    // can write via group bit but is not the owner and cannot chmod). In that
+    // case proceed without chmod; tee will fail here too if the write is
+    // actually forbidden. Only set preTeeMode when chmod succeeded so the
+    // finally block knows to restore the original mode only when it was changed.
     if (!isNewFile) {
-      preTeeMode = getSudoFileMode(sudo, resolvedTarget);
-      sudoRun(sudo, ['chmod', 'u+w', '--', resolvedTarget]);
+      const capturedMode = getSudoFileMode(sudo, resolvedTarget);
+      try {
+        sudoRun(sudo, ['chmod', 'u+w', '--', resolvedTarget]);
+        preTeeMode = capturedMode; // only set when chmod succeeded
+      } catch {
+        // chmod u+w failed (not owner) — proceed; tee will fail if write is
+        // also forbidden. preTeeMode remains undefined (nothing to restore).
+      }
     }
 
     // No '--' before resolvedTarget: BSD tee(1) on macOS does not support '--',

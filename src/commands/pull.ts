@@ -732,7 +732,16 @@ export function pullCommand(): Command {
                 sudo: meta.sudo,
               });
               staleRestoreDiffIndices.push(staleDiffs.length);
-              staleDiffs.push(computeDiff(ref.absolutePath, original));
+              const staleDiff = computeDiff(ref.absolutePath, original);
+              // A missing file with empty v0 produces isNew=true but
+              // hasChanges=false ('' !== '' = false). Mark it as hasChanges so
+              // printDiffs shows the recreate action and it passes the hasChanges
+              // gate without a separate staleDiffs.some(d => d.isNew) check.
+              staleDiffs.push(
+                staleDiff.isNew
+                  ? { ...staleDiff, hasChanges: true }
+                  : staleDiff,
+              );
             } else {
               console.warn(
                 `Warning: cannot restore original for ${ref.absolutePath} — v0 was never captured (file was unreadable at first pull). Leaving file unchanged.`,
@@ -839,6 +848,14 @@ export function pullCommand(): Command {
       // desired content. If they match, suppress the write for this entry.
       for (let i = 0; i < writeTargets.length; i++) {
         if (allDiffs[i].isUnreadable && writeTargets[i].sudo) {
+          // Skip idempotency read for symlinks: sudoRead follows symlinks and
+          // the write path replaces or refuses them; reading through a symlink
+          // here would compare against the wrong content.
+          if (
+            sudoIsSymlink(writeTargets[i].sudo!, writeTargets[i].targetPath)
+          ) {
+            continue;
+          }
           const current = sudoRead(
             writeTargets[i].sudo!,
             writeTargets[i].targetPath,
@@ -869,6 +886,13 @@ export function pullCommand(): Command {
       for (let i = 0; i < staleToRestore.length; i++) {
         const diffIdx = staleRestoreDiffIndices[i];
         if (staleDiffs[diffIdx]?.isUnreadable && staleToRestore[i].sudo) {
+          // Skip idempotency read for symlinks: sudoRead follows symlinks and
+          // could read an unintended privileged file before write-path checks run.
+          if (
+            sudoIsSymlink(staleToRestore[i].sudo!, staleToRestore[i].targetPath)
+          ) {
+            continue;
+          }
           const current = sudoRead(
             staleToRestore[i].sudo!,
             staleToRestore[i].targetPath,
@@ -885,12 +909,7 @@ export function pullCommand(): Command {
 
       const hasChanges =
         allDiffs.some((d) => d.hasChanges) ||
-        staleDiffs.some((d) => d.hasChanges) ||
-        // A stale restore where the original v0 is empty and the file is
-        // missing produces hasChanges=false ('' !== '' = false) but isNew=true.
-        // Without this, the early-exit below fires before activeStaleRestore is
-        // computed and the file is never recreated.
-        staleDiffs.some((d) => d.isNew);
+        staleDiffs.some((d) => d.hasChanges);
       printDiffs([...allDiffs, ...staleDiffs]);
 
       // Show SHA mismatch summary when using --accept-changes
@@ -1142,7 +1161,11 @@ export function pullCommand(): Command {
               allDiffs[i].isUnreadable &&
               !allDiffs[i].isNew &&
               writeTargets[i].sudo &&
-              !history.getFileMeta(targetPath)
+              !history.getFileMeta(targetPath) &&
+              // Refuse symlinks: sudoRead follows them and could read an
+              // unintended privileged file before write-path checks run,
+              // persisting arbitrary content into the user's history.
+              !sudoIsSymlink(writeTargets[i].sudo!, targetPath)
             ) {
               v0Override =
                 sudoRead(writeTargets[i].sudo!, targetPath) ?? undefined;
