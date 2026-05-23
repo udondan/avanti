@@ -735,6 +735,54 @@ export function pullCommand(): Command {
         }
       }
 
+      // Windows does not have sudo; fail before any authentication attempt.
+      if (process.platform === 'win32' && writeTargets.some((t) => t.sudo)) {
+        throw new Error('sudo is not supported on Windows');
+      }
+
+      // Authenticate early for unreadable sudo files so we can read their actual
+      // content before deciding whether anything changed. Without this, every pull
+      // would show unreadable files as "changed" (we can't diff without reading),
+      // and "Nothing to do." could never be reported on a re-run.
+      const unreadableSudoValues = new Set<true | string>();
+      for (let i = 0; i < writeTargets.length; i++) {
+        if (allDiffs[i].isUnreadable && writeTargets[i].sudo) {
+          unreadableSudoValues.add(writeTargets[i].sudo!);
+        }
+      }
+      for (const sv of unreadableSudoValues) {
+        sudoAuth(sv);
+      }
+      // For entries where lstatSync failed (parent directory not searchable),
+      // use sudoFileExists to determine whether the file actually exists so
+      // existedBeforeAvanti is recorded correctly.
+      for (let i = 0; i < writeTargets.length; i++) {
+        if (allDiffs[i].lstatFailed && writeTargets[i].sudo) {
+          const exists = sudoFileExists(
+            writeTargets[i].sudo!,
+            writeTargets[i].targetPath,
+          );
+          allDiffs[i] = { ...allDiffs[i], isNew: !exists };
+        }
+      }
+      // Post-auth idempotency: compare current file content via sudo against the
+      // desired content. If they match, suppress the write for this entry.
+      for (let i = 0; i < writeTargets.length; i++) {
+        if (allDiffs[i].isUnreadable && writeTargets[i].sudo) {
+          const current = sudoRead(
+            writeTargets[i].sudo!,
+            writeTargets[i].targetPath,
+          );
+          if (current !== null && current.equals(writeTargets[i].content)) {
+            allDiffs[i] = {
+              ...allDiffs[i],
+              contentChanged: false,
+              hasChanges: allDiffs[i].modeChange !== undefined,
+            };
+          }
+        }
+      }
+
       const hasChanges =
         allDiffs.some((d) => d.hasChanges) ||
         staleDiffs.some((d) => d.hasChanges);
@@ -756,8 +804,18 @@ export function pullCommand(): Command {
             );
           }
         }
-        if (process.platform === 'win32' && writeTargets.some((t) => t.sudo)) {
-          throw new Error('sudo is not supported on Windows');
+        // Even when content is unchanged, the sudo setting on a tracked file
+        // may have changed in the config. Persist the updated identity so that
+        // future stale cleanup uses the correct privileges.
+        if (historyAvailable) {
+          for (let i = 0; i < writeTargets.length; i++) {
+            if (history.getFileMeta(writeTargets[i].targetPath)) {
+              history.updateFileSudo(
+                writeTargets[i].targetPath,
+                writeTargets[i].sudo,
+              );
+            }
+          }
         }
         console.log('Nothing to do.');
         process.exit(0);
@@ -874,19 +932,6 @@ export function pullCommand(): Command {
       }
       for (const sv of sudoValues) {
         sudoAuth(sv);
-      }
-
-      // For entries where lstatSync itself failed (parent directory not searchable),
-      // use sudoFileExists to determine whether the file actually exists. Correct
-      // isNew so that history records existedBeforeAvanti correctly.
-      for (let i = 0; i < writeTargets.length; i++) {
-        if (allDiffs[i].lstatFailed && writeTargets[i].sudo) {
-          const exists = sudoFileExists(
-            writeTargets[i].sudo!,
-            writeTargets[i].targetPath,
-          );
-          allDiffs[i] = { ...allDiffs[i], isNew: !exists };
-        }
       }
 
       // Stage history versions before atomicWrite so v0 is captured before overwrite
