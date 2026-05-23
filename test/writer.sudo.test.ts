@@ -171,6 +171,9 @@ describe('sudoAtomicWrite — mv path', () => {
       (_cmd: string, args: readonly string[]) => {
         calls.push([...args]);
         if (args.includes('mktemp')) return okResult('/etc/.avanti-tmp');
+        // UID stat (-c %u): return 0 (root owns /etc)
+        if (args.includes('stat') && args.includes('%u')) return okResult('0');
+        // mode stat (-c %a or -f %Lp): return 644 (no group/world write)
         if (args.includes('stat')) return okResult('644');
         if (args.includes('test') && args.includes('-L')) return failResult();
         if (args.includes('test') && args.includes('-d')) return failResult();
