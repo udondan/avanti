@@ -30,6 +30,7 @@ import {
   sudoDelete,
   sudoFileExists,
   sudoIsSymlink,
+  sudoRead,
   sudoRun,
   SudoWriteTarget,
   WriteTarget,
@@ -374,7 +375,19 @@ async function runFetchLoop(
         // effectivePath is always defined here: isSelf is false (we continued above),
         // so targetPath was defined, and effectivePath = resolveFollowSymlink(targetPath, ...).
         const ep = effectivePath!;
-        const diff = computeDiff(ep, content, entry.mode);
+        let diff = computeDiff(ep, content, entry.mode);
+        // Unreadable sudo targets cannot be diffed against live content. Compare
+        // against the last recorded history version so repeated pulls of an
+        // unchanged file do not trigger spurious rewrites.
+        if (diff.isUnreadable && !diff.isNew && entry.sudo && history) {
+          const meta = history.getFileMeta(ep);
+          if (meta && meta.currentVersion > 0) {
+            const last = history.readVersion(ep, meta.currentVersion);
+            if (last !== null && last.equals(content)) {
+              diff = { ...diff, hasChanges: false, contentChanged: false };
+            }
+          }
+        }
         allDiffs.push(diff);
         const backupPath =
           entry.backup && diff.hasChanges && !diff.isNew
@@ -849,6 +862,33 @@ export function pullCommand(): Command {
           runNamedHook('beforeUpdate', ctx.hooks.beforeUpdate);
       }
 
+      // Compute write batches and authenticate before staging so that sudo is
+      // available for v0 capture of unreadable first-seen files (history must
+      // record the original content before it is overwritten).
+      const changedTargets = writeTargets.filter(
+        (_, i) => allDiffs[i].hasChanges && allDiffs[i].contentChanged,
+      );
+      const sudoValues = new Set<true | string>(
+        [...changedTargets, ...staleToRestore]
+          .map((t) => t.sudo)
+          .filter(Boolean) as (true | string)[],
+      );
+      for (const sv of staleDeleteSudo.values()) {
+        sudoValues.add(sv);
+      }
+      for (let i = 0; i < writeTargets.length; i++) {
+        if (
+          allDiffs[i].modeChange &&
+          !allDiffs[i].contentChanged &&
+          writeTargets[i].sudo
+        ) {
+          sudoValues.add(writeTargets[i].sudo!);
+        }
+      }
+      for (const sv of sudoValues) {
+        sudoAuth(sv);
+      }
+
       // Stage history versions before atomicWrite so v0 is captured before overwrite
       const stagedFileRefs: PullLogFileRef[] = [];
       if (pullId) {
@@ -877,6 +917,19 @@ export function pullCommand(): Command {
                       acceptedShaLabels.has(r.sourceLabel),
                   }))
                 : undefined;
+            // For a first-seen unreadable sudo file, capture v0 via sudo so
+            // revert-to-original works even when the invoking user cannot read
+            // the file directly.
+            let v0Override: Buffer | undefined;
+            if (
+              allDiffs[i].isUnreadable &&
+              !allDiffs[i].isNew &&
+              writeTargets[i].sudo &&
+              !history.getFileMeta(targetPath)
+            ) {
+              v0Override =
+                sudoRead(writeTargets[i].sudo!, targetPath) ?? undefined;
+            }
             const { fileRef } = history.stageFileVersion(
               pullId,
               targetPath,
@@ -884,6 +937,7 @@ export function pullCommand(): Command {
               allDiffs[i].isNew,
               sourceShaRecords,
               writeTargets[i].sudo,
+              v0Override,
             );
             stagedFileRefs.push(fileRef);
           } catch {
@@ -896,34 +950,7 @@ export function pullCommand(): Command {
 
       let postWriteError: string | null = null;
       try {
-        const changedTargets = writeTargets.filter(
-          (_, i) => allDiffs[i].hasChanges && allDiffs[i].contentChanged,
-        );
-
-        // Authenticate once per distinct sudo identity before any writes,
-        // including mode-only chmod targets (excluded from changedTargets).
-        const allWriteTargets = [...changedTargets, ...staleToRestore];
-        const sudoValues = new Set<true | string>(
-          allWriteTargets.map((t) => t.sudo).filter(Boolean) as (
-            | true
-            | string
-          )[],
-        );
-        for (const sv of staleDeleteSudo.values()) {
-          sudoValues.add(sv);
-        }
-        for (let i = 0; i < writeTargets.length; i++) {
-          if (
-            allDiffs[i].modeChange &&
-            !allDiffs[i].contentChanged &&
-            writeTargets[i].sudo
-          ) {
-            sudoValues.add(writeTargets[i].sudo!);
-          }
-        }
-        for (const sv of sudoValues) {
-          sudoAuth(sv);
-        }
+        // changedTargets and sudoValues already computed above; auth already done.
 
         // Content writes go first so that if atomicWrite throws, no permissions
         // have been changed yet (minimises partial-apply surface).

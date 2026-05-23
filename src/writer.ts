@@ -49,6 +49,14 @@ export function sudoAtomicWrite(targets: SudoWriteTarget[]): void {
   }
 }
 
+export function sudoRead(sudo: true | string, filePath: string): Buffer | null {
+  const r = spawnSync('sudo', [...sudoUserArgs(sudo), 'cat', '--', filePath], {
+    stdio: ['ignore', 'pipe', 'inherit'],
+  });
+  if (r.status !== 0 || r.error || !r.stdout) return null;
+  return r.stdout;
+}
+
 export function sudoDelete(p: string, sudo: true | string): void {
   const r = spawnSync('sudo', [...sudoUserArgs(sudo), 'rm', '-f', '--', p], {
     stdio: 'inherit',
