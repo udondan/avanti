@@ -85,10 +85,9 @@ export function computeDiff(
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code;
     if (code !== 'EACCES' && code !== 'EPERM') throw err;
-    // File exists but is unreadable (e.g. root-owned 0600). Treat as new
-    // so the write is always applied — prevents a crash and ensures content
-    // is (re-)written to match the declared source.
-    isNew = true;
+    // File exists but is unreadable (e.g. root-owned 0600). Keep isNew=false
+    // so history correctly records existedBeforeAvanti and backups are made.
+    isNew = false;
     isUnreadable = true;
     oldBuf = Buffer.alloc(0);
   }
@@ -113,6 +112,18 @@ export function computeDiff(
     }
   }
 
+  if (isUnreadable) {
+    return {
+      targetPath,
+      isNew: false,
+      hasChanges: true,
+      contentChanged: true,
+      patch: '',
+      isUnreadable: true,
+      modeChange,
+    };
+  }
+
   const binary = isBinary(newContent) || isBinary(oldBuf);
 
   if (binary) {
@@ -125,7 +136,6 @@ export function computeDiff(
       contentChanged,
       patch: '',
       isBinary: true,
-      ...(isUnreadable && { isUnreadable }),
       modeChange,
     };
   }
@@ -152,7 +162,6 @@ export function computeDiff(
     hasChanges,
     contentChanged,
     patch,
-    ...(isUnreadable && { isUnreadable }),
     modeChange,
   };
 }
@@ -181,11 +190,11 @@ export function formatDiff(diff: FileDiff): string {
   }
 
   if (diff.isUnreadable) {
-    const oldPath = diff.isDelete ? diff.targetPath : '/dev/null';
+    const oldPath = diff.isDelete ? diff.targetPath : diff.targetPath;
     const newPath = diff.isDelete ? '/dev/null' : diff.targetPath;
     const label = diff.isDelete
       ? 'file deleted (unreadable — no diff available)'
-      : 'file updated (existing content unreadable — showing new content only)';
+      : 'file updated (existing content unreadable — diff unavailable)';
     let out = chalk.bold(`--- ${oldPath}\n+++ ${newPath}`) + '\n';
     if (diff.modeChange) out += modeFrom + '\n' + modeTo + '\n';
     out += chalk.cyan(`@@ ${label} @@`);

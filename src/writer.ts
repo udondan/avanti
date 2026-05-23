@@ -193,12 +193,20 @@ function sudoWriteMv(t: SudoWriteTarget): void {
             '.avanti-tmp',
         );
         sudoRun(sudo, ['cp', '--', resolvedTarget, backupTmp]);
-        const backupIsDir = spawnSync(
-          'sudo',
-          [...sudoUserArgs(sudo), 'test', '-d', path.resolve(t.backupPath)],
-          { stdio: 'ignore' },
-        );
-        if (backupIsDir.status === 0) {
+        const resolvedBackup = path.resolve(t.backupPath);
+        const backupIsDir =
+          spawnSync(
+            'sudo',
+            [...sudoUserArgs(sudo), 'test', '-d', resolvedBackup],
+            { stdio: 'ignore' },
+          ).status === 0;
+        const backupIsSymlink =
+          spawnSync(
+            'sudo',
+            [...sudoUserArgs(sudo), 'test', '-L', resolvedBackup],
+            { stdio: 'ignore' },
+          ).status === 0;
+        if (backupIsDir && !backupIsSymlink) {
           throw new Error(`backup path is a directory: ${t.backupPath}`);
         }
         sudoRun(sudo, ['mv', '--', backupTmp, t.backupPath]);
@@ -206,12 +214,16 @@ function sudoWriteMv(t: SudoWriteTarget): void {
       }
     }
 
-    const destIsDir = spawnSync(
-      'sudo',
-      [...sudoUserArgs(sudo), 'test', '-d', path.resolve(t.targetPath)],
-      { stdio: 'ignore' },
-    );
-    if (destIsDir.status === 0) {
+    const resolvedTarget = path.resolve(t.targetPath);
+    const destIsDir =
+      spawnSync('sudo', [...sudoUserArgs(sudo), 'test', '-d', resolvedTarget], {
+        stdio: 'ignore',
+      }).status === 0;
+    const destIsSymlink =
+      spawnSync('sudo', [...sudoUserArgs(sudo), 'test', '-L', resolvedTarget], {
+        stdio: 'ignore',
+      }).status === 0;
+    if (destIsDir && !destIsSymlink) {
       throw new Error(`target path is a directory: ${t.targetPath}`);
     }
     sudoRun(sudo, ['mv', '--', tmpFile, t.targetPath]);
@@ -284,12 +296,20 @@ function sudoWriteInPlace(t: SudoWriteTarget): void {
             '.avanti-tmp',
         );
         sudoRun(sudo, ['cp', '--', resolvedTarget, backupTmp]);
-        const backupIsDir = spawnSync(
-          'sudo',
-          [...sudoUserArgs(sudo), 'test', '-d', path.resolve(t.backupPath)],
-          { stdio: 'ignore' },
-        );
-        if (backupIsDir.status === 0) {
+        const resolvedBackup = path.resolve(t.backupPath);
+        const backupIsDir =
+          spawnSync(
+            'sudo',
+            [...sudoUserArgs(sudo), 'test', '-d', resolvedBackup],
+            { stdio: 'ignore' },
+          ).status === 0;
+        const backupIsSymlink =
+          spawnSync(
+            'sudo',
+            [...sudoUserArgs(sudo), 'test', '-L', resolvedBackup],
+            { stdio: 'ignore' },
+          ).status === 0;
+        if (backupIsDir && !backupIsSymlink) {
           throw new Error(`backup path is a directory: ${t.backupPath}`);
         }
         sudoRun(sudo, ['mv', '--', backupTmp, t.backupPath]);

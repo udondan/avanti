@@ -756,6 +756,9 @@ export function pullCommand(): Command {
             }
           }
         }
+        if (process.platform === 'win32' && writeTargets.some((t) => t.sudo)) {
+          throw new Error('sudo is not supported on Windows');
+        }
         console.log('Nothing to do.');
         process.exit(0);
       }
