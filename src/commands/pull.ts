@@ -1103,6 +1103,7 @@ export function pullCommand(): Command {
       }
 
       let postWriteError: string | null = null;
+      let effectivelyDeleted = new Set<string>();
       try {
         // changedTargets and sudoValues already computed above; auth already done.
 
@@ -1182,10 +1183,13 @@ export function pullCommand(): Command {
             }
           }
         }
-        const deletedCount = staleToDelete.filter((p) => {
-          const idx = staleDeleteDiffIndex.get(p);
-          return idx !== undefined && staleDiffs[idx].hasChanges;
-        }).length;
+        effectivelyDeleted = new Set(
+          staleToDelete.filter((p) => {
+            const idx = staleDeleteDiffIndex.get(p);
+            return idx !== undefined && staleDiffs[idx].hasChanges;
+          }),
+        );
+        const deletedCount = effectivelyDeleted.size;
         const written =
           changedTargets.length +
           activeStaleRestore.length +
@@ -1263,14 +1267,33 @@ export function pullCommand(): Command {
         }
       }
 
-      // Only record to pulls.jsonl if at least one file was staged (written or
-      // SHA-accepted via --accept-changes with no content diff)
-      if (pullId && stagedFileRefs.length > 0) {
+      // Record to pulls.jsonl when files were staged OR stale files were deleted.
+      // For stale-delete-only runs, merge surviving refs from the last pull so
+      // the deleted paths are no longer listed — without this, subsequent pulls
+      // see the same deleted files in the last-pull log and try to re-delete them.
+      if (
+        pullId &&
+        (stagedFileRefs.length > 0 || effectivelyDeleted.size > 0)
+      ) {
         try {
+          let refsToRecord = stagedFileRefs;
+          if (effectivelyDeleted.size > 0 && historyAvailable) {
+            const lastFiles = history.getLastPullFiles();
+            const survivingRefs = lastFiles.filter(
+              (ref) => !effectivelyDeleted.has(ref.absolutePath),
+            );
+            const stagedPaths = new Set(
+              stagedFileRefs.map((r) => r.absolutePath),
+            );
+            refsToRecord = [
+              ...survivingRefs.filter((r) => !stagedPaths.has(r.absolutePath)),
+              ...stagedFileRefs,
+            ];
+          }
           history.closePullSession(
             pullId,
             normalizeConfigKey(configPath),
-            stagedFileRefs,
+            refsToRecord,
           );
         } catch {
           console.warn('Warning: could not save pull history.');

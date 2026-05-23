@@ -67,15 +67,22 @@ export function sudoRead(sudo: true | string, filePath: string): Buffer | null {
       },
     );
     if (cp.status !== 0 || cp.error) return null;
-    // chown to current process UID so fs.readFileSync can read it.
+    // Make the temp copy readable by the current process.
+    // Root sudo: chown to current UID using the already-authenticated root
+    // identity — avoids leaving the file world-readable even briefly.
+    // Named-user sudo: chmod o+r using the SAME authenticated identity so we
+    // never introduce an implicit root sudo call that was not pre-authenticated.
     const uid = process.getuid?.();
-    if (uid !== undefined) {
+    if (uid !== undefined && sudo === true) {
       spawnSync('sudo', ['chown', String(uid), '--', tmpFile], {
         stdio: 'inherit',
       });
     } else {
-      // Windows fallback (sudo is unsupported there but keep the path safe).
-      spawnSync('sudo', ['chmod', 'a+r', '--', tmpFile], { stdio: 'inherit' });
+      spawnSync(
+        'sudo',
+        [...sudoUserArgs(sudo), 'chmod', 'o+r', '--', tmpFile],
+        { stdio: 'inherit' },
+      );
     }
     return fs.readFileSync(tmpFile);
   } catch {
@@ -350,16 +357,29 @@ function sudoWriteMv(t: SudoWriteTarget): void {
   }
 }
 
-// Security note: the preflight symlink/type checks and the subsequent sudo tee
-// are not atomic. An attacker who can write to the destination directory could
-// swap the path between the checks and the tee, redirecting the privileged write.
-// The risk is limited to directories writable by untrusted users; system directories
-// (e.g. /etc) are root-owned and not subject to this race. Use writeInPlace only
-// when the target directory is not writable by untrusted users.
 function sudoWriteInPlace(t: SudoWriteTarget): void {
   const sudo = t.sudo;
   const dir = path.dirname(t.targetPath);
   sudoRun(sudo, ['mkdir', '-p', '--', dir]);
+
+  // Reject writeInPlace when the parent directory is world-writable: the
+  // symlink/type preflight and the subsequent sudo tee are not atomic, so an
+  // attacker who can write to the directory could swap the path between the
+  // checks and the tee, redirecting the privileged write. System directories
+  // (e.g. /etc, /usr/local/etc) are root-owned and not at risk; reject only
+  // world-writable directories (mode bit 0o002). Use the mv-style write
+  // (writeInPlace: false) for targets in untrusted directories.
+  const dirModeStr = getSudoFileMode(sudo, dir);
+  if (dirModeStr) {
+    const dirMode = parseInt(dirModeStr, 8);
+    if (!isNaN(dirMode) && dirMode & 0o002) {
+      throw new Error(
+        `writeInPlace: parent directory ${dir} is world-writable; ` +
+          `sudo writeInPlace cannot be used safely here due to TOCTOU risk. ` +
+          `Remove writeInPlace: true to use atomic mv-style writes instead.`,
+      );
+    }
+  }
 
   let backupTmp: string | undefined;
 
