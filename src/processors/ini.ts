@@ -399,20 +399,20 @@ function mergeDocuments(
             it.isArray === item.isArray,
         )
       ) {
-        // Insert before the first section, and before any trailing blank/comment
-        // nodes in the global area, so base formatting stays at end/boundary.
+        // Insert after the last global KV, or at the section boundary when
+        // there are no global KVs — never before leading comment/blank lines.
         const firstSectionIdx = base.items.findIndex(
           (it) => it.kind === 'section',
         );
         const boundary =
           firstSectionIdx === -1 ? base.items.length : firstSectionIdx;
         let insertAt = boundary;
-        while (
-          insertAt > 0 &&
-          base.items[insertAt - 1].kind !== 'kv' &&
-          base.items[insertAt - 1].kind !== 'section'
-        )
-          insertAt--;
+        for (let j = boundary - 1; j >= 0; j--) {
+          if (base.items[j].kind === 'kv') {
+            insertAt = j + 1;
+            break;
+          }
+        }
         base.items.splice(insertAt, 0, { ...item });
       }
       continue;

@@ -9,6 +9,7 @@ import { mergeToml } from './toml';
 import {
   parseIniDoc,
   stringifyIniDoc,
+  mergeIni,
   type IniDocument,
   type IniKeyValue,
   type IniSection,
@@ -16,7 +17,6 @@ import {
   type IniComment,
   type IniBlank,
 } from './ini';
-import { mergeIni } from './ini';
 import {
   resolveJsonOptions,
   resolveYamlOptions,

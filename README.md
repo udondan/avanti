@@ -1015,9 +1015,11 @@ The options behave identically to JSON, YAML, and TOML merging:
 
 **Comments and key order are preserved in the base (first) source.** The INI processor uses
 a line-level AST, so comment lines, inline comments, and blank lines from the first source
-are carried through the merge unchanged. Comments from later (overlay) sources are not
-transferred — they are value sources only. When a key's value is updated, the key stays at
-its original position — it is not shuffled to the end.
+are preserved through the merge. Minor whitespace normalization may occur (e.g. a single
+space is inserted before inline comments, and spacing around `=` follows the base key's
+original separator). Comments from later (overlay) sources are not transferred — they are
+value sources only. When a key's value is updated, the key stays at its original position —
+it is not shuffled to the end.
 
 **Supported INI features:** sections (`[section]`), subsections (`[section "name"]`),
 `key = value` pairs, bare keys, quoted values (`"..."` / `'...'`), comment lines (`;` and `#`),
