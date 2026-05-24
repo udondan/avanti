@@ -358,6 +358,80 @@ describe('YAML — user override protection', () => {
   });
 });
 
+// ── YAML — property order preservation ───────────────────────────────────────
+
+describe('YAML — property order preservation', () => {
+  it('key updated in new contribution keeps its original position', () => {
+    const targetPath = path.join(tmpDir, 'file.yaml');
+    fs.writeFileSync(targetPath, 'z: 1\na: 99\nm: 3\n');
+    const result = applyInsertMode(
+      makeEntry({ yaml: true }),
+      'a: 100\n',
+      'a: 99\n',
+      targetPath,
+    );
+    expect(result).toBe('z: 1\na: 100\nm: 3\n');
+  });
+
+  it('nested key updated in new contribution keeps its original position', () => {
+    const targetPath = path.join(tmpDir, 'file.yaml');
+    fs.writeFileSync(targetPath, 'config:\n  a: 99\n  userProp: x\n');
+    const result = applyInsertMode(
+      makeEntry({ yaml: true }),
+      'config:\n  a: 100\n',
+      'config:\n  a: 99\n',
+      targetPath,
+    );
+    expect(result).toContain('a: 100');
+    expect(result).toContain('userProp: x');
+    expect(result.indexOf('a: 100')).toBeLessThan(
+      result.indexOf('userProp: x'),
+    );
+  });
+
+  it('uses remove-then-merge (no order preservation) when conflicts: first_wins', () => {
+    const targetPath = path.join(tmpDir, 'file.yaml');
+    fs.writeFileSync(targetPath, 'a: 99\nb: 2\n');
+    const result = applyInsertMode(
+      makeEntry({ yaml: { conflicts: 'first_wins' } }),
+      'a: 100\n',
+      'a: 99\n',
+      targetPath,
+    );
+    // first_wins: 'a' is removed then re-merged; no order preservation
+    expect(result).toContain('a: 100');
+    expect(result.indexOf('b: 2')).toBeLessThan(result.indexOf('a: 100'));
+  });
+
+  it('does not throw with conflicts: abort when updated key is removed before merge', () => {
+    const targetPath = path.join(tmpDir, 'file.yaml');
+    fs.writeFileSync(targetPath, 'a: 99\nb: 2\n');
+    expect(() =>
+      applyInsertMode(
+        makeEntry({ yaml: { conflicts: 'abort' } }),
+        'a: 100\n',
+        'a: 99\n',
+        targetPath,
+      ),
+    ).not.toThrow();
+  });
+
+  it('falls back to remove-then-merge when processedText is invalid YAML', () => {
+    const targetPath = path.join(tmpDir, 'file.yaml');
+    fs.writeFileSync(targetPath, 'a: 99\nb: 2\n');
+    // invalid YAML → newContrib stays null → old remove-then-merge behaviour
+    // mergeYaml itself will throw on the invalid processedText
+    expect(() =>
+      applyInsertMode(
+        makeEntry({ yaml: true }),
+        ': invalid: yaml: [[[',
+        'a: 99\n',
+        targetPath,
+      ),
+    ).toThrow();
+  });
+});
+
 // ── TOML ──────────────────────────────────────────────────────────────────────
 
 describe('TOML — first insert', () => {

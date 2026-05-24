@@ -102,6 +102,7 @@ function yamlNodeToJs(node: unknown): unknown {
 function deepRemoveFromYamlMap(
   base: ReturnType<typeof parseDocument>['contents'] & object,
   oldContrib: Record<string, unknown>,
+  newContrib: Record<string, unknown> | null = null,
 ): void {
   if (!isMap(base)) return;
 
@@ -112,19 +113,28 @@ function deepRemoveFromYamlMap(
     const pair = base.items[pairIdx];
     const oldVal = oldContrib[key];
     const pairVal = pair.value;
+    const newVal =
+      newContrib != null && Object.hasOwn(newContrib, key)
+        ? newContrib[key]
+        : undefined;
 
     if (isPlainObject(oldVal) && isMap(pairVal)) {
-      deepRemoveFromYamlMap(pairVal, oldVal);
-      if ((pairVal as { items: unknown[] }).items.length === 0) {
+      const nestedNew = isPlainObject(newVal) ? newVal : null;
+      deepRemoveFromYamlMap(pairVal, oldVal, nestedNew);
+      if (
+        (pairVal as { items: unknown[] }).items.length === 0 &&
+        newVal === undefined
+      ) {
         base.items.splice(pairIdx, 1);
       }
     } else if (Array.isArray(oldVal) && isSeq(pairVal)) {
       const seqItems = (pairVal as { items: unknown[] }).items;
       removeArrayContribution(seqItems, oldVal, (item) => yamlNodeToJs(item));
-      if (seqItems.length === 0) {
+      if (seqItems.length === 0 && newVal === undefined) {
         base.items.splice(pairIdx, 1);
       }
     } else {
+      if (newVal !== undefined) continue;
       if (deepEqual(yamlNodeToJs(pairVal), oldVal)) {
         base.items.splice(pairIdx, 1);
       }
@@ -262,7 +272,27 @@ function applyYamlInsert(
       if (lpDoc.errors.length === 0) {
         const oldContrib = lpDoc.toJSON() as Record<string, unknown>;
         if (isPlainObject(oldContrib)) {
-          deepRemoveFromYamlMap(doc.contents, oldContrib);
+          // Order-preservation only works under last_wins; with first_wins the
+          // stale key would persist, and with abort mergeYaml would throw on
+          // the un-removed key.
+          const rawConflicts = opts['conflicts'];
+          const effectiveConflicts =
+            rawConflicts === 'abort' || rawConflicts === 'first_wins'
+              ? rawConflicts
+              : 'last_wins';
+          let newContrib: Record<string, unknown> | null = null;
+          if (effectiveConflicts === 'last_wins') {
+            try {
+              const ptDoc = parseDocument(processedText);
+              if (ptDoc.errors.length === 0) {
+                const p = ptDoc.toJSON() as unknown;
+                if (isPlainObject(p)) newContrib = p;
+              }
+            } catch {
+              // unparseable processedText → null (old behaviour)
+            }
+          }
+          deepRemoveFromYamlMap(doc.contents, oldContrib, newContrib);
         }
       }
     }
