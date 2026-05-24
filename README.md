@@ -1027,10 +1027,11 @@ is no base inline comment to fall back on). When a new section is introduced by 
 (one that does not exist in the base), it is inserted without its section header comment or
 any internal comment/blank nodes — only its key-value pairs are carried over.
 
-**Comment behavior under `objects: replace`:** When the overlay section replaces an existing
-base section (or appends a new one), the entire overlay section content is used as-is —
-including its section header comment, internal comment lines, blank lines, and inline
-comments.
+**Comment behavior under `objects: replace`:** When the overlay section's key-value content
+differs from the base, the entire overlay section is used as-is — including its section
+header comment, internal comment lines, blank lines, and inline comments. If the two sections
+have identical key-value content (even when they differ only in comments or whitespace), no
+replacement occurs — the base section is kept unchanged.
 
 **Inline comment limitation for arrays:** When the same key appears as multiple `key[] = val`
 entries, all values are coalesced into a single array node. Only the inline comment from the
@@ -1042,6 +1043,12 @@ discarded.
 inline comments, blank lines, backslash line continuation, and arrays via `key[] = val`. All
 `key[] = val` entries for the same key are collected into one array regardless of position in
 the file; non-contiguous entries are normalized to appear at the first occurrence of that key.
+
+**Value coercion:** Unquoted values that match `true` or `false` (case-insensitive) are parsed
+as booleans, and values that parse as a valid number are parsed as numbers. This means
+`enabled = true` is stored as a boolean and `port = 8080` as a number; on format or merge
+these are re-serialised as `true` / `8080` respectively. Strings like `001` are normalised to
+`1`. To preserve the exact string form, quote the value: `port = "8080"`.
 
 **Inline comment delimiter:** `;` and `#` are treated as comment delimiters when they appear
 outside of quoted strings. If a value contains a literal `;` or `#` character, quote the value

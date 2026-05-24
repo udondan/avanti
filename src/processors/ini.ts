@@ -222,6 +222,9 @@ export function parseIniDoc(text: string): IniDocument {
       }
       const { value: bareKey, inlineComment: bareComment } =
         splitValueAndComment(trimmed);
+      if (bareKey.includes('\0')) {
+        throw new Error(`line ${i + 1}: INI key must not contain null bytes`);
+      }
       pushItem({
         kind: 'kv',
         key: bareKey,
