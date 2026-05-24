@@ -326,9 +326,15 @@ function mergeKvIntoItems(
   );
 
   if (idx === -1) {
-    // Insert before any trailing blank/comment nodes to keep formatting at end
+    // Insert after the last existing KV; if none exist, append at end so that
+    // leading comment/blank nodes (e.g. section header notes) are not displaced.
     let insertAt = items.length;
-    while (insertAt > 0 && items[insertAt - 1].kind !== 'kv') insertAt--;
+    for (let j = items.length - 1; j >= 0; j--) {
+      if (items[j].kind === 'kv') {
+        insertAt = j + 1;
+        break;
+      }
+    }
     items.splice(insertAt, 0, { ...overlay });
     return;
   }
@@ -358,10 +364,9 @@ function mergeKvIntoItems(
   }
   if (opts.conflicts === 'first_wins') return;
 
-  // last_wins: update value and sep in-place, preserve inline comment and position
+  // last_wins: update value in-place; preserve sep, inline comment, and position
   const baseKv = items[idx] as IniKeyValue;
   baseKv.value = overlay.value;
-  baseKv.sep = overlay.sep;
 }
 
 function mergeSectionItems(
