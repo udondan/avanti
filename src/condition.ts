@@ -16,7 +16,8 @@ export function evaluateCondition(
 
   if (cond.os !== undefined) {
     const platforms = Array.isArray(cond.os) ? cond.os : [cond.os];
-    if (!(platforms as string[]).includes(currentPlatform())) result = false;
+    if (!platforms.map(normalizePlatform).includes(currentPlatform()))
+      result = false;
   }
   if (result && cond.exists !== undefined) {
     let existsPath = resolveVars(cond.exists, vars);
@@ -61,8 +62,12 @@ export function evaluateConditions(
   return true;
 }
 
+function normalizePlatform(p: string): string {
+  if (p === 'darwin') return 'mac';
+  if (p === 'win32') return 'windows';
+  return p;
+}
+
 function currentPlatform(): string {
-  if (process.platform === 'win32') return 'windows';
-  if (process.platform === 'darwin') return 'mac';
-  return process.platform;
+  return normalizePlatform(process.platform);
 }

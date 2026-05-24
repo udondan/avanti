@@ -54,6 +54,24 @@ describe('evaluateCondition', () => {
       );
     });
 
+    it('accepts darwin as alias for mac', () => {
+      spoofPlatform('darwin');
+      expect(evaluateCondition({ os: 'darwin' }, () => '', tmpDir, {})).toBe(
+        true,
+      );
+      spoofPlatform('linux');
+      expect(evaluateCondition({ os: 'darwin' }, () => '', tmpDir, {})).toBe(
+        false,
+      );
+    });
+
+    it('accepts win32 as alias for windows', () => {
+      spoofPlatform('win32');
+      expect(evaluateCondition({ os: 'win32' }, () => '', tmpDir, {})).toBe(
+        true,
+      );
+    });
+
     it('passes when current platform is in the list', () => {
       spoofPlatform('linux');
       expect(
