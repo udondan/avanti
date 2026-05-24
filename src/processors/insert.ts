@@ -234,7 +234,9 @@ function deepRemoveFromIniSectionItems(
       if (!node) continue;
       const curArr = node.value as IniScalar[];
       removeArrayContribution(curArr, oldVal);
-      if (curArr.length === 0 && newVal === undefined) {
+      // Remove the array node when it becomes empty and newVal is not an array
+      // (key removed or type changed to scalar).
+      if (curArr.length === 0 && !Array.isArray(newVal)) {
         const idx = items.indexOf(node);
         if (idx !== -1) items.splice(idx, 1);
       }
@@ -244,7 +246,9 @@ function deepRemoveFromIniSectionItems(
           it.kind === 'kv' && it.key === key && !it.isArray,
       );
       if (!node) continue;
-      if (newVal !== undefined) continue;
+      // Skip only when newVal is the same scalar type; if it changed to an
+      // array, remove the old scalar node so mergeIni can insert the new shape.
+      if (newVal !== undefined && !Array.isArray(newVal)) continue;
       if (deepEqual(node.value, oldVal)) {
         const idx = items.indexOf(node);
         if (idx !== -1) items.splice(idx, 1);
@@ -279,9 +283,11 @@ function deepRemoveFromIniDoc(
       if (!section) continue;
       const nestedNew = isPlainObject(newVal) ? newVal : null;
       deepRemoveFromIniSectionItems(section.items, oldVal, nestedNew);
+      // Remove the section when it's empty and newVal is not also a section
+      // (key removed or type changed to scalar/array).
       if (
         section.items.filter((it) => it.kind === 'kv').length === 0 &&
-        newVal === undefined
+        !isPlainObject(newVal)
       ) {
         const idx = doc.items.indexOf(section);
         if (idx !== -1) doc.items.splice(idx, 1);
@@ -294,7 +300,9 @@ function deepRemoveFromIniDoc(
       if (!node) continue;
       const curArr = node.value as IniScalar[];
       removeArrayContribution(curArr, oldVal);
-      if (curArr.length === 0 && newVal === undefined) {
+      // Remove the array node when it becomes empty and newVal is not an array
+      // (key removed or type changed to scalar/section).
+      if (curArr.length === 0 && !Array.isArray(newVal)) {
         const idx = doc.items.indexOf(node);
         if (idx !== -1) doc.items.splice(idx, 1);
       }
@@ -304,7 +312,14 @@ function deepRemoveFromIniDoc(
           it.kind === 'kv' && it.key === key && !it.isArray,
       );
       if (!node) continue;
-      if (newVal !== undefined) continue;
+      // Skip only when newVal is the same scalar type; remove the old node
+      // when type changes to array or section so the merge can re-add it.
+      if (
+        newVal !== undefined &&
+        !Array.isArray(newVal) &&
+        !isPlainObject(newVal)
+      )
+        continue;
       if (deepEqual(node.value, oldVal)) {
         const idx = doc.items.indexOf(node);
         if (idx !== -1) doc.items.splice(idx, 1);
