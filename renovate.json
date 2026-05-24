@@ -11,7 +11,7 @@
   "automergeStrategy": "squash",
   "packageRules": [
     {
-      "matchPackagePatterns": ["*"],
+      "matchPackagePatterns": [".*"],
       "semanticCommitType": "chore"
     }
   ],
