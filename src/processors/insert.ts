@@ -227,10 +227,14 @@ function deepRemoveFromIniSectionItems(
         : undefined;
 
     if (Array.isArray(oldVal)) {
-      const node = items.find(
-        (it): it is IniKeyValue =>
-          it.kind === 'kv' && it.key === key && it.isArray,
-      );
+      let node: IniKeyValue | undefined;
+      for (let j = items.length - 1; j >= 0; j--) {
+        const it = items[j];
+        if (it.kind === 'kv' && it.key === key && it.isArray) {
+          node = it;
+          break;
+        }
+      }
       if (!node) continue;
       const curArr = node.value as IniScalar[];
       removeArrayContribution(curArr, oldVal);
@@ -241,10 +245,14 @@ function deepRemoveFromIniSectionItems(
         if (idx !== -1) items.splice(idx, 1);
       }
     } else {
-      const node = items.find(
-        (it): it is IniKeyValue =>
-          it.kind === 'kv' && it.key === key && !it.isArray,
-      );
+      let node: IniKeyValue | undefined;
+      for (let j = items.length - 1; j >= 0; j--) {
+        const it = items[j];
+        if (it.kind === 'kv' && it.key === key && !it.isArray) {
+          node = it;
+          break;
+        }
+      }
       if (!node) continue;
       // Skip only when newVal is the same scalar type; if it changed to an
       // array, remove the old scalar node so mergeIni can insert the new shape.
@@ -274,15 +282,23 @@ function deepRemoveFromIniDoc(
         ? key.slice(INI_SECTION_PREFIX.length)
         : key;
       const subsectionMatch = /^(.+?)\s+"([^"]*)"$/.exec(sectionName);
-      const section = doc.items.find((it): it is IniSection => {
-        if (it.kind !== 'section') return false;
+      let section: IniSection | undefined;
+      for (let j = doc.items.length - 1; j >= 0; j--) {
+        const it = doc.items[j];
+        if (it.kind !== 'section') continue;
         if (subsectionMatch) {
-          return (
-            it.name === subsectionMatch[1] && it.subName === subsectionMatch[2]
-          );
+          if (
+            it.name === subsectionMatch[1] &&
+            it.subName === subsectionMatch[2]
+          ) {
+            section = it;
+            break;
+          }
+        } else if (it.name === sectionName && it.subName === undefined) {
+          section = it;
+          break;
         }
-        return it.name === sectionName && it.subName === undefined;
-      });
+      }
       if (!section) continue;
       const nestedNew = isPlainObject(newVal) ? newVal : null;
       deepRemoveFromIniSectionItems(section.items, oldVal, nestedNew);
@@ -296,10 +312,14 @@ function deepRemoveFromIniDoc(
         if (idx !== -1) doc.items.splice(idx, 1);
       }
     } else if (Array.isArray(oldVal)) {
-      const node = doc.items.find(
-        (it): it is IniKeyValue =>
-          it.kind === 'kv' && it.key === key && it.isArray,
-      );
+      let node: IniKeyValue | undefined;
+      for (let j = doc.items.length - 1; j >= 0; j--) {
+        const it = doc.items[j];
+        if (it.kind === 'kv' && it.key === key && it.isArray) {
+          node = it;
+          break;
+        }
+      }
       if (!node) continue;
       const curArr = node.value as IniScalar[];
       removeArrayContribution(curArr, oldVal);
@@ -310,10 +330,14 @@ function deepRemoveFromIniDoc(
         if (idx !== -1) doc.items.splice(idx, 1);
       }
     } else {
-      const node = doc.items.find(
-        (it): it is IniKeyValue =>
-          it.kind === 'kv' && it.key === key && !it.isArray,
-      );
+      let node: IniKeyValue | undefined;
+      for (let j = doc.items.length - 1; j >= 0; j--) {
+        const it = doc.items[j];
+        if (it.kind === 'kv' && it.key === key && !it.isArray) {
+          node = it;
+          break;
+        }
+      }
       if (!node) continue;
       // Skip only when newVal is the same scalar type; remove the old node
       // when type changes to array or section so the merge can re-add it.

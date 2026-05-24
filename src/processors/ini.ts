@@ -175,12 +175,14 @@ export function parseIniDoc(text: string): IniDocument {
       // Coalesce array entries with the same key[] into the same node
       if (isArray) {
         const target = currentSection ? currentSection.items : doc.items;
-        const existing = [...target]
-          .reverse()
-          .find(
-            (it): it is IniKeyValue =>
-              it.kind === 'kv' && it.key === key && it.isArray,
-          );
+        let existing: IniKeyValue | undefined;
+        for (let j = target.length - 1; j >= 0; j--) {
+          const it = target[j];
+          if (it.kind === 'kv' && it.key === key && it.isArray) {
+            existing = it;
+            break;
+          }
+        }
         if (existing) {
           (existing.value as IniScalar[]).push(parsed);
           i++;
@@ -432,13 +434,20 @@ function mergeDocuments(
 
     if (item.kind === 'section') {
       if (opts.objects === 'replace') {
-        // Replace the entire matching section or append
-        const existingIdx = base.items.findIndex(
-          (it): it is IniSection =>
+        // Replace the entire matching section or append. Scan from end: INI
+        // semantics give the last repeated section the effective value.
+        let existingIdx = -1;
+        for (let j = base.items.length - 1; j >= 0; j--) {
+          const it = base.items[j];
+          if (
             it.kind === 'section' &&
             it.name === item.name &&
-            it.subName === item.subName,
-        );
+            it.subName === item.subName
+          ) {
+            existingIdx = j;
+            break;
+          }
+        }
         if (existingIdx === -1) {
           base.items.push({
             ...item,
@@ -453,13 +462,21 @@ function mergeDocuments(
         continue;
       }
 
-      // objects: merge (default) — find or create the section in base
-      const existing = base.items.find(
-        (it): it is IniSection =>
+      // objects: merge (default) — find or create the last section in base.
+      // Scan from end: INI semantics give the last repeated section the
+      // effective value, so that is the one we must merge into.
+      let existing: IniSection | undefined;
+      for (let j = base.items.length - 1; j >= 0; j--) {
+        const it = base.items[j];
+        if (
           it.kind === 'section' &&
           it.name === item.name &&
-          it.subName === item.subName,
-      );
+          it.subName === item.subName
+        ) {
+          existing = it;
+          break;
+        }
+      }
 
       const sectionPath =
         item.subName !== undefined
