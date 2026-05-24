@@ -195,8 +195,18 @@ export function parseIniDoc(text: string): IniDocument {
       continue;
     }
 
-    // Bare key (no `=`): treat as empty-string value
+    // Bare key (no `=`): treat as empty-string value.
+    // Reject lines that look like a broken section header or an empty-key
+    // assignment — those are parse errors, not bare keys.
     if (trimmed !== '') {
+      if (trimmed.startsWith('[')) {
+        throw new Error(`line ${i + 1}: malformed section header: ${trimmed}`);
+      }
+      if (trimmed.startsWith('=')) {
+        throw new Error(
+          `line ${i + 1}: key/value line with empty key: ${trimmed}`,
+        );
+      }
       const { value: bareKey, inlineComment: bareComment } =
         splitValueAndComment(trimmed);
       pushItem({
