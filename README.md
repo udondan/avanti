@@ -1001,7 +1001,7 @@ files:
 
 The options behave identically to JSON, YAML, and TOML merging:
 
-- `conflicts` — what to do when the same key holds a scalar value that differs:
+- `conflicts` — what to do when the same key holds a scalar (or an array/object when their strategy is `replace`):
   - `last_wins` _(default)_ — the last source's value wins
   - `first_wins` — the first source's value is kept
   - `abort` — throw an error (identical values are not considered a conflict)
