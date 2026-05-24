@@ -1021,7 +1021,9 @@ its original position — it is not shuffled to the end.
 
 **Supported INI features:** sections (`[section]`), subsections (`[section "name"]`),
 `key = value` pairs, bare keys, quoted values (`"..."` / `'...'`), comment lines (`;` and `#`),
-inline comments, blank lines, backslash line continuation, and arrays via `key[] = val`.
+inline comments, blank lines, backslash line continuation, and arrays via `key[] = val`. All
+`key[] = val` entries for the same key are collected into one array regardless of position in
+the file; non-contiguous entries are normalized to appear at the first occurrence of that key.
 
 **Pretty-printing a single file** — `ini` works on single-source entries too. Auto-detection
 applies here as well, so a single `.ini` or `.cfg` source is normalized automatically.
