@@ -443,6 +443,24 @@ describe('TOML — property order preservation', () => {
     expect(result).toContain('a = 100');
   });
 
+  it('nested key updated in new contribution keeps its original position', () => {
+    const targetPath = path.join(tmpDir, 'file.toml');
+    fs.writeFileSync(targetPath, '[config]\na = 99\nuserProp = "x"\n');
+    const result = applyInsertMode(
+      makeEntry({ toml: true }),
+      '[config]\na = 100\n',
+      '[config]\na = 99\n',
+      targetPath,
+    );
+    expect(result).toContain('a = 100');
+    expect(result).toContain('userProp = "x"');
+    // 'a' must appear before 'userProp' inside [config]
+    const lines = result.trim().split('\n');
+    const idxA = lines.findIndex((l) => l.startsWith('a'));
+    const idxU = lines.findIndex((l) => l.startsWith('userProp'));
+    expect(idxA).toBeLessThan(idxU);
+  });
+
   it('uses remove-then-merge (no order preservation) when conflicts: first_wins', () => {
     const targetPath = path.join(tmpDir, 'file.toml');
     fs.writeFileSync(targetPath, 'a = 99\nb = 2\n');
