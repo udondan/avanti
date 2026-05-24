@@ -149,23 +149,30 @@ type TomlObject = Record<string, unknown>;
 function deepRemoveFromTomlObj(
   existing: TomlObject,
   oldContrib: Record<string, unknown>,
+  newContrib: Record<string, unknown> | null = null,
 ): void {
   for (const key of Object.keys(oldContrib)) {
     if (!Object.hasOwn(existing, key)) continue;
     const oldVal = oldContrib[key];
     const curVal = existing[key];
+    const newVal =
+      newContrib != null && Object.hasOwn(newContrib, key)
+        ? newContrib[key]
+        : undefined;
 
     if (isPlainObject(oldVal) && isPlainObject(curVal)) {
-      deepRemoveFromTomlObj(curVal, oldVal);
-      if (Object.keys(curVal).length === 0) {
+      const nestedNew = isPlainObject(newVal) ? newVal : null;
+      deepRemoveFromTomlObj(curVal, oldVal, nestedNew);
+      if (Object.keys(curVal).length === 0 && newVal === undefined) {
         delete existing[key];
       }
     } else if (Array.isArray(oldVal) && Array.isArray(curVal)) {
       removeArrayContribution(curVal, oldVal);
-      if (curVal.length === 0) {
+      if (curVal.length === 0 && newVal === undefined) {
         delete existing[key];
       }
     } else {
+      if (newVal !== undefined) continue;
       if (deepEqual(curVal, oldVal)) {
         delete existing[key];
       }
@@ -315,7 +322,24 @@ function applyTomlInsert(
     }
     try {
       const oldContrib = parseToml(lastProcessed) as Record<string, unknown>;
-      deepRemoveFromTomlObj(existingParsed, oldContrib);
+      // Order-preservation only works under last_wins; with first_wins the
+      // stale key would persist, and with abort mergeToml would throw on
+      // the un-removed key.
+      const rawConflicts = opts['conflicts'];
+      const effectiveConflicts =
+        rawConflicts === 'abort' || rawConflicts === 'first_wins'
+          ? rawConflicts
+          : 'last_wins';
+      let newContrib: Record<string, unknown> | null = null;
+      if (effectiveConflicts === 'last_wins') {
+        try {
+          const p = parseToml(processedText);
+          if (isPlainObject(p)) newContrib = p;
+        } catch {
+          // unparseable processedText → null (old behaviour)
+        }
+      }
+      deepRemoveFromTomlObj(existingParsed, oldContrib, newContrib);
     } catch {
       // Corrupted history fragment — skip key removal, fall through to merge
     }
