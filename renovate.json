@@ -9,6 +9,12 @@
   "automerge": true,
   "automergeType": "pr",
   "automergeStrategy": "squash",
+  "packageRules": [
+    {
+      "matchPackagePatterns": ["*"],
+      "semanticCommitType": "chore"
+    }
+  ],
   "customManagers": [
     {
       "customType": "regex",
