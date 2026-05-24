@@ -318,12 +318,20 @@ function mergeKvIntoItems(
   opts: ResolvedOptions,
   path: string,
 ): void {
-  const idx = items.findIndex(
-    (it): it is IniKeyValue =>
+  // Match the last occurrence: INI semantics treat the last duplicate as the
+  // effective value, so we must update that one to keep the output correct.
+  let idx = -1;
+  for (let j = items.length - 1; j >= 0; j--) {
+    const it = items[j];
+    if (
       it.kind === 'kv' &&
       it.key === overlay.key &&
-      it.isArray === overlay.isArray,
-  );
+      it.isArray === overlay.isArray
+    ) {
+      idx = j;
+      break;
+    }
+  }
 
   if (idx === -1) {
     // Insert after the last existing KV; if none exist, append at end so that
