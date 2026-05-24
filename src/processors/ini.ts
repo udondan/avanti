@@ -288,6 +288,18 @@ function arraysEqual(a: IniScalar[], b: IniScalar[]): boolean {
   return a.length === b.length && a.every((v, i) => scalarsEqual(v, b[i]));
 }
 
+function sectionKvsEqual(a: IniSection, b: IniSection): boolean {
+  const aKvs = a.items.filter((it): it is IniKeyValue => it.kind === 'kv');
+  const bKvs = b.items.filter((it): it is IniKeyValue => it.kind === 'kv');
+  if (aKvs.length !== bKvs.length) return false;
+  return aKvs.every(
+    (kv, i) =>
+      kv.key === bKvs[i].key &&
+      kv.isArray === bKvs[i].isArray &&
+      valuesEqual(kv.value, bKvs[i].value),
+  );
+}
+
 function valuesEqual(
   a: IniScalar | IniScalar[],
   b: IniScalar | IniScalar[],
@@ -454,10 +466,28 @@ function mergeDocuments(
             items: item.items.map((it) => ({ ...it })),
           });
         } else {
-          base.items[existingIdx] = {
-            ...item,
-            items: item.items.map((it) => ({ ...it })),
-          };
+          const baseSection = base.items[existingIdx] as IniSection;
+          if (!sectionKvsEqual(baseSection, item)) {
+            // Sections differ: apply the same conflict policy used for scalars.
+            // Mirrors TOML's behavior where objects:replace falls through to
+            // conflict handling when the values are not identical.
+            const sectionPath =
+              item.subName !== undefined
+                ? `${item.name} "${item.subName}"`
+                : item.name;
+            if (opts.conflicts === 'abort') {
+              throw new Error(`INI conflict at ${sectionPath}`);
+            }
+            if (opts.conflicts !== 'first_wins') {
+              // last_wins: replace the section
+              base.items[existingIdx] = {
+                ...item,
+                items: item.items.map((it) => ({ ...it })),
+              };
+            }
+            // first_wins: keep base — no-op
+          }
+          // identical sections: no-op
         }
         continue;
       }
