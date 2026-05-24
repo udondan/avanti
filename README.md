@@ -1017,9 +1017,13 @@ The options behave identically to JSON, YAML, and TOML merging:
 a line-level AST, so comment lines, inline comments, and blank lines from the first source
 are preserved through the merge. Minor whitespace normalization may occur (e.g. a single
 space is inserted before inline comments, and spacing around `=` follows the base key's
-original separator). Comments from later (overlay) sources are not transferred — they are
-value sources only. When a key's value is updated, the key stays at its original position —
-it is not shuffled to the end.
+original separator). When a key's value is updated by a later source, the base key's inline
+comment is kept and the key stays at its original position — it is not shuffled to the end.
+Line-level comment nodes (`; ...` / `# ...`) and section header comments from overlay sources
+are not transferred into the merged output. Inline comments on keys or sections that exist
+**only** in an overlay (not in the base) are preserved, since there is no base comment to
+fall back on. When `objects: replace` replaces an existing section, the overlay's section
+content (including any inline comments it carries) becomes the new section.
 
 **Inline comment limitation for arrays:** When the same key appears as multiple `key[] = val`
 entries, all values are coalesced into a single array node. Only the inline comment from the

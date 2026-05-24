@@ -127,10 +127,20 @@ export function parseIniDoc(text: string): IniDocument {
     // Section header
     const sectionMatch = trimmed.match(SECTION_RE);
     if (sectionMatch) {
+      const name = sectionMatch[1].trim();
+      const subName = sectionMatch[2] ?? undefined;
+      if (
+        name.includes('\0') ||
+        (subName !== undefined && subName.includes('\0'))
+      ) {
+        throw new Error(
+          `line ${i + 1}: INI section name must not contain null bytes`,
+        );
+      }
       const section: IniSection = {
         kind: 'section',
-        name: sectionMatch[1].trim(),
-        subName: sectionMatch[2] ?? undefined,
+        name,
+        subName,
         headerComment: sectionMatch[3] || undefined,
         items: [],
       };
@@ -144,6 +154,9 @@ export function parseIniDoc(text: string): IniDocument {
     const kvMatch = trimmed.match(KV_RE);
     if (kvMatch) {
       const key = kvMatch[1].trim();
+      if (key.includes('\0')) {
+        throw new Error(`line ${i + 1}: INI key must not contain null bytes`);
+      }
       const isArray = kvMatch[2] === '[]';
       const sep = trimmed
         .slice(kvMatch[1].length + (isArray ? 2 : 0))
