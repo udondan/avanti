@@ -18,7 +18,6 @@ export interface IniKeyValue {
   value: IniScalar | IniScalar[]; // scalar or array (for isArray keys)
   sep: string; // separator as written: ' = ', '=', ' =', '= ', etc.
   inlineComment?: string; // text after trailing `;` or `#`, including delimiter
-  continuationLines: string[]; // raw continuation lines (backslash-joined)
 }
 
 export interface IniSection {
@@ -154,14 +153,11 @@ export function parseIniDoc(text: string): IniDocument {
       let rawValue = trimmed.slice(
         kvMatch[1].length + (isArray ? 2 : 0) + sep.length,
       );
-      const continuationLines: string[] = [];
 
       while (rawValue.endsWith('\\') && i + 1 < lines.length) {
         rawValue = rawValue.slice(0, -1); // strip trailing backslash
         i++;
-        const nextRaw = lines[i];
-        continuationLines.push(nextRaw);
-        rawValue += nextRaw.trim();
+        rawValue += lines[i].trim();
       }
 
       const { value: valueStr, inlineComment } = splitValueAndComment(rawValue);
@@ -174,7 +170,6 @@ export function parseIniDoc(text: string): IniDocument {
         value: isArray ? [parsed] : parsed,
         sep,
         inlineComment,
-        continuationLines,
       };
 
       // Coalesce array entries with the same key[] into the same node
@@ -209,7 +204,6 @@ export function parseIniDoc(text: string): IniDocument {
         value: '',
         sep: '',
         inlineComment: bareComment,
-        continuationLines: [],
       });
     }
     i++;
@@ -407,7 +401,8 @@ function mergeDocuments(
           it.kind !== 'section',
       );
       mergeKvIntoItems(baseGlobals, item, opts, item.key);
-      // Sync back: if the key was new, it was pushed to baseGlobals but not to base.items
+      // Sync back: mergeKvIntoItems works on the filtered baseGlobals copy, so a
+      // newly inserted key lives there but not yet in base.items — add it here.
       if (
         !base.items.some(
           (it) =>
