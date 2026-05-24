@@ -364,9 +364,13 @@ function mergeKvIntoItems(
   }
   if (opts.conflicts === 'first_wins') return;
 
-  // last_wins: update value in-place; preserve sep, inline comment, and position
+  // last_wins: update value in-place; preserve sep when both sides are key=value,
+  // but adopt the overlay sep when the shape changes (bare ↔ key=value).
   const baseKv = items[idx] as IniKeyValue;
   baseKv.value = overlay.value;
+  if ((baseKv.sep === '') !== (overlay.sep === '')) {
+    baseKv.sep = overlay.sep;
+  }
 }
 
 function mergeSectionItems(
