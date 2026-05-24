@@ -89,7 +89,7 @@ function splitValueAndComment(raw: string): {
 }
 
 export function parseIniDoc(text: string): IniDocument {
-  const lines = text.split('\n');
+  const lines = text.split(/\r?\n/);
   const doc: IniDocument = { items: [] };
   let currentSection: IniSection | null = null;
 
@@ -152,7 +152,6 @@ export function parseIniDoc(text: string): IniDocument {
       const continuationLines: string[] = [];
 
       while (rawValue.endsWith('\\')) {
-        continuationLines.push(lines[i] ?? '');
         rawValue = rawValue.slice(0, -1); // strip trailing backslash
         i++;
         const nextRaw = lines[i] ?? '';

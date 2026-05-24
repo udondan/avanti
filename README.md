@@ -1013,10 +1013,11 @@ The options behave identically to JSON, YAML, and TOML merging:
   - `merge` _(default)_ — deep merge, applying the same rules recursively to section keys
   - `replace` — the later source's section replaces the earlier one entirely
 
-**Comments and key order are preserved.** The INI processor uses a line-level AST, so
-comment lines, inline comments, and blank lines are carried through the merge unchanged.
-When a key's value is updated, the key stays at its original position — it is not shuffled
-to the end.
+**Comments and key order are preserved in the base (first) source.** The INI processor uses
+a line-level AST, so comment lines, inline comments, and blank lines from the first source
+are carried through the merge unchanged. Comments from later (overlay) sources are not
+transferred — they are value sources only. When a key's value is updated, the key stays at
+its original position — it is not shuffled to the end.
 
 **Supported INI features:** sections (`[section]`), subsections (`[section "name"]`),
 `key = value` pairs, bare keys, quoted values (`"..."` / `'...'`), comment lines (`;` and `#`),

@@ -266,7 +266,7 @@ function deepRemoveFromIniDoc(
         : undefined;
 
     if (isPlainObject(oldVal)) {
-      const subsectionMatch = /^(\S+)\s+"([^"]*)"$/.exec(key);
+      const subsectionMatch = /^(.+?)\s+"([^"]*)"$/.exec(key);
       const section = doc.items.find((it): it is IniSection => {
         if (it.kind !== 'section') return false;
         if (subsectionMatch) {
