@@ -242,8 +242,10 @@ export function parseIniDoc(text: string): IniDocument {
 function stringifyScalar(v: IniScalar): string {
   if (typeof v === 'boolean') return v ? 'true' : 'false';
   if (typeof v === 'number') return String(v);
-  // Quote values that start/end with whitespace or contain special chars.
-  if (/^[\s]|[\s]$|[;#"]/.test(v)) return `"${v.replace(/"/g, '\\"')}"`;
+  // Quote values that start/end with whitespace, contain special chars, or end
+  // with a backslash — a trailing backslash would be misread as a continuation
+  // marker on the next round-trip parse.
+  if (/^[\s]|[\s]$|[;#"]|\\$/.test(v)) return `"${v.replace(/"/g, '\\"')}"`;
   return v;
 }
 

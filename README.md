@@ -1019,13 +1019,18 @@ are preserved through the merge. Minor whitespace normalization may occur (e.g. 
 space is inserted before inline comments, and spacing around `=` follows the base key's
 original separator). When a key's value is updated by a later source, the base key's inline
 comment is kept and the key stays at its original position — it is not shuffled to the end.
-Line-level comment nodes (`; ...` / `# ...`) and section header comments from overlay sources
-are not transferred into the merged output. Inline comments attached to key-value lines that
-exist **only** in an overlay (not in the base) are preserved, since there is no base comment
-to fall back on; however, section header comments (the trailing comment after `]` on a section
-line) are always dropped for new sections added by overlays under `objects: merge`. When
-`objects: replace` replaces an existing section, the overlay's section content (including any
-inline comments it carries) becomes the new section.
+**Comment behavior under `objects: merge` (default):** Comment lines (`; ...` / `# ...`),
+blank lines, and section header comments from overlay sources are not transferred when merging
+individual keys. For keys that already exist in the base, the base key's inline comment is
+kept. For new keys introduced only by the overlay, their inline comments are preserved (there
+is no base inline comment to fall back on). When a new section is introduced by the overlay
+(one that does not exist in the base), it is inserted without its section header comment or
+any internal comment/blank nodes — only its key-value pairs are carried over.
+
+**Comment behavior under `objects: replace`:** When the overlay section replaces an existing
+base section (or appends a new one), the entire overlay section content is used as-is —
+including its section header comment, internal comment lines, blank lines, and inline
+comments.
 
 **Inline comment limitation for arrays:** When the same key appears as multiple `key[] = val`
 entries, all values are coalesced into a single array node. Only the inline comment from the

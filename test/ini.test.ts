@@ -96,6 +96,22 @@ describe('parseIniDoc / stringifyIniDoc — round-trips', () => {
     expect(String(kv.value)).toContain('first');
   });
 
+  it('round-trips a value ending with a backslash without treating it as continuation', () => {
+    // A trailing backslash must be quoted on serialisation so it is not
+    // mis-parsed as a line-continuation marker on the next parse.
+    const input = 'path = C:\\tmp\\\n';
+    const doc = parseIniDoc(input);
+    const serialised = stringifyIniDoc(doc);
+    const doc2 = parseIniDoc(serialised);
+    const kv = doc2.items.find((it) => it.kind === 'kv') as {
+      kind: string;
+      key: string;
+      value: unknown;
+    };
+    expect(kv?.key).toBe('path');
+    expect(String(kv?.value)).toBe('C:\\tmp\\');
+  });
+
   it('handles boolean coercion (true)', () => {
     const input = '[s]\nenabled = true\n';
     const doc = parseIniDoc(input);
