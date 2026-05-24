@@ -333,7 +333,8 @@ function deepRemoveFromIniDoc(
         const idx = doc.items.indexOf(section);
         if (idx !== -1) {
           doc.items.splice(idx, 1);
-          splicePrecedingCommentBlanks(doc.items, idx);
+          // Do not strip preceding comment/blank nodes at the doc level —
+          // they may be file-level separators unrelated to this section.
         }
       }
     } else if (Array.isArray(oldVal)) {
@@ -357,7 +358,7 @@ function deepRemoveFromIniDoc(
         const idx = doc.items.indexOf(node);
         if (idx !== -1) {
           doc.items.splice(idx, 1);
-          splicePrecedingCommentBlanks(doc.items, idx);
+          // Do not strip preceding comment/blank nodes at the doc level.
         }
       }
     } else {
@@ -382,7 +383,7 @@ function deepRemoveFromIniDoc(
         const idx = doc.items.indexOf(node);
         if (idx !== -1) {
           doc.items.splice(idx, 1);
-          splicePrecedingCommentBlanks(doc.items, idx);
+          // Do not strip preceding comment/blank nodes at the doc level.
         }
       }
     }
