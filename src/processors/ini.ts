@@ -160,7 +160,7 @@ export function parseIniDoc(text: string): IniDocument {
       const isArray = kvMatch[2] === '[]';
       const sep = trimmed
         .slice(kvMatch[1].length + (isArray ? 2 : 0))
-        .match(/^(\s*=\s?)/)![1];
+        .match(/^(\s*=\s*)/)![1];
 
       // Collect value including continuation lines
       let rawValue = trimmed.slice(

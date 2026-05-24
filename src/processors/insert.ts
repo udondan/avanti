@@ -11,6 +11,7 @@ import {
   stringifyIniDoc,
   mergeIni,
   type IniDocument,
+  type IniItem,
   type IniKeyValue,
   type IniSection,
   type IniScalar,
@@ -214,6 +215,18 @@ function removeArrayContribution(
 
 type IniSectionItems = (IniComment | IniBlank | IniKeyValue)[];
 
+// Remove contiguous comment/blank nodes immediately preceding `idx` in `items`.
+// Stops when it reaches a kv or section boundary, preventing unrelated comments
+// from being stripped. Call this after splicing a kv node to avoid leaving
+// orphaned comments that would appear to annotate the next key.
+function splicePrecedingCommentBlanks(items: IniItem[], idx: number): void {
+  let k = idx - 1;
+  while (k >= 0 && (items[k].kind === 'comment' || items[k].kind === 'blank')) {
+    items.splice(k, 1);
+    k--;
+  }
+}
+
 function deepRemoveFromIniSectionItems(
   items: IniSectionItems,
   oldContrib: Record<string, unknown>,
@@ -245,7 +258,10 @@ function deepRemoveFromIniSectionItems(
       // (key removed or type changed to scalar).
       if (curArr.length === 0 && !Array.isArray(newVal)) {
         const idx = items.indexOf(node);
-        if (idx !== -1) items.splice(idx, 1);
+        if (idx !== -1) {
+          items.splice(idx, 1);
+          splicePrecedingCommentBlanks(items, idx);
+        }
       }
     } else {
       let node: IniKeyValue | undefined;
@@ -262,7 +278,10 @@ function deepRemoveFromIniSectionItems(
       if (newVal !== undefined && !Array.isArray(newVal)) continue;
       if (deepEqual(node.value, oldVal)) {
         const idx = items.indexOf(node);
-        if (idx !== -1) items.splice(idx, 1);
+        if (idx !== -1) {
+          items.splice(idx, 1);
+          splicePrecedingCommentBlanks(items, idx);
+        }
       }
     }
   }
@@ -312,7 +331,10 @@ function deepRemoveFromIniDoc(
         !isPlainObject(newVal)
       ) {
         const idx = doc.items.indexOf(section);
-        if (idx !== -1) doc.items.splice(idx, 1);
+        if (idx !== -1) {
+          doc.items.splice(idx, 1);
+          splicePrecedingCommentBlanks(doc.items, idx);
+        }
       }
     } else if (Array.isArray(oldVal)) {
       const iniKey = key.startsWith(INI_ARRAY_PREFIX)
@@ -333,7 +355,10 @@ function deepRemoveFromIniDoc(
       // (key removed or type changed to scalar/section).
       if (curArr.length === 0 && !Array.isArray(newVal)) {
         const idx = doc.items.indexOf(node);
-        if (idx !== -1) doc.items.splice(idx, 1);
+        if (idx !== -1) {
+          doc.items.splice(idx, 1);
+          splicePrecedingCommentBlanks(doc.items, idx);
+        }
       }
     } else {
       let node: IniKeyValue | undefined;
@@ -355,7 +380,10 @@ function deepRemoveFromIniDoc(
         continue;
       if (deepEqual(node.value, oldVal)) {
         const idx = doc.items.indexOf(node);
-        if (idx !== -1) doc.items.splice(idx, 1);
+        if (idx !== -1) {
+          doc.items.splice(idx, 1);
+          splicePrecedingCommentBlanks(doc.items, idx);
+        }
       }
     }
   }
