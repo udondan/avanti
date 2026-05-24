@@ -227,10 +227,13 @@ function deepRemoveFromIniSectionItems(
         : undefined;
 
     if (Array.isArray(oldVal)) {
+      const iniKey = key.startsWith(INI_ARRAY_PREFIX)
+        ? key.slice(INI_ARRAY_PREFIX.length)
+        : key;
       let node: IniKeyValue | undefined;
       for (let j = items.length - 1; j >= 0; j--) {
         const it = items[j];
-        if (it.kind === 'kv' && it.key === key && it.isArray) {
+        if (it.kind === 'kv' && it.key === iniKey && it.isArray) {
           node = it;
           break;
         }
@@ -312,10 +315,13 @@ function deepRemoveFromIniDoc(
         if (idx !== -1) doc.items.splice(idx, 1);
       }
     } else if (Array.isArray(oldVal)) {
+      const iniKey = key.startsWith(INI_ARRAY_PREFIX)
+        ? key.slice(INI_ARRAY_PREFIX.length)
+        : key;
       let node: IniKeyValue | undefined;
       for (let j = doc.items.length - 1; j >= 0; j--) {
         const it = doc.items[j];
-        if (it.kind === 'kv' && it.key === key && it.isArray) {
+        if (it.kind === 'kv' && it.key === iniKey && it.isArray) {
           node = it;
           break;
         }
@@ -359,6 +365,9 @@ function deepRemoveFromIniDoc(
 // key named "db" and a section named [db] never collide in the same object.
 // Real INI keys cannot contain null bytes, making this unambiguous.
 const INI_SECTION_PREFIX = '\0s:';
+// Sentinel prefix for array KV keys (key[] = val) so they never collide with
+// a scalar KV of the same name (key = val) in the same JS object.
+const INI_ARRAY_PREFIX = '\0a:';
 
 function iniDocToJs(doc: IniDocument): Record<string, unknown> {
   const result: Record<string, unknown> = Object.create(null) as Record<
@@ -367,7 +376,8 @@ function iniDocToJs(doc: IniDocument): Record<string, unknown> {
   >;
   for (const item of doc.items) {
     if (item.kind === 'kv') {
-      result[item.key] = item.value;
+      const jsKey = item.isArray ? INI_ARRAY_PREFIX + item.key : item.key;
+      result[jsKey] = item.value;
     } else if (item.kind === 'section') {
       const sectionKey =
         item.subName !== undefined
@@ -379,7 +389,10 @@ function iniDocToJs(doc: IniDocument): Record<string, unknown> {
       >;
       for (const child of item.items) {
         if (child.kind === 'kv') {
-          obj[child.key] = child.value;
+          const jsKey = child.isArray
+            ? INI_ARRAY_PREFIX + child.key
+            : child.key;
+          obj[jsKey] = child.value;
         }
       }
       result[INI_SECTION_PREFIX + sectionKey] = obj;

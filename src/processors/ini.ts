@@ -299,15 +299,29 @@ function arraysEqual(a: IniScalar[], b: IniScalar[]): boolean {
 }
 
 function sectionKvsEqual(a: IniSection, b: IniSection): boolean {
+  // Compare semantically: the effective value of each key is the last
+  // occurrence (INI last-wins). Build key→value maps and compare those,
+  // so sections with the same effective keys/values but different ordering
+  // or duplicate runs are treated as identical.
+  const toEffective = (
+    kvs: IniKeyValue[],
+  ): Map<string, IniScalar | IniScalar[]> => {
+    const m = new Map<string, IniScalar | IniScalar[]>();
+    for (const kv of kvs) {
+      m.set(`${kv.key}\0${kv.isArray ? '1' : '0'}`, kv.value);
+    }
+    return m;
+  };
   const aKvs = a.items.filter((it): it is IniKeyValue => it.kind === 'kv');
   const bKvs = b.items.filter((it): it is IniKeyValue => it.kind === 'kv');
-  if (aKvs.length !== bKvs.length) return false;
-  return aKvs.every(
-    (kv, i) =>
-      kv.key === bKvs[i].key &&
-      kv.isArray === bKvs[i].isArray &&
-      valuesEqual(kv.value, bKvs[i].value),
-  );
+  const aMap = toEffective(aKvs);
+  const bMap = toEffective(bKvs);
+  if (aMap.size !== bMap.size) return false;
+  for (const [k, aVal] of aMap) {
+    if (!bMap.has(k)) return false;
+    if (!valuesEqual(aVal, bMap.get(k)!)) return false;
+  }
+  return true;
 }
 
 function valuesEqual(

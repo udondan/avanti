@@ -1021,11 +1021,20 @@ original separator). Comments from later (overlay) sources are not transferred �
 value sources only. When a key's value is updated, the key stays at its original position —
 it is not shuffled to the end.
 
+**Inline comment limitation for arrays:** When the same key appears as multiple `key[] = val`
+entries, all values are coalesced into a single array node. Only the inline comment from the
+_first_ occurrence (if any) is preserved; inline comments on subsequent `key[] = val` lines are
+discarded.
+
 **Supported INI features:** sections (`[section]`), subsections (`[section "name"]`),
 `key = value` pairs, bare keys, quoted values (`"..."` / `'...'`), comment lines (`;` and `#`),
 inline comments, blank lines, backslash line continuation, and arrays via `key[] = val`. All
 `key[] = val` entries for the same key are collected into one array regardless of position in
 the file; non-contiguous entries are normalized to appear at the first occurrence of that key.
+
+**Inline comment delimiter:** `;` and `#` are treated as comment delimiters when they appear
+outside of quoted strings. If a value contains a literal `;` or `#` character, quote the value
+(e.g. `url = "https://example.com#anchor"`) to prevent it from being interpreted as a comment.
 
 **Pretty-printing a single file** — `ini` works on single-source entries too. Auto-detection
 applies here as well, so a single `.ini` or `.cfg` source is normalized automatically.
