@@ -1020,10 +1020,12 @@ space is inserted before inline comments, and spacing around `=` follows the bas
 original separator). When a key's value is updated by a later source, the base key's inline
 comment is kept and the key stays at its original position — it is not shuffled to the end.
 Line-level comment nodes (`; ...` / `# ...`) and section header comments from overlay sources
-are not transferred into the merged output. Inline comments on keys or sections that exist
-**only** in an overlay (not in the base) are preserved, since there is no base comment to
-fall back on. When `objects: replace` replaces an existing section, the overlay's section
-content (including any inline comments it carries) becomes the new section.
+are not transferred into the merged output. Inline comments attached to key-value lines that
+exist **only** in an overlay (not in the base) are preserved, since there is no base comment
+to fall back on; however, section header comments (the trailing comment after `]` on a section
+line) are always dropped for new sections added by overlays under `objects: merge`. When
+`objects: replace` replaces an existing section, the overlay's section content (including any
+inline comments it carries) becomes the new section.
 
 **Inline comment limitation for arrays:** When the same key appears as multiple `key[] = val`
 entries, all values are coalesced into a single array node. Only the inline comment from the

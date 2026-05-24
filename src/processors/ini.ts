@@ -459,14 +459,10 @@ function mergeDocuments(
       mergeKvIntoItems(baseGlobals, item, opts, item.key);
       // Sync back: mergeKvIntoItems works on the filtered baseGlobals copy, so a
       // newly inserted key lives there but not yet in base.items — add it here.
-      if (
-        !base.items.some(
-          (it) =>
-            it.kind === 'kv' &&
-            it.key === item.key &&
-            it.isArray === item.isArray,
-        )
-      ) {
+      // Match by key only (not isArray) so that a first_wins scalar↔array
+      // type-change does not incorrectly re-insert the overlay entry alongside
+      // the kept base entry, producing duplicate scalar+array lines.
+      if (!base.items.some((it) => it.kind === 'kv' && it.key === item.key)) {
         // Insert after the last global KV, or at the section boundary when
         // there are no global KVs — never before leading comment/blank lines.
         const firstSectionIdx = base.items.findIndex(
