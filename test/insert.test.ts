@@ -564,4 +564,21 @@ describe('TOML — property order preservation', () => {
     expect(result).toContain('a = 100');
     expect(result).toContain('b = 2');
   });
+
+  it('falls back to remove-then-merge when processedText is unparseable TOML', () => {
+    const targetPath = path.join(tmpDir, 'file.toml');
+    // 'a' is first; old contribution was a = 99
+    fs.writeFileSync(targetPath, 'a = 99\nb = 2\n');
+    // processedText is invalid TOML → parseToml throws inside the newContrib try/catch
+    // → newContrib stays null → old remove-then-merge behaviour applies
+    // → mergeToml itself will throw on the invalid processedText, which is expected
+    expect(() =>
+      applyInsertMode(
+        makeEntry({ toml: true }),
+        'not valid toml ===',
+        'a = 99\n',
+        targetPath,
+      ),
+    ).toThrow();
+  });
 });
