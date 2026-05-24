@@ -270,7 +270,10 @@ function deepRemoveFromIniDoc(
         : undefined;
 
     if (isPlainObject(oldVal)) {
-      const subsectionMatch = /^(.+?)\s+"([^"]*)"$/.exec(key);
+      const sectionName = key.startsWith(INI_SECTION_PREFIX)
+        ? key.slice(INI_SECTION_PREFIX.length)
+        : key;
+      const subsectionMatch = /^(.+?)\s+"([^"]*)"$/.exec(sectionName);
       const section = doc.items.find((it): it is IniSection => {
         if (it.kind !== 'section') return false;
         if (subsectionMatch) {
@@ -278,7 +281,7 @@ function deepRemoveFromIniDoc(
             it.name === subsectionMatch[1] && it.subName === subsectionMatch[2]
           );
         }
-        return it.name === key && it.subName === undefined;
+        return it.name === sectionName && it.subName === undefined;
       });
       if (!section) continue;
       const nestedNew = isPlainObject(newVal) ? newVal : null;
@@ -328,6 +331,11 @@ function deepRemoveFromIniDoc(
   }
 }
 
+// Sentinel prefix for section keys in the JS representation so that a global
+// key named "db" and a section named [db] never collide in the same object.
+// Real INI keys cannot contain null bytes, making this unambiguous.
+const INI_SECTION_PREFIX = '\0s:';
+
 function iniDocToJs(doc: IniDocument): Record<string, unknown> {
   const result: Record<string, unknown> = Object.create(null) as Record<
     string,
@@ -350,7 +358,7 @@ function iniDocToJs(doc: IniDocument): Record<string, unknown> {
           obj[child.key] = child.value;
         }
       }
-      result[sectionKey] = obj;
+      result[INI_SECTION_PREFIX + sectionKey] = obj;
     }
   }
   return result;
