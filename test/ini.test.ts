@@ -112,6 +112,24 @@ describe('parseIniDoc / stringifyIniDoc — round-trips', () => {
     expect(String(kv?.value)).toBe('C:\\tmp\\');
   });
 
+  it('round-trips a value ending with a backslash when an inline comment is present', () => {
+    // Value ends with \ and has an inline comment — the closing quote of the
+    // serialised form must not be escaped by the preceding backslash.
+    const input = 'path = C:\\tmp\\ ; backup dir\n';
+    const doc = parseIniDoc(input);
+    const serialised = stringifyIniDoc(doc);
+    const doc2 = parseIniDoc(serialised);
+    const kv = doc2.items.find((it) => it.kind === 'kv') as {
+      kind: string;
+      key: string;
+      value: unknown;
+      inlineComment?: string;
+    };
+    expect(kv?.key).toBe('path');
+    expect(String(kv?.value)).toBe('C:\\tmp\\');
+    expect(kv?.inlineComment).toBe('; backup dir');
+  });
+
   it('handles boolean coercion (true)', () => {
     const input = '[s]\nenabled = true\n';
     const doc = parseIniDoc(input);

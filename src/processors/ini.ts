@@ -44,7 +44,7 @@ const KV_RE = /^([^=\s][^=]*?)(\[\])?\s*(=)\s?/;
 function unquoteValue(raw: string): IniScalar {
   const trimmed = raw.trim();
   if (trimmed.startsWith('"') && trimmed.endsWith('"')) {
-    return trimmed.slice(1, -1).replace(/\\"/g, '"');
+    return trimmed.slice(1, -1).replace(/\\(["\\])/g, '$1');
   }
   if (trimmed.startsWith("'") && trimmed.endsWith("'")) {
     return trimmed.slice(1, -1);
@@ -245,7 +245,8 @@ function stringifyScalar(v: IniScalar): string {
   // Quote values that start/end with whitespace, contain special chars, or end
   // with a backslash — a trailing backslash would be misread as a continuation
   // marker on the next round-trip parse.
-  if (/^[\s]|[\s]$|[;#"]|\\$/.test(v)) return `"${v.replace(/"/g, '\\"')}"`;
+  if (/^[\s]|[\s]$|[;#"]|\\$/.test(v))
+    return `"${v.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
   return v;
 }
 
