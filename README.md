@@ -222,7 +222,8 @@ Each line is prefixed with `[verbose]` and includes:
 - The source being fetched (e.g. `github:org/repo:file@main`)
 - Every HTTP request URL and response status code
 - Retry delays and reasons
-- CLI tool invocations (`gh`, `glab`, `aws`, `vault`, `git`)
+- CLI tool invocations (`gh`, `glab`, `vault`, `git`)
+- AWS SDK API calls (`s3 GetObject`, `ssm GetParameter`, `secrets-manager GetSecretValue`)
 - Cache hits
 
 **Credential safety:** tokens are read from environment variables and sent as HTTP headers, which are never logged. Git URLs with embedded credentials are redacted. `exec:` source commands are logged verbatim — if your config embeds secrets in an exec command (e.g. `exec: curl -H "Token: $env:MY_SECRET"`), those secrets will appear in verbose output after variable substitution.
