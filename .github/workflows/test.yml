@@ -98,6 +98,7 @@ jobs:
           timeout_minutes: 10
           retry_wait_seconds: 15
           command: |
+            set -euo pipefail
             docker rm -f vault 2>/dev/null || true
             docker run -d \
               --name vault \
@@ -135,6 +136,7 @@ jobs:
               -H "X-Vault-Token: root" -H "Content-Type: application/json" \
               -d '{"policies":["avanti-read"],"ttl":"1h"}' | jq -e -r '.auth.client_token')
             export VAULT_TOKEN
+            : "${VAULT_TOKEN:?token creation failed}"
             bunx vitest run test/vault-integration.test.ts
         env:
           VAULT_ADDR: http://127.0.0.1:8200
