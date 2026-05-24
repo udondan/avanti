@@ -44,10 +44,10 @@ const KV_RE = /^([^=\s][^=]*?)(\[\])?\s*(=)\s?/;
 
 function unquoteValue(raw: string): IniScalar {
   const trimmed = raw.trim();
-  if (
-    (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
-    (trimmed.startsWith("'") && trimmed.endsWith("'"))
-  ) {
+  if (trimmed.startsWith('"') && trimmed.endsWith('"')) {
+    return trimmed.slice(1, -1).replace(/\\"/g, '"');
+  }
+  if (trimmed.startsWith("'") && trimmed.endsWith("'")) {
     return trimmed.slice(1, -1);
   }
   if (trimmed.toLowerCase() === 'true') return true;
@@ -111,7 +111,7 @@ export function parseIniDoc(text: string): IniDocument {
 
     // Comment-only line
     if (COMMENT_LINE_RE.test(trimmed)) {
-      pushItem({ kind: 'comment', raw: trimmed });
+      pushItem({ kind: 'comment', raw: line });
       i++;
       continue;
     }
@@ -224,7 +224,10 @@ function stringifyKv(node: IniKeyValue): string {
   if (node.isArray) {
     const vals = node.value as IniScalar[];
     return vals
-      .map((v) => `${node.key}${keySuffix}${node.sep}${stringifyScalar(v)}`)
+      .map(
+        (v, i) =>
+          `${node.key}${keySuffix}${node.sep}${stringifyScalar(v)}${i === 0 ? comment : ''}`,
+      )
       .join('\n');
   }
   if (node.sep === '') {
@@ -374,7 +377,14 @@ function mergeDocuments(
       );
       mergeKvIntoItems(baseGlobals, item, opts, item.key);
       // Sync back: if the key was new, it was pushed to baseGlobals but not to base.items
-      if (!base.items.some((it) => it.kind === 'kv' && it.key === item.key)) {
+      if (
+        !base.items.some(
+          (it) =>
+            it.kind === 'kv' &&
+            it.key === item.key &&
+            it.isArray === item.isArray,
+        )
+      ) {
         // Insert before the first section
         const firstSectionIdx = base.items.findIndex(
           (it) => it.kind === 'section',

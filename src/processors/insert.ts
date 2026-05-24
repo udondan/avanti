@@ -266,9 +266,16 @@ function deepRemoveFromIniDoc(
         : undefined;
 
     if (isPlainObject(oldVal)) {
-      const section = doc.items.find(
-        (it): it is IniSection => it.kind === 'section' && it.name === key,
-      );
+      const subsectionMatch = /^(\S+)\s+"([^"]*)"$/.exec(key);
+      const section = doc.items.find((it): it is IniSection => {
+        if (it.kind !== 'section') return false;
+        if (subsectionMatch) {
+          return (
+            it.name === subsectionMatch[1] && it.subName === subsectionMatch[2]
+          );
+        }
+        return it.name === key && it.subName === undefined;
+      });
       if (!section) continue;
       const nestedNew = isPlainObject(newVal) ? newVal : null;
       deepRemoveFromIniSectionItems(section.items, oldVal, nestedNew);
@@ -307,7 +314,10 @@ function deepRemoveFromIniDoc(
 }
 
 function iniDocToJs(doc: IniDocument): Record<string, unknown> {
-  const result: Record<string, unknown> = {};
+  const result: Record<string, unknown> = Object.create(null) as Record<
+    string,
+    unknown
+  >;
   for (const item of doc.items) {
     if (item.kind === 'kv') {
       result[item.key] = item.value;
@@ -316,7 +326,10 @@ function iniDocToJs(doc: IniDocument): Record<string, unknown> {
         item.subName !== undefined
           ? `${item.name} "${item.subName}"`
           : item.name;
-      const obj: Record<string, unknown> = {};
+      const obj: Record<string, unknown> = Object.create(null) as Record<
+        string,
+        unknown
+      >;
       for (const child of item.items) {
         if (child.kind === 'kv') {
           obj[child.key] = child.value;
