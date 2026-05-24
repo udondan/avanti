@@ -92,7 +92,7 @@ jobs:
         run: bun install --frozen-lockfile
 
       - name: Start Vault, seed secrets and run integration tests
-        uses: nick-invision/retry@v3
+        uses: nick-invision/retry@ce71cc2ab81d554ebbe88c79ab5975992d79ba08 # v3
         with:
           max_attempts: 3
           timeout_minutes: 10
@@ -133,7 +133,7 @@ jobs:
               -d "$(jq -n --arg p "$POLICY" '{"policy":$p}')"
             VAULT_TOKEN=$(curl -sf -X POST http://127.0.0.1:8200/v1/auth/token/create \
               -H "X-Vault-Token: root" -H "Content-Type: application/json" \
-              -d '{"policies":["avanti-read"],"ttl":"1h"}' | jq -r '.auth.client_token')
+              -d '{"policies":["avanti-read"],"ttl":"1h"}' | jq -e -r '.auth.client_token')
             export VAULT_TOKEN
             bunx vitest run test/vault-integration.test.ts
         env:
