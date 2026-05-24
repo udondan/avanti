@@ -457,18 +457,19 @@ describe('TOML — property order preservation', () => {
     const idxB = lines.findIndex((l) => l.startsWith('b'));
     const idxA = lines.findIndex((l) => l.startsWith('a'));
     expect(idxB).toBeLessThan(idxA);
+    expect(result).toContain('a = 100');
   });
 
   it('does not throw with conflicts: abort when updated key is removed before merge', () => {
     const targetPath = path.join(tmpDir, 'file.toml');
     fs.writeFileSync(targetPath, 'a = 99\nb = 2\n');
-    expect(() =>
-      applyInsertMode(
-        makeEntry({ toml: { conflicts: 'abort' } }),
-        'a = 100\n',
-        'a = 99\n',
-        targetPath,
-      ),
-    ).not.toThrow();
+    const result = applyInsertMode(
+      makeEntry({ toml: { conflicts: 'abort' } }),
+      'a = 100\n',
+      'a = 99\n',
+      targetPath,
+    );
+    expect(result).toContain('a = 100');
+    expect(result).toContain('b = 2');
   });
 });
