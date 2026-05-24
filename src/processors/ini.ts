@@ -195,13 +195,15 @@ export function parseIniDoc(text: string): IniDocument {
 
     // Bare key (no `=`): treat as empty-string value
     if (trimmed !== '') {
+      const { value: bareKey, inlineComment: bareComment } =
+        splitValueAndComment(trimmed);
       pushItem({
         kind: 'kv',
-        key: trimmed,
+        key: bareKey,
         isArray: false,
         value: '',
         sep: '',
-        inlineComment: undefined,
+        inlineComment: bareComment,
         continuationLines: [],
       });
     }
@@ -234,7 +236,7 @@ function stringifyKv(node: IniKeyValue): string {
       .join('\n');
   }
   if (node.sep === '') {
-    return node.key;
+    return `${node.key}${comment}`;
   }
   return `${node.key}${node.sep}${stringifyScalar(node.value as IniScalar)}${comment}`;
 }
