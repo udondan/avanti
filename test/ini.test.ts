@@ -1,6 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { parseIniDoc, stringifyIniDoc } from '../src/processors/ini';
-import { mergeIni, formatIni } from '../src/processors/ini';
+import {
+  parseIniDoc,
+  stringifyIniDoc,
+  mergeIni,
+  formatIni,
+} from '../src/processors/ini';
 
 // ── formatIni ─────────────────────────────────────────────────────────────────
 

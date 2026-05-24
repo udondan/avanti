@@ -89,7 +89,12 @@ function splitValueAndComment(raw: string): {
 }
 
 export function parseIniDoc(text: string): IniDocument {
-  const lines = text.split(/\r?\n/);
+  const rawLines = text.split(/\r?\n/);
+  // Drop the trailing empty string that split() produces when text ends with \n
+  const lines =
+    rawLines.length > 0 && rawLines[rawLines.length - 1] === ''
+      ? rawLines.slice(0, -1)
+      : rawLines;
   const doc: IniDocument = { items: [] };
   let currentSection: IniSection | null = null;
 
@@ -268,8 +273,7 @@ export function stringifyIniDoc(doc: IniDocument): string {
     }
   }
 
-  const result = out.join('\n');
-  return result.endsWith('\n') ? result : result + '\n';
+  return out.join('\n') + '\n';
 }
 
 // ── Merge helpers ─────────────────────────────────────────────────────────────
@@ -322,7 +326,10 @@ function mergeKvIntoItems(
   );
 
   if (idx === -1) {
-    items.push({ ...overlay });
+    // Insert before any trailing blank/comment nodes to keep formatting at end
+    let insertAt = items.length;
+    while (insertAt > 0 && items[insertAt - 1].kind !== 'kv') insertAt--;
+    items.splice(insertAt, 0, { ...overlay });
     return;
   }
 
@@ -392,15 +399,21 @@ function mergeDocuments(
             it.isArray === item.isArray,
         )
       ) {
-        // Insert before the first section
+        // Insert before the first section, and before any trailing blank/comment
+        // nodes in the global area, so base formatting stays at end/boundary.
         const firstSectionIdx = base.items.findIndex(
           (it) => it.kind === 'section',
         );
-        if (firstSectionIdx === -1) {
-          base.items.push({ ...item });
-        } else {
-          base.items.splice(firstSectionIdx, 0, { ...item });
-        }
+        const boundary =
+          firstSectionIdx === -1 ? base.items.length : firstSectionIdx;
+        let insertAt = boundary;
+        while (
+          insertAt > 0 &&
+          base.items[insertAt - 1].kind !== 'kv' &&
+          base.items[insertAt - 1].kind !== 'section'
+        )
+          insertAt--;
+        base.items.splice(insertAt, 0, { ...item });
       }
       continue;
     }
