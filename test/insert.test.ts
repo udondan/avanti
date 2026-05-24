@@ -496,3 +496,89 @@ describe('TOML — datetime values', () => {
     expect(result).toContain('ts');
   });
 });
+
+describe('TOML — property order preservation', () => {
+  it('key updated in new contribution keeps its original position', () => {
+    const targetPath = path.join(tmpDir, 'file.toml');
+    fs.writeFileSync(targetPath, 'z = 1\na = 99\nm = 3\n');
+    const result = applyInsertMode(
+      makeEntry({ toml: true }),
+      'a = 100\n',
+      'a = 99\n',
+      targetPath,
+    );
+    // 'a' must stay between 'z' and 'm', not be appended at the end
+    const lines = result.trim().split('\n');
+    const idxZ = lines.findIndex((l) => l.startsWith('z'));
+    const idxA = lines.findIndex((l) => l.startsWith('a'));
+    const idxM = lines.findIndex((l) => l.startsWith('m'));
+    expect(idxZ).toBeLessThan(idxA);
+    expect(idxA).toBeLessThan(idxM);
+    expect(result).toContain('a = 100');
+  });
+
+  it('nested key updated in new contribution keeps its original position', () => {
+    const targetPath = path.join(tmpDir, 'file.toml');
+    fs.writeFileSync(targetPath, '[config]\na = 99\nuserProp = "x"\n');
+    const result = applyInsertMode(
+      makeEntry({ toml: true }),
+      '[config]\na = 100\n',
+      '[config]\na = 99\n',
+      targetPath,
+    );
+    expect(result).toContain('a = 100');
+    expect(result).toContain('userProp = "x"');
+    // 'a' must appear before 'userProp' inside [config]
+    const lines = result.trim().split('\n');
+    const idxA = lines.findIndex((l) => l.startsWith('a'));
+    const idxU = lines.findIndex((l) => l.startsWith('userProp'));
+    expect(idxA).toBeLessThan(idxU);
+  });
+
+  it('uses remove-then-merge (no order preservation) when conflicts: first_wins', () => {
+    const targetPath = path.join(tmpDir, 'file.toml');
+    fs.writeFileSync(targetPath, 'a = 99\nb = 2\n');
+    const result = applyInsertMode(
+      makeEntry({ toml: { conflicts: 'first_wins' } }),
+      'a = 100\n',
+      'a = 99\n',
+      targetPath,
+    );
+    // 'a' is removed then re-merged; new value wins; 'a' appears after 'b'
+    const lines = result.trim().split('\n');
+    const idxB = lines.findIndex((l) => l.startsWith('b'));
+    const idxA = lines.findIndex((l) => l.startsWith('a'));
+    expect(idxB).toBeLessThan(idxA);
+    expect(result).toContain('a = 100');
+  });
+
+  it('does not throw with conflicts: abort when updated key is removed before merge', () => {
+    const targetPath = path.join(tmpDir, 'file.toml');
+    fs.writeFileSync(targetPath, 'a = 99\nb = 2\n');
+    const result = applyInsertMode(
+      makeEntry({ toml: { conflicts: 'abort' } }),
+      'a = 100\n',
+      'a = 99\n',
+      targetPath,
+    );
+    expect(result).toContain('a = 100');
+    expect(result).toContain('b = 2');
+  });
+
+  it('falls back to remove-then-merge when processedText is unparseable TOML', () => {
+    const targetPath = path.join(tmpDir, 'file.toml');
+    // 'a' is first; old contribution was a = 99
+    fs.writeFileSync(targetPath, 'a = 99\nb = 2\n');
+    // processedText is invalid TOML → parseToml throws inside the newContrib try/catch
+    // → newContrib stays null → old remove-then-merge behaviour applies
+    // → mergeToml itself will throw on the invalid processedText, which is expected
+    expect(() =>
+      applyInsertMode(
+        makeEntry({ toml: true }),
+        'not valid toml ===',
+        'a = 99\n',
+        targetPath,
+      ),
+    ).toThrow();
+  });
+});
