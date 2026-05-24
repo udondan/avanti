@@ -151,10 +151,10 @@ export function parseIniDoc(text: string): IniDocument {
       );
       const continuationLines: string[] = [];
 
-      while (rawValue.endsWith('\\')) {
+      while (rawValue.endsWith('\\') && i + 1 < lines.length) {
         rawValue = rawValue.slice(0, -1); // strip trailing backslash
         i++;
-        const nextRaw = lines[i] ?? '';
+        const nextRaw = lines[i];
         continuationLines.push(nextRaw);
         rawValue += nextRaw.trim();
       }
@@ -442,7 +442,10 @@ function mergeDocuments(
       if (!existing) {
         base.items.push({
           ...item,
-          items: item.items.map((it) => ({ ...it })),
+          headerComment: undefined,
+          items: item.items
+            .filter((it) => it.kind === 'kv')
+            .map((it) => ({ ...it })),
         });
       } else {
         mergeSectionItems(existing.items, item.items, opts, sectionPath);
