@@ -16,29 +16,44 @@ atomic rollbacks, and diff-before-apply safety.
   - [`avanti diff`](#avanti-diff)
   - [`avanti pull`](#avanti-pull)
   - [`avanti lock`](#avanti-lock)
+  - [`--verbose` / `-v`](#--verbose---v)
 - [History](#history)
   - [`avanti log`](#avanti-log)
   - [`avanti diff <pullId>`](#avanti-diff-pullid)
   - [`avanti revert [pullId]`](#avanti-revert-pullid)
   - [`avanti reset`](#avanti-reset)
-  - [`--verbose` / `-v`](#--verbose---v)
 - [Working Directory](#working-directory)
   - [Path Constraints](#path-constraints)
 - [Configuration](#configuration)
   - [File Entry Fields](#file-entry-fields)
   - [Source Types](#source-types)
+    - [SHA pinning](#sha-pinning)
+    - [Filter](#filter)
+    - [Extract](#extract)
   - [Directory Sources](#directory-sources)
   - [JSON Merging](#json-merging)
   - [YAML Merging](#yaml-merging)
   - [TOML Merging](#toml-merging)
   - [Template Rendering](#template-rendering)
+  - [Event Hooks](#event-hooks)
   - [Insert Mode](#insert-mode)
   - [Conditions](#conditions)
+    - [Condition fields](#condition-fields)
+    - [Examples](#examples)
   - [Scaffold Pattern](#scaffold-pattern)
   - [Backup](#backup)
+    - [Path variables](#path-variables)
+    - [Counter pattern](#counter-pattern)
+    - [Security: backup_roots](#security-backup_roots)
+    - [Backup examples](#backup-examples)
   - [Write in Place](#write-in-place)
   - [Follow Symlink](#follow-symlink)
+  - [Sudo](#sudo)
   - [Variables](#variables)
+    - [List and object variables](#list-and-object-variables)
+    - [Accessing nested values with \${expr}](#accessing-nested-values-with-expr)
+    - [Source-based variables](#source-based-variables)
+    - [System-injected variables](#system-injected-variables)
   - [$self — Self-managing Config](#self--self-managing-config)
   - [Authentication](#authentication)
   - [Private Instances](#private-instances)
@@ -193,6 +208,25 @@ SHA is computed over the raw fetched content of each source, before any `replace
 
 Excluded from SHA pinning: local paths and `raw:` sources (their content is either authored locally or inline in the config, so changes are always visible).
 
+### `--verbose` / `-v`
+
+Pass `--verbose` (or `-v`) to any command to print internal debug details to stderr. Verbose output does not appear on stdout, so piping diff output is unaffected.
+
+```sh
+avanti diff --verbose
+avanti pull -v
+```
+
+Each line is prefixed with `[verbose]` and includes:
+
+- The source being fetched (e.g. `github:org/repo:file@main`)
+- Every HTTP request URL and response status code
+- Retry delays and reasons
+- CLI tool invocations (`gh`, `glab`, `aws`, `vault`, `git`)
+- Cache hits
+
+**Credential safety:** tokens are read from environment variables and sent as HTTP headers, which are never logged. Git URLs with embedded credentials are redacted. `exec:` source commands are logged verbatim — if your config embeds secrets in an exec command (e.g. `exec: curl -H "Token: $env:MY_SECRET"`), those secrets will appear in verbose output after variable substitution.
+
 ## History
 
 Every successful `avanti pull` that writes at least one file is recorded in a local history store. This lets you inspect what changed, preview past states, revert the whole project, or fully undo all avanti changes.
@@ -287,25 +321,6 @@ Apply? [y/N]
 ```
 
 Use `--yes` to skip the prompt. The history log is preserved — you can still run `avanti log` after a reset.
-
-### `--verbose` / `-v`
-
-Pass `--verbose` (or `-v`) to any command to print internal debug details to stderr. Verbose output does not appear on stdout, so piping diff output is unaffected.
-
-```sh
-avanti diff --verbose
-avanti pull -v
-```
-
-Each line is prefixed with `[verbose]` and includes:
-
-- The source being fetched (e.g. `github:org/repo:file@main`)
-- Every HTTP request URL and response status code
-- Retry delays and reasons
-- CLI tool invocations (`gh`, `glab`, `aws`, `vault`, `git`)
-- Cache hits
-
-**Credential safety:** tokens are read from environment variables and sent as HTTP headers, which are never logged. Git URLs with embedded credentials are redacted. `exec:` source commands are logged verbatim — if your config embeds secrets in an exec command (e.g. `exec: curl -H "Token: $env:MY_SECRET"`), those secrets will appear in verbose output after variable substitution.
 
 ## Working Directory
 
