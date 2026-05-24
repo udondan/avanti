@@ -240,6 +240,36 @@ describe('mergeIni — sections (objects strategy)', () => {
   });
 });
 
+// ── mergeIni — scalar↔array type change ──────────────────────────────────────
+
+describe('mergeIni — scalar↔array type change', () => {
+  it('last_wins: overlay array replaces base scalar', () => {
+    const result = mergeIni(['[s]\nfoo = 1\n', '[s]\nfoo[] = a\n']);
+    expect(result).not.toContain('foo = 1');
+    expect(result).toContain('foo[] = a');
+  });
+
+  it('last_wins: overlay scalar replaces base array', () => {
+    const result = mergeIni(['[s]\nfoo[] = a\n', '[s]\nfoo = 1\n']);
+    expect(result).not.toContain('foo[] = a');
+    expect(result).toContain('foo = 1');
+  });
+
+  it('first_wins: keeps base scalar when overlay is array', () => {
+    const result = mergeIni(['[s]\nfoo = 1\n', '[s]\nfoo[] = a\n'], {
+      conflicts: 'first_wins',
+    });
+    expect(result).toContain('foo = 1');
+    expect(result).not.toContain('foo[] = a');
+  });
+
+  it('abort: throws on scalar↔array type change', () => {
+    expect(() =>
+      mergeIni(['[s]\nfoo = 1\n', '[s]\nfoo[] = a\n'], { conflicts: 'abort' }),
+    ).toThrow('INI conflict at s.foo');
+  });
+});
+
 // ── mergeIni — arrays (key[]=) ────────────────────────────────────────────────
 
 describe('mergeIni — arrays: replace (default)', () => {

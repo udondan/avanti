@@ -350,24 +350,21 @@ function mergeKvIntoItems(
   opts: ResolvedOptions,
   path: string,
 ): void {
-  // Match the last occurrence: INI semantics treat the last duplicate as the
-  // effective value, so we must update that one to keep the output correct.
+  // Match by key only (ignoring isArray) so that a scalar↔array type change on
+  // the same key is handled by the conflict strategy rather than silently
+  // producing duplicate entries (one scalar + one array) in the output.
   let idx = -1;
   for (let j = items.length - 1; j >= 0; j--) {
     const it = items[j];
-    if (
-      it.kind === 'kv' &&
-      it.key === overlay.key &&
-      it.isArray === overlay.isArray
-    ) {
+    if (it.kind === 'kv' && it.key === overlay.key) {
       idx = j;
       break;
     }
   }
 
   if (idx === -1) {
-    // Insert after the last existing KV; if none exist, append at end so that
-    // leading comment/blank nodes (e.g. section header notes) are not displaced.
+    // New key — insert after the last existing KV; if none exist, append at end
+    // so that leading comment/blank nodes are not displaced.
     let insertAt = items.length;
     for (let j = items.length - 1; j >= 0; j--) {
       if (items[j].kind === 'kv') {
@@ -379,20 +376,29 @@ function mergeKvIntoItems(
     return;
   }
 
-  const base = items[idx] as IniKeyValue;
+  const baseKv = items[idx] as IniKeyValue;
 
-  if (valuesEqual(base.value, overlay.value)) return;
+  // Scalar↔array type change: treat as a conflict regardless of array strategy.
+  if (baseKv.isArray !== overlay.isArray) {
+    const loc = path || '(root)';
+    if (opts.conflicts === 'abort') throw new Error(`INI conflict at ${loc}`);
+    if (opts.conflicts === 'first_wins') return;
+    // last_wins: replace value and type in-place.
+    baseKv.value = overlay.value;
+    baseKv.isArray = overlay.isArray;
+    if ((baseKv.sep === '') !== (overlay.sep === '')) baseKv.sep = overlay.sep;
+    return;
+  }
 
-  if (Array.isArray(base.value) && Array.isArray(overlay.value)) {
+  if (valuesEqual(baseKv.value, overlay.value)) return;
+
+  if (Array.isArray(baseKv.value) && Array.isArray(overlay.value)) {
     if (opts.arrays === 'concat') {
-      (items[idx] as IniKeyValue).value = [...base.value, ...overlay.value];
+      baseKv.value = [...baseKv.value, ...overlay.value];
       return;
     }
     if (opts.arrays === 'dedupe') {
-      (items[idx] as IniKeyValue).value = dedupeArrayValues(
-        base.value,
-        overlay.value,
-      );
+      baseKv.value = dedupeArrayValues(baseKv.value, overlay.value);
       return;
     }
     // replace (default) falls through to conflict handling
@@ -406,7 +412,6 @@ function mergeKvIntoItems(
 
   // last_wins: update value in-place; preserve sep when both sides are key=value,
   // but adopt the overlay sep when the shape changes (bare ↔ key=value).
-  const baseKv = items[idx] as IniKeyValue;
   baseKv.value = overlay.value;
   if ((baseKv.sep === '') !== (overlay.sep === '')) {
     baseKv.sep = overlay.sep;
