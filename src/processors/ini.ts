@@ -434,7 +434,7 @@ function mergeDocuments(
           (it): it is IniSection =>
             it.kind === 'section' &&
             it.name === item.name &&
-            (it.subName ?? '') === (item.subName ?? ''),
+            it.subName === item.subName,
         );
         if (existingIdx === -1) {
           base.items.push({
@@ -455,12 +455,12 @@ function mergeDocuments(
         (it): it is IniSection =>
           it.kind === 'section' &&
           it.name === item.name &&
-          (it.subName ?? '') === (item.subName ?? ''),
+          it.subName === item.subName,
       );
 
       const sectionPath =
         item.subName !== undefined
-          ? `${item.name}."${item.subName}"`
+          ? `${item.name} "${item.subName}"`
           : item.name;
 
       if (!existing) {
