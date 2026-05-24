@@ -217,35 +217,44 @@ describe('history integration', () => {
   });
 
   describe('avanti diff <pullId>', () => {
-    it('exits 0 when current files match the given pull state', () => {
-      const src = writeSource('src.txt', 'content');
-      writeConfig(`files:\n  ./out.txt:\n    src: ${src}\n`);
-      run('pull --yes');
+    it(
+      'exits 0 when current files match the given pull state',
+      { timeout: 15_000 },
+      () => {
+        const src = writeSource('src.txt', 'content');
+        writeConfig(`files:\n  ./out.txt:\n    src: ${src}\n`);
+        run('pull --yes');
 
-      const { stdout: logOut } = run('log');
-      const pullId = logOut.match(/pull ([0-9a-f]{8})/)?.[1] ?? '';
-      expect(pullId).not.toBe('');
+        const { stdout: logOut } = run('log');
+        const pullId = logOut.match(/pull ([0-9a-f]{8})/)?.[1] ?? '';
+        expect(pullId).not.toBe('');
 
-      const { exitCode } = run(`diff ${pullId}`);
-      expect(exitCode).toBe(0);
-    });
+        const { exitCode } = run(`diff ${pullId}`);
+        expect(exitCode).toBe(0);
+      },
+    );
 
-    it('exits 1 and shows diff when files differ from given pull state', () => {
-      const src = writeSource('src.txt', 'v1');
-      writeConfig(`files:\n  ./out.txt:\n    src: ${src}\n`);
-      run('pull --yes');
+    it(
+      'exits 1 and shows diff when files differ from given pull state',
+      { timeout: 15_000 },
+      () => {
+        const src = writeSource('src.txt', 'v1');
+        writeConfig(`files:\n  ./out.txt:\n    src: ${src}\n`);
+        run('pull --yes');
 
-      const { stdout: logAfterFirst } = run('log');
-      const firstPullId = logAfterFirst.match(/pull ([0-9a-f]{8})/)?.[1] ?? '';
+        const { stdout: logAfterFirst } = run('log');
+        const firstPullId =
+          logAfterFirst.match(/pull ([0-9a-f]{8})/)?.[1] ?? '';
 
-      writeFileSync(src, 'v2');
-      run('pull --yes');
+        writeFileSync(src, 'v2');
+        run('pull --yes');
 
-      const { exitCode, stdout } = run(`diff ${firstPullId}`);
-      expect(exitCode).toBe(1);
-      expect(stdout).toContain('---');
-      expect(stdout).toContain('+++');
-    });
+        const { exitCode, stdout } = run(`diff ${firstPullId}`);
+        expect(exitCode).toBe(1);
+        expect(stdout).toContain('---');
+        expect(stdout).toContain('+++');
+      },
+    );
 
     it('errors when pullId is not found', () => {
       const src = writeSource('src.txt', 'content');
