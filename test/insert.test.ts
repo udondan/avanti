@@ -422,3 +422,53 @@ describe('TOML — datetime values', () => {
     expect(result).toContain('ts');
   });
 });
+
+describe('TOML — property order preservation', () => {
+  it('key updated in new contribution keeps its original position', () => {
+    const targetPath = path.join(tmpDir, 'file.toml');
+    fs.writeFileSync(targetPath, 'z = 1\na = 99\nm = 3\n');
+    const result = applyInsertMode(
+      makeEntry({ toml: true }),
+      'a = 100\n',
+      'a = 99\n',
+      targetPath,
+    );
+    // 'a' must stay between 'z' and 'm', not be appended at the end
+    const lines = result.trim().split('\n');
+    const idxZ = lines.findIndex((l) => l.startsWith('z'));
+    const idxA = lines.findIndex((l) => l.startsWith('a'));
+    const idxM = lines.findIndex((l) => l.startsWith('m'));
+    expect(idxZ).toBeLessThan(idxA);
+    expect(idxA).toBeLessThan(idxM);
+    expect(result).toContain('a = 100');
+  });
+
+  it('uses remove-then-merge (no order preservation) when conflicts: first_wins', () => {
+    const targetPath = path.join(tmpDir, 'file.toml');
+    fs.writeFileSync(targetPath, 'a = 99\nb = 2\n');
+    const result = applyInsertMode(
+      makeEntry({ toml: { conflicts: 'first_wins' } }),
+      'a = 100\n',
+      'a = 99\n',
+      targetPath,
+    );
+    // 'a' is removed then re-merged; new value wins; 'a' appears after 'b'
+    const lines = result.trim().split('\n');
+    const idxB = lines.findIndex((l) => l.startsWith('b'));
+    const idxA = lines.findIndex((l) => l.startsWith('a'));
+    expect(idxB).toBeLessThan(idxA);
+  });
+
+  it('does not throw with conflicts: abort when updated key is removed before merge', () => {
+    const targetPath = path.join(tmpDir, 'file.toml');
+    fs.writeFileSync(targetPath, 'a = 99\nb = 2\n');
+    expect(() =>
+      applyInsertMode(
+        makeEntry({ toml: { conflicts: 'abort' } }),
+        'a = 100\n',
+        'a = 99\n',
+        targetPath,
+      ),
+    ).not.toThrow();
+  });
+});
