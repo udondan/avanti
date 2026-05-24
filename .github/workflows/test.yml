@@ -98,7 +98,7 @@ jobs:
           timeout_minutes: 10
           retry_wait_seconds: 15
           command: |
-            set -euo pipefail
+            set -eu
             docker rm -f vault 2>/dev/null || true
             docker run -d \
               --name vault \
