@@ -26,6 +26,10 @@ import {
   TomlConflictStrategy,
   TomlMergeOptions,
   TomlObjectStrategy,
+  IniArrayStrategy,
+  IniConflictStrategy,
+  IniMergeOptions,
+  IniObjectStrategy,
   ReplaceRule,
   TemplateEngine,
   VALID_TEMPLATE_ENGINES,
@@ -418,6 +422,15 @@ export function parseConfigContent(content: string): AvantiConfig {
       }
     }
 
+    if (e['ini'] !== undefined) {
+      const rawIni = e['ini'];
+      if (rawIni === true || rawIni === false) {
+        fileEntry.ini = rawIni;
+      } else {
+        fileEntry.ini = parseIniMergeOptions(rawIni, `files["${target}"]`);
+      }
+    }
+
     if (e['template'] !== undefined) {
       const rawTemplate = e['template'];
       if (rawTemplate === true) {
@@ -650,6 +663,15 @@ function parseVariableEntry(
       entry.toml = rawToml;
     } else {
       entry.toml = parseTomlMergeOptions(rawToml, loc);
+    }
+  }
+
+  if (obj['ini'] !== undefined) {
+    const rawIni = obj['ini'];
+    if (rawIni === true || rawIni === false) {
+      entry.ini = rawIni;
+    } else {
+      entry.ini = parseIniMergeOptions(rawIni, loc);
     }
   }
 
@@ -1394,6 +1416,21 @@ function parseTomlMergeOptions(raw: unknown, loc: string): TomlMergeOptions {
     raw,
     loc,
     'toml',
+    ['abort', 'first_wins', 'last_wins'],
+    ['replace', 'concat', 'dedupe'],
+    ['replace', 'merge'],
+  );
+}
+
+function parseIniMergeOptions(raw: unknown, loc: string): IniMergeOptions {
+  return parseMergeOptions<
+    IniConflictStrategy,
+    IniArrayStrategy,
+    IniObjectStrategy
+  >(
+    raw,
+    loc,
+    'ini',
     ['abort', 'first_wins', 'last_wins'],
     ['replace', 'concat', 'dedupe'],
     ['replace', 'merge'],

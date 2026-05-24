@@ -582,3 +582,73 @@ describe('TOML — property order preservation', () => {
     ).toThrow();
   });
 });
+
+// ── INI — property order preservation ────────────────────────────────────────
+
+describe('INI — property order preservation', () => {
+  it('key updated in new contribution keeps its original position', () => {
+    const targetPath = path.join(tmpDir, 'file.ini');
+    fs.writeFileSync(targetPath, '[s]\nz = 1\na = 99\nm = 3\n');
+    const result = applyInsertMode(
+      makeEntry({ ini: true, target: 'file.ini' }),
+      '[s]\na = 100\n',
+      '[s]\na = 99\n',
+      targetPath,
+    );
+    // 'a' must stay between 'z' and 'm', not be appended at the end
+    const lines = result.trim().split('\n');
+    const idxZ = lines.findIndex((l) => l.startsWith('z'));
+    const idxA = lines.findIndex((l) => l.startsWith('a'));
+    const idxM = lines.findIndex((l) => l.startsWith('m'));
+    expect(idxZ).toBeLessThan(idxA);
+    expect(idxA).toBeLessThan(idxM);
+    expect(result).toContain('a = 100');
+  });
+
+  it('comment on existing key is preserved after update', () => {
+    const targetPath = path.join(tmpDir, 'file.ini');
+    fs.writeFileSync(targetPath, '[s]\n; the port\nport = 5432\nhost = x\n');
+    const result = applyInsertMode(
+      makeEntry({ ini: true, target: 'file.ini' }),
+      '[s]\nport = 5433\n',
+      '[s]\nport = 5432\n',
+      targetPath,
+    );
+    expect(result).toContain('port = 5433');
+    expect(result).toContain('host = x');
+    expect(result).toContain('; the port');
+  });
+
+  it('uses remove-then-merge (no order preservation) when conflicts: first_wins', () => {
+    const targetPath = path.join(tmpDir, 'file.ini');
+    fs.writeFileSync(targetPath, '[s]\na = 99\nb = 2\n');
+    const result = applyInsertMode(
+      makeEntry({ ini: { conflicts: 'first_wins' }, target: 'file.ini' }),
+      '[s]\na = 100\n',
+      '[s]\na = 99\n',
+      targetPath,
+    );
+    // 'a' is removed then re-merged; 'b' was already present so appears first
+    const lines = result
+      .trim()
+      .split('\n')
+      .filter((l) => /^[ab]/.test(l));
+    const idxB = lines.findIndex((l) => l.startsWith('b'));
+    const idxA = lines.findIndex((l) => l.startsWith('a'));
+    expect(idxB).toBeLessThan(idxA);
+    expect(result).toContain('a = 100');
+  });
+
+  it('does not throw with conflicts: abort when updated key is removed before merge', () => {
+    const targetPath = path.join(tmpDir, 'file.ini');
+    fs.writeFileSync(targetPath, '[s]\na = 99\nb = 2\n');
+    const result = applyInsertMode(
+      makeEntry({ ini: { conflicts: 'abort' }, target: 'file.ini' }),
+      '[s]\na = 100\n',
+      '[s]\na = 99\n',
+      targetPath,
+    );
+    expect(result).toContain('a = 100');
+    expect(result).toContain('b = 2');
+  });
+});

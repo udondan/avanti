@@ -9,6 +9,7 @@ import {
   JsonMergeOptions,
   YamlMergeOptions,
   TomlMergeOptions,
+  IniMergeOptions,
   Variables,
 } from '../types';
 import { evaluateConditions } from '../condition';
@@ -28,6 +29,7 @@ import { fetchVault } from './vault';
 import { mergeJson, formatJson } from '../processors/json';
 import { mergeYaml, formatYaml } from '../processors/yaml';
 import { mergeToml, formatToml } from '../processors/toml';
+import { mergeIni, formatIni } from '../processors/ini';
 import { isBinary } from '../binary';
 import { applyFilter } from '../filter';
 import { extractArchive, detectArchiveFormat } from '../extract';
@@ -35,6 +37,7 @@ import { extractArchive, detectArchiveFormat } from '../extract';
 const JSON_EXTENSIONS = new Set(['.json', '.jsonc']);
 const YAML_EXTENSIONS = new Set(['.yaml', '.yml']);
 const TOML_EXTENSIONS = new Set(['.toml']);
+const INI_EXTENSIONS = new Set(['.ini', '.cfg']);
 
 function srcFilename(src: FileSrc): string | null {
   if (typeof src === 'string') {
@@ -108,6 +111,12 @@ function hasTomlExtension(src: FileSrc): boolean {
   return TOML_EXTENSIONS.has(path.extname(name).toLowerCase());
 }
 
+function hasIniExtension(src: FileSrc): boolean {
+  const name = srcFilename(src);
+  if (!name) return false;
+  return INI_EXTENSIONS.has(path.extname(name).toLowerCase());
+}
+
 export function resolveJsonOptions(
   entry: FileEntry,
   srcs: FileSrc[],
@@ -144,6 +153,19 @@ export function resolveTomlOptions(
   if (toml !== undefined && typeof toml === 'object') return toml;
   // Auto-detect: all sources have a TOML file extension
   if (srcs.length > 0 && srcs.every(hasTomlExtension)) return {};
+  return null;
+}
+
+export function resolveIniOptions(
+  entry: FileEntry,
+  srcs: FileSrc[],
+): IniMergeOptions | null {
+  const { ini } = entry;
+  if (ini === false) return null;
+  if (ini === true) return {};
+  if (ini !== undefined && typeof ini === 'object') return ini;
+  // Auto-detect: all sources have an INI file extension
+  if (srcs.length > 0 && srcs.every(hasIniExtension)) return {};
   return null;
 }
 
@@ -774,6 +796,10 @@ export async function fetchSource(
       jsonOpts === null && yamlOpts === null
         ? resolveTomlOptions(entry, src)
         : null;
+    const iniOpts =
+      jsonOpts === null && yamlOpts === null && tomlOpts === null
+        ? resolveIniOptions(entry, src)
+        : null;
     let content: string;
     if (jsonOpts !== null) {
       content = mergeJson(parts, jsonOpts);
@@ -781,6 +807,8 @@ export async function fetchSource(
       content = mergeYaml(parts, yamlOpts);
     } else if (tomlOpts !== null) {
       content = mergeToml(parts, tomlOpts);
+    } else if (iniOpts !== null) {
+      content = mergeIni(parts, iniOpts);
     } else {
       content = parts.join('\n');
     }
@@ -861,8 +889,17 @@ export async function fetchSource(
       dirJsonOpts === null && dirYamlOpts === null
         ? resolveTomlOptions(entry, [src])
         : null;
+    let dirIniOpts =
+      dirJsonOpts === null && dirYamlOpts === null && dirTomlOpts === null
+        ? resolveIniOptions(entry, [src])
+        : null;
 
-    if (dirJsonOpts === null && dirYamlOpts === null && dirTomlOpts === null) {
+    if (
+      dirJsonOpts === null &&
+      dirYamlOpts === null &&
+      dirTomlOpts === null &&
+      dirIniOpts === null
+    ) {
       const keys = Array.from(singleResult.files.keys());
       if (
         entry.json !== false &&
@@ -879,10 +916,20 @@ export async function fetchSource(
         keys.every((k) => TOML_EXTENSIONS.has(path.extname(k).toLowerCase()))
       ) {
         dirTomlOpts = {};
+      } else if (
+        entry.ini !== false &&
+        keys.every((k) => INI_EXTENSIONS.has(path.extname(k).toLowerCase()))
+      ) {
+        dirIniOpts = {};
       }
     }
 
-    if (dirJsonOpts !== null || dirYamlOpts !== null || dirTomlOpts !== null) {
+    if (
+      dirJsonOpts !== null ||
+      dirYamlOpts !== null ||
+      dirTomlOpts !== null ||
+      dirIniOpts !== null
+    ) {
       assertTextFiles(singleResult.files, 'directory merge');
       const sortedValues = Array.from(singleResult.files.entries())
         .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
@@ -893,8 +940,10 @@ export async function fetchSource(
         merged = mergeJson(sortedValues, dirJsonOpts);
       } else if (dirYamlOpts !== null) {
         merged = mergeYaml(sortedValues, dirYamlOpts);
+      } else if (dirTomlOpts !== null) {
+        merged = mergeToml(sortedValues, dirTomlOpts);
       } else {
-        merged = mergeToml(sortedValues, dirTomlOpts!);
+        merged = mergeIni(sortedValues, dirIniOpts!);
       }
       return {
         files: new Map([[filename, Buffer.from(merged, 'utf8')]]),
@@ -912,11 +961,18 @@ export async function fetchSource(
     singleJsonOpts === null && singleYamlOpts === null
       ? resolveTomlOptions(entry, [src])
       : null;
+  const singleIniOpts =
+    singleJsonOpts === null &&
+    singleYamlOpts === null &&
+    singleTomlOpts === null
+      ? resolveIniOptions(entry, [src])
+      : null;
 
   if (
     singleJsonOpts === null &&
     singleYamlOpts === null &&
-    singleTomlOpts === null
+    singleTomlOpts === null &&
+    singleIniOpts === null
   )
     return { ...singleResult, sourceRecords };
 
@@ -928,7 +984,9 @@ export async function fetchSource(
           ? 'json'
           : singleYamlOpts !== null
             ? 'yaml'
-            : 'toml';
+            : singleTomlOpts !== null
+              ? 'toml'
+              : 'ini';
       throw new Error(
         `Binary file "${k}" cannot be formatted as ${fmtName}. Remove the format option or use a text source.`,
       );
@@ -938,8 +996,10 @@ export async function fetchSource(
       formatted.set(k, Buffer.from(formatJson(text, singleJsonOpts), 'utf8'));
     } else if (singleYamlOpts !== null) {
       formatted.set(k, Buffer.from(formatYaml(text), 'utf8'));
-    } else {
+    } else if (singleTomlOpts !== null) {
       formatted.set(k, Buffer.from(formatToml(text), 'utf8'));
+    } else {
+      formatted.set(k, Buffer.from(formatIni(text), 'utf8'));
     }
   }
   return { files: formatted, sourceRecords };

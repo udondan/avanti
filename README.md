@@ -34,6 +34,7 @@ atomic rollbacks, and diff-before-apply safety.
   - [JSON Merging](#json-merging)
   - [YAML Merging](#yaml-merging)
   - [TOML Merging](#toml-merging)
+  - [INI Merging](#ini-merging)
   - [Template Rendering](#template-rendering)
   - [Event Hooks](#event-hooks)
   - [Insert Mode](#insert-mode)
@@ -121,6 +122,7 @@ avanti revert  # roll back instantly if something breaks
 - **JSON merging** — deep-merge multiple JSON/JSONC sources with configurable conflict, array, and object strategies; format output with configurable indentation, trailing commas, key sorting, minification, and comment stripping
 - **YAML merging** — deep-merge multiple YAML/YML sources with the same strategies, with full comment preservation
 - **TOML merging** — deep-merge multiple TOML sources with configurable conflict, array, and table strategies
+- **INI merging** — deep-merge multiple INI/CFG sources with the same strategies, with full comment and key-order preservation
 - **Variables** — define reusable values in a `variables:` block and reference them anywhere with `$name`; variables can be plain strings, `$env:NAME` environment variable references, or fetched from any remote/local source (the same source types as `files:`)
 - **Post-processing** — apply text replacements (string or regex) and/or pipe content through a shell script
 - **Release artifacts** — download release assets attached to a GitHub or GitLab release by tag, `$latest` (newest stable semver tag), `$recent` (most recently created/published tag), or `/pattern/[flags]` (GitLab prefers `package`-type links; falls back to all links)
@@ -445,6 +447,7 @@ A brace group is only expanded when it contains **at least one comma** (e.g. `{f
 | `json`          | No       | JSON merge/format options (see below). When omitted, merging is auto-enabled if all sources have a `.json` or `.jsonc` extension. Use `true`/`false` to force on or off regardless of extension.                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | `yaml`          | No       | YAML merge/format options (see below). When omitted, merging is auto-enabled if all sources have a `.yaml` or `.yml` extension. Use `true`/`false` to force on or off regardless of extension. Comments are preserved in merged output.                                                                                                                                                                                                                                                                                                                                                                             |
 | `toml`          | No       | TOML merge/format options (see below). When omitted, merging is auto-enabled if all sources have a `.toml` extension. Use `true`/`false` to force on or off regardless of extension. See [TOML Merging](#toml-merging).                                                                                                                                                                                                                                                                                                                                                                                             |
+| `ini`           | No       | INI merge/format options (see below). When omitted, merging is auto-enabled if all sources have a `.ini` or `.cfg` extension. Use `true`/`false` to force on or off regardless of extension. Comments and key order are preserved. See [INI Merging](#ini-merging).                                                                                                                                                                                                                                                                                                                                                 |
 | `strategy`      | No       | Write strategy: `replace` _(default)_ — overwrite the target file entirely; `insert` — merge content into the existing file without clobbering unrelated content. See [Insert Mode](#insert-mode).                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | `writeInPlace`  | No       | If `true`, replaces file content in-place instead of using an atomic rename. Preserves the existing inode. **Not atomic** — use only when inode stability is required. Errors if the target is a symlink. See [Write in Place](#write-in-place).                                                                                                                                                                                                                                                                                                                                                                    |
 | `followSymlink` | No       | If `true` and the target path is a symlink, writes the fetched content to the **symlink's target** instead of replacing the symlink itself. The resolved target must not be a directory and must stay inside the working directory. See [Follow Symlink](#follow-symlink).                                                                                                                                                                                                                                                                                                                                          |
@@ -953,6 +956,106 @@ files:
   config.toml:
     src: ./config.toml
 ```
+
+### INI Merging
+
+When all sources in a list have a `.ini` or `.cfg` extension, INI merging is enabled
+automatically — no extra config needed:
+
+```yaml
+files:
+  merged.ini:
+    src:
+      - ./defaults.ini
+      - ./overrides.ini
+```
+
+To merge sources that don't have an INI extension (e.g. `exec:`, `raw:`, or a URL without `.ini`), set `ini: true`:
+
+```yaml
+files:
+  merged.ini:
+    src:
+      - exec: cat defaults.ini
+      - ./overrides.ini
+    ini: true
+```
+
+To opt out of auto-detection and force plain concatenation, set `ini: false`.
+
+**Fine-grained options** — pass an object to control merge behavior:
+
+```yaml
+files:
+  merged.ini:
+    src:
+      - ./defaults.ini
+      - github:
+          repo: org/configs
+          file: overrides.ini
+    ini:
+      conflicts: last_wins # abort | first_wins | last_wins (default)
+      arrays: replace # replace (default) | concat | dedupe
+      objects: merge # merge (default) | replace
+```
+
+The options behave identically to JSON, YAML, and TOML merging:
+
+- `conflicts` — what to do when the same key holds a scalar (or an array/object when their strategy is `replace`):
+  - `last_wins` _(default)_ — the last source's value wins
+  - `first_wins` — the first source's value is kept
+  - `abort` — throw an error (identical values are not considered a conflict)
+- `arrays` — how to combine arrays at the same key (written as `key[] = val` in INI):
+  - `replace` _(default)_ — the later source's array replaces the earlier one
+  - `concat` — arrays are concatenated (no deduplication)
+  - `dedupe` — items from the later source are appended only if not already present
+- `objects` — how to combine sections at the same name:
+  - `merge` _(default)_ — deep merge, applying the same rules recursively to section keys
+  - `replace` — the later source's section replaces the earlier one entirely
+
+**Comments and key order are preserved in the base (first) source.** The INI processor uses
+a line-level AST, so comment lines, inline comments, and blank lines from the first source
+are preserved through the merge. Minor whitespace normalization may occur (e.g. a single
+space is inserted before inline comments, and spacing around `=` follows the base key's
+original separator). When a key's value is updated by a later source, the base key's inline
+comment is kept and the key stays at its original position — it is not shuffled to the end.
+**Comment behavior under `objects: merge` (default):** Comment lines (`; ...` / `# ...`),
+blank lines, and section header comments from overlay sources are not transferred when merging
+individual keys. For keys that already exist in the base, the base key's inline comment is
+kept. For new keys introduced only by the overlay, their inline comments are preserved (there
+is no base inline comment to fall back on). When a new section is introduced by the overlay
+(one that does not exist in the base), it is inserted without its section header comment or
+any internal comment/blank nodes — only its key-value pairs are carried over.
+
+**Comment behavior under `objects: replace`:** When the overlay section's key-value content
+differs from the base, the entire overlay section is used as-is — including its section
+header comment, internal comment lines, blank lines, and inline comments. If the two sections
+have identical key-value content (even when they differ only in comments or whitespace), no
+replacement occurs — the base section is kept unchanged.
+
+**Inline comment limitation for arrays:** When the same key appears as multiple `key[] = val`
+entries, all values are coalesced into a single array node. Only the inline comment from the
+_first_ occurrence (if any) is preserved; inline comments on subsequent `key[] = val` lines are
+discarded.
+
+**Supported INI features:** sections (`[section]`), subsections (`[section "name"]`),
+`key = value` pairs, bare keys, quoted values (`"..."` / `'...'`), comment lines (`;` and `#`),
+inline comments, blank lines, backslash line continuation, and arrays via `key[] = val`. All
+`key[] = val` entries for the same key are collected into one array regardless of position in
+the file; non-contiguous entries are normalized to appear at the first occurrence of that key.
+
+**Value coercion:** Unquoted values that match `true` or `false` (case-insensitive) are parsed
+as booleans, and values that parse as a valid number are parsed as numbers. This means
+`enabled = true` is stored as a boolean and `port = 8080` as a number; on format or merge
+these are re-serialised as `true` / `8080` respectively. Strings like `001` are normalised to
+`1`. To preserve the exact string form, quote the value: `port = "8080"`.
+
+**Inline comment delimiter:** `;` and `#` are treated as comment delimiters when they appear
+outside of quoted strings. If a value contains a literal `;` or `#` character, quote the value
+(e.g. `url = "https://example.com#anchor"`) to prevent it from being interpreted as a comment.
+
+**Pretty-printing a single file** — `ini` works on single-source entries too. Auto-detection
+applies here as well, so a single `.ini` or `.cfg` source is normalized automatically.
 
 ### Template Rendering
 

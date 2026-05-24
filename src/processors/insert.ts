@@ -7,9 +7,22 @@ import { mergeJson } from './json';
 import { mergeYaml } from './yaml';
 import { mergeToml } from './toml';
 import {
+  parseIniDoc,
+  stringifyIniDoc,
+  mergeIni,
+  type IniDocument,
+  type IniItem,
+  type IniKeyValue,
+  type IniSection,
+  type IniScalar,
+  type IniComment,
+  type IniBlank,
+} from './ini';
+import {
   resolveJsonOptions,
   resolveYamlOptions,
   resolveTomlOptions,
+  resolveIniOptions,
 } from '../sources';
 
 // ── Utilities ────────────────────────────────────────────────────────────────
@@ -198,6 +211,225 @@ function removeArrayContribution(
   }
 }
 
+// ── INI removal (AST, preserves comments on retained keys) ───────────────────
+
+type IniSectionItems = (IniComment | IniBlank | IniKeyValue)[];
+
+// Remove contiguous comment/blank nodes immediately preceding `idx` in `items`.
+// Stops when it reaches a kv or section boundary, preventing unrelated comments
+// from being stripped. Call this after splicing a kv node to avoid leaving
+// orphaned comments that would appear to annotate the next key.
+function splicePrecedingCommentBlanks(items: IniItem[], idx: number): void {
+  let k = idx - 1;
+  while (k >= 0 && (items[k].kind === 'comment' || items[k].kind === 'blank')) {
+    items.splice(k, 1);
+    k--;
+  }
+}
+
+function deepRemoveFromIniSectionItems(
+  items: IniSectionItems,
+  oldContrib: Record<string, unknown>,
+  newContrib: Record<string, unknown> | null,
+): void {
+  for (const key of Object.keys(oldContrib)) {
+    const oldVal = oldContrib[key];
+    const newVal =
+      newContrib != null && Object.hasOwn(newContrib, key)
+        ? newContrib[key]
+        : undefined;
+
+    if (Array.isArray(oldVal)) {
+      const iniKey = key.startsWith(INI_ARRAY_PREFIX)
+        ? key.slice(INI_ARRAY_PREFIX.length)
+        : key;
+      let node: IniKeyValue | undefined;
+      for (let j = items.length - 1; j >= 0; j--) {
+        const it = items[j];
+        if (it.kind === 'kv' && it.key === iniKey && it.isArray) {
+          node = it;
+          break;
+        }
+      }
+      if (!node) continue;
+      const curArr = node.value as IniScalar[];
+      removeArrayContribution(curArr, oldVal);
+      // Remove the array node when it becomes empty and newVal is not an array
+      // (key removed or type changed to scalar).
+      if (curArr.length === 0 && !Array.isArray(newVal)) {
+        const idx = items.indexOf(node);
+        if (idx !== -1) {
+          items.splice(idx, 1);
+          splicePrecedingCommentBlanks(items, idx);
+        }
+      }
+    } else {
+      let node: IniKeyValue | undefined;
+      for (let j = items.length - 1; j >= 0; j--) {
+        const it = items[j];
+        if (it.kind === 'kv' && it.key === key && !it.isArray) {
+          node = it;
+          break;
+        }
+      }
+      if (!node) continue;
+      // Skip only when newVal is the same scalar type; if it changed to an
+      // array, remove the old scalar node so mergeIni can insert the new shape.
+      if (newVal !== undefined && !Array.isArray(newVal)) continue;
+      if (deepEqual(node.value, oldVal)) {
+        const idx = items.indexOf(node);
+        if (idx !== -1) {
+          items.splice(idx, 1);
+          splicePrecedingCommentBlanks(items, idx);
+        }
+      }
+    }
+  }
+}
+
+function deepRemoveFromIniDoc(
+  doc: IniDocument,
+  oldContrib: Record<string, unknown>,
+  newContrib: Record<string, unknown> | null,
+): void {
+  for (const key of Object.keys(oldContrib)) {
+    const oldVal = oldContrib[key];
+    const newVal =
+      newContrib != null && Object.hasOwn(newContrib, key)
+        ? newContrib[key]
+        : undefined;
+
+    if (isPlainObject(oldVal)) {
+      const sectionName = key.startsWith(INI_SECTION_PREFIX)
+        ? key.slice(INI_SECTION_PREFIX.length)
+        : key;
+      const subsectionMatch = /^(.+?)\s+"([^"]*)"$/.exec(sectionName);
+      let section: IniSection | undefined;
+      for (let j = doc.items.length - 1; j >= 0; j--) {
+        const it = doc.items[j];
+        if (it.kind !== 'section') continue;
+        if (subsectionMatch) {
+          if (
+            it.name === subsectionMatch[1] &&
+            it.subName === subsectionMatch[2]
+          ) {
+            section = it;
+            break;
+          }
+        } else if (it.name === sectionName && it.subName === undefined) {
+          section = it;
+          break;
+        }
+      }
+      if (!section) continue;
+      const nestedNew = isPlainObject(newVal) ? newVal : null;
+      deepRemoveFromIniSectionItems(section.items, oldVal, nestedNew);
+      // Remove the section when it's empty and newVal is not also a section
+      // (key removed or type changed to scalar/array).
+      if (
+        section.items.filter((it) => it.kind === 'kv').length === 0 &&
+        !isPlainObject(newVal)
+      ) {
+        const idx = doc.items.indexOf(section);
+        if (idx !== -1) {
+          doc.items.splice(idx, 1);
+          // Do not strip preceding comment/blank nodes at the doc level —
+          // they may be file-level separators unrelated to this section.
+        }
+      }
+    } else if (Array.isArray(oldVal)) {
+      const iniKey = key.startsWith(INI_ARRAY_PREFIX)
+        ? key.slice(INI_ARRAY_PREFIX.length)
+        : key;
+      let node: IniKeyValue | undefined;
+      for (let j = doc.items.length - 1; j >= 0; j--) {
+        const it = doc.items[j];
+        if (it.kind === 'kv' && it.key === iniKey && it.isArray) {
+          node = it;
+          break;
+        }
+      }
+      if (!node) continue;
+      const curArr = node.value as IniScalar[];
+      removeArrayContribution(curArr, oldVal);
+      // Remove the array node when it becomes empty and newVal is not an array
+      // (key removed or type changed to scalar/section).
+      if (curArr.length === 0 && !Array.isArray(newVal)) {
+        const idx = doc.items.indexOf(node);
+        if (idx !== -1) {
+          doc.items.splice(idx, 1);
+          // Do not strip preceding comment/blank nodes at the doc level.
+        }
+      }
+    } else {
+      let node: IniKeyValue | undefined;
+      for (let j = doc.items.length - 1; j >= 0; j--) {
+        const it = doc.items[j];
+        if (it.kind === 'kv' && it.key === key && !it.isArray) {
+          node = it;
+          break;
+        }
+      }
+      if (!node) continue;
+      // Skip only when newVal is the same scalar type; remove the old node
+      // when type changes to array or section so the merge can re-add it.
+      if (
+        newVal !== undefined &&
+        !Array.isArray(newVal) &&
+        !isPlainObject(newVal)
+      )
+        continue;
+      if (deepEqual(node.value, oldVal)) {
+        const idx = doc.items.indexOf(node);
+        if (idx !== -1) {
+          doc.items.splice(idx, 1);
+          // Do not strip preceding comment/blank nodes at the doc level.
+        }
+      }
+    }
+  }
+}
+
+// Sentinel prefix for section keys in the JS representation so that a global
+// key named "db" and a section named [db] never collide in the same object.
+// Real INI keys cannot contain null bytes, making this unambiguous.
+const INI_SECTION_PREFIX = '\0s:';
+// Sentinel prefix for array KV keys (key[] = val) so they never collide with
+// a scalar KV of the same name (key = val) in the same JS object.
+const INI_ARRAY_PREFIX = '\0a:';
+
+function iniDocToJs(doc: IniDocument): Record<string, unknown> {
+  const result: Record<string, unknown> = Object.create(null) as Record<
+    string,
+    unknown
+  >;
+  for (const item of doc.items) {
+    if (item.kind === 'kv') {
+      const jsKey = item.isArray ? INI_ARRAY_PREFIX + item.key : item.key;
+      result[jsKey] = item.value;
+    } else if (item.kind === 'section') {
+      const sectionKey =
+        item.subName !== undefined
+          ? `${item.name} "${item.subName}"`
+          : item.name;
+      const obj: Record<string, unknown> = Object.create(null) as Record<
+        string,
+        unknown
+      >;
+      for (const child of item.items) {
+        if (child.kind === 'kv') {
+          const jsKey = child.isArray
+            ? INI_ARRAY_PREFIX + child.key
+            : child.key;
+          obj[jsKey] = child.value;
+        }
+      }
+      result[INI_SECTION_PREFIX + sectionKey] = obj;
+    }
+  }
+  return result;
+}
+
 // ── Structured insert helpers ─────────────────────────────────────────────────
 
 function applyJsonInsert(
@@ -350,6 +582,54 @@ function applyTomlInsert(
   return mergeToml([cleanedToml, processedText], opts);
 }
 
+function applyIniInsert(
+  existingContent: string,
+  processedText: string,
+  lastProcessed: string | null,
+  opts: Record<string, unknown>,
+): string {
+  let cleanedIni: string;
+  if (lastProcessed !== null) {
+    let existingDoc: IniDocument;
+    try {
+      existingDoc = parseIniDoc(existingContent);
+    } catch (err) {
+      throw new Error(
+        `insert mode: existing file is not valid INI: ${err instanceof Error ? err.message : String(err)}`,
+        { cause: err },
+      );
+    }
+    try {
+      const oldDoc = parseIniDoc(lastProcessed);
+      const oldContrib = iniDocToJs(oldDoc);
+      // Order-preservation only works under last_wins; with first_wins the
+      // stale key would persist, and with abort mergeIni would throw on
+      // the un-removed key.
+      const rawConflicts = opts['conflicts'];
+      const effectiveConflicts =
+        rawConflicts === 'abort' || rawConflicts === 'first_wins'
+          ? rawConflicts
+          : 'last_wins';
+      let newContrib: Record<string, unknown> | null = null;
+      if (effectiveConflicts === 'last_wins') {
+        try {
+          const p = iniDocToJs(parseIniDoc(processedText));
+          if (isPlainObject(p)) newContrib = p;
+        } catch {
+          // unparseable processedText → null (old behaviour)
+        }
+      }
+      deepRemoveFromIniDoc(existingDoc, oldContrib, newContrib);
+    } catch {
+      // Corrupted history fragment — skip key removal, fall through to merge
+    }
+    cleanedIni = stringifyIniDoc(existingDoc);
+  } else {
+    cleanedIni = existingContent;
+  }
+  return mergeIni([cleanedIni, processedText], opts);
+}
+
 // ── Public API ────────────────────────────────────────────────────────────────
 
 export function applyInsertMode(
@@ -370,6 +650,10 @@ export function applyInsertMode(
   const tomlOpts =
     jsonOpts === null && yamlOpts === null
       ? resolveTomlOptions(entry, srcs)
+      : null;
+  const iniOpts =
+    jsonOpts === null && yamlOpts === null && tomlOpts === null
+      ? resolveIniOptions(entry, srcs)
       : null;
 
   if (jsonOpts !== null) {
@@ -394,6 +678,14 @@ export function applyInsertMode(
       processedText,
       lastProcessed,
       tomlOpts as Record<string, unknown>,
+    );
+  }
+  if (iniOpts !== null) {
+    return applyIniInsert(
+      existingContent,
+      processedText,
+      lastProcessed,
+      iniOpts as Record<string, unknown>,
     );
   }
 

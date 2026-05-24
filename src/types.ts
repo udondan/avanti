@@ -250,6 +250,16 @@ export interface TomlMergeOptions {
   objects?: TomlObjectStrategy;
 }
 
+export type IniConflictStrategy = 'abort' | 'first_wins' | 'last_wins';
+export type IniArrayStrategy = 'replace' | 'concat' | 'dedupe';
+export type IniObjectStrategy = 'replace' | 'merge';
+
+export interface IniMergeOptions {
+  conflicts?: IniConflictStrategy;
+  arrays?: IniArrayStrategy;
+  objects?: IniObjectStrategy;
+}
+
 export type TemplateEngine =
   | 'handlebars'
   | 'nunjucks'
@@ -291,6 +301,7 @@ export interface FileEntry {
   json?: JsonMergeOptions | boolean;
   yaml?: YamlMergeOptions | boolean;
   toml?: TomlMergeOptions | boolean;
+  ini?: IniMergeOptions | boolean;
   strategy?: 'replace' | 'insert';
   writeInPlace?: boolean;
   followSymlink?: boolean;
@@ -303,6 +314,7 @@ export interface VariableEntry {
   json?: JsonMergeOptions | boolean;
   yaml?: YamlMergeOptions | boolean;
   toml?: TomlMergeOptions | boolean;
+  ini?: IniMergeOptions | boolean;
   template?: TemplateEngine | true;
 }
 
