@@ -1089,13 +1089,13 @@ When both are present, both must pass. Each condition object may also include `n
 
 #### Condition fields
 
-| Field           | Type           | Description                                                                        |
-| --------------- | -------------- | ---------------------------------------------------------------------------------- |
-| `os`            | string or list | Platform must match. Values: `linux`, `mac`, `windows`. List = any matches.        |
-| `exists`        | string         | Path (file or directory) must exist. Variables are resolved.                       |
-| `exec`          | string         | Shell command must exit with code `0`.                                             |
-| `target_exists` | boolean        | `true` — pass only if target exists. `false` — pass only if target does not exist. |
-| `not`           | boolean        | `true` — invert the result of all checks in this condition object.                 |
+| Field           | Type           | Description                                                                                                                     |
+| --------------- | -------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `os`            | string or list | Platform must match. Values: `linux`, `mac`, `windows`. Aliases: `darwin` (= `mac`), `win32` (= `windows`). List = any matches. |
+| `exists`        | string         | Path (file or directory) must exist. Variables are resolved.                                                                    |
+| `exec`          | string         | Shell command must exit with code `0`.                                                                                          |
+| `target_exists` | boolean        | `true` — pass only if target exists. `false` — pass only if target does not exist.                                              |
+| `not`           | boolean        | `true` — invert the result of all checks in this condition object.                                                              |
 
 #### Examples
 
