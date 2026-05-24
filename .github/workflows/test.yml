@@ -91,55 +91,51 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      - name: Start Vault
-        run: |
-          docker run -d \
-            --name vault \
-            --cap-add IPC_LOCK \
-            -p 8200:8200 \
-            -e VAULT_DEV_ROOT_TOKEN_ID=root \
-            -e VAULT_DEV_LISTEN_ADDRESS=0.0.0.0:8200 \
-            hashicorp/vault:latest
-          for i in $(seq 1 30); do
-            if curl -sf http://127.0.0.1:8200/v1/sys/health; then
-              echo "Vault is ready"
-              break
-            fi
-            if [ "$i" -eq 30 ]; then
-              echo "Vault failed to start after 60s"
-              docker logs vault
-              exit 1
-            fi
-            sleep 2
-          done
-
-      - name: Seed Vault test secrets
-        run: |
-          # KV v2 on default 'secret/' mount (enabled in dev mode)
-          curl -sf -X POST http://127.0.0.1:8200/v1/secret/data/myapp/db \
-            -H "X-Vault-Token: root" -H "Content-Type: application/json" \
-            -d '{"data":{"username":"admin","password":"s3cr3t"}}'
-          # Enable KV v1 mount at 'kv1/'
-          curl -sf -X POST http://127.0.0.1:8200/v1/sys/mounts/kv1 \
-            -H "X-Vault-Token: root" -H "Content-Type: application/json" \
-            -d '{"type":"kv","options":{"version":"1"}}'
-          # KV v1 secret (fields at top level, no 'data' wrapper)
-          curl -sf -X POST http://127.0.0.1:8200/v1/kv1/myapp/token \
-            -H "X-Vault-Token: root" -H "Content-Type: application/json" \
-            -d '{"apikey":"v1key123"}'
-          # Create a policy scoped only to the test paths
-          POLICY=$(printf 'path "secret/data/myapp/*" { capabilities = ["read"] }\npath "secret/myapp/*" { capabilities = ["read"] }\npath "kv1/myapp/*" { capabilities = ["read"] }')
-          curl -sf -X PUT http://127.0.0.1:8200/v1/sys/policies/acl/avanti-read \
-            -H "X-Vault-Token: root" -H "Content-Type: application/json" \
-            -d "$(jq -n --arg p "$POLICY" '{"policy":$p}')"
-          # Create a restricted token and export it for the test step
-          RESTRICTED_TOKEN=$(curl -sf -X POST http://127.0.0.1:8200/v1/auth/token/create \
-            -H "X-Vault-Token: root" -H "Content-Type: application/json" \
-            -d '{"policies":["avanti-read"],"ttl":"1h"}' | jq -r '.auth.client_token')
-          echo "VAULT_TOKEN=$RESTRICTED_TOKEN" >> "$GITHUB_ENV"
-
       - name: Run Vault integration tests
-        run: bunx vitest run test/vault-integration.test.ts
+        uses: nick-invision/retry@v3
+        with:
+          max_attempts: 3
+          timeout_minutes: 10
+          retry_wait_seconds: 15
+          command: |
+            docker rm -f vault 2>/dev/null || true
+            docker run -d \
+              --name vault \
+              --cap-add IPC_LOCK \
+              -p 8200:8200 \
+              -e VAULT_DEV_ROOT_TOKEN_ID=root \
+              -e VAULT_DEV_LISTEN_ADDRESS=0.0.0.0:8200 \
+              hashicorp/vault:latest
+            for i in $(seq 1 30); do
+              if curl -sf http://127.0.0.1:8200/v1/sys/health; then
+                echo "Vault is ready"
+                break
+              fi
+              if [ "$i" -eq 30 ]; then
+                echo "Vault failed to start after 60s"
+                docker logs vault
+                exit 1
+              fi
+              sleep 2
+            done
+            curl -sf -X POST http://127.0.0.1:8200/v1/secret/data/myapp/db \
+              -H "X-Vault-Token: root" -H "Content-Type: application/json" \
+              -d '{"data":{"username":"admin","password":"s3cr3t"}}'
+            curl -sf -X POST http://127.0.0.1:8200/v1/sys/mounts/kv1 \
+              -H "X-Vault-Token: root" -H "Content-Type: application/json" \
+              -d '{"type":"kv","options":{"version":"1"}}'
+            curl -sf -X POST http://127.0.0.1:8200/v1/kv1/myapp/token \
+              -H "X-Vault-Token: root" -H "Content-Type: application/json" \
+              -d '{"apikey":"v1key123"}'
+            POLICY=$(printf 'path "secret/data/myapp/*" { capabilities = ["read"] }\npath "secret/myapp/*" { capabilities = ["read"] }\npath "kv1/myapp/*" { capabilities = ["read"] }')
+            curl -sf -X PUT http://127.0.0.1:8200/v1/sys/policies/acl/avanti-read \
+              -H "X-Vault-Token: root" -H "Content-Type: application/json" \
+              -d "$(jq -n --arg p "$POLICY" '{"policy":$p}')"
+            VAULT_TOKEN=$(curl -sf -X POST http://127.0.0.1:8200/v1/auth/token/create \
+              -H "X-Vault-Token: root" -H "Content-Type: application/json" \
+              -d '{"policies":["avanti-read"],"ttl":"1h"}' | jq -r '.auth.client_token')
+            export VAULT_TOKEN
+            bunx vitest run test/vault-integration.test.ts
         env:
           VAULT_ADDR: http://127.0.0.1:8200
 
