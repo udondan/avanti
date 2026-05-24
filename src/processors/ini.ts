@@ -70,6 +70,10 @@ function splitValueAndComment(raw: string): {
       inSingle = !inSingle;
       continue;
     }
+    if (ch === '\\' && inDouble) {
+      i++; // skip escaped character — don't toggle quote state on \"
+      continue;
+    }
     if (ch === '"' && !inSingle) {
       inDouble = !inDouble;
       continue;
@@ -346,8 +350,10 @@ function mergeKvIntoItems(
   }
   if (opts.conflicts === 'first_wins') return;
 
-  // last_wins: update value in-place, preserve inline comment and position
-  (items[idx] as IniKeyValue).value = overlay.value;
+  // last_wins: update value and sep in-place, preserve inline comment and position
+  const baseKv = items[idx] as IniKeyValue;
+  baseKv.value = overlay.value;
+  baseKv.sep = overlay.sep;
 }
 
 function mergeSectionItems(

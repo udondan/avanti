@@ -137,6 +137,7 @@ export async function resolveVariableSpec(
         json: entry.json,
         yaml: entry.yaml,
         toml: entry.toml,
+        ini: entry.ini,
       };
       let result: FetchResult;
       try {
@@ -152,7 +153,7 @@ export async function resolveVariableSpec(
       }
       if (result.files.size > 1) {
         throw new Error(
-          `variables.${name}: source resolved to multiple files; set json/yaml/toml to merge them into one`,
+          `variables.${name}: source resolved to multiple files; set json/yaml/toml/ini to merge them into one`,
         );
       }
       const [srcPath, buf] = result.files.entries().next().value as [
