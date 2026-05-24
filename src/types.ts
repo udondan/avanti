@@ -14,7 +14,7 @@ export type Variables = Record<string, VariableValue>;
 
 export type Via = 'api' | 'cli';
 
-export type OsPlatform = 'linux' | 'mac' | 'windows';
+export type OsPlatform = 'linux' | 'mac' | 'windows' | 'darwin' | 'win32';
 
 export interface Condition {
   os?: OsPlatform | OsPlatform[];

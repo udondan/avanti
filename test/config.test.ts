@@ -2238,6 +2238,30 @@ files:
     );
   });
 
+  it('accepts darwin as os value', () => {
+    const f = writeTmp(`
+files:
+  out.txt:
+    src: https://example.com/out.txt
+    if:
+      os: darwin
+`);
+    const cfg = parseConfigContent(fs.readFileSync(f, 'utf8'));
+    expect(cfg.files['out.txt']['if']).toEqual({ os: 'darwin' });
+  });
+
+  it('accepts win32 as os value', () => {
+    const f = writeTmp(`
+files:
+  out.txt:
+    src: https://example.com/out.txt
+    if:
+      os: win32
+`);
+    const cfg = parseConfigContent(fs.readFileSync(f, 'utf8'));
+    expect(cfg.files['out.txt']['if']).toEqual({ os: 'win32' });
+  });
+
   it('throws on empty if array', () => {
     const f = writeTmp(`
 files:

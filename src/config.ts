@@ -741,7 +741,13 @@ export function parseVia(value: unknown, loc: string): Via | Via[] | undefined {
   throw new Error(`${loc}.via: must be a string or array`);
 }
 
-const VALID_OS_PLATFORMS: OsPlatform[] = ['linux', 'mac', 'windows'];
+const VALID_OS_PLATFORMS: OsPlatform[] = [
+  'linux',
+  'mac',
+  'windows',
+  'darwin',
+  'win32',
+];
 
 function parseCondition(raw: unknown, loc: string): Condition {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
