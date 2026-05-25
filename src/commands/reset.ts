@@ -109,7 +109,9 @@ export function resetCommand(): Command {
           `This will restore ${total} tracked file(s) to their pre-avanti state:\n`,
         );
       }
-      printDiffs(diffs);
+      if (diffs.length > 0) {
+        printDiffs(diffs);
+      }
 
       if (hasError) process.exit(2);
 

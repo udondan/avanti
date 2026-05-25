@@ -204,7 +204,9 @@ export function revertCommand(): Command {
             ? `Undoing last pull (${shortId})`
             : `Reverting to state after pull ${shortId}`;
         console.log(`${label}:\n`);
-        printDiffs(diffs);
+        if (diffs.length > 0) {
+          printDiffs(diffs);
+        }
 
         if (hasError) process.exit(2);
 

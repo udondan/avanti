@@ -840,22 +840,52 @@ export function pullCommand(): Command {
           if (meta.existedBeforeAvanti) {
             const original = history.readVersion(ref.absolutePath, 0);
             if (original !== null) {
-              staleToRestore.push({
-                targetPath: ref.absolutePath,
-                content: original,
-                sudo: meta.sudo,
-              });
-              staleRestoreDiffIndices.push(staleDiffs.length);
-              const staleDiff = computeDiff(ref.absolutePath, original);
-              // A missing file with empty v0 produces isNew=true but
-              // hasChanges=false and an empty patch, so formatDiff returns ''.
-              // Rebuild as a proper new-file diff so the confirmation output
-              // shows the recreate action and the patch is consistent.
-              staleDiffs.push(
-                staleDiff.isNew
-                  ? buildNewFileDiff(ref.absolutePath, original)
-                  : staleDiff,
-              );
+              if (meta.v0IsSymlink) {
+                if (process.platform === 'win32') {
+                  console.error(
+                    `symlink: ${ref.absolutePath}: cannot restore pre-avanti symlink on Windows`,
+                  );
+                } else {
+                  const symlinkTarget = original.toString('utf8');
+                  const staleDiff = computeSymlinkDiff(
+                    ref.absolutePath,
+                    symlinkTarget,
+                  );
+                  if (staleDiff.isDirectory) {
+                    console.error(
+                      `symlink: ${ref.absolutePath} is a directory; cannot restore symlink over directory`,
+                    );
+                    staleDiffs.push(staleDiff);
+                    staleRestoreDiffIndices.push(staleDiffs.length - 1);
+                  } else if (staleDiff.hasChanges) {
+                    staleToRestore.push({
+                      targetPath: ref.absolutePath,
+                      content: original,
+                      symlinkTarget,
+                      sudo: meta.sudo,
+                    });
+                    staleRestoreDiffIndices.push(staleDiffs.length);
+                    staleDiffs.push(staleDiff);
+                  }
+                }
+              } else {
+                staleToRestore.push({
+                  targetPath: ref.absolutePath,
+                  content: original,
+                  sudo: meta.sudo,
+                });
+                staleRestoreDiffIndices.push(staleDiffs.length);
+                const staleDiff = computeDiff(ref.absolutePath, original);
+                // A missing file with empty v0 produces isNew=true but
+                // hasChanges=false and an empty patch, so formatDiff returns ''.
+                // Rebuild as a proper new-file diff so the confirmation output
+                // shows the recreate action and the patch is consistent.
+                staleDiffs.push(
+                  staleDiff.isNew
+                    ? buildNewFileDiff(ref.absolutePath, original)
+                    : staleDiff,
+                );
+              }
             } else {
               console.warn(
                 `Warning: cannot restore original for ${ref.absolutePath} — v0 was never captured (file was unreadable at first pull). Leaving file unchanged.`,
