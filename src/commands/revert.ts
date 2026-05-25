@@ -109,7 +109,12 @@ export function revertCommand(): Command {
             if (entry.isSymlink) {
               const symlinkTarget = content.toString('utf8');
               const d = computeSymlinkDiff(meta.absolutePath, symlinkTarget);
-              if (d.hasChanges) {
+              if (d.isDirectory) {
+                console.error(
+                  `symlink: ${meta.absolutePath} is a directory; cannot restore symlink over directory`,
+                );
+                diffs.push(d);
+              } else if (d.hasChanges) {
                 writeTargets.push({
                   targetPath: meta.absolutePath,
                   content,
@@ -135,7 +140,12 @@ export function revertCommand(): Command {
                     meta.absolutePath,
                     symlinkTarget,
                   );
-                  if (d.hasChanges) {
+                  if (d.isDirectory) {
+                    console.error(
+                      `symlink: ${meta.absolutePath} is a directory; cannot restore symlink over directory`,
+                    );
+                    diffs.push(d);
+                  } else if (d.hasChanges) {
                     writeTargets.push({
                       targetPath: meta.absolutePath,
                       content: original,

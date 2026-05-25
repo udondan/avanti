@@ -74,7 +74,10 @@ export function resolveSymlinkSrcPath(
     expanded.startsWith('git://') ||
     expanded.startsWith('git+') ||
     expanded.startsWith('ssh://') ||
-    expanded.startsWith('s3://')
+    expanded.startsWith('s3://') ||
+    expanded.startsWith('github:') ||
+    expanded.startsWith('gitlab:') ||
+    expanded.startsWith('raw:')
   ) {
     throw new Error(
       `symlink src resolved to a non-local value "${expanded}"; symlink src must be a local filesystem path`,

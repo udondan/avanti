@@ -55,7 +55,12 @@ export function resetCommand(): Command {
           if (meta.v0IsSymlink) {
             const symlinkTarget = original.toString('utf8');
             const d = computeSymlinkDiff(meta.absolutePath, symlinkTarget);
-            if (d.hasChanges) {
+            if (d.isDirectory) {
+              console.error(
+                `symlink: ${meta.absolutePath} is a directory; cannot restore symlink over directory`,
+              );
+              diffs.push(d);
+            } else if (d.hasChanges) {
               writeTargets.push({
                 targetPath: meta.absolutePath,
                 content: original,
