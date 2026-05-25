@@ -177,6 +177,24 @@ function sudoSymlinkWrite(t: SudoWriteTarget): void {
     // symlink at that path.
     sudoRun(sudo, ['rm', '-f', '--', newTmp]);
     sudoRun(sudo, ['ln', '-s', '--', t.symlinkTarget!, newTmp]);
+    // macOS/BSD: mv without -T follows symlinks-to-directories, moving newTmp
+    // inside the target directory rather than replacing the symlink. Pre-remove
+    // only that case; rename(2) replaces symlinks-to-files atomically on all
+    // platforms. Linux uses mv -T which always calls rename(2) directly.
+    if (process.platform !== 'linux') {
+      const destIsSymlinkToDir =
+        sudoIsSymlink(sudo, t.targetPath) &&
+        spawnSync(
+          'sudo',
+          [...sudoUserArgs(sudo), 'test', '-d', resolvedTarget],
+          {
+            stdio: 'ignore',
+          },
+        ).status === 0;
+      if (destIsSymlinkToDir) {
+        sudoRun(sudo, ['rm', '-f', '--', resolvedTarget]);
+      }
+    }
     sudoMv(sudo, newTmp, resolvedTarget);
   } catch (err) {
     sudoRun(sudo, ['rm', '-f', '--', newTmp]);

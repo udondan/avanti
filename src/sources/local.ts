@@ -73,6 +73,7 @@ export function resolveSymlinkSrcPath(
   if (
     expanded.startsWith('http://') ||
     expanded.startsWith('https://') ||
+    expanded.startsWith('file://') ||
     expanded.startsWith('exec:') ||
     isGitRemoteUrl(expanded) ||
     expanded.startsWith('git+') ||

@@ -59,6 +59,7 @@ function isLocalFileSrc(src: FileSrc): boolean {
     return (
       !src.startsWith('http://') &&
       !src.startsWith('https://') &&
+      !src.startsWith('file://') &&
       !isGitRemoteUrl(src) &&
       !src.startsWith('exec:') &&
       !src.startsWith('github:') &&
@@ -74,6 +75,7 @@ function isLocalFileSrc(src: FileSrc): boolean {
   return (
     !p.startsWith('http://') &&
     !p.startsWith('https://') &&
+    !p.startsWith('file://') &&
     !isGitRemoteUrl(p) &&
     !p.startsWith('exec:') &&
     !p.startsWith('github:') &&
