@@ -14,9 +14,11 @@ const CLI = path.resolve(__dirname, '../src/cli.ts');
 const PROJECT_ROOT = path.resolve(__dirname, '..');
 
 let tmpDir: string;
+let historyDir: string;
 
 beforeEach(() => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'avanti-symlink-test-'));
+  historyDir = path.join(tmpDir, '.history');
 });
 
 afterEach(() => {
@@ -30,7 +32,7 @@ function runAvanti(configPath: string, workingDir: string, cmd = 'pull --yes') {
       {
         encoding: 'utf8',
         cwd: PROJECT_ROOT,
-        env: { ...process.env },
+        env: { ...process.env, AVANTI_HISTORY_DIR: historyDir },
         stdio: ['pipe', 'pipe', 'pipe'],
       },
     );
