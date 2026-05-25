@@ -869,6 +869,7 @@ export function pullCommand(): Command {
                     console.error(
                       `symlink: ${ref.absolutePath} is a directory; cannot restore symlink over directory`,
                     );
+                    staleHasError = true;
                     // No staleRestoreDiffIndices push — no corresponding
                     // staleToRestore entry for this error-only diff.
                     staleDiffs.push(staleDiff);
