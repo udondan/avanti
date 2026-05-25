@@ -1028,7 +1028,6 @@ export function atomicWrite(
           crypto.randomBytes(8).toString('hex') +
           '.avanti-tmp',
       );
-      backupTemps.push(backupTmp);
       if (existing.isSymbolicLink()) {
         if (process.platform === 'win32') {
           // fs.symlinkSync requires elevated privileges on Windows; copyFileSync
@@ -1050,6 +1049,7 @@ export function atomicWrite(
       } else {
         fs.copyFileSync(t.targetPath, backupTmp);
       }
+      backupTemps.push(backupTmp);
       backupRenames.push({ tmp: backupTmp, dest: t.backupPath });
     }
     // Phase 2b: all copies succeeded — rename each backup temp into place.
