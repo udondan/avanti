@@ -26,6 +26,7 @@ import {
   buildNewFileDiff,
   computeDiff,
   computeDeleteDiff,
+  computeSymlinkDiff,
   FileDiff,
   printDiffs,
 } from '../diff';
@@ -48,7 +49,14 @@ import {
   resolveFollowSymlink,
   resolveTargetPath,
 } from '../paths';
-import { AvantiConfig, FileEntry, OnHooks, Variables } from '../types';
+import {
+  AvantiConfig,
+  FileEntry,
+  LocalSrc,
+  OnHooks,
+  Variables,
+} from '../types';
+import { resolveSymlinkSrcPath } from '../sources/local';
 import { HistoryManager, PullLogFileRef, SourceShaRecord } from '../history';
 import { confirm } from '../prompt';
 import { applyUpdatedShas, writeUpdatedShas } from '../config-writeback';
@@ -245,6 +253,43 @@ async function runFetchLoop(
         }
         continue;
       }
+
+      // Symlink entries: resolve src path and create a symlink instead of
+      // fetching and writing file content.
+      if (!isSelf && entry.symlink) {
+        const targetPath = resolveTargetPath(entry, '', workingDir, vars);
+        const rawSrc = Array.isArray(entry.src)
+          ? ''
+          : typeof entry.src === 'string'
+            ? entry.src
+            : (entry.src as LocalSrc).path;
+        const symlinkTarget = resolveSymlinkSrcPath(
+          rawSrc,
+          workingDir,
+          preVars,
+          entry.symlink,
+          targetPath,
+        );
+        const diff = computeSymlinkDiff(targetPath, symlinkTarget);
+        allDiffs.push(diff);
+        const symlinkContent = Buffer.from(symlinkTarget, 'utf8');
+        writeTargets.push({
+          targetPath,
+          content: symlinkContent,
+          symlinkTarget,
+          sudo: entry.sudo,
+        });
+        if (entry.on && diff.hasChanges) {
+          fileHookContexts.push({
+            targetPath,
+            hooks: entry.on,
+            isNew: diff.isNew,
+          });
+        }
+        pendingWrites.set(targetPath, symlinkContent);
+        continue;
+      }
+
       const result = await fetchSource(
         entry,
         workingDir,
@@ -1155,6 +1200,7 @@ export function pullCommand(): Command {
               sourceShaRecords,
               writeTargets[i].sudo,
               v0Override,
+              writeTargets[i].symlinkTarget !== undefined ? true : undefined,
             );
             stagedFileRefs.push(fileRef);
           } catch {

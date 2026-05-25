@@ -54,6 +54,21 @@ const CONFIG_CANDIDATES = [
   'avanti.yaml',
 ];
 
+function isLocalFileSrc(src: FileSrc): boolean {
+  if (typeof src === 'string') {
+    return (
+      !src.startsWith('http://') &&
+      !src.startsWith('https://') &&
+      !isGitRemoteUrl(src) &&
+      !src.startsWith('exec:') &&
+      !src.startsWith('github:') &&
+      !src.startsWith('gitlab:') &&
+      !src.startsWith('raw:')
+    );
+  }
+  return 'path' in src;
+}
+
 export function isRemoteConfigSpec(s: string): boolean {
   return (
     s.startsWith('http://') ||
@@ -353,6 +368,18 @@ export function parseConfigContent(content: string): AvantiConfig {
       fileEntry.writeInPlace = e['writeInPlace'];
     if (typeof e['followSymlink'] === 'boolean')
       fileEntry.followSymlink = e['followSymlink'];
+    if (e['symlink'] !== undefined) {
+      if (
+        e['symlink'] !== true &&
+        e['symlink'] !== 'absolute' &&
+        e['symlink'] !== 'relative'
+      ) {
+        throw new Error(
+          `files["${target}"].symlink: must be true, "absolute", or "relative"`,
+        );
+      }
+      fileEntry.symlink = e['symlink'];
+    }
     if (e['sudo'] !== undefined) {
       if (e['sudo'] === true) {
         fileEntry.sudo = true;
@@ -489,6 +516,80 @@ export function parseConfigContent(content: string): AvantiConfig {
       } else {
         throw new Error(
           `files["${target}"].extract: must be true or a non-empty array of patterns`,
+        );
+      }
+    }
+
+    if (fileEntry.symlink) {
+      if (Array.isArray(fileEntry.src)) {
+        throw new Error(
+          `files["${target}"].symlink: cannot be combined with a list of sources`,
+        );
+      }
+      if (!isLocalFileSrc(fileEntry.src)) {
+        throw new Error(
+          `files["${target}"].symlink: src must be a local path — ` +
+            `http, exec, github, gitlab, and other remote sources are not supported`,
+        );
+      }
+      if (fileEntry.replace) {
+        throw new Error(
+          `files["${target}"].symlink: cannot be combined with replace:`,
+        );
+      }
+      if (fileEntry.template) {
+        throw new Error(
+          `files["${target}"].symlink: cannot be combined with template:`,
+        );
+      }
+      if (fileEntry.json) {
+        throw new Error(
+          `files["${target}"].symlink: cannot be combined with json:`,
+        );
+      }
+      if (fileEntry.yaml) {
+        throw new Error(
+          `files["${target}"].symlink: cannot be combined with yaml:`,
+        );
+      }
+      if (fileEntry.toml) {
+        throw new Error(
+          `files["${target}"].symlink: cannot be combined with toml:`,
+        );
+      }
+      if (fileEntry.ini) {
+        throw new Error(
+          `files["${target}"].symlink: cannot be combined with ini:`,
+        );
+      }
+      if (fileEntry.on?.write) {
+        throw new Error(
+          `files["${target}"].symlink: cannot be combined with on.write:`,
+        );
+      }
+      if (fileEntry.extract) {
+        throw new Error(
+          `files["${target}"].symlink: cannot be combined with extract:`,
+        );
+      }
+      if (fileEntry.writeInPlace) {
+        throw new Error(
+          `files["${target}"].symlink: cannot be combined with writeInPlace:`,
+        );
+      }
+      if (fileEntry.strategy) {
+        throw new Error(
+          `files["${target}"].symlink: cannot be combined with strategy:`,
+        );
+      }
+      if (fileEntry.followSymlink) {
+        throw new Error(
+          `files["${target}"].symlink: cannot be combined with followSymlink:`,
+        );
+      }
+      if (fileEntry.mode) {
+        throw new Error(
+          `files["${target}"].symlink: cannot be combined with mode: — symlinks do not have independent permissions`,
         );
       }
     }

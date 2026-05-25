@@ -305,6 +305,7 @@ export interface FileEntry {
   strategy?: 'replace' | 'insert';
   writeInPlace?: boolean;
   followSymlink?: boolean;
+  symlink?: boolean | 'absolute' | 'relative';
   extract?: true | string[];
   sudo?: true | string;
 }

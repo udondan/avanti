@@ -16,6 +16,7 @@ export interface FileDiff {
    *  meaning existence cannot be determined without elevated privileges. */
   lstatFailed?: boolean;
   modeChange?: { from: number; to: number };
+  isSymlink?: boolean;
 }
 
 export function computeDeleteDiff(targetPath: string): FileDiff {
@@ -245,6 +246,109 @@ export function buildNewFileDiff(
   };
 }
 
+export function computeSymlinkDiff(
+  targetPath: string,
+  symlinkTarget: string,
+): FileDiff {
+  let stat: ReturnType<typeof fs.lstatSync> | undefined;
+  try {
+    stat = fs.lstatSync(targetPath, { throwIfNoEntry: false });
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code !== 'EACCES' && code !== 'EPERM') throw err;
+    return {
+      targetPath,
+      isNew: false,
+      hasChanges: true,
+      contentChanged: true,
+      patch: '',
+      isUnreadable: true,
+      isSymlink: true,
+    };
+  }
+
+  if (stat === undefined) {
+    const patch = createTwoFilesPatch(
+      '/dev/null',
+      targetPath,
+      '',
+      `-> ${symlinkTarget}\n`,
+      '',
+      'new symlink',
+    );
+    return {
+      targetPath,
+      isNew: true,
+      hasChanges: true,
+      contentChanged: true,
+      patch,
+      isSymlink: true,
+    };
+  }
+
+  if (!stat.isSymbolicLink()) {
+    const patch = createTwoFilesPatch(
+      targetPath,
+      targetPath,
+      '[regular file]\n',
+      `-> ${symlinkTarget}\n`,
+      'was regular file',
+      'replaced by symlink',
+    );
+    return {
+      targetPath,
+      isNew: false,
+      hasChanges: true,
+      contentChanged: true,
+      patch,
+      isSymlink: true,
+    };
+  }
+
+  let currentTarget: string;
+  try {
+    currentTarget = fs.readlinkSync(targetPath);
+  } catch {
+    return {
+      targetPath,
+      isNew: false,
+      hasChanges: true,
+      contentChanged: true,
+      patch: '',
+      isUnreadable: true,
+      isSymlink: true,
+    };
+  }
+
+  if (currentTarget === symlinkTarget) {
+    return {
+      targetPath,
+      isNew: false,
+      hasChanges: false,
+      contentChanged: false,
+      patch: '',
+      isSymlink: true,
+    };
+  }
+
+  const patch = createTwoFilesPatch(
+    targetPath,
+    targetPath,
+    `-> ${currentTarget}\n`,
+    `-> ${symlinkTarget}\n`,
+    'symlink target changed',
+    'symlink target changed',
+  );
+  return {
+    targetPath,
+    isNew: false,
+    hasChanges: true,
+    contentChanged: true,
+    patch,
+    isSymlink: true,
+  };
+}
+
 export function formatDiff(diff: FileDiff): string {
   if (!diff.hasChanges) return '';
 
@@ -256,6 +360,17 @@ export function formatDiff(diff: FileDiff): string {
     if (line.startsWith('-')) return chalk.red(line);
     return line;
   };
+
+  if (diff.isSymlink) {
+    if (diff.isUnreadable) {
+      return (
+        chalk.bold(`--- ${diff.targetPath}\n+++ ${diff.targetPath}`) +
+        '\n' +
+        chalk.cyan('@@ symlink (existing state unreadable) @@')
+      );
+    }
+    return diff.patch.split('\n').map(colorLine).join('\n');
+  }
 
   let modeFrom = '';
   let modeTo = '';

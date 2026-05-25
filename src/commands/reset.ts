@@ -3,7 +3,12 @@ import * as path from 'path';
 import { normalizeConfigKey, resolveConfigPath } from '../config';
 import { expandTilde } from '../paths';
 import { HistoryManager } from '../history';
-import { computeDiff, computeDeleteDiff, printDiffs } from '../diff';
+import {
+  computeDiff,
+  computeDeleteDiff,
+  computeSymlinkDiff,
+  printDiffs,
+} from '../diff';
 import { atomicWrite, WriteTarget } from '../writer';
 import { confirm } from '../prompt';
 import { FileDiff } from '../diff';
@@ -47,13 +52,26 @@ export function resetCommand(): Command {
         if (meta.existedBeforeAvanti) {
           const original = history.readVersion(meta.absolutePath, 0);
           if (original === null) continue;
-          const d = computeDiff(meta.absolutePath, original);
-          if (d.hasChanges) {
-            writeTargets.push({
-              targetPath: meta.absolutePath,
-              content: original,
-            });
-            diffs.push(d);
+          if (meta.isSymlink) {
+            const symlinkTarget = original.toString('utf8');
+            const d = computeSymlinkDiff(meta.absolutePath, symlinkTarget);
+            if (d.hasChanges) {
+              writeTargets.push({
+                targetPath: meta.absolutePath,
+                content: original,
+                symlinkTarget,
+              });
+              diffs.push(d);
+            }
+          } else {
+            const d = computeDiff(meta.absolutePath, original);
+            if (d.hasChanges) {
+              writeTargets.push({
+                targetPath: meta.absolutePath,
+                content: original,
+              });
+              diffs.push(d);
+            }
           }
         } else {
           const d = computeDeleteDiff(meta.absolutePath);

@@ -10,6 +10,7 @@ export interface WriteTarget {
   backupPath?: string;
   writeInPlace?: boolean;
   sudo?: true | string;
+  symlinkTarget?: string;
 }
 
 export type SudoWriteTarget = WriteTarget & { sudo: true | string };
@@ -39,14 +40,35 @@ export function sudoAuth(sudo: true | string = true): void {
 // true batch atomicity would require a two-phase stage+rename via a privileged
 // helper, which is not implemented here.
 export function sudoAtomicWrite(targets: SudoWriteTarget[]): void {
-  const mvTargets = targets.filter((t) => !t.writeInPlace);
-  const inPlaceTargets = targets.filter((t) => t.writeInPlace);
+  const symlinkTargets = targets.filter((t) => t.symlinkTarget !== undefined);
+  const regularTargets = targets.filter((t) => t.symlinkTarget === undefined);
+  const mvTargets = regularTargets.filter((t) => !t.writeInPlace);
+  const inPlaceTargets = regularTargets.filter((t) => t.writeInPlace);
+  for (const t of symlinkTargets) {
+    sudoSymlinkWrite(t);
+  }
   for (const t of mvTargets) {
     sudoWriteMv(t);
   }
   for (const t of inPlaceTargets) {
     sudoWriteInPlace(t);
   }
+}
+
+function sudoSymlinkWrite(t: SudoWriteTarget): void {
+  const sudo = t.sudo;
+  const dir = path.dirname(t.targetPath);
+  sudoRun(sudo, ['mkdir', '-p', '--', dir]);
+  // ln -sf atomically replaces any existing path (file, symlink, or nothing)
+  // with the new symlink. On POSIX, ln -sf calls unlink + symlink or rename,
+  // which is effectively atomic for our purposes (no partial-write window).
+  sudoRun(sudo, [
+    'ln',
+    '-sf',
+    '--',
+    t.symlinkTarget!,
+    path.resolve(t.targetPath),
+  ]);
 }
 
 export function sudoRead(sudo: true | string, filePath: string): Buffer | null {
@@ -738,8 +760,29 @@ export function atomicWrite(
 ): void {
   // Stage each file as a sibling temp file on the same filesystem as the
   // destination so that renameSync (rename(2)) is atomic on POSIX.
-  const mvTargets = targets.filter((t) => !t.writeInPlace);
-  const inPlaceTargets = targets.filter((t) => t.writeInPlace);
+  const symlinkTargets = targets.filter((t) => t.symlinkTarget !== undefined);
+  const regularTargets = targets.filter((t) => t.symlinkTarget === undefined);
+  const mvTargets = regularTargets.filter((t) => !t.writeInPlace);
+  const inPlaceTargets = regularTargets.filter((t) => t.writeInPlace);
+
+  // Symlink phase: create atomically via temp symlink + rename(2).
+  // rename(2) is atomic on POSIX even when the destination already exists.
+  for (const t of symlinkTargets) {
+    const dir = path.dirname(t.targetPath);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+    const tmpLink = path.join(
+      dir,
+      '.' +
+        path.basename(t.targetPath) +
+        '.' +
+        crypto.randomBytes(8).toString('hex') +
+        '.avanti-tmp',
+    );
+    fs.symlinkSync(t.symlinkTarget!, tmpLink);
+    fs.renameSync(tmpLink, t.targetPath);
+  }
   const staged: Array<{ tmp: string; dest: string; effectiveMode?: number }> =
     [];
   const backupTemps: string[] = [];

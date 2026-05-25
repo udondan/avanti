@@ -2,6 +2,8 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { verbose } from '../logger';
+import { resolveVars } from '../variables';
+import type { Variables } from '../types';
 
 export interface LocalResult {
   files: Map<string, Buffer>;
@@ -52,4 +54,26 @@ function readDirRecursive(
       out.set(rel, fs.readFileSync(full));
     }
   }
+}
+
+export function resolveSymlinkSrcPath(
+  src: string,
+  workingDir: string,
+  vars: Variables,
+  mode: boolean | 'absolute' | 'relative',
+  linkPath: string,
+): string {
+  const expanded = resolveVars(src, vars);
+  let abs: string;
+  if (expanded.startsWith('~/')) {
+    abs = path.join(os.homedir(), expanded.slice(2));
+  } else if (path.isAbsolute(expanded)) {
+    abs = expanded;
+  } else {
+    abs = path.resolve(workingDir, expanded);
+  }
+  if (mode === 'relative') {
+    return path.relative(path.dirname(linkPath), abs);
+  }
+  return abs;
 }

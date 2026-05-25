@@ -11,6 +11,7 @@ export interface FileHistoryMeta {
   existedBeforeAvanti: boolean;
   currentVersion: number;
   sudo?: true | string;
+  isSymlink?: boolean;
   insertedFragment?: {
     raw: string;
     processed: string;
@@ -132,6 +133,7 @@ export class HistoryManager {
     sources?: SourceShaRecord[],
     sudo?: true | string,
     v0Override?: Buffer,
+    isSymlink?: boolean,
   ): { version: number; fileRef: PullLogFileRef } {
     const slug = sha256(targetPath);
     const fileDir = path.join(this.filesDir, slug);
@@ -143,13 +145,35 @@ export class HistoryManager {
     let isFirstSeen = false;
     if (fs.existsSync(metaPath)) {
       meta = JSON.parse(fs.readFileSync(metaPath, 'utf8')) as FileHistoryMeta;
+      // Update isSymlink flag when it changes (e.g. entry switched from file to symlink).
+      if (isSymlink !== undefined) meta.isSymlink = isSymlink || undefined;
     } else {
       isFirstSeen = true;
       let existedBeforeAvanti = !isNew;
       if (existedBeforeAvanti) {
         try {
-          const originalContent = fs.readFileSync(targetPath);
-          fs.writeFileSync(path.join(fileDir, 'v0'), originalContent);
+          let originalContent: Buffer;
+          if (isSymlink) {
+            // For a symlink entry, capture the previous symlink target (if any)
+            // rather than the content of the file it points to.
+            const stat = fs.lstatSync(targetPath, { throwIfNoEntry: false });
+            if (stat?.isSymbolicLink()) {
+              originalContent = Buffer.from(
+                fs.readlinkSync(targetPath),
+                'utf8',
+              );
+            } else if (stat?.isFile()) {
+              originalContent = fs.readFileSync(targetPath);
+            } else {
+              existedBeforeAvanti = false;
+              originalContent = Buffer.alloc(0);
+            }
+          } else {
+            originalContent = fs.readFileSync(targetPath);
+          }
+          if (existedBeforeAvanti) {
+            fs.writeFileSync(path.join(fileDir, 'v0'), originalContent);
+          }
         } catch (err) {
           const code = (err as NodeJS.ErrnoException).code;
           if (code !== 'EACCES' && code !== 'EPERM' && code !== 'ENOENT') {
@@ -175,6 +199,7 @@ export class HistoryManager {
         firstSeenAt: new Date().toISOString(),
         existedBeforeAvanti,
         currentVersion: 0,
+        ...(isSymlink ? { isSymlink: true } : {}),
       };
     }
 

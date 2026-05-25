@@ -16,7 +16,12 @@ import { applyReplace } from '../processors/replace';
 import { applyWriteHook } from '../processors/on';
 import { applyInsertMode } from '../processors/insert';
 import { isBinary } from '../binary';
-import { computeDiff, computeDeleteDiff, printDiffs } from '../diff';
+import {
+  computeDiff,
+  computeDeleteDiff,
+  computeSymlinkDiff,
+  printDiffs,
+} from '../diff';
 import { FileDiff } from '../diff';
 import {
   buildEntryPreVars,
@@ -24,7 +29,8 @@ import {
   resolveFollowSymlink,
   resolveTargetPath,
 } from '../paths';
-import { AvantiConfig, FileEntry, Variables } from '../types';
+import { AvantiConfig, FileEntry, LocalSrc, Variables } from '../types';
+import { resolveSymlinkSrcPath } from '../sources/local';
 import { HistoryManager } from '../history';
 import { resolveVariableSpec } from '../variables-remote';
 import { evaluateConditions } from '../condition';
@@ -114,6 +120,26 @@ async function runDiffLoop(
         )
       )
         continue;
+
+      if (!isSelf && entry.symlink) {
+        const targetPath = resolveTargetPath(entry, '', workingDir, vars);
+        const rawSrc = Array.isArray(entry.src)
+          ? ''
+          : typeof entry.src === 'string'
+            ? entry.src
+            : (entry.src as LocalSrc).path;
+        const symlinkTarget = resolveSymlinkSrcPath(
+          rawSrc,
+          workingDir,
+          preVars,
+          entry.symlink,
+          targetPath,
+        );
+        allDiffs.push(computeSymlinkDiff(targetPath, symlinkTarget));
+        pendingWrites.set(targetPath, Buffer.from(symlinkTarget, 'utf8'));
+        continue;
+      }
+
       const result = await fetchSource(
         entry,
         workingDir,
