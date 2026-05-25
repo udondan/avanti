@@ -92,7 +92,11 @@ export function resolveSymlinkSrcPath(
     abs = path.resolve(workingDir, expanded);
   }
   if (mode === 'relative') {
-    return path.relative(path.dirname(linkPath), abs);
+    const rel = path.relative(path.dirname(linkPath), abs);
+    // path.relative returns "" when both paths are identical (src is the
+    // symlink's parent directory). Normalize to "." so the symlink target is
+    // valid — a symlink with an empty target string is broken on all platforms.
+    return rel === '' ? '.' : rel;
   }
   return abs;
 }
