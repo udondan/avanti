@@ -76,6 +76,7 @@ export function resolveSymlinkSrcPath(
     expanded.startsWith('exec:') ||
     isGitRemoteUrl(expanded) ||
     expanded.startsWith('git+') ||
+    expanded.startsWith('ssh://') ||
     expanded.startsWith('s3://') ||
     expanded.startsWith('github:') ||
     expanded.startsWith('gitlab:') ||
