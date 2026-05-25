@@ -1109,15 +1109,26 @@ export function atomicWrite(
           }
         }
       } else {
-        backupTmp = path.join(
-          backupDir,
-          '.' +
-            path.basename(t.backupPath) +
+        for (;;) {
+          backupTmp = path.join(
+            backupDir,
             '.' +
-            crypto.randomBytes(8).toString('hex') +
-            '.avanti-backup-tmp',
-        );
-        fs.copyFileSync(t.targetPath, backupTmp);
+              path.basename(t.backupPath) +
+              '.' +
+              crypto.randomBytes(8).toString('hex') +
+              '.avanti-backup-tmp',
+          );
+          try {
+            fs.copyFileSync(
+              t.targetPath,
+              backupTmp,
+              fs.constants.COPYFILE_EXCL,
+            );
+            break;
+          } catch (err) {
+            if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
+          }
+        }
       }
       backupTemps.push(backupTmp);
       backupRenames.push({ tmp: backupTmp, dest: t.backupPath });
