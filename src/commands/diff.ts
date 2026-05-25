@@ -153,7 +153,24 @@ async function runDiffLoop(
           targetPath,
         );
         allDiffs.push(computeSymlinkDiff(targetPath, symlinkTarget));
-        pendingWrites.set(targetPath, Buffer.from(symlinkTarget, 'utf8'));
+        // Register the resolved src content (not the symlink target string) in
+        // pendingWrites so subsequent local entries that read through this symlink
+        // path see the actual file bytes, not the raw symlink target path.
+        const absSymlinkSrc = resolveSymlinkSrcPath(
+          rawSrc,
+          workingDir,
+          preVars,
+          true,
+          targetPath,
+        );
+        try {
+          const srcStat = fs.statSync(absSymlinkSrc, { throwIfNoEntry: false });
+          if (srcStat?.isFile()) {
+            pendingWrites.set(targetPath, fs.readFileSync(absSymlinkSrc));
+          }
+        } catch {
+          // src not readable — omit from pendingWrites
+        }
         continue;
       }
 

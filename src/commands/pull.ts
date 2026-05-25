@@ -314,7 +314,24 @@ async function runFetchLoop(
             isNew: diff.isNew,
           });
         }
-        pendingWrites.set(targetPath, symlinkContent);
+        // Register the resolved src content (not the symlink target string) in
+        // pendingWrites so subsequent local entries that read through this symlink
+        // path see the actual file bytes, not the raw symlink target path.
+        const absSymlinkSrc = resolveSymlinkSrcPath(
+          rawSrc,
+          workingDir,
+          preVars,
+          true,
+          targetPath,
+        );
+        try {
+          const srcStat = fs.statSync(absSymlinkSrc, { throwIfNoEntry: false });
+          if (srcStat?.isFile()) {
+            pendingWrites.set(targetPath, fs.readFileSync(absSymlinkSrc));
+          }
+        } catch {
+          // src not readable — omit from pendingWrites
+        }
         continue;
       }
 
@@ -893,16 +910,25 @@ export function pullCommand(): Command {
             }
           }
           if (isNew) {
-            // File confirmed absent — rebuild as a proper new-file diff so
+            // File confirmed absent — rebuild as a proper new diff so
             // formatDiff shows the actual content instead of "unreadable".
-            allDiffs[i] = buildNewFileDiff(
-              allDiffs[i].targetPath,
-              writeTargets[i].content,
-              modeChange,
-            );
             // Clear backupPath: it was set assuming the file existed (conservative
             // lstatFailed default). Since the file is actually new, there is
             // nothing to back up and the backup should not be created.
+            if (writeTargets[i].symlinkTarget !== undefined) {
+              // Symlink entry — rebuild using computeSymlinkDiff (now that the
+              // path is confirmed absent it will return isNew:true correctly).
+              allDiffs[i] = computeSymlinkDiff(
+                allDiffs[i].targetPath,
+                writeTargets[i].symlinkTarget!,
+              );
+            } else {
+              allDiffs[i] = buildNewFileDiff(
+                allDiffs[i].targetPath,
+                writeTargets[i].content,
+                modeChange,
+              );
+            }
             writeTargets[i] = { ...writeTargets[i], backupPath: undefined };
           } else {
             allDiffs[i] = { ...allDiffs[i], isNew, modeChange };

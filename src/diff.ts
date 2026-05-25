@@ -263,6 +263,7 @@ export function computeSymlinkDiff(
       contentChanged: true,
       patch: '',
       isUnreadable: true,
+      lstatFailed: true,
       isSymlink: true,
     };
   }
