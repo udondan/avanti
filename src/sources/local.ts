@@ -87,7 +87,7 @@ export function resolveSymlinkSrcPath(
   const tildeExpanded = expandTilde(expanded);
   const abs = path.isAbsolute(tildeExpanded)
     ? tildeExpanded
-    : path.resolve(workingDir, expanded);
+    : path.resolve(workingDir, tildeExpanded);
   if (mode === 'relative') {
     const rel = path.relative(path.dirname(linkPath), abs);
     // path.relative returns "" when both paths are identical (src is the
