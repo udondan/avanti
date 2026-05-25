@@ -153,10 +153,35 @@ function sudoSymlinkWrite(t: SudoWriteTarget): void {
     } // end existingIsSymlink || existingIsFile
   }
 
-  // ln -sf atomically replaces any existing path (file, symlink, or nothing)
-  // with the new symlink. On POSIX, ln -sf calls unlink + symlink or rename,
-  // which is effectively atomic for our purposes (no partial-write window).
-  sudoRun(sudo, ['ln', '-sf', '--', t.symlinkTarget!, resolvedTarget]);
+  // Stage the new symlink at a temp path in the same directory, then rename
+  // atomically into place — same pattern as sudoWriteMv for files. ln -sf
+  // would call unlink+symlink with a visible window; rename(2) has none.
+  const mktempNew = spawnSync(
+    'sudo',
+    [
+      ...sudoUserArgs(sudo),
+      'mktemp',
+      path.join(dir, '.avanti-symlink-XXXXXXXXXX'),
+    ],
+    { stdio: ['ignore', 'pipe', 'inherit'] },
+  );
+  if (mktempNew.status !== 0 || mktempNew.error) {
+    const detail = mktempNew.error
+      ? mktempNew.error.message
+      : `exit code ${mktempNew.status ?? 'unknown'}`;
+    throw new Error(`sudo mktemp failed in ${dir}: ${detail}`);
+  }
+  const newTmp = mktempNew.stdout.toString().trim();
+  try {
+    // mktemp creates a regular file placeholder; remove it so we can create a
+    // symlink at that path.
+    sudoRun(sudo, ['rm', '-f', '--', newTmp]);
+    sudoRun(sudo, ['ln', '-s', '--', t.symlinkTarget!, newTmp]);
+    sudoMv(sudo, newTmp, resolvedTarget);
+  } catch (err) {
+    sudoRun(sudo, ['rm', '-f', '--', newTmp]);
+    throw err;
+  }
 }
 
 export function sudoRead(sudo: true | string, filePath: string): Buffer | null {
