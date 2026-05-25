@@ -70,7 +70,11 @@ export function resolveSymlinkSrcPath(
   if (
     expanded.startsWith('http://') ||
     expanded.startsWith('https://') ||
-    expanded.startsWith('exec:')
+    expanded.startsWith('exec:') ||
+    expanded.startsWith('git://') ||
+    expanded.startsWith('git+') ||
+    expanded.startsWith('ssh://') ||
+    expanded.startsWith('s3://')
   ) {
     throw new Error(
       `symlink src resolved to a non-local value "${expanded}"; symlink src must be a local filesystem path`,

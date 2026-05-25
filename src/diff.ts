@@ -17,6 +17,9 @@ export interface FileDiff {
   lstatFailed?: boolean;
   modeChange?: { from: number; to: number };
   isSymlink?: boolean;
+  /** True when the target path is an existing directory; symlinks cannot replace
+   *  directories, so pull should error rather than attempt the write. */
+  isDirectory?: boolean;
 }
 
 export function computeDeleteDiff(targetPath: string): FileDiff {
@@ -288,13 +291,26 @@ export function computeSymlinkDiff(
   }
 
   if (!stat.isSymbolicLink()) {
-    const oldLabel = stat.isDirectory() ? '[directory]' : '[regular file]';
+    if (stat.isDirectory()) {
+      // Symlinks cannot replace existing directories — write will fail.
+      // Return a diff marked isDirectory so callers can surface an error
+      // rather than attempting a write that will fail with EISDIR.
+      return {
+        targetPath,
+        isNew: false,
+        hasChanges: true,
+        contentChanged: true,
+        patch: '',
+        isSymlink: true,
+        isDirectory: true,
+      };
+    }
     const patch = createTwoFilesPatch(
       targetPath,
       targetPath,
-      `${oldLabel}\n`,
+      '[regular file]\n',
       `-> ${symlinkTarget}\n`,
-      `was ${oldLabel.slice(1, -1)}`,
+      'was regular file',
       'replaced by symlink',
     );
     return {
@@ -364,6 +380,15 @@ export function formatDiff(diff: FileDiff): string {
   };
 
   if (diff.isSymlink) {
+    if (diff.isDirectory) {
+      return (
+        chalk.bold(`--- ${diff.targetPath}\n+++ ${diff.targetPath}`) +
+        '\n' +
+        chalk.red(
+          '@@ ERROR: target is an existing directory; symlinks cannot replace directories @@',
+        )
+      );
+    }
     if (diff.isUnreadable) {
       return (
         chalk.bold(`--- ${diff.targetPath}\n+++ ${diff.targetPath}`) +

@@ -289,6 +289,15 @@ async function runFetchLoop(
         );
         const diff = computeSymlinkDiff(targetPath, symlinkTarget);
         allDiffs.push(diff);
+        // Symlinks cannot replace existing directories — error early so the
+        // write batch is not attempted and EISDIR is not thrown at rename time.
+        if (diff.isDirectory) {
+          console.error(
+            `Error processing ${JSON.stringify(entry.src)}: symlink: ${targetPath} is a directory; cannot replace with a symlink`,
+          );
+          hasError = true;
+          continue;
+        }
         const symlinkContent = Buffer.from(symlinkTarget, 'utf8');
         const symlinkBackupPath =
           entry.backup && diff.hasChanges && !diff.isNew
