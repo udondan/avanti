@@ -123,6 +123,14 @@ describe('config parsing — symlink', () => {
     ).toThrow(/src must be a local path/);
   });
 
+  it('rejects object-form src with http path with symlink', () => {
+    expect(() =>
+      parseConfigContent(
+        `files:\n  ./link:\n    src:\n      path: https://example.com/file\n    symlink: true\n`,
+      ),
+    ).toThrow(/src must be a local path/);
+  });
+
   it('rejects symlink combined with replace:', () => {
     expect(() =>
       parseConfigContent(

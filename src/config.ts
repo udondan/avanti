@@ -69,7 +69,20 @@ function isLocalFileSrc(src: FileSrc): boolean {
       !src.startsWith('git+')
     );
   }
-  return 'path' in src;
+  if (!('path' in src)) return false;
+  const p = (src as { path: string }).path;
+  return (
+    !p.startsWith('http://') &&
+    !p.startsWith('https://') &&
+    !isGitRemoteUrl(p) &&
+    !p.startsWith('exec:') &&
+    !p.startsWith('github:') &&
+    !p.startsWith('gitlab:') &&
+    !p.startsWith('raw:') &&
+    !p.startsWith('s3://') &&
+    !p.startsWith('ssh://') &&
+    !p.startsWith('git+')
+  );
 }
 
 export function isRemoteConfigSpec(s: string): boolean {
