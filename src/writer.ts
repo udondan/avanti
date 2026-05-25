@@ -59,7 +59,18 @@ function sudoSymlinkWrite(t: SudoWriteTarget): void {
   const sudo = t.sudo;
   const resolvedTarget = path.resolve(t.targetPath);
   const dir = path.dirname(resolvedTarget);
+
+  // Build the trusted-UID set (same policy as sudoWriteMv/sudoWriteInPlace):
+  // root, the invoking user, and the named sudo target user if applicable.
+  const trustedUids = buildTrustedUids(sudo);
+
+  // Validate existing ancestors BEFORE any privileged mkdir to avoid creating
+  // root-owned directories under untrusted/world-writable paths.
+  checkAncestorsSafe(sudo, t.targetPath, trustedUids, 'destination');
   sudoRun(sudo, ['mkdir', '-p', '--', dir]);
+  // Re-validate after mkdir: intermediate directories created by mkdir -p were
+  // not covered by the pre-mkdir check.
+  checkAncestorsSafe(sudo, t.targetPath, trustedUids, 'destination');
 
   // Refuse to write if the target path is an existing directory: ln -sf would
   // place the symlink *inside* the directory rather than replacing it.
@@ -76,7 +87,12 @@ function sudoSymlinkWrite(t: SudoWriteTarget): void {
 
   if (t.backupPath) {
     const backupDir = path.dirname(t.backupPath);
+    // Validate backup ancestors BEFORE privileged mkdir to avoid creating
+    // root-owned directories in an untrusted path.
+    checkAncestorsSafe(sudo, t.backupPath, trustedUids, 'backup');
     sudoRun(sudo, ['mkdir', '-p', '--', backupDir]);
+    // Re-validate after mkdir: newly created intermediates are now present.
+    checkAncestorsSafe(sudo, t.backupPath, trustedUids, 'backup');
     // cp -P preserves symlinks — back up the existing entry (file or symlink)
     // without following it. Failure is non-fatal: the symlink write still
     // proceeds so pull is not blocked when backup storage is unavailable.
