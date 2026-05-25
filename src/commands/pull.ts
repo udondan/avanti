@@ -286,7 +286,12 @@ async function runFetchLoop(
             true,
             targetPath,
           );
-          if (!fs.existsSync(absSrc)) continue;
+          if (!fs.existsSync(absSrc)) {
+            // Mark the target as skipped so stale cleanup does not treat a
+            // previously-managed path as unmanaged and delete/restore it.
+            skippedPaths.add(targetPath);
+            continue;
+          }
         }
 
         const symlinkTarget = resolveSymlinkSrcPath(
