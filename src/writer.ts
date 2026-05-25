@@ -117,21 +117,25 @@ function sudoSymlinkWrite(t: SudoWriteTarget): void {
         throw new Error(`sudo mktemp failed in ${backupDir}: ${detail}`);
       }
       const backupTmp = mktempBackup.stdout.toString().trim();
-      // cp -pP: -p preserves metadata; -P preserves symlinks (does not dereference).
-      sudoRun(sudo, ['cp', '-pP', '--', resolvedTarget, backupTmp]);
-      const backupIsDir =
-        spawnSync(
-          'sudo',
-          [...sudoUserArgs(sudo), 'test', '-d', resolvedBackup],
-          {
-            stdio: 'ignore',
-          },
-        ).status === 0;
-      if (backupIsDir) {
+      try {
+        // cp -pP: -p preserves metadata; -P preserves symlinks (does not dereference).
+        sudoRun(sudo, ['cp', '-pP', '--', resolvedTarget, backupTmp]);
+        const backupIsDir =
+          spawnSync(
+            'sudo',
+            [...sudoUserArgs(sudo), 'test', '-d', resolvedBackup],
+            {
+              stdio: 'ignore',
+            },
+          ).status === 0;
+        if (backupIsDir) {
+          throw new Error(`backup path is a directory: ${t.backupPath}`);
+        }
+        sudoMv(sudo, backupTmp, resolvedBackup);
+      } catch (err) {
         sudoRun(sudo, ['rm', '-f', '--', backupTmp]);
-        throw new Error(`backup path is a directory: ${t.backupPath}`);
+        throw err;
       }
-      sudoMv(sudo, backupTmp, resolvedBackup);
     } // end existingIsSymlink || existingIsFile
   }
 
@@ -973,6 +977,18 @@ export function atomicWrite(
       }
 
       stagingEntry.effectiveMode = effectiveMode;
+    }
+
+    // Pre-validate writeInPlace targets before Phase 2: if any is a symlink,
+    // Phase 4 will refuse to write through it. Fail early so no backup is
+    // created for a write that will never proceed.
+    for (const t of inPlaceTargets) {
+      const entry = fs.lstatSync(t.targetPath, { throwIfNoEntry: false });
+      if (entry?.isSymbolicLink()) {
+        throw new Error(
+          `writeInPlace: ${t.targetPath} is a symlink; refusing to follow`,
+        );
+      }
     }
 
     // Phase 2: all staging succeeded — now create backups.

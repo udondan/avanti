@@ -99,6 +99,14 @@ describe('config parsing — symlink', () => {
     ).toThrow(/cannot be combined with a list of sources/);
   });
 
+  it('rejects symlink target with trailing slash', () => {
+    expect(() =>
+      parseConfigContent(
+        `files:\n  ./link/:\n    src: /tmp/x\n    symlink: true\n`,
+      ),
+    ).toThrow(/target must be a single file path, not a directory pattern/);
+  });
+
   it('rejects http src with symlink', () => {
     expect(() =>
       parseConfigContent(
@@ -195,12 +203,15 @@ describe('config parsing — symlink', () => {
     ).toThrow(/cannot be combined with strategy:/);
   });
 
-  it('rejects symlink combined with extract:', () => {
+  it('rejects symlink combined with extract: (trailing slash fires first)', () => {
+    // extract: requires the target to end with "/" (directory pattern);
+    // symlink: rejects trailing-slash targets. The trailing-slash check fires
+    // first, so the combined error is the directory-pattern rejection.
     expect(() =>
       parseConfigContent(
         `files:\n  ./link/:\n    src: /tmp/x\n    symlink: true\n    extract: true\n`,
       ),
-    ).toThrow(/cannot be combined with extract:/);
+    ).toThrow(/target must be a single file path, not a directory pattern/);
   });
 
   it('rejects symlink combined with on.write:', () => {

@@ -529,6 +529,11 @@ export function parseConfigContent(content: string): AvantiConfig {
           `files["${SELF_KEY}"].symlink: $self cannot be a symlink entry`,
         );
       }
+      if (target.endsWith('/') || target.endsWith(path.sep)) {
+        throw new Error(
+          `files["${target}"].symlink: target must be a single file path, not a directory pattern (remove the trailing slash)`,
+        );
+      }
       if (Array.isArray(fileEntry.src)) {
         throw new Error(
           `files["${target}"].symlink: cannot be combined with a list of sources`,
@@ -596,11 +601,6 @@ export function parseConfigContent(content: string): AvantiConfig {
       if (fileEntry.on?.write) {
         throw new Error(
           `files["${target}"].symlink: cannot be combined with on.write:`,
-        );
-      }
-      if (fileEntry.extract) {
-        throw new Error(
-          `files["${target}"].symlink: cannot be combined with extract:`,
         );
       }
       if (fileEntry.writeInPlace) {
