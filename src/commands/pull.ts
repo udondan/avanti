@@ -268,9 +268,13 @@ async function runFetchLoop(
           continue;
         }
         const targetPath = resolveTargetPath(entry, '', workingDir, vars);
-        const rawSrc = Array.isArray(entry.src)
-          ? ''
-          : typeof entry.src === 'string'
+        if (Array.isArray(entry.src)) {
+          throw new Error(
+            `files["${entry.target}"].symlink: src must be a single local path, not an array`,
+          );
+        }
+        const rawSrc =
+          typeof entry.src === 'string'
             ? entry.src
             : (entry.src as LocalSrc).path;
 
