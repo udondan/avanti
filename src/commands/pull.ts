@@ -818,6 +818,7 @@ export function pullCommand(): Command {
       const staleDiffs: FileDiff[] = [];
       // Parallel array: staleDiffs index for each staleToRestore entry
       const staleRestoreDiffIndices: number[] = [];
+      let staleHasError = false;
 
       if (historyAvailable && !hasUnresolvableSkippedPath) {
         const lastFiles = history.getLastPullFiles();
@@ -845,6 +846,10 @@ export function pullCommand(): Command {
                   console.error(
                     `symlink: ${ref.absolutePath}: cannot restore pre-avanti symlink on Windows`,
                   );
+                  staleHasError = true;
+                  const warnDiff = buildNewSymlinkDiff(ref.absolutePath, '');
+                  staleDiffs.push({ ...warnDiff, hasChanges: true });
+                  staleRestoreDiffIndices.push(staleDiffs.length - 1);
                 } else {
                   const symlinkTarget = original.toString('utf8');
                   const staleDiff = computeSymlinkDiff(
@@ -1126,6 +1131,8 @@ export function pullCommand(): Command {
         allDiffs.some((d) => d.hasChanges) ||
         staleDiffs.some((d) => d.hasChanges);
       printDiffs([...allDiffs, ...staleDiffs]);
+
+      if (staleHasError) process.exit(2);
 
       // Show SHA mismatch summary when using --accept-changes
       if (opts.acceptChanges && firstPass.shaErrors.length > 0) {
