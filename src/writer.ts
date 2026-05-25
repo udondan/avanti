@@ -1064,14 +1064,7 @@ export function atomicWrite(
       // Copy via a uniquely-named temp file then rename so that:
       // (a) a symlink at backupPath is replaced, not followed, and
       // (b) a predictable temp path cannot be pre-created as a symlink.
-      const backupTmp = path.join(
-        backupDir,
-        '.' +
-          path.basename(t.backupPath) +
-          '.' +
-          crypto.randomBytes(8).toString('hex') +
-          '.avanti-tmp',
-      );
+      let backupTmp: string;
       if (existing.isSymbolicLink()) {
         // Preserve the symlink itself (not the file it points to) in the backup.
         // Resolve relative targets to absolute so the backup symlink resolves
@@ -1080,8 +1073,32 @@ export function atomicWrite(
         const absLinkTarget = path.isAbsolute(rawLinkTarget)
           ? rawLinkTarget
           : path.resolve(path.dirname(t.targetPath), rawLinkTarget);
-        fs.symlinkSync(absLinkTarget, backupTmp);
+        // Retry on EEXIST — same strategy as the symlink staging loop (Phase 0).
+        for (;;) {
+          backupTmp = path.join(
+            backupDir,
+            '.' +
+              path.basename(t.backupPath) +
+              '.' +
+              crypto.randomBytes(8).toString('hex') +
+              '.avanti-backup-tmp',
+          );
+          try {
+            fs.symlinkSync(absLinkTarget, backupTmp);
+            break;
+          } catch (err) {
+            if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
+          }
+        }
       } else {
+        backupTmp = path.join(
+          backupDir,
+          '.' +
+            path.basename(t.backupPath) +
+            '.' +
+            crypto.randomBytes(8).toString('hex') +
+            '.avanti-backup-tmp',
+        );
         fs.copyFileSync(t.targetPath, backupTmp);
       }
       backupTemps.push(backupTmp);
