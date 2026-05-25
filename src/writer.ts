@@ -1047,6 +1047,16 @@ export function atomicWrite(
       if (!t.backupPath) continue;
       const existing = fs.lstatSync(t.targetPath, { throwIfNoEntry: false });
       if (!existing?.isFile() && !existing?.isSymbolicLink()) continue;
+      if (existing.isSymbolicLink() && process.platform === 'win32') {
+        // fs.symlinkSync requires elevated privileges on Windows; copyFileSync
+        // would dereference the link and copy its target's contents, which is
+        // misleading and can read files outside the working directory. Skip
+        // before creating backupDir so no empty directory is left behind.
+        console.warn(
+          `Warning: cannot back up symlink ${t.targetPath} on Windows; backup skipped.`,
+        );
+        continue;
+      }
       const backupDir = path.dirname(t.backupPath);
       if (!fs.existsSync(backupDir)) {
         fs.mkdirSync(backupDir, { recursive: true });
@@ -1063,15 +1073,6 @@ export function atomicWrite(
           '.avanti-tmp',
       );
       if (existing.isSymbolicLink()) {
-        if (process.platform === 'win32') {
-          // fs.symlinkSync requires elevated privileges on Windows; copyFileSync
-          // would dereference the link and copy its target's contents, which is
-          // misleading and can read files outside the working directory. Skip.
-          console.warn(
-            `Warning: cannot back up symlink ${t.targetPath} on Windows; backup skipped.`,
-          );
-          continue;
-        }
         // Preserve the symlink itself (not the file it points to) in the backup.
         // Resolve relative targets to absolute so the backup symlink resolves
         // correctly from backupDir, not just from the original link's directory.
