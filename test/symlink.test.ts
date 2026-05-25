@@ -160,7 +160,7 @@ describe('config parsing — symlink', () => {
       parseConfigContent(
         `files:\n  ./link:\n    src: /tmp/x\n    symlink: true\n    mode: "0644"\n`,
       ),
-    ).toThrow(/cannot be combined with mode:/);
+    ).toThrow(/cannot be combined with mode/);
   });
 
   it('rejects symlink combined with yaml:', () => {
@@ -501,5 +501,57 @@ describe.skipIf(isWindows)('integration — symlink pull', () => {
     // Resolved should point to the actual source file
     const resolved = path.resolve(path.dirname(linkPath), symlinkTarget);
     expect(resolved).toBe(srcFile);
+  });
+
+  it('revert undoes a symlink pull, restoring the original file', () => {
+    const srcFile = path.join(tmpDir, 'source.txt');
+    const workDir = path.join(tmpDir, 'work');
+    fs.writeFileSync(srcFile, 'source content');
+    fs.mkdirSync(workDir);
+    const linkPath = path.join(workDir, 'my-link');
+    // Pre-create a regular file at the target path (pre-avanti state)
+    fs.writeFileSync(linkPath, 'original content');
+    const config = writeConfig(
+      tmpDir,
+      `files:\n  ./my-link:\n    src: ${srcFile}\n    symlink: true\n`,
+    );
+    // Pull replaces the regular file with a symlink
+    const pull1 = runAvanti(config, workDir);
+    expect(pull1.exitCode).toBe(0);
+    expect(fs.lstatSync(linkPath).isSymbolicLink()).toBe(true);
+    // Revert (undo last pull) should restore the original regular file
+    const revert = runAvanti(config, workDir, 'revert --yes');
+    expect(revert.exitCode).toBe(0);
+    expect(fs.lstatSync(linkPath).isFile()).toBe(true);
+    expect(fs.readFileSync(linkPath, 'utf8')).toBe('original content');
+  });
+
+  it('revert restores symlink to prior target after second pull changes target', () => {
+    const src1 = path.join(tmpDir, 'src1.txt');
+    const src2 = path.join(tmpDir, 'src2.txt');
+    const workDir = path.join(tmpDir, 'work');
+    fs.writeFileSync(src1, 'first');
+    fs.writeFileSync(src2, 'second');
+    fs.mkdirSync(workDir);
+    const linkPath = path.join(workDir, 'my-link');
+    // Pull 1: create symlink pointing to src1
+    const config1 = writeConfig(
+      tmpDir,
+      `files:\n  ./my-link:\n    src: ${src1}\n    symlink: true\n`,
+    );
+    runAvanti(config1, workDir);
+    expect(fs.readlinkSync(linkPath)).toBe(src1);
+    // Pull 2: update symlink to point to src2
+    const config2 = writeConfig(
+      tmpDir,
+      `files:\n  ./my-link:\n    src: ${src2}\n    symlink: true\n`,
+    );
+    runAvanti(config2, workDir);
+    expect(fs.readlinkSync(linkPath)).toBe(src2);
+    // Revert (undo pull 2): symlink should revert to src1
+    const revert = runAvanti(config2, workDir, 'revert --yes');
+    expect(revert.exitCode).toBe(0);
+    expect(fs.lstatSync(linkPath).isSymbolicLink()).toBe(true);
+    expect(fs.readlinkSync(linkPath)).toBe(src1);
   });
 });

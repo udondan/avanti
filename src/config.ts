@@ -597,7 +597,7 @@ export function parseConfigContent(content: string): AvantiConfig {
       }
       if (fileEntry.mode) {
         throw new Error(
-          `files["${target}"].symlink: cannot be combined with mode: — symlinks do not have independent permissions`,
+          `files["${target}"].symlink: cannot be combined with mode — symlinks do not have independent permission bits on POSIX`,
         );
       }
     }

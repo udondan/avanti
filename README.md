@@ -1312,7 +1312,7 @@ files:
     backup: $dirname/$filename.bkp
 ```
 
-Backup happens when the target is a regular file or a symlink entry. For regular files, the file content is copied to the backup path. For symlink entries (`symlink: true/absolute/relative`), the existing entry at the target path is preserved as-is — if it is a symlink, the symlink itself (not the file it points to) is backed up; if it is a regular file that will be replaced by a symlink, the file is copied. Backup does not apply to directory targets. If the backup path already exists it is overwritten — use the [counter pattern](#counter-pattern) or `$datetime` when you want to keep every backup.
+Backup happens when the target path currently holds a regular file or a symlink — regardless of whether the entry being written is a regular file or a symlink entry. If the existing target is a symlink, the symlink itself (not the file it points to) is preserved in the backup. Directory targets are never backed up. If the backup path already exists it is overwritten — use the [counter pattern](#counter-pattern) or `$datetime` when you want to keep every backup.
 
 #### Path variables
 
