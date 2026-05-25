@@ -287,12 +287,13 @@ export function computeSymlinkDiff(
   }
 
   if (!stat.isSymbolicLink()) {
+    const oldLabel = stat.isDirectory() ? '[directory]' : '[regular file]';
     const patch = createTwoFilesPatch(
       targetPath,
       targetPath,
-      '[regular file]\n',
+      `${oldLabel}\n`,
       `-> ${symlinkTarget}\n`,
-      'was regular file',
+      `was ${oldLabel.slice(1, -1)}`,
       'replaced by symlink',
     );
     return {

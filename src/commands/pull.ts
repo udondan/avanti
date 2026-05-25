@@ -273,10 +273,21 @@ async function runFetchLoop(
         const diff = computeSymlinkDiff(targetPath, symlinkTarget);
         allDiffs.push(diff);
         const symlinkContent = Buffer.from(symlinkTarget, 'utf8');
+        const symlinkBackupPath =
+          entry.backup && diff.hasChanges && !diff.isNew
+            ? resolveBackupPath(
+                entry.backup,
+                targetPath,
+                workingDir,
+                vars,
+                config.backup_roots ?? [],
+              )
+            : undefined;
         writeTargets.push({
           targetPath,
           content: symlinkContent,
           symlinkTarget,
+          backupPath: symlinkBackupPath,
           sudo: entry.sudo,
         });
         if (entry.on && diff.hasChanges) {
@@ -1200,7 +1211,7 @@ export function pullCommand(): Command {
               sourceShaRecords,
               writeTargets[i].sudo,
               v0Override,
-              writeTargets[i].symlinkTarget !== undefined ? true : undefined,
+              !!writeTargets[i].symlinkTarget,
             );
             stagedFileRefs.push(fileRef);
           } catch {

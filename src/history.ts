@@ -12,6 +12,7 @@ export interface FileHistoryMeta {
   currentVersion: number;
   sudo?: true | string;
   isSymlink?: boolean;
+  v0IsSymlink?: boolean;
   insertedFragment?: {
     raw: string;
     processed: string;
@@ -146,10 +147,11 @@ export class HistoryManager {
     if (fs.existsSync(metaPath)) {
       meta = JSON.parse(fs.readFileSync(metaPath, 'utf8')) as FileHistoryMeta;
       // Update isSymlink flag when it changes (e.g. entry switched from file to symlink).
-      if (isSymlink !== undefined) meta.isSymlink = isSymlink || undefined;
+      meta.isSymlink = isSymlink ? true : undefined;
     } else {
       isFirstSeen = true;
       let existedBeforeAvanti = !isNew;
+      let v0IsSymlink = false;
       if (existedBeforeAvanti) {
         try {
           let originalContent: Buffer;
@@ -162,6 +164,7 @@ export class HistoryManager {
                 fs.readlinkSync(targetPath),
                 'utf8',
               );
+              v0IsSymlink = true;
             } else if (stat?.isFile()) {
               originalContent = fs.readFileSync(targetPath);
             } else {
@@ -200,6 +203,7 @@ export class HistoryManager {
         existedBeforeAvanti,
         currentVersion: 0,
         ...(isSymlink ? { isSymlink: true } : {}),
+        ...(v0IsSymlink ? { v0IsSymlink: true } : {}),
       };
     }
 

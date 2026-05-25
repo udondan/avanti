@@ -57,18 +57,43 @@ export function sudoAtomicWrite(targets: SudoWriteTarget[]): void {
 
 function sudoSymlinkWrite(t: SudoWriteTarget): void {
   const sudo = t.sudo;
-  const dir = path.dirname(t.targetPath);
+  const resolvedTarget = path.resolve(t.targetPath);
+  const dir = path.dirname(resolvedTarget);
   sudoRun(sudo, ['mkdir', '-p', '--', dir]);
+
+  // Refuse to write if the target path is an existing directory: ln -sf would
+  // place the symlink *inside* the directory rather than replacing it.
+  const isDir = spawnSync(
+    'sudo',
+    [...sudoUserArgs(sudo), 'test', '-d', resolvedTarget],
+    { stdio: 'ignore' },
+  );
+  if (isDir.status === 0) {
+    throw new Error(
+      `symlink: ${t.targetPath} is a directory; refusing to replace it with a symlink`,
+    );
+  }
+
+  if (t.backupPath) {
+    const backupDir = path.dirname(t.backupPath);
+    sudoRun(sudo, ['mkdir', '-p', '--', backupDir]);
+    // cp -P preserves symlinks — back up the existing entry (file or symlink)
+    // without following it. Failure is non-fatal: the symlink write still
+    // proceeds so pull is not blocked when backup storage is unavailable.
+    const cp = spawnSync(
+      'sudo',
+      [...sudoUserArgs(sudo), 'cp', '-P', '--', resolvedTarget, t.backupPath],
+      { stdio: 'ignore' },
+    );
+    if (cp.status !== 0 || cp.error) {
+      console.warn(`Warning: could not back up ${t.targetPath}`);
+    }
+  }
+
   // ln -sf atomically replaces any existing path (file, symlink, or nothing)
   // with the new symlink. On POSIX, ln -sf calls unlink + symlink or rename,
   // which is effectively atomic for our purposes (no partial-write window).
-  sudoRun(sudo, [
-    'ln',
-    '-sf',
-    '--',
-    t.symlinkTarget!,
-    path.resolve(t.targetPath),
-  ]);
+  sudoRun(sudo, ['ln', '-sf', '--', t.symlinkTarget!, resolvedTarget]);
 }
 
 export function sudoRead(sudo: true | string, filePath: string): Buffer | null {
@@ -765,28 +790,31 @@ export function atomicWrite(
   const mvTargets = regularTargets.filter((t) => !t.writeInPlace);
   const inPlaceTargets = regularTargets.filter((t) => t.writeInPlace);
 
-  // Symlink phase: create atomically via temp symlink + rename(2).
-  // rename(2) is atomic on POSIX even when the destination already exists.
-  for (const t of symlinkTargets) {
-    const dir = path.dirname(t.targetPath);
-    if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true });
-    }
-    const tmpLink = path.join(
-      dir,
-      '.' +
-        path.basename(t.targetPath) +
-        '.' +
-        crypto.randomBytes(8).toString('hex') +
-        '.avanti-tmp',
-    );
-    fs.symlinkSync(t.symlinkTarget!, tmpLink);
-    fs.renameSync(tmpLink, t.targetPath);
-  }
   const staged: Array<{ tmp: string; dest: string; effectiveMode?: number }> =
     [];
   const backupTemps: string[] = [];
+  const tmpLinks: string[] = [];
   try {
+    // Symlink phase: create atomically via temp symlink + rename(2).
+    // rename(2) is atomic on POSIX even when the destination already exists.
+    for (const t of symlinkTargets) {
+      const dir = path.dirname(t.targetPath);
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
+      const tmpLink = path.join(
+        dir,
+        '.' +
+          path.basename(t.targetPath) +
+          '.' +
+          crypto.randomBytes(8).toString('hex') +
+          '.avanti-tmp',
+      );
+      tmpLinks.push(tmpLink);
+      fs.symlinkSync(t.symlinkTarget!, tmpLink);
+      fs.renameSync(tmpLink, t.targetPath);
+      tmpLinks.pop(); // rename succeeded — no longer needs cleanup
+    }
     // Phase 1 (mv targets): write all temp files. Backups are deferred to
     // Phase 2 so that a staging failure here never creates an orphaned backup
     // for a destination that hasn't been modified yet.
@@ -865,29 +893,32 @@ export function atomicWrite(
     // dir. If any copy fails, no backup destination has been touched yet.
     const backupRenames: Array<{ tmp: string; dest: string }> = [];
     for (const t of targets) {
-      if (
-        t.backupPath &&
-        fs.lstatSync(t.targetPath, { throwIfNoEntry: false })?.isFile()
-      ) {
-        const backupDir = path.dirname(t.backupPath);
-        if (!fs.existsSync(backupDir)) {
-          fs.mkdirSync(backupDir, { recursive: true });
-        }
-        // Copy via a uniquely-named temp file then rename so that:
-        // (a) a symlink at backupPath is replaced, not followed, and
-        // (b) a predictable temp path cannot be pre-created as a symlink.
-        const backupTmp = path.join(
-          backupDir,
-          '.' +
-            path.basename(t.backupPath) +
-            '.' +
-            crypto.randomBytes(8).toString('hex') +
-            '.avanti-tmp',
-        );
-        backupTemps.push(backupTmp);
-        fs.copyFileSync(t.targetPath, backupTmp);
-        backupRenames.push({ tmp: backupTmp, dest: t.backupPath });
+      if (!t.backupPath) continue;
+      const existing = fs.lstatSync(t.targetPath, { throwIfNoEntry: false });
+      if (!existing?.isFile() && !existing?.isSymbolicLink()) continue;
+      const backupDir = path.dirname(t.backupPath);
+      if (!fs.existsSync(backupDir)) {
+        fs.mkdirSync(backupDir, { recursive: true });
       }
+      // Copy via a uniquely-named temp file then rename so that:
+      // (a) a symlink at backupPath is replaced, not followed, and
+      // (b) a predictable temp path cannot be pre-created as a symlink.
+      const backupTmp = path.join(
+        backupDir,
+        '.' +
+          path.basename(t.backupPath) +
+          '.' +
+          crypto.randomBytes(8).toString('hex') +
+          '.avanti-tmp',
+      );
+      backupTemps.push(backupTmp);
+      if (existing.isSymbolicLink()) {
+        // Preserve the symlink itself (not the file it points to) in the backup.
+        fs.symlinkSync(fs.readlinkSync(t.targetPath), backupTmp);
+      } else {
+        fs.copyFileSync(t.targetPath, backupTmp);
+      }
+      backupRenames.push({ tmp: backupTmp, dest: t.backupPath });
     }
     // Phase 2b: all copies succeeded — rename each backup temp into place.
     for (const { tmp, dest } of backupRenames) {
@@ -1002,6 +1033,13 @@ export function atomicWrite(
       }
     }
   } finally {
+    for (const tmp of tmpLinks) {
+      try {
+        fs.rmSync(tmp, { force: true });
+      } catch {
+        // already renamed into place or never created
+      }
+    }
     for (const tmp of backupTemps) {
       try {
         fs.rmSync(tmp, { force: true });

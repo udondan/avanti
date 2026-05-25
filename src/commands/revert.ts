@@ -125,7 +125,7 @@ export function revertCommand(): Command {
             if (meta.existedBeforeAvanti) {
               const original = history.readVersion(meta.absolutePath, 0);
               if (original !== null) {
-                if (meta.isSymlink) {
+                if (meta.v0IsSymlink) {
                   const symlinkTarget = original.toString('utf8');
                   const d = computeSymlinkDiff(
                     meta.absolutePath,

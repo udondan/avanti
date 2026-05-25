@@ -1443,7 +1443,7 @@ Use `symlink: "relative"` to store the symlink target as a path relative to the 
 files:
   configs/active:
     src: configs/production.yml
-    symlink: relative # symlink points to ../production.yml rather than an absolute path
+    symlink: relative # symlink points to production.yml rather than an absolute path
 ```
 
 **How `diff` and `pull` handle symlinks:**
