@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { verbose } from '../logger';
+import { expandTilde } from '../paths';
 import { resolveVars } from '../variables';
 import type { Variables } from '../types';
 
@@ -83,14 +84,10 @@ export function resolveSymlinkSrcPath(
       `symlink src resolved to a non-local value "${expanded}"; symlink src must be a local filesystem path`,
     );
   }
-  let abs: string;
-  if (expanded.startsWith('~/')) {
-    abs = path.join(os.homedir(), expanded.slice(2));
-  } else if (path.isAbsolute(expanded)) {
-    abs = expanded;
-  } else {
-    abs = path.resolve(workingDir, expanded);
-  }
+  const tildeExpanded = expandTilde(expanded);
+  const abs = path.isAbsolute(tildeExpanded)
+    ? tildeExpanded
+    : path.resolve(workingDir, expanded);
   if (mode === 'relative') {
     const rel = path.relative(path.dirname(linkPath), abs);
     // path.relative returns "" when both paths are identical (src is the
