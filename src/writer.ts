@@ -72,17 +72,25 @@ function sudoSymlinkWrite(t: SudoWriteTarget): void {
   // not covered by the pre-mkdir check.
   checkAncestorsSafe(sudo, t.targetPath, trustedUids, 'destination');
 
-  // Refuse to write if the target path is an existing directory: ln -sf would
-  // place the symlink *inside* the directory rather than replacing it.
-  const isDir = spawnSync(
+  // Refuse to write if the target path is an existing *real* directory: ln -sf
+  // would place the symlink inside it rather than replacing it. A symlink that
+  // points to a directory is fine — it can be atomically replaced.
+  const isSymlinkAtTarget = spawnSync(
     'sudo',
-    [...sudoUserArgs(sudo), 'test', '-d', resolvedTarget],
+    [...sudoUserArgs(sudo), 'test', '-L', resolvedTarget],
     { stdio: 'ignore' },
   );
-  if (isDir.status === 0) {
-    throw new Error(
-      `symlink: ${t.targetPath} is a directory; refusing to replace it with a symlink`,
+  if (isSymlinkAtTarget.status !== 0) {
+    const isDir = spawnSync(
+      'sudo',
+      [...sudoUserArgs(sudo), 'test', '-d', resolvedTarget],
+      { stdio: 'ignore' },
     );
+    if (isDir.status === 0) {
+      throw new Error(
+        `symlink: ${t.targetPath} is a directory; refusing to replace it with a symlink`,
+      );
+    }
   }
 
   if (t.backupPath) {

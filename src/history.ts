@@ -175,7 +175,20 @@ export class HistoryManager {
               originalContent = Buffer.alloc(0);
             }
           } else {
-            originalContent = fs.readFileSync(targetPath);
+            // Even when the new entry is a regular file, the path may already
+            // hold a symlink. Use lstat so we capture the symlink itself (not
+            // the bytes it points to) and set v0IsSymlink accordingly — this
+            // lets reset/revert faithfully restore the pre-avanti symlink.
+            const stat = fs.lstatSync(targetPath, { throwIfNoEntry: false });
+            if (stat?.isSymbolicLink()) {
+              originalContent = Buffer.from(
+                fs.readlinkSync(targetPath),
+                'utf8',
+              );
+              v0IsSymlink = true;
+            } else {
+              originalContent = fs.readFileSync(targetPath);
+            }
           }
           if (existedBeforeAvanti) {
             fs.writeFileSync(path.join(fileDir, 'v0'), originalContent);
