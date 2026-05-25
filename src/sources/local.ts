@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { redactUrl } from '../fetch';
+import { isGitRemoteUrl } from './git';
 import { verbose } from '../logger';
 import { expandTilde } from '../paths';
 import { resolveVars } from '../variables';
@@ -73,9 +74,8 @@ export function resolveSymlinkSrcPath(
     expanded.startsWith('http://') ||
     expanded.startsWith('https://') ||
     expanded.startsWith('exec:') ||
-    expanded.startsWith('git://') ||
+    isGitRemoteUrl(expanded) ||
     expanded.startsWith('git+') ||
-    expanded.startsWith('ssh://') ||
     expanded.startsWith('s3://') ||
     expanded.startsWith('github:') ||
     expanded.startsWith('gitlab:') ||

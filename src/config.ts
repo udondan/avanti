@@ -479,6 +479,11 @@ export function parseConfigContent(content: string): AvantiConfig {
     }
 
     if (e['extract'] !== undefined) {
+      if (fileEntry.symlink) {
+        throw new Error(
+          `files["${target}"].symlink: cannot be combined with extract:`,
+        );
+      }
       if (Array.isArray(src)) {
         throw new Error(
           `files["${target}"].extract: cannot be used with a list of sources`,
