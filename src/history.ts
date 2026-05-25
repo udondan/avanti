@@ -145,14 +145,15 @@ export class HistoryManager {
     let meta: FileHistoryMeta;
 
     let isFirstSeen = false;
+    let isSymlinkChanged = false;
     if (fs.existsSync(metaPath)) {
       meta = JSON.parse(fs.readFileSync(metaPath, 'utf8')) as FileHistoryMeta;
-      // Only persist when isSymlink actually changes to avoid spurious I/O
-      // and premature meta updates that could be observed if the pull aborts.
+      // Update isSymlink in memory only; persist after the version file write
+      // so that meta.json is never ahead of committed history if the pull aborts.
       const newIsSymlink = isSymlink ? true : undefined;
       if (meta.isSymlink !== newIsSymlink) {
         meta.isSymlink = newIsSymlink;
-        fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2), 'utf8');
+        isSymlinkChanged = true;
       }
     } else {
       isFirstSeen = true;
@@ -234,6 +235,8 @@ export class HistoryManager {
       const index = this.readIndex();
       index[targetPath] = slug;
       this.writeIndex(index);
+    } else if (isSymlinkChanged) {
+      fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2), 'utf8');
     }
 
     const fileRef: PullLogFileRef = {
