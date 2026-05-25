@@ -94,6 +94,7 @@ export function revertCommand(): Command {
         const writeTargets: WriteTarget[] = [];
         const deletions: string[] = [];
         const diffs: FileDiff[] = [];
+        let hasError = false;
 
         const allTracked = history.listTrackedFiles();
 
@@ -113,6 +114,7 @@ export function revertCommand(): Command {
                 console.error(
                   `symlink: ${meta.absolutePath} is a directory; cannot restore symlink over directory`,
                 );
+                hasError = true;
                 diffs.push(d);
               } else if (d.hasChanges) {
                 writeTargets.push({
@@ -144,6 +146,7 @@ export function revertCommand(): Command {
                     console.error(
                       `symlink: ${meta.absolutePath} is a directory; cannot restore symlink over directory`,
                     );
+                    hasError = true;
                     diffs.push(d);
                   } else if (d.hasChanges) {
                     writeTargets.push({
@@ -173,6 +176,8 @@ export function revertCommand(): Command {
             }
           }
         }
+
+        if (hasError) process.exit(2);
 
         if (diffs.length === 0) {
           console.log(

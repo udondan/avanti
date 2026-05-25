@@ -94,44 +94,61 @@ function sudoSymlinkWrite(t: SudoWriteTarget): void {
   }
 
   if (t.backupPath) {
-    const backupDir = path.dirname(t.backupPath);
-    const resolvedBackup = path.resolve(t.backupPath);
-    // Validate backup ancestors BEFORE privileged mkdir to avoid creating
-    // root-owned directories in an untrusted path.
-    checkAncestorsSafe(sudo, t.backupPath, trustedUids, 'backup');
-    sudoRun(sudo, ['mkdir', '-p', '--', backupDir]);
-    // Re-validate after mkdir: newly created intermediates are now present.
-    checkAncestorsSafe(sudo, t.backupPath, trustedUids, 'backup');
-    // Use mktemp + cp -pP + mv (same pattern as sudoWriteMv) to avoid following
-    // an existing symlink at backupPath. -P preserves symlinks; -p preserves
-    // timestamps and mode bits. Backup failure is fatal (matches sudoWriteMv).
-    const mktempBackup = spawnSync(
-      'sudo',
-      [
-        ...sudoUserArgs(sudo),
-        'mktemp',
-        path.join(path.resolve(backupDir), '.avanti-backup-XXXXXXXXXX'),
-      ],
-      { stdio: ['ignore', 'pipe', 'inherit'] },
-    );
-    if (mktempBackup.status !== 0 || mktempBackup.error) {
-      const detail = mktempBackup.error
-        ? mktempBackup.error.message
-        : `exit code ${mktempBackup.status ?? 'unknown'}`;
-      throw new Error(`sudo mktemp failed in ${backupDir}: ${detail}`);
-    }
-    const backupTmp = mktempBackup.stdout.toString().trim();
-    // cp -pP: -p preserves metadata; -P preserves symlinks (does not dereference).
-    sudoRun(sudo, ['cp', '-pP', '--', resolvedTarget, backupTmp]);
-    const backupIsDir =
-      spawnSync('sudo', [...sudoUserArgs(sudo), 'test', '-d', resolvedBackup], {
+    // Only back up when the target path already holds a symlink or regular file.
+    // Skip backup when the path is absent (new file) to mirror sudoWriteMv.
+    const existingIsSymlink =
+      spawnSync('sudo', [...sudoUserArgs(sudo), 'test', '-L', resolvedTarget], {
         stdio: 'ignore',
       }).status === 0;
-    if (backupIsDir) {
-      sudoRun(sudo, ['rm', '-f', '--', backupTmp]);
-      throw new Error(`backup path is a directory: ${t.backupPath}`);
-    }
-    sudoMv(sudo, backupTmp, resolvedBackup);
+    const existingIsFile =
+      !existingIsSymlink &&
+      spawnSync('sudo', [...sudoUserArgs(sudo), 'test', '-f', resolvedTarget], {
+        stdio: 'ignore',
+      }).status === 0;
+    if (existingIsSymlink || existingIsFile) {
+      const backupDir = path.dirname(t.backupPath);
+      const resolvedBackup = path.resolve(t.backupPath);
+      // Validate backup ancestors BEFORE privileged mkdir to avoid creating
+      // root-owned directories in an untrusted path.
+      checkAncestorsSafe(sudo, t.backupPath, trustedUids, 'backup');
+      sudoRun(sudo, ['mkdir', '-p', '--', backupDir]);
+      // Re-validate after mkdir: newly created intermediates are now present.
+      checkAncestorsSafe(sudo, t.backupPath, trustedUids, 'backup');
+      // Use mktemp + cp -pP + mv (same pattern as sudoWriteMv) to avoid following
+      // an existing symlink at backupPath. -P preserves symlinks; -p preserves
+      // timestamps and mode bits. Backup failure is fatal (matches sudoWriteMv).
+      const mktempBackup = spawnSync(
+        'sudo',
+        [
+          ...sudoUserArgs(sudo),
+          'mktemp',
+          path.join(path.resolve(backupDir), '.avanti-backup-XXXXXXXXXX'),
+        ],
+        { stdio: ['ignore', 'pipe', 'inherit'] },
+      );
+      if (mktempBackup.status !== 0 || mktempBackup.error) {
+        const detail = mktempBackup.error
+          ? mktempBackup.error.message
+          : `exit code ${mktempBackup.status ?? 'unknown'}`;
+        throw new Error(`sudo mktemp failed in ${backupDir}: ${detail}`);
+      }
+      const backupTmp = mktempBackup.stdout.toString().trim();
+      // cp -pP: -p preserves metadata; -P preserves symlinks (does not dereference).
+      sudoRun(sudo, ['cp', '-pP', '--', resolvedTarget, backupTmp]);
+      const backupIsDir =
+        spawnSync(
+          'sudo',
+          [...sudoUserArgs(sudo), 'test', '-d', resolvedBackup],
+          {
+            stdio: 'ignore',
+          },
+        ).status === 0;
+      if (backupIsDir) {
+        sudoRun(sudo, ['rm', '-f', '--', backupTmp]);
+        throw new Error(`backup path is a directory: ${t.backupPath}`);
+      }
+      sudoMv(sudo, backupTmp, resolvedBackup);
+    } // end existingIsSymlink || existingIsFile
   }
 
   // ln -sf atomically replaces any existing path (file, symlink, or nothing)

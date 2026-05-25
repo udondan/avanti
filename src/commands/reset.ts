@@ -47,6 +47,7 @@ export function resetCommand(): Command {
       const writeTargets: WriteTarget[] = [];
       const deletions: string[] = [];
       const diffs: FileDiff[] = [];
+      let hasError = false;
 
       for (const meta of tracked) {
         if (meta.existedBeforeAvanti) {
@@ -59,6 +60,7 @@ export function resetCommand(): Command {
               console.error(
                 `symlink: ${meta.absolutePath} is a directory; cannot restore symlink over directory`,
               );
+              hasError = true;
               diffs.push(d);
             } else if (d.hasChanges) {
               writeTargets.push({
@@ -86,6 +88,8 @@ export function resetCommand(): Command {
           }
         }
       }
+
+      if (hasError) process.exit(2);
 
       if (diffs.length === 0) {
         console.log(
