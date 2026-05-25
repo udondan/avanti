@@ -108,3 +108,13 @@ The `$self` key in `files:` is the only mechanism for config re-evaluation. When
 - `0` — Success / no changes detected
 - `1` — Changes detected (in `diff` command)
 - `2` — Error
+
+## Internal vs. user-facing fields
+
+Some fields exist on internal TypeScript types but are **never written by the user** in YAML — they are derived by the parser and must not appear in documentation or examples.
+
+| Internal field | Where it lives | How it is set                                                                                       | What the user writes                                        |
+| -------------- | -------------- | --------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
+| `target`       | `FileEntry`    | Derived from the map key in `config.ts` (`for (const [target, entry] of Object.entries(filesRaw))`) | The map key itself: `files:\n  path/to/file:\n    src: ...` |
+
+**Rule:** before documenting or code-generating any field from an internal type, verify it is actually parsed from user YAML. Do not assume the TypeScript interface mirrors the YAML schema — the parser often populates fields programmatically.
