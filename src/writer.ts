@@ -75,36 +75,20 @@ function sudoSymlinkWrite(t: SudoWriteTarget): void {
   // Refuse to write if the target path is an existing *real* directory: ln -sf
   // would place the symlink inside it rather than replacing it. A symlink that
   // points to a directory is fine — it can be atomically replaced.
-  const isSymlinkAtTarget = spawnSync(
-    'sudo',
-    [...sudoUserArgs(sudo), 'test', '-L', resolvedTarget],
-    { stdio: 'ignore' },
-  );
-  if (isSymlinkAtTarget.status !== 0) {
-    const isDir = spawnSync(
-      'sudo',
-      [...sudoUserArgs(sudo), 'test', '-d', resolvedTarget],
-      { stdio: 'ignore' },
+  if (
+    !sudoIsSymlink(sudo, t.targetPath) &&
+    sudoIsDirectory(sudo, t.targetPath)
+  ) {
+    throw new Error(
+      `symlink: ${t.targetPath} is a directory; refusing to replace it with a symlink`,
     );
-    if (isDir.status === 0) {
-      throw new Error(
-        `symlink: ${t.targetPath} is a directory; refusing to replace it with a symlink`,
-      );
-    }
   }
 
   if (t.backupPath) {
     // Only back up when the target path already holds a symlink or regular file.
     // Skip backup when the path is absent (new file) to mirror sudoWriteMv.
-    const existingIsSymlink =
-      spawnSync('sudo', [...sudoUserArgs(sudo), 'test', '-L', resolvedTarget], {
-        stdio: 'ignore',
-      }).status === 0;
-    const existingIsFile =
-      !existingIsSymlink &&
-      spawnSync('sudo', [...sudoUserArgs(sudo), 'test', '-f', resolvedTarget], {
-        stdio: 'ignore',
-      }).status === 0;
+    const existingIsSymlink = sudoIsSymlink(sudo, t.targetPath);
+    const existingIsFile = !existingIsSymlink && sudoIsFile(sudo, t.targetPath);
     if (existingIsSymlink || existingIsFile) {
       const backupDir = path.dirname(t.backupPath);
       const resolvedBackup = path.resolve(t.backupPath);
@@ -232,6 +216,30 @@ export function sudoIsDirectory(
   );
   if (r.error) throw new Error(`sudo test -d failed: ${r.error.message}`);
   return r.status === 0;
+}
+
+export function sudoIsFile(sudo: true | string, targetPath: string): boolean {
+  const r = spawnSync(
+    'sudo',
+    [...sudoUserArgs(sudo), 'test', '-f', path.resolve(targetPath)],
+    { stdio: 'ignore' },
+  );
+  if (r.error) throw new Error(`sudo test -f failed: ${r.error.message}`);
+  return r.status === 0;
+}
+
+export function sudoReadlink(
+  sudo: true | string,
+  targetPath: string,
+): string | null {
+  const r = spawnSync(
+    'sudo',
+    [...sudoUserArgs(sudo), 'readlink', path.resolve(targetPath)],
+    { stdio: ['ignore', 'pipe', 'ignore'] },
+  );
+  if (r.error) throw new Error(`sudo readlink failed: ${r.error.message}`);
+  if (r.status !== 0) return null;
+  return r.stdout.toString().trim();
 }
 
 export function sudoRun(sudo: true | string, args: string[]): void {

@@ -41,6 +41,7 @@ import {
   sudoIsDirectory,
   sudoIsSymlink,
   sudoRead,
+  sudoReadlink,
   sudoRun,
   SudoWriteTarget,
   WriteTarget,
@@ -1005,9 +1006,36 @@ export function pullCommand(): Command {
       // desired content. If they match, suppress the write for this entry.
       for (let i = 0; i < writeTargets.length; i++) {
         if (allDiffs[i].isUnreadable && writeTargets[i].sudo) {
-          // Skip idempotency read for symlinks: sudoRead follows symlinks and
-          // the write path replaces or refuses them; reading through a symlink
-          // here would compare against the wrong content.
+          if (writeTargets[i].symlinkTarget !== undefined) {
+            // Symlink entry: use sudo readlink to check whether the on-disk
+            // symlink already points to the desired target. If it does, the
+            // write is a no-op and the diff should be suppressed.
+            const current = sudoReadlink(
+              writeTargets[i].sudo!,
+              writeTargets[i].targetPath,
+            );
+            if (current !== null && current === writeTargets[i].symlinkTarget) {
+              const updatedHasChanges = allDiffs[i].modeChange !== undefined;
+              allDiffs[i] = {
+                ...allDiffs[i],
+                contentChanged: false,
+                hasChanges: updatedHasChanges,
+              };
+              if (!updatedHasChanges) {
+                const hookIdx = fileHookContexts.findIndex(
+                  (ctx) => ctx.targetPath === writeTargets[i].targetPath,
+                );
+                if (hookIdx >= 0) {
+                  fileHookContexts.splice(hookIdx, 1);
+                }
+              }
+            }
+            continue;
+          }
+          // For regular file entries: skip idempotency read when the existing
+          // path is a symlink — sudoRead follows symlinks and could compare
+          // against the wrong content (the symlink target's bytes, not the
+          // symlink itself).
           if (
             sudoIsSymlink(writeTargets[i].sudo!, writeTargets[i].targetPath)
           ) {
