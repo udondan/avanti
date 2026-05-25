@@ -257,6 +257,13 @@ async function runFetchLoop(
       // Symlink entries: resolve src path and create a symlink instead of
       // fetching and writing file content.
       if (!isSelf && entry.symlink) {
+        if (process.platform === 'win32') {
+          console.error(
+            `Error processing ${JSON.stringify(entry.src)}: symlink entries are not supported on Windows; use an \`if: { os: [linux, mac] }\` condition to gate symlink entries in cross-platform configs`,
+          );
+          hasError = true;
+          continue;
+        }
         const targetPath = resolveTargetPath(entry, '', workingDir, vars);
         const rawSrc = Array.isArray(entry.src)
           ? ''

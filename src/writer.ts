@@ -102,10 +102,9 @@ function sudoSymlinkWrite(t: SudoWriteTarget): void {
     sudoRun(sudo, ['mkdir', '-p', '--', backupDir]);
     // Re-validate after mkdir: newly created intermediates are now present.
     checkAncestorsSafe(sudo, t.backupPath, trustedUids, 'backup');
-    // Use mktemp + cp -P + mv (same pattern as sudoWriteMv) to avoid following
-    // an existing symlink at backupPath. cp writes to the temp file (O_EXCL,
-    // owned by root), then mv atomically replaces backupPath. Failure is
-    // non-fatal: the symlink write still proceeds.
+    // Use mktemp + cp -pP + mv (same pattern as sudoWriteMv) to avoid following
+    // an existing symlink at backupPath. -P preserves symlinks; -p preserves
+    // timestamps and mode bits. Backup failure is fatal (matches sudoWriteMv).
     const mktempBackup = spawnSync(
       'sudo',
       [
@@ -115,49 +114,24 @@ function sudoSymlinkWrite(t: SudoWriteTarget): void {
       ],
       { stdio: ['ignore', 'pipe', 'inherit'] },
     );
-    if (mktempBackup.status === 0 && !mktempBackup.error) {
-      const backupTmp = mktempBackup.stdout.toString().trim();
-      // cp -P preserves symlinks (does not dereference the source).
-      const cp = spawnSync(
-        'sudo',
-        [...sudoUserArgs(sudo), 'cp', '-P', '--', resolvedTarget, backupTmp],
-        { stdio: 'ignore' },
-      );
-      if (cp.status === 0 && !cp.error) {
-        const backupIsDir =
-          spawnSync(
-            'sudo',
-            [...sudoUserArgs(sudo), 'test', '-d', resolvedBackup],
-            { stdio: 'ignore' },
-          ).status === 0;
-        if (backupIsDir) {
-          sudoRun(sudo, ['rm', '-f', '--', backupTmp]);
-          console.warn(
-            `Warning: could not back up ${t.targetPath}: backup path is a directory`,
-          );
-        } else {
-          try {
-            sudoMv(sudo, backupTmp, resolvedBackup);
-          } catch {
-            spawnSync(
-              'sudo',
-              [...sudoUserArgs(sudo), 'rm', '-f', '--', backupTmp],
-              { stdio: 'ignore' },
-            );
-            console.warn(`Warning: could not back up ${t.targetPath}`);
-          }
-        }
-      } else {
-        spawnSync(
-          'sudo',
-          [...sudoUserArgs(sudo), 'rm', '-f', '--', backupTmp],
-          { stdio: 'ignore' },
-        );
-        console.warn(`Warning: could not back up ${t.targetPath}`);
-      }
-    } else {
-      console.warn(`Warning: could not back up ${t.targetPath}`);
+    if (mktempBackup.status !== 0 || mktempBackup.error) {
+      const detail = mktempBackup.error
+        ? mktempBackup.error.message
+        : `exit code ${mktempBackup.status ?? 'unknown'}`;
+      throw new Error(`sudo mktemp failed in ${backupDir}: ${detail}`);
     }
+    const backupTmp = mktempBackup.stdout.toString().trim();
+    // cp -pP: -p preserves metadata; -P preserves symlinks (does not dereference).
+    sudoRun(sudo, ['cp', '-pP', '--', resolvedTarget, backupTmp]);
+    const backupIsDir =
+      spawnSync('sudo', [...sudoUserArgs(sudo), 'test', '-d', resolvedBackup], {
+        stdio: 'ignore',
+      }).status === 0;
+    if (backupIsDir) {
+      sudoRun(sudo, ['rm', '-f', '--', backupTmp]);
+      throw new Error(`backup path is a directory: ${t.backupPath}`);
+    }
+    sudoMv(sudo, backupTmp, resolvedBackup);
   }
 
   // ln -sf atomically replaces any existing path (file, symlink, or nothing)
@@ -871,9 +845,7 @@ export function atomicWrite(
     // Phase 0 (symlink staging): create temp symlinks but do NOT rename yet.
     // Renames happen in Phase 3, after backups have captured the pre-write state.
     if (symlinkTargets.length > 0 && process.platform === 'win32') {
-      throw new Error(
-        'symlink entries are not supported on Windows; use an `if: { os: [linux, mac] }` condition to gate symlink entries in cross-platform configs',
-      );
+      throw new Error('symlink writes are not supported on Windows');
     }
     for (const t of symlinkTargets) {
       const dir = path.dirname(t.targetPath);
@@ -989,10 +961,12 @@ export function atomicWrite(
           '.avanti-tmp',
       );
       backupTemps.push(backupTmp);
-      if (existing.isSymbolicLink()) {
+      if (existing.isSymbolicLink() && process.platform !== 'win32') {
         // Preserve the symlink itself (not the file it points to) in the backup.
         fs.symlinkSync(fs.readlinkSync(t.targetPath), backupTmp);
       } else {
+        // On Windows fs.symlinkSync requires elevated privileges; back up the
+        // dereferenced file content instead (best available option on that platform).
         fs.copyFileSync(t.targetPath, backupTmp);
       }
       backupRenames.push({ tmp: backupTmp, dest: t.backupPath });
