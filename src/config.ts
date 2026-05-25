@@ -44,6 +44,7 @@ import { fetchHttp } from './sources/http';
 import { fetchGitHub } from './sources/github';
 import { fetchGitLab } from './sources/gitlab';
 import { fetchGit, isGitRemoteUrl, parseGitRemoteSpec } from './sources/git';
+import { isNonLocalSrcString } from './sources/local';
 
 export const SELF_KEY = '$self';
 
@@ -56,43 +57,10 @@ const CONFIG_CANDIDATES = [
 
 function isLocalFileSrc(src: FileSrc): boolean {
   if (typeof src === 'string') {
-    return (
-      !src.startsWith('http://') &&
-      !src.startsWith('https://') &&
-      !src.startsWith('file://') &&
-      !isGitRemoteUrl(src) &&
-      !src.startsWith('exec:') &&
-      !src.startsWith('github:') &&
-      !src.startsWith('gitlab:') &&
-      !src.startsWith('bitbucket:') &&
-      !src.startsWith('raw:') &&
-      !src.startsWith('s3://') &&
-      !src.startsWith('ssh://') &&
-      !src.startsWith('git+') &&
-      !src.startsWith('vault:') &&
-      !src.startsWith('aws_secrets_manager:') &&
-      !src.startsWith('aws_systems_manager_parameter:')
-    );
+    return !isNonLocalSrcString(src);
   }
   if (!('path' in src)) return false;
-  const p = (src as { path: string }).path;
-  return (
-    !p.startsWith('http://') &&
-    !p.startsWith('https://') &&
-    !p.startsWith('file://') &&
-    !isGitRemoteUrl(p) &&
-    !p.startsWith('exec:') &&
-    !p.startsWith('github:') &&
-    !p.startsWith('gitlab:') &&
-    !p.startsWith('bitbucket:') &&
-    !p.startsWith('raw:') &&
-    !p.startsWith('s3://') &&
-    !p.startsWith('ssh://') &&
-    !p.startsWith('git+') &&
-    !p.startsWith('vault:') &&
-    !p.startsWith('aws_secrets_manager:') &&
-    !p.startsWith('aws_systems_manager_parameter:')
-  );
+  return !isNonLocalSrcString((src as { path: string }).path);
 }
 
 export function isRemoteConfigSpec(s: string): boolean {

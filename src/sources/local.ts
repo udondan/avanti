@@ -59,6 +59,26 @@ function readDirRecursive(
   }
 }
 
+export function isNonLocalSrcString(s: string): boolean {
+  return (
+    s.startsWith('http://') ||
+    s.startsWith('https://') ||
+    s.startsWith('file://') ||
+    s.startsWith('exec:') ||
+    isGitRemoteUrl(s) ||
+    s.startsWith('git+') ||
+    s.startsWith('ssh://') ||
+    s.startsWith('s3://') ||
+    s.startsWith('github:') ||
+    s.startsWith('gitlab:') ||
+    s.startsWith('bitbucket:') ||
+    s.startsWith('raw:') ||
+    s.startsWith('vault:') ||
+    s.startsWith('aws_secrets_manager:') ||
+    s.startsWith('aws_systems_manager_parameter:')
+  );
+}
+
 export function resolveSymlinkSrcPath(
   src: string,
   workingDir: string,
@@ -70,23 +90,7 @@ export function resolveSymlinkSrcPath(
   // Guard against a variable that resolves to a remote URL or exec: expression.
   // Config-level validation (isLocalFileSrc) checks the raw src before variable
   // substitution; a variable value could still expand to a remote spec.
-  if (
-    expanded.startsWith('http://') ||
-    expanded.startsWith('https://') ||
-    expanded.startsWith('file://') ||
-    expanded.startsWith('exec:') ||
-    isGitRemoteUrl(expanded) ||
-    expanded.startsWith('git+') ||
-    expanded.startsWith('ssh://') ||
-    expanded.startsWith('s3://') ||
-    expanded.startsWith('github:') ||
-    expanded.startsWith('gitlab:') ||
-    expanded.startsWith('bitbucket:') ||
-    expanded.startsWith('raw:') ||
-    expanded.startsWith('vault:') ||
-    expanded.startsWith('aws_secrets_manager:') ||
-    expanded.startsWith('aws_systems_manager_parameter:')
-  ) {
+  if (isNonLocalSrcString(expanded)) {
     throw new Error(
       `symlink src resolved to a non-local value "${redactUrl(expanded)}"; symlink src must be a local filesystem path`,
     );
