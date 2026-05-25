@@ -1367,6 +1367,7 @@ export function pullCommand(): Command {
             // revert-to-original works even when the invoking user cannot read
             // the file directly.
             let v0Override: Buffer | undefined;
+            let v0IsSymlinkOverride = false;
             if (
               allDiffs[i].isUnreadable &&
               !allDiffs[i].isNew &&
@@ -1384,6 +1385,7 @@ export function pullCommand(): Command {
                   );
                   if (existingTarget !== null) {
                     v0Override = Buffer.from(existingTarget);
+                    v0IsSymlinkOverride = true;
                   }
                 }
                 // If the write target is a regular file but the destination is a
@@ -1403,6 +1405,7 @@ export function pullCommand(): Command {
               writeTargets[i].sudo,
               v0Override,
               !!writeTargets[i].symlinkTarget,
+              v0IsSymlinkOverride,
             );
             stagedFileRefs.push(fileRef);
           } catch {

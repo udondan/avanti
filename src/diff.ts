@@ -456,10 +456,14 @@ export function formatDiff(diff: FileDiff): string {
       );
     }
     if (diff.isUnreadable) {
+      const newPath = diff.isDelete ? '/dev/null' : diff.targetPath;
+      const label = diff.isDelete
+        ? 'symlink deleted (existing target unreadable — diff unavailable)'
+        : 'symlink (existing state unreadable)';
       return (
-        chalk.bold(`--- ${diff.targetPath}\n+++ ${diff.targetPath}`) +
+        chalk.bold(`--- ${diff.targetPath}\n+++ ${newPath}`) +
         '\n' +
-        chalk.cyan('@@ symlink (existing state unreadable) @@')
+        chalk.cyan(`@@ ${label} @@`)
       );
     }
     return diff.patch.split('\n').map(colorLine).join('\n');

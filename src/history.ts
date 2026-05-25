@@ -136,6 +136,7 @@ export class HistoryManager {
     sudo?: true | string,
     v0Override?: Buffer,
     isSymlink?: boolean,
+    v0IsSymlinkOverride?: boolean,
   ): { version: number; fileRef: PullLogFileRef } {
     const slug = sha256(targetPath);
     const fileDir = path.join(this.filesDir, slug);
@@ -204,6 +205,7 @@ export class HistoryManager {
           }
           if (v0Override !== undefined) {
             fs.writeFileSync(path.join(fileDir, 'v0'), v0Override);
+            if (v0IsSymlinkOverride) v0IsSymlink = true;
           } else if (code === 'ENOENT') {
             // Dangling symlink: lstatSync saw the symlink but readFileSync
             // followed it to a missing target. No usable original content
