@@ -1462,6 +1462,8 @@ The symlink itself is tracked in avanti's history, so `revert` and `reset` resto
 - `mode` — symlinks do not have independent permission bits on POSIX
 - A list `src` — a symlink has exactly one target
 
+**POSIX only** — symlink entries are not supported on Windows. `pull` will error if a symlink entry is reached on win32. Use an `if: { os: [linux, mac] }` condition to gate symlink entries in cross-platform configs.
+
 ### Sudo
 
 Set `sudo: true` to write a file using elevated privileges (as root). Set `sudo: "username"` to write as a specific user via `sudo -u`:

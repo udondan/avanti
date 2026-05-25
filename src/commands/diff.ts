@@ -152,7 +152,14 @@ async function runDiffLoop(
           entry.symlink,
           targetPath,
         );
-        allDiffs.push(computeSymlinkDiff(targetPath, symlinkTarget));
+        const d = computeSymlinkDiff(targetPath, symlinkTarget);
+        allDiffs.push(d);
+        if (d.isDirectory) {
+          console.error(
+            `Error processing ${JSON.stringify(entry.src)}: symlink: ${targetPath} is a directory; cannot replace with a symlink`,
+          );
+          hasError = true;
+        }
         // Register the resolved src content (not the symlink target string) in
         // pendingWrites so subsequent local entries that read through this symlink
         // path see the actual file bytes, not the raw symlink target path.

@@ -870,6 +870,11 @@ export function atomicWrite(
   try {
     // Phase 0 (symlink staging): create temp symlinks but do NOT rename yet.
     // Renames happen in Phase 3, after backups have captured the pre-write state.
+    if (symlinkTargets.length > 0 && process.platform === 'win32') {
+      throw new Error(
+        'symlink entries are not supported on Windows; use an `if: { os: [linux, mac] }` condition to gate symlink entries in cross-platform configs',
+      );
+    }
     for (const t of symlinkTargets) {
       const dir = path.dirname(t.targetPath);
       if (!fs.existsSync(dir)) {
