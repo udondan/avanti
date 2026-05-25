@@ -249,6 +249,31 @@ export function buildNewFileDiff(
   };
 }
 
+/** Build a new-symlink FileDiff without reading disk. Used when lstatFailed
+ *  initially but sudo confirms the path does not yet exist — calling
+ *  computeSymlinkDiff again would still EACCES on the parent directory. */
+export function buildNewSymlinkDiff(
+  targetPath: string,
+  symlinkTarget: string,
+): FileDiff {
+  const patch = createTwoFilesPatch(
+    '/dev/null',
+    targetPath,
+    '',
+    `-> ${symlinkTarget}\n`,
+    '',
+    'new symlink',
+  );
+  return {
+    targetPath,
+    isNew: true,
+    hasChanges: true,
+    contentChanged: true,
+    patch,
+    isSymlink: true,
+  };
+}
+
 export function computeSymlinkDiff(
   targetPath: string,
   symlinkTarget: string,

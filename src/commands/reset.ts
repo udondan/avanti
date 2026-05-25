@@ -89,9 +89,7 @@ export function resetCommand(): Command {
         }
       }
 
-      if (hasError) process.exit(2);
-
-      if (diffs.length === 0) {
+      if (diffs.length === 0 && !hasError) {
         console.log(
           'Files are already at their pre-avanti state. Nothing to reset.',
         );
@@ -99,10 +97,14 @@ export function resetCommand(): Command {
       }
 
       const total = writeTargets.length + deletions.length;
-      console.log(
-        `This will restore ${total} tracked file(s) to their pre-avanti state:\n`,
-      );
+      if (total > 0) {
+        console.log(
+          `This will restore ${total} tracked file(s) to their pre-avanti state:\n`,
+        );
+      }
       printDiffs(diffs);
+
+      if (hasError) process.exit(2);
 
       const yes = opts.yes ?? false;
       if (!yes) {

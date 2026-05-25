@@ -24,6 +24,7 @@ import { applyInsertMode } from '../processors/insert';
 import { isBinary } from '../binary';
 import {
   buildNewFileDiff,
+  buildNewSymlinkDiff,
   computeDiff,
   computeDeleteDiff,
   computeSymlinkDiff,
@@ -932,9 +933,11 @@ export function pullCommand(): Command {
             // lstatFailed default). Since the file is actually new, there is
             // nothing to back up and the backup should not be created.
             if (writeTargets[i].symlinkTarget !== undefined) {
-              // Symlink entry — rebuild using computeSymlinkDiff (now that the
-              // path is confirmed absent it will return isNew:true correctly).
-              allDiffs[i] = computeSymlinkDiff(
+              // Symlink entry — use buildNewSymlinkDiff instead of
+              // computeSymlinkDiff: the parent dir is still not searchable
+              // (EACCES), so calling computeSymlinkDiff would lstatSync-fail
+              // again and return isUnreadable rather than isNew:true.
+              allDiffs[i] = buildNewSymlinkDiff(
                 allDiffs[i].targetPath,
                 writeTargets[i].symlinkTarget!,
               );

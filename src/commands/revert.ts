@@ -177,9 +177,7 @@ export function revertCommand(): Command {
           }
         }
 
-        if (hasError) process.exit(2);
-
-        if (diffs.length === 0) {
+        if (diffs.length === 0 && !hasError) {
           console.log(
             'Nothing to revert — files already match the target state.',
           );
@@ -193,6 +191,8 @@ export function revertCommand(): Command {
             : `Reverting to state after pull ${shortId}`;
         console.log(`${label}:\n`);
         printDiffs(diffs);
+
+        if (hasError) process.exit(2);
 
         const yes = opts.yes ?? false;
         if (!yes) {
