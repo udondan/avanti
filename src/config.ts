@@ -669,6 +669,15 @@ export function parseConfigContent(content: string): AvantiConfig {
           `files["${expandedTarget}"]: duplicate target${suffix}`,
         );
       }
+      if (
+        fileEntry.symlink &&
+        expandedTarget !== target &&
+        (expandedTarget.endsWith('/') || expandedTarget.endsWith(path.sep))
+      ) {
+        throw new Error(
+          `files["${expandedTarget}"] (expanded from "${target}").symlink: target must be a single file path, not a directory pattern (remove the trailing slash)`,
+        );
+      }
       files[expandedTarget] = { ...fileEntry, target: expandedTarget };
       if (expandedTarget !== target) {
         fileOrigins[expandedTarget] = target;
