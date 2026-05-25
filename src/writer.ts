@@ -908,15 +908,24 @@ export function atomicWrite(
       if (!fs.existsSync(dir)) {
         fs.mkdirSync(dir, { recursive: true });
       }
-      const tmpLink = path.join(
-        dir,
-        '.' +
-          path.basename(t.targetPath) +
+      let tmpLink: string;
+      for (;;) {
+        tmpLink = path.join(
+          dir,
           '.' +
-          crypto.randomBytes(8).toString('hex') +
-          '.avanti-tmp',
-      );
-      fs.symlinkSync(t.symlinkTarget!, tmpLink);
+            path.basename(t.targetPath) +
+            '.' +
+            crypto.randomBytes(8).toString('hex') +
+            '.avanti-tmp',
+        );
+        try {
+          fs.symlinkSync(t.symlinkTarget!, tmpLink);
+          break;
+        } catch (err) {
+          // Retry on collision — same strategy as O_EXCL temp files.
+          if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
+        }
+      }
       stagedLinks.push({ tmp: tmpLink, dest: t.targetPath });
     }
 

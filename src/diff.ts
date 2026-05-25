@@ -390,7 +390,9 @@ export function computeSymlinkDiff(
   let currentTarget: string;
   try {
     currentTarget = fs.readlinkSync(targetPath);
-  } catch {
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code !== 'EACCES' && code !== 'EPERM') throw err;
     return {
       targetPath,
       isNew: false,
