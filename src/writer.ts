@@ -991,25 +991,20 @@ export function atomicWrite(
           '.avanti-tmp',
       );
       backupTemps.push(backupTmp);
-      if (existing.isSymbolicLink() && process.platform !== 'win32') {
+      if (existing.isSymbolicLink()) {
+        if (process.platform === 'win32') {
+          // fs.symlinkSync requires elevated privileges on Windows; copyFileSync
+          // would dereference the link and copy its target's contents, which is
+          // misleading and can read files outside the working directory. Skip.
+          console.warn(
+            `Warning: cannot back up symlink ${t.targetPath} on Windows; backup skipped.`,
+          );
+          continue;
+        }
         // Preserve the symlink itself (not the file it points to) in the backup.
         fs.symlinkSync(fs.readlinkSync(t.targetPath), backupTmp);
       } else {
-        // On Windows fs.symlinkSync requires elevated privileges; back up the
-        // dereferenced file content instead. Skip when the symlink points to a
-        // directory (EISDIR) or is dangling (ENOENT) — those cannot be copied.
-        try {
-          fs.copyFileSync(t.targetPath, backupTmp);
-        } catch (err: unknown) {
-          const code = (err as NodeJS.ErrnoException).code;
-          if (code === 'EISDIR' || code === 'ENOENT') {
-            console.warn(
-              `Warning: cannot back up ${t.targetPath} on Windows (${code}); backup skipped.`,
-            );
-            continue;
-          }
-          throw err;
-        }
+        fs.copyFileSync(t.targetPath, backupTmp);
       }
       backupRenames.push({ tmp: backupTmp, dest: t.backupPath });
     }
