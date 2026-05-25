@@ -63,7 +63,10 @@ function isLocalFileSrc(src: FileSrc): boolean {
       !src.startsWith('exec:') &&
       !src.startsWith('github:') &&
       !src.startsWith('gitlab:') &&
-      !src.startsWith('raw:')
+      !src.startsWith('raw:') &&
+      !src.startsWith('s3://') &&
+      !src.startsWith('ssh://') &&
+      !src.startsWith('git+')
     );
   }
   return 'path' in src;
@@ -521,6 +524,11 @@ export function parseConfigContent(content: string): AvantiConfig {
     }
 
     if (fileEntry.symlink) {
+      if (target === SELF_KEY) {
+        throw new Error(
+          `files["${SELF_KEY}"].symlink: $self cannot be a symlink entry`,
+        );
+      }
       if (Array.isArray(fileEntry.src)) {
         throw new Error(
           `files["${target}"].symlink: cannot be combined with a list of sources`,

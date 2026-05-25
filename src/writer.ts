@@ -87,21 +87,67 @@ function sudoSymlinkWrite(t: SudoWriteTarget): void {
 
   if (t.backupPath) {
     const backupDir = path.dirname(t.backupPath);
+    const resolvedBackup = path.resolve(t.backupPath);
     // Validate backup ancestors BEFORE privileged mkdir to avoid creating
     // root-owned directories in an untrusted path.
     checkAncestorsSafe(sudo, t.backupPath, trustedUids, 'backup');
     sudoRun(sudo, ['mkdir', '-p', '--', backupDir]);
     // Re-validate after mkdir: newly created intermediates are now present.
     checkAncestorsSafe(sudo, t.backupPath, trustedUids, 'backup');
-    // cp -P preserves symlinks — back up the existing entry (file or symlink)
-    // without following it. Failure is non-fatal: the symlink write still
-    // proceeds so pull is not blocked when backup storage is unavailable.
-    const cp = spawnSync(
+    // Use mktemp + cp -P + mv (same pattern as sudoWriteMv) to avoid following
+    // an existing symlink at backupPath. cp writes to the temp file (O_EXCL,
+    // owned by root), then mv atomically replaces backupPath. Failure is
+    // non-fatal: the symlink write still proceeds.
+    const mktempBackup = spawnSync(
       'sudo',
-      [...sudoUserArgs(sudo), 'cp', '-P', '--', resolvedTarget, t.backupPath],
-      { stdio: 'ignore' },
+      [
+        ...sudoUserArgs(sudo),
+        'mktemp',
+        path.join(path.resolve(backupDir), '.avanti-backup-XXXXXXXXXX'),
+      ],
+      { stdio: ['ignore', 'pipe', 'inherit'] },
     );
-    if (cp.status !== 0 || cp.error) {
+    if (mktempBackup.status === 0 && !mktempBackup.error) {
+      const backupTmp = mktempBackup.stdout.toString().trim();
+      // cp -P preserves symlinks (does not dereference the source).
+      const cp = spawnSync(
+        'sudo',
+        [...sudoUserArgs(sudo), 'cp', '-P', '--', resolvedTarget, backupTmp],
+        { stdio: 'ignore' },
+      );
+      if (cp.status === 0 && !cp.error) {
+        const backupIsDir =
+          spawnSync(
+            'sudo',
+            [...sudoUserArgs(sudo), 'test', '-d', resolvedBackup],
+            { stdio: 'ignore' },
+          ).status === 0;
+        if (backupIsDir) {
+          sudoRun(sudo, ['rm', '-f', '--', backupTmp]);
+          console.warn(
+            `Warning: could not back up ${t.targetPath}: backup path is a directory`,
+          );
+        } else {
+          try {
+            sudoMv(sudo, backupTmp, resolvedBackup);
+          } catch {
+            spawnSync(
+              'sudo',
+              [...sudoUserArgs(sudo), 'rm', '-f', '--', backupTmp],
+              { stdio: 'ignore' },
+            );
+            console.warn(`Warning: could not back up ${t.targetPath}`);
+          }
+        }
+      } else {
+        spawnSync(
+          'sudo',
+          [...sudoUserArgs(sudo), 'rm', '-f', '--', backupTmp],
+          { stdio: 'ignore' },
+        );
+        console.warn(`Warning: could not back up ${t.targetPath}`);
+      }
+    } else {
       console.warn(`Warning: could not back up ${t.targetPath}`);
     }
   }

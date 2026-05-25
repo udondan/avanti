@@ -162,6 +162,54 @@ describe('config parsing — symlink', () => {
       ),
     ).toThrow(/cannot be combined with mode:/);
   });
+
+  it('rejects symlink combined with yaml:', () => {
+    expect(() =>
+      parseConfigContent(
+        `files:\n  ./link:\n    src: /tmp/x\n    symlink: true\n    yaml: true\n`,
+      ),
+    ).toThrow(/cannot be combined with yaml:/);
+  });
+
+  it('rejects symlink combined with toml:', () => {
+    expect(() =>
+      parseConfigContent(
+        `files:\n  ./link:\n    src: /tmp/x\n    symlink: true\n    toml: true\n`,
+      ),
+    ).toThrow(/cannot be combined with toml:/);
+  });
+
+  it('rejects symlink combined with ini:', () => {
+    expect(() =>
+      parseConfigContent(
+        `files:\n  ./link:\n    src: /tmp/x\n    symlink: true\n    ini: true\n`,
+      ),
+    ).toThrow(/cannot be combined with ini:/);
+  });
+
+  it('rejects symlink combined with strategy:', () => {
+    expect(() =>
+      parseConfigContent(
+        `files:\n  ./link:\n    src: /tmp/x\n    symlink: true\n    strategy: insert\n`,
+      ),
+    ).toThrow(/cannot be combined with strategy:/);
+  });
+
+  it('rejects symlink combined with extract:', () => {
+    expect(() =>
+      parseConfigContent(
+        `files:\n  ./link/:\n    src: /tmp/x\n    symlink: true\n    extract: true\n`,
+      ),
+    ).toThrow(/cannot be combined with extract:/);
+  });
+
+  it('rejects symlink combined with on.write:', () => {
+    expect(() =>
+      parseConfigContent(
+        `files:\n  ./link:\n    src: /tmp/x\n    symlink: true\n    on:\n      write: echo done\n`,
+      ),
+    ).toThrow(/cannot be combined with on\.write:/);
+  });
 });
 
 // ── resolveSymlinkSrcPath ──────────────────────────────────────────────────
