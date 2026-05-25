@@ -44,14 +44,14 @@ export function sudoAtomicWrite(targets: SudoWriteTarget[]): void {
   const regularTargets = targets.filter((t) => t.symlinkTarget === undefined);
   const mvTargets = regularTargets.filter((t) => !t.writeInPlace);
   const inPlaceTargets = regularTargets.filter((t) => t.writeInPlace);
-  for (const t of symlinkTargets) {
-    sudoSymlinkWrite(t);
-  }
   for (const t of mvTargets) {
     sudoWriteMv(t);
   }
   for (const t of inPlaceTargets) {
     sudoWriteInPlace(t);
+  }
+  for (const t of symlinkTargets) {
+    sudoSymlinkWrite(t);
   }
 }
 

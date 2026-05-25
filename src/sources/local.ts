@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { redactUrl } from '../fetch';
 import { verbose } from '../logger';
 import { expandTilde } from '../paths';
 import { resolveVars } from '../variables';
@@ -81,7 +82,7 @@ export function resolveSymlinkSrcPath(
     expanded.startsWith('raw:')
   ) {
     throw new Error(
-      `symlink src resolved to a non-local value "${expanded}"; symlink src must be a local filesystem path`,
+      `symlink src resolved to a non-local value "${redactUrl(expanded)}"; symlink src must be a local filesystem path`,
     );
   }
   const tildeExpanded = expandTilde(expanded);

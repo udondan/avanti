@@ -351,12 +351,13 @@ export function computeSymlinkDiff(
         isDirectory: true,
       };
     }
+    const existingLabel = stat.isFile() ? 'regular file' : 'special file';
     const patch = createTwoFilesPatch(
       targetPath,
       targetPath,
-      '[regular file]\n',
+      `[${existingLabel}]\n`,
       `-> ${symlinkTarget}\n`,
-      'was regular file',
+      `was ${existingLabel}`,
       'replaced by symlink',
     );
     return {
