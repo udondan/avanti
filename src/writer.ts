@@ -983,8 +983,20 @@ export function atomicWrite(
         fs.symlinkSync(fs.readlinkSync(t.targetPath), backupTmp);
       } else {
         // On Windows fs.symlinkSync requires elevated privileges; back up the
-        // dereferenced file content instead (best available option on that platform).
-        fs.copyFileSync(t.targetPath, backupTmp);
+        // dereferenced file content instead. Skip when the symlink points to a
+        // directory (EISDIR) or is dangling (ENOENT) — those cannot be copied.
+        try {
+          fs.copyFileSync(t.targetPath, backupTmp);
+        } catch (err: unknown) {
+          const code = (err as NodeJS.ErrnoException).code;
+          if (code === 'EISDIR' || code === 'ENOENT') {
+            console.warn(
+              `Warning: cannot back up ${t.targetPath} on Windows (${code}); backup skipped.`,
+            );
+            continue;
+          }
+          throw err;
+        }
       }
       backupRenames.push({ tmp: backupTmp, dest: t.backupPath });
     }
