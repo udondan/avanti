@@ -64,10 +64,14 @@ function isLocalFileSrc(src: FileSrc): boolean {
       !src.startsWith('exec:') &&
       !src.startsWith('github:') &&
       !src.startsWith('gitlab:') &&
+      !src.startsWith('bitbucket:') &&
       !src.startsWith('raw:') &&
       !src.startsWith('s3://') &&
       !src.startsWith('ssh://') &&
-      !src.startsWith('git+')
+      !src.startsWith('git+') &&
+      !src.startsWith('vault:') &&
+      !src.startsWith('aws_secrets_manager:') &&
+      !src.startsWith('aws_systems_manager_parameter:')
     );
   }
   if (!('path' in src)) return false;
@@ -80,10 +84,14 @@ function isLocalFileSrc(src: FileSrc): boolean {
     !p.startsWith('exec:') &&
     !p.startsWith('github:') &&
     !p.startsWith('gitlab:') &&
+    !p.startsWith('bitbucket:') &&
     !p.startsWith('raw:') &&
     !p.startsWith('s3://') &&
     !p.startsWith('ssh://') &&
-    !p.startsWith('git+')
+    !p.startsWith('git+') &&
+    !p.startsWith('vault:') &&
+    !p.startsWith('aws_secrets_manager:') &&
+    !p.startsWith('aws_systems_manager_parameter:')
   );
 }
 

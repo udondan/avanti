@@ -81,7 +81,11 @@ export function resolveSymlinkSrcPath(
     expanded.startsWith('s3://') ||
     expanded.startsWith('github:') ||
     expanded.startsWith('gitlab:') ||
-    expanded.startsWith('raw:')
+    expanded.startsWith('bitbucket:') ||
+    expanded.startsWith('raw:') ||
+    expanded.startsWith('vault:') ||
+    expanded.startsWith('aws_secrets_manager:') ||
+    expanded.startsWith('aws_systems_manager_parameter:')
   ) {
     throw new Error(
       `symlink src resolved to a non-local value "${redactUrl(expanded)}"; symlink src must be a local filesystem path`,
