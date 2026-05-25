@@ -118,8 +118,22 @@ function sudoSymlinkWrite(t: SudoWriteTarget): void {
       }
       const backupTmp = mktempBackup.stdout.toString().trim();
       try {
-        // cp -pP: -p preserves metadata; -P preserves symlinks (does not dereference).
-        sudoRun(sudo, ['cp', '-pP', '--', resolvedTarget, backupTmp]);
+        if (existingIsSymlink) {
+          // Store the symlink as an absolute target so the backup resolves
+          // correctly from backupDir regardless of whether the original target
+          // was relative. mktemp already created a regular file; remove it
+          // before symlinking.
+          const rawLinkTarget = sudoReadlink(sudo, t.targetPath);
+          if (rawLinkTarget === null)
+            throw new Error(`sudoReadlink failed for ${t.targetPath}`);
+          const absLinkTarget = path.isAbsolute(rawLinkTarget)
+            ? rawLinkTarget
+            : path.resolve(path.dirname(resolvedTarget), rawLinkTarget);
+          sudoRun(sudo, ['rm', '-f', '--', backupTmp]);
+          sudoRun(sudo, ['ln', '-s', '--', absLinkTarget, backupTmp]);
+        } else {
+          sudoRun(sudo, ['cp', '-pP', '--', resolvedTarget, backupTmp]);
+        }
         const backupIsDir =
           spawnSync(
             'sudo',
@@ -1026,7 +1040,13 @@ export function atomicWrite(
           continue;
         }
         // Preserve the symlink itself (not the file it points to) in the backup.
-        fs.symlinkSync(fs.readlinkSync(t.targetPath), backupTmp);
+        // Resolve relative targets to absolute so the backup symlink resolves
+        // correctly from backupDir, not just from the original link's directory.
+        const rawLinkTarget = fs.readlinkSync(t.targetPath);
+        const absLinkTarget = path.isAbsolute(rawLinkTarget)
+          ? rawLinkTarget
+          : path.resolve(path.dirname(t.targetPath), rawLinkTarget);
+        fs.symlinkSync(absLinkTarget, backupTmp);
       } else {
         fs.copyFileSync(t.targetPath, backupTmp);
       }

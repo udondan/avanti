@@ -25,13 +25,34 @@ export interface FileDiff {
 export function computeDeleteDiff(targetPath: string): FileDiff {
   let oldBuf: Buffer;
   try {
-    if (fs.lstatSync(targetPath, { throwIfNoEntry: false }) === undefined) {
+    const stat = fs.lstatSync(targetPath, { throwIfNoEntry: false });
+    if (stat === undefined) {
       return {
         targetPath,
         isNew: false,
         hasChanges: false,
         contentChanged: false,
         patch: '',
+      };
+    }
+    if (stat.isSymbolicLink()) {
+      const linkTarget = fs.readlinkSync(targetPath);
+      const patch = createTwoFilesPatch(
+        targetPath,
+        '/dev/null',
+        `-> ${linkTarget}\n`,
+        '',
+        undefined,
+        'deleted',
+      );
+      return {
+        targetPath,
+        isNew: false,
+        isDelete: true,
+        hasChanges: true,
+        contentChanged: true,
+        patch,
+        isSymlink: true,
       };
     }
     oldBuf = fs.readFileSync(targetPath);

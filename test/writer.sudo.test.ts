@@ -516,6 +516,7 @@ describe('sudoAtomicWrite — symlink path', () => {
           if (args.includes('test') && args.includes('-f')) return failResult();
           if (args.includes('mktemp'))
             return okResult('/etc/.avanti-backup-tmp');
+          if (args.includes('readlink')) return okResult('/etc/old-target');
           return okResult();
         },
       );
@@ -529,9 +530,19 @@ describe('sudoAtomicWrite — symlink path', () => {
       };
       sudoAtomicWrite([target]);
       const flat = calls.map((a) => a.join(' '));
+      // Symlink backups use ln -s with an absolute target (not cp -pP) so the
+      // backup resolves correctly from the backup directory.
       expect(flat.some((c) => c.includes('cp') && c.includes('-pP'))).toBe(
-        true,
+        false,
       );
+      expect(
+        flat.some(
+          (c) =>
+            c.includes('ln') &&
+            c.includes('-s') &&
+            c.includes('/etc/old-target'),
+        ),
+      ).toBe(true);
       expect(flat.some((c) => c.includes('ln') && c.includes('-sf'))).toBe(
         true,
       );
