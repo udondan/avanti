@@ -54,6 +54,13 @@ export function resetCommand(): Command {
           const original = history.readVersion(meta.absolutePath, 0);
           if (original === null) continue;
           if (meta.v0IsSymlink) {
+            if (process.platform === 'win32') {
+              console.error(
+                `symlink: ${meta.absolutePath}: cannot restore pre-avanti symlink on Windows`,
+              );
+              hasError = true;
+              continue;
+            }
             const symlinkTarget = original.toString('utf8');
             const d = computeSymlinkDiff(meta.absolutePath, symlinkTarget);
             if (d.isDirectory) {

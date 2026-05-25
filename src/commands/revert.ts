@@ -108,6 +108,13 @@ export function revertCommand(): Command {
             );
             if (content === null) continue;
             if (entry.isSymlink) {
+              if (process.platform === 'win32') {
+                console.error(
+                  `symlink: ${meta.absolutePath}: cannot restore symlink on Windows`,
+                );
+                hasError = true;
+                continue;
+              }
               const symlinkTarget = content.toString('utf8');
               const d = computeSymlinkDiff(meta.absolutePath, symlinkTarget);
               if (d.isDirectory) {
@@ -137,6 +144,13 @@ export function revertCommand(): Command {
               const original = history.readVersion(meta.absolutePath, 0);
               if (original !== null) {
                 if (meta.v0IsSymlink) {
+                  if (process.platform === 'win32') {
+                    console.error(
+                      `symlink: ${meta.absolutePath}: cannot restore pre-avanti symlink on Windows`,
+                    );
+                    hasError = true;
+                    continue;
+                  }
                   const symlinkTarget = original.toString('utf8');
                   const d = computeSymlinkDiff(
                     meta.absolutePath,

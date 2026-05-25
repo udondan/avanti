@@ -147,10 +147,13 @@ export class HistoryManager {
     let isFirstSeen = false;
     if (fs.existsSync(metaPath)) {
       meta = JSON.parse(fs.readFileSync(metaPath, 'utf8')) as FileHistoryMeta;
-      // Update isSymlink flag when it changes (e.g. entry switched from file to symlink)
-      // and persist immediately — closePullSession only updates currentVersion/sudo.
-      meta.isSymlink = isSymlink ? true : undefined;
-      fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2), 'utf8');
+      // Only persist when isSymlink actually changes to avoid spurious I/O
+      // and premature meta updates that could be observed if the pull aborts.
+      const newIsSymlink = isSymlink ? true : undefined;
+      if (meta.isSymlink !== newIsSymlink) {
+        meta.isSymlink = newIsSymlink;
+        fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2), 'utf8');
+      }
     } else {
       isFirstSeen = true;
       let existedBeforeAvanti = !isNew;

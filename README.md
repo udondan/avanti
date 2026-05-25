@@ -1312,7 +1312,7 @@ files:
     backup: $dirname/$filename.bkp
 ```
 
-Backup happens when the target path currently holds a regular file or a symlink — regardless of whether the entry being written is a regular file or a symlink entry. If the existing target is a symlink, the symlink itself (not the file it points to) is preserved in the backup. **Exception:** for regular-file entries with `sudo: true`, only existing regular files are backed up — if the current target is a symlink it is not backed up. For `symlink:` entries with `sudo: true`, the existing symlink (or regular file) at the target path is backed up before being replaced. Directory targets are never backed up. If the backup path already exists it is overwritten — use the [counter pattern](#counter-pattern) or `$datetime` when you want to keep every backup.
+Backup happens when the target path currently holds a regular file or a symlink — regardless of whether the entry being written is a regular file or a symlink entry. On POSIX, if the existing target is a symlink, the symlink itself (not the file it points to) is preserved in the backup; on Windows the backup contains the dereferenced file content instead (because creating symlinks may require elevated privileges). **Exception:** for regular-file entries with `sudo: true`, only existing regular files are backed up — if the current target is a symlink it is not backed up. For `symlink:` entries with `sudo: true`, the existing symlink (or regular file) at the target path is backed up before being replaced. Directory targets are never backed up. If the backup path already exists it is overwritten — use the [counter pattern](#counter-pattern) or `$datetime` when you want to keep every backup.
 
 #### Path variables
 
