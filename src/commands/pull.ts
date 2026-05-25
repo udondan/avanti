@@ -1370,14 +1370,28 @@ export function pullCommand(): Command {
               allDiffs[i].isUnreadable &&
               !allDiffs[i].isNew &&
               writeTargets[i].sudo &&
-              !history.getFileMeta(targetPath) &&
-              // Refuse symlinks: sudoRead follows them and could read an
-              // unintended privileged file before write-path checks run,
-              // persisting arbitrary content into the user's history.
-              !sudoIsSymlink(writeTargets[i].sudo!, targetPath)
+              !history.getFileMeta(targetPath)
             ) {
-              v0Override =
-                sudoRead(writeTargets[i].sudo!, targetPath) ?? undefined;
+              if (sudoIsSymlink(writeTargets[i].sudo!, targetPath)) {
+                if (writeTargets[i].symlinkTarget !== undefined) {
+                  // Destination is a symlink and so is the write target — read
+                  // the existing link target via sudoReadlink so v0 records the
+                  // original symlink destination for faithful revert/reset.
+                  const existingTarget = sudoReadlink(
+                    writeTargets[i].sudo!,
+                    targetPath,
+                  );
+                  if (existingTarget !== null) {
+                    v0Override = Buffer.from(existingTarget);
+                  }
+                }
+                // If the write target is a regular file but the destination is a
+                // symlink, skip v0: sudoRead would follow the symlink and could
+                // read an unintended privileged file before write-path checks run.
+              } else {
+                v0Override =
+                  sudoRead(writeTargets[i].sudo!, targetPath) ?? undefined;
+              }
             }
             const { fileRef } = history.stageFileVersion(
               pullId,

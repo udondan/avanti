@@ -36,7 +36,24 @@ export function computeDeleteDiff(targetPath: string): FileDiff {
       };
     }
     if (stat.isSymbolicLink()) {
-      const linkTarget = fs.readlinkSync(targetPath);
+      let linkTarget: string;
+      try {
+        linkTarget = fs.readlinkSync(targetPath);
+      } catch (err) {
+        const code = (err as NodeJS.ErrnoException).code;
+        if (code !== 'EACCES' && code !== 'EPERM') throw err;
+        // Symlink exists but reading its target requires elevated privileges.
+        return {
+          targetPath,
+          isNew: false,
+          isDelete: true,
+          hasChanges: true,
+          contentChanged: true,
+          patch: '',
+          isUnreadable: true,
+          isSymlink: true,
+        };
+      }
       const patch = createTwoFilesPatch(
         targetPath,
         '/dev/null',
