@@ -1461,6 +1461,8 @@ The symlink itself is tracked in avanti's history, so `revert` and `reset` resto
 - `writeInPlace`, `strategy`, `followSymlink` — incompatible write strategies
 - `mode` — symlinks do not have independent permission bits on POSIX
 - A list `src` — a symlink has exactly one target
+- `src.sha`, `src.filter`, `src.if`, `src.ifAny` — object-form src options that only apply to fetched content
+- The `$self` key — the config file itself cannot be a symlink entry
 
 **POSIX only** — symlink entries are not supported on Windows. `pull` will error if a symlink entry is reached on win32. Use an `if: { os: [linux, mac] }` condition to gate symlink entries in cross-platform configs.
 
