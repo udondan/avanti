@@ -70,7 +70,7 @@ export function revertCommand(): Command {
         // When reverting TO a specific pull, we want the state AFTER that pull
         let snapshot: Map<
           string,
-          { version: number; existedBeforeAvanti: boolean }
+          { version: number; existedBeforeAvanti: boolean; isSymlink?: boolean }
         >;
 
         if (pullId === undefined) {
@@ -80,7 +80,11 @@ export function revertCommand(): Command {
               ? history.getFilesAtPull(pulls[1].pullId)
               : new Map<
                   string,
-                  { version: number; existedBeforeAvanti: boolean }
+                  {
+                    version: number;
+                    existedBeforeAvanti: boolean;
+                    isSymlink?: boolean;
+                  }
                 >(); // no prior pull → everything goes to pre-avanti state
         } else {
           snapshot = history.getFilesAtPull(targetPullId);
@@ -102,7 +106,7 @@ export function revertCommand(): Command {
               entry.version,
             );
             if (content === null) continue;
-            if (meta.isSymlink) {
+            if (entry.isSymlink) {
               const symlinkTarget = content.toString('utf8');
               const d = computeSymlinkDiff(meta.absolutePath, symlinkTarget);
               if (d.hasChanges) {

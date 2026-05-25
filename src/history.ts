@@ -40,6 +40,7 @@ export interface PullLogFileRef {
   wasNew: boolean;
   sudo?: true | string;
   sources?: SourceShaRecord[];
+  isSymlink?: boolean;
 }
 
 export interface FileVersionInfo {
@@ -146,8 +147,10 @@ export class HistoryManager {
     let isFirstSeen = false;
     if (fs.existsSync(metaPath)) {
       meta = JSON.parse(fs.readFileSync(metaPath, 'utf8')) as FileHistoryMeta;
-      // Update isSymlink flag when it changes (e.g. entry switched from file to symlink).
+      // Update isSymlink flag when it changes (e.g. entry switched from file to symlink)
+      // and persist immediately — closePullSession only updates currentVersion/sudo.
       meta.isSymlink = isSymlink ? true : undefined;
+      fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2), 'utf8');
     } else {
       isFirstSeen = true;
       let existedBeforeAvanti = !isNew;
@@ -224,6 +227,7 @@ export class HistoryManager {
       wasNew: isNew,
       ...(sudo ? { sudo } : {}),
       ...(sources !== undefined && { sources }),
+      ...(isSymlink ? { isSymlink: true } : {}),
     };
 
     return { version: nextVersion, fileRef };
@@ -360,38 +364,52 @@ export class HistoryManager {
 
   getFilesAtPull(
     pullId: string,
-  ): Map<string, { version: number; existedBeforeAvanti: boolean }> {
+  ): Map<
+    string,
+    { version: number; existedBeforeAvanti: boolean; isSymlink?: boolean }
+  > {
     const result = new Map<
       string,
-      { version: number; existedBeforeAvanti: boolean }
+      { version: number; existedBeforeAvanti: boolean; isSymlink?: boolean }
     >();
     const pulls = this.listPulls().slice().reverse(); // chronological
 
-    // Build state snapshot: for each file, find highest version at or before the target pull
+    // Build state snapshot: for each file, find highest version at or before the target pull.
+    // Track both version and isSymlink from the ref so revert uses per-version type info.
     let found = false;
-    const snapshot = new Map<string, number>(); // absolutePath → version at target pull
+    const snapshot = new Map<
+      string,
+      { version: number; isSymlink?: boolean }
+    >();
 
     for (const pull of pulls) {
       if (pull.pullId === pullId) {
         for (const ref of pull.files) {
-          snapshot.set(ref.absolutePath, ref.version);
+          snapshot.set(ref.absolutePath, {
+            version: ref.version,
+            isSymlink: ref.isSymlink,
+          });
         }
         found = true;
         break;
       }
       // Always overwrite so we capture the most recent version before the target pull
       for (const ref of pull.files) {
-        snapshot.set(ref.absolutePath, ref.version);
+        snapshot.set(ref.absolutePath, {
+          version: ref.version,
+          isSymlink: ref.isSymlink,
+        });
       }
     }
 
     if (!found) return result;
 
-    for (const [absolutePath, version] of snapshot) {
+    for (const [absolutePath, { version, isSymlink }] of snapshot) {
       const meta = this.getFileMeta(absolutePath);
       result.set(absolutePath, {
         version,
         existedBeforeAvanti: meta?.existedBeforeAvanti ?? false,
+        isSymlink,
       });
     }
 

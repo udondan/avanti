@@ -790,13 +790,16 @@ export function atomicWrite(
   const mvTargets = regularTargets.filter((t) => !t.writeInPlace);
   const inPlaceTargets = regularTargets.filter((t) => t.writeInPlace);
 
+  // Symlinks and mv-target files both use a stage-then-rename approach so
+  // no destination path is touched until ALL staging AND backup work is done.
   const staged: Array<{ tmp: string; dest: string; effectiveMode?: number }> =
     [];
+  // Staged temp symlinks — renamed into place in Phase 3 alongside mv targets.
+  const stagedLinks: Array<{ tmp: string; dest: string }> = [];
   const backupTemps: string[] = [];
-  const tmpLinks: string[] = [];
   try {
-    // Symlink phase: create atomically via temp symlink + rename(2).
-    // rename(2) is atomic on POSIX even when the destination already exists.
+    // Phase 0 (symlink staging): create temp symlinks but do NOT rename yet.
+    // Renames happen in Phase 3, after backups have captured the pre-write state.
     for (const t of symlinkTargets) {
       const dir = path.dirname(t.targetPath);
       if (!fs.existsSync(dir)) {
@@ -810,11 +813,10 @@ export function atomicWrite(
           crypto.randomBytes(8).toString('hex') +
           '.avanti-tmp',
       );
-      tmpLinks.push(tmpLink);
       fs.symlinkSync(t.symlinkTarget!, tmpLink);
-      fs.renameSync(tmpLink, t.targetPath);
-      tmpLinks.pop(); // rename succeeded — no longer needs cleanup
+      stagedLinks.push({ tmp: tmpLink, dest: t.targetPath });
     }
+
     // Phase 1 (mv targets): write all temp files. Backups are deferred to
     // Phase 2 so that a staging failure here never creates an orphaned backup
     // for a destination that hasn't been modified yet.
@@ -925,7 +927,11 @@ export function atomicWrite(
       fs.renameSync(tmp, dest);
     }
 
-    // Phase 3: atomically rename each temp file into place
+    // Phase 3: atomically rename all staged temps (files and symlinks) into place.
+    // Only now are destination paths modified — all staging and backups succeeded.
+    for (const s of stagedLinks) {
+      fs.renameSync(s.tmp, s.dest);
+    }
     for (const s of staged) {
       fs.renameSync(s.tmp, s.dest);
       if (s.effectiveMode !== undefined) {
@@ -1033,9 +1039,9 @@ export function atomicWrite(
       }
     }
   } finally {
-    for (const tmp of tmpLinks) {
+    for (const s of stagedLinks) {
       try {
-        fs.rmSync(tmp, { force: true });
+        fs.rmSync(s.tmp, { force: true });
       } catch {
         // already renamed into place or never created
       }

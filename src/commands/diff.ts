@@ -128,6 +128,23 @@ async function runDiffLoop(
           : typeof entry.src === 'string'
             ? entry.src
             : (entry.src as LocalSrc).path;
+
+        // Honor optional: true — skip when the local source does not exist.
+        const isOptionalSrc =
+          !Array.isArray(entry.src) &&
+          typeof entry.src !== 'string' &&
+          !!(entry.src as LocalSrc).optional;
+        if (isOptionalSrc) {
+          const absSrc = resolveSymlinkSrcPath(
+            rawSrc,
+            workingDir,
+            preVars,
+            true,
+            targetPath,
+          );
+          if (!fs.existsSync(absSrc)) continue;
+        }
+
         const symlinkTarget = resolveSymlinkSrcPath(
           rawSrc,
           workingDir,

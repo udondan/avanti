@@ -327,6 +327,50 @@ describe.skipIf(isWindows)('atomicWrite — symlink targets', () => {
     ]);
     expect(fs.lstatSync(linkPath).isSymbolicLink()).toBe(true);
   });
+
+  it('backs up pre-existing regular file before replacing with symlink', () => {
+    const srcFile = path.join(tmpDir, 'source.txt');
+    const linkPath = path.join(tmpDir, 'my-link');
+    const backupPath = path.join(tmpDir, 'backup', 'my-link.bak');
+    const originalContent = 'original file content';
+    fs.writeFileSync(srcFile, 'target');
+    fs.writeFileSync(linkPath, originalContent);
+    atomicWrite([
+      {
+        targetPath: linkPath,
+        content: Buffer.from(srcFile),
+        symlinkTarget: srcFile,
+        backupPath,
+      },
+    ]);
+    // Link path is now a symlink
+    expect(fs.lstatSync(linkPath).isSymbolicLink()).toBe(true);
+    expect(fs.readlinkSync(linkPath)).toBe(srcFile);
+    // Backup contains the original file content
+    expect(fs.readFileSync(backupPath, 'utf8')).toBe(originalContent);
+  });
+
+  it('backs up pre-existing symlink before replacing with new symlink', () => {
+    const src1 = path.join(tmpDir, 'src1.txt');
+    const src2 = path.join(tmpDir, 'src2.txt');
+    const linkPath = path.join(tmpDir, 'my-link');
+    const backupPath = path.join(tmpDir, 'backup', 'my-link.bak');
+    fs.writeFileSync(src1, 'a');
+    fs.writeFileSync(src2, 'b');
+    fs.symlinkSync(src1, linkPath);
+    atomicWrite([
+      {
+        targetPath: linkPath,
+        content: Buffer.from(src2),
+        symlinkTarget: src2,
+        backupPath,
+      },
+    ]);
+    expect(fs.readlinkSync(linkPath)).toBe(src2);
+    // Backup is also a symlink pointing to the original target
+    expect(fs.lstatSync(backupPath).isSymbolicLink()).toBe(true);
+    expect(fs.readlinkSync(backupPath)).toBe(src1);
+  });
 });
 
 // ── Integration: pull creates symlink ─────────────────────────────────────
