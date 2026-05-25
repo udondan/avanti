@@ -847,9 +847,15 @@ export function pullCommand(): Command {
                     `symlink: ${ref.absolutePath}: cannot restore pre-avanti symlink on Windows`,
                   );
                   staleHasError = true;
-                  const warnDiff = buildNewSymlinkDiff(ref.absolutePath, '');
+                  // Show the actual stored target so the user knows what cannot
+                  // be restored. No staleRestoreDiffIndices push — there is no
+                  // corresponding staleToRestore entry for error-only diffs.
+                  const symlinkTarget = original.toString('utf8');
+                  const warnDiff = buildNewSymlinkDiff(
+                    ref.absolutePath,
+                    symlinkTarget,
+                  );
                   staleDiffs.push({ ...warnDiff, hasChanges: true });
-                  staleRestoreDiffIndices.push(staleDiffs.length - 1);
                 } else {
                   const symlinkTarget = original.toString('utf8');
                   const staleDiff = computeSymlinkDiff(
@@ -860,8 +866,9 @@ export function pullCommand(): Command {
                     console.error(
                       `symlink: ${ref.absolutePath} is a directory; cannot restore symlink over directory`,
                     );
+                    // No staleRestoreDiffIndices push — no corresponding
+                    // staleToRestore entry for this error-only diff.
                     staleDiffs.push(staleDiff);
-                    staleRestoreDiffIndices.push(staleDiffs.length - 1);
                   } else if (staleDiff.hasChanges) {
                     staleToRestore.push({
                       targetPath: ref.absolutePath,
