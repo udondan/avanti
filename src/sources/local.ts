@@ -64,6 +64,18 @@ export function resolveSymlinkSrcPath(
   linkPath: string,
 ): string {
   const expanded = resolveVars(src, vars);
+  // Guard against a variable that resolves to a remote URL or exec: expression.
+  // Config-level validation (isLocalFileSrc) checks the raw src before variable
+  // substitution; a variable value could still expand to a remote spec.
+  if (
+    expanded.startsWith('http://') ||
+    expanded.startsWith('https://') ||
+    expanded.startsWith('exec:')
+  ) {
+    throw new Error(
+      `symlink src resolved to a non-local value "${expanded}"; symlink src must be a local filesystem path`,
+    );
+  }
   let abs: string;
   if (expanded.startsWith('~/')) {
     abs = path.join(os.homedir(), expanded.slice(2));
