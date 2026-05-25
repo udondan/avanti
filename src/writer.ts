@@ -221,6 +221,19 @@ export function sudoIsSymlink(
   return r.status === 0;
 }
 
+export function sudoIsDirectory(
+  sudo: true | string,
+  targetPath: string,
+): boolean {
+  const r = spawnSync(
+    'sudo',
+    [...sudoUserArgs(sudo), 'test', '-d', path.resolve(targetPath)],
+    { stdio: 'ignore' },
+  );
+  if (r.error) throw new Error(`sudo test -d failed: ${r.error.message}`);
+  return r.status === 0;
+}
+
 export function sudoRun(sudo: true | string, args: string[]): void {
   const r = spawnSync('sudo', [...sudoUserArgs(sudo), ...args], {
     stdio: 'inherit',

@@ -38,6 +38,7 @@ import {
   sudoAuth,
   sudoDelete,
   sudoFileExists,
+  sudoIsDirectory,
   sudoIsSymlink,
   sudoRead,
   sudoRun,
@@ -950,7 +951,27 @@ export function pullCommand(): Command {
             }
             writeTargets[i] = { ...writeTargets[i], backupPath: undefined };
           } else {
-            allDiffs[i] = { ...allDiffs[i], isNew, modeChange };
+            let updatedDiff: FileDiff = { ...allDiffs[i], isNew, modeChange };
+            // For symlink entries, check whether the existing path is a real
+            // directory — ln -sf would place the symlink inside it rather than
+            // replacing it, so detect this now and surface an error before the
+            // write batch is attempted.
+            if (writeTargets[i].symlinkTarget !== undefined) {
+              const isSymlinkAtTarget = sudoIsSymlink(
+                writeTargets[i].sudo!,
+                writeTargets[i].targetPath,
+              );
+              if (
+                !isSymlinkAtTarget &&
+                sudoIsDirectory(
+                  writeTargets[i].sudo!,
+                  writeTargets[i].targetPath,
+                )
+              ) {
+                updatedDiff = { ...updatedDiff, isDirectory: true };
+              }
+            }
+            allDiffs[i] = updatedDiff;
           }
           // Propagate corrected isNew to the hook context so lifecycle hooks
           // receive the correct AVANTI_IS_NEW value.
@@ -961,6 +982,19 @@ export function pullCommand(): Command {
             fileHookContexts[hookIdx] = { ...fileHookContexts[hookIdx], isNew };
           }
         }
+      }
+      // Fail fast if any symlink write target is a real directory: ln -sf would
+      // place the symlink inside it rather than replacing it, so abort before
+      // prompting the user rather than failing mid-write-batch.
+      for (const d of allDiffs) {
+        if (d.isDirectory && d.isSymlink) {
+          console.error(
+            `symlink: ${d.targetPath} is a directory; cannot replace with a symlink`,
+          );
+        }
+      }
+      if (allDiffs.some((d) => d.isDirectory && d.isSymlink)) {
+        process.exit(2);
       }
       // Post-auth idempotency: compare current file content via sudo against the
       // desired content. If they match, suppress the write for this entry.
