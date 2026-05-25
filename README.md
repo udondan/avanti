@@ -1431,8 +1431,7 @@ Set `sudo: true` to write a file using elevated privileges (as root). Set `sudo:
 
 ```yaml
 files:
-  sshd_config:
-    target: /etc/ssh/sshd_config
+  /etc/ssh/sshd_config:
     src:
       github:
         repo: org/system-configs
@@ -1440,13 +1439,12 @@ files:
     mode: '0600'
     sudo: true
 
-  index_html:
-    target: /var/www/html/index.html
+  /var/www/html/index.html:
     src: https://example.com/index.html
     sudo: 'www-data'
 ```
 
-Absolute target paths (e.g. `/etc/ssh/sshd_config`) require `--working-dir /`. Use the `target:` field to specify where the file should be written:
+Absolute target paths (e.g. `/etc/ssh/sshd_config`) require `--working-dir /`. The map key is the target path:
 
 ```sh
 avanti pull --working-dir /
