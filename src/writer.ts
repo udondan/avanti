@@ -1126,7 +1126,12 @@ export function atomicWrite(
             );
             break;
           } catch (err) {
-            if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
+            if ((err as NodeJS.ErrnoException).code !== 'EEXIST') {
+              // copyFileSync may have created a partial file before failing
+              // (e.g. ENOSPC, I/O error). Remove it so no orphan is left.
+              fs.rmSync(backupTmp, { force: true });
+              throw err;
+            }
           }
         }
       }
