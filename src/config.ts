@@ -540,6 +540,29 @@ export function parseConfigContent(content: string): AvantiConfig {
             `http, exec, github, gitlab, and other remote sources are not supported`,
         );
       }
+      if (typeof fileEntry.src !== 'string' && 'path' in fileEntry.src) {
+        const localSrc = fileEntry.src;
+        if (localSrc.sha) {
+          throw new Error(
+            `files["${target}"].symlink: cannot be combined with src.sha`,
+          );
+        }
+        if (localSrc.filter) {
+          throw new Error(
+            `files["${target}"].symlink: cannot be combined with src.filter`,
+          );
+        }
+        if (localSrc.if) {
+          throw new Error(
+            `files["${target}"].symlink: cannot be combined with src.if`,
+          );
+        }
+        if (localSrc.ifAny) {
+          throw new Error(
+            `files["${target}"].symlink: cannot be combined with src.ifAny`,
+          );
+        }
+      }
       if (fileEntry.replace) {
         throw new Error(
           `files["${target}"].symlink: cannot be combined with replace:`,

@@ -210,6 +210,38 @@ describe('config parsing — symlink', () => {
       ),
     ).toThrow(/cannot be combined with on\.write:/);
   });
+
+  it('rejects symlink combined with src.sha', () => {
+    expect(() =>
+      parseConfigContent(
+        `files:\n  ./link:\n    src:\n      path: /tmp/x\n      sha: ${'a'.repeat(64)}\n    symlink: true\n`,
+      ),
+    ).toThrow(/cannot be combined with src\.sha/);
+  });
+
+  it('rejects symlink combined with src.filter', () => {
+    expect(() =>
+      parseConfigContent(
+        `files:\n  ./link:\n    src:\n      path: /tmp/x\n      filter:\n        - "*.txt"\n    symlink: true\n`,
+      ),
+    ).toThrow(/cannot be combined with src\.filter/);
+  });
+
+  it('rejects symlink combined with src.if', () => {
+    expect(() =>
+      parseConfigContent(
+        `files:\n  ./link:\n    src:\n      path: /tmp/x\n      if:\n        os: linux\n    symlink: true\n`,
+      ),
+    ).toThrow(/cannot be combined with src\.if/);
+  });
+
+  it('rejects symlink combined with src.ifAny', () => {
+    expect(() =>
+      parseConfigContent(
+        `files:\n  ./link:\n    src:\n      path: /tmp/x\n      ifAny:\n        - os: linux\n    symlink: true\n`,
+      ),
+    ).toThrow(/cannot be combined with src\.ifAny/);
+  });
 });
 
 // ── resolveSymlinkSrcPath ──────────────────────────────────────────────────

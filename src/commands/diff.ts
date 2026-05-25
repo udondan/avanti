@@ -473,10 +473,16 @@ function diffAgainstHistory(
   }
 
   const diffs: FileDiff[] = [];
-  for (const [absolutePath, { version }] of snapshot) {
+  for (const [absolutePath, { version, isSymlink }] of snapshot) {
     const historicalContent = history.readVersion(absolutePath, version);
     if (historicalContent === null) continue;
-    diffs.push(computeDiff(absolutePath, historicalContent));
+    if (isSymlink) {
+      diffs.push(
+        computeSymlinkDiff(absolutePath, historicalContent.toString('utf8')),
+      );
+    } else {
+      diffs.push(computeDiff(absolutePath, historicalContent));
+    }
   }
 
   // Also account for files that would be deleted (tracked files not in this snapshot)
