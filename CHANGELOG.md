@@ -1,5 +1,33 @@
 # Changelog
 
+## [0.25.0](https://github.com/udondan/avanti/compare/v0.24.0...v0.25.0) (2026-05-26)
+
+
+### ⚠ BREAKING CHANGES
+
+* `post:` is removed; migrate to `on.write:`.
+
+### Features
+
+* add $os, $arch, $arch_go system-injected variables ([#206](https://github.com/udondan/avanti/issues/206)) ([bee76c6](https://github.com/udondan/avanti/commit/bee76c6c7c0d7e035cfc270a46d7ef7f73bbf802))
+* add extract option for unpacking archives from single-file sources ([#210](https://github.com/udondan/avanti/issues/210)) ([4159785](https://github.com/udondan/avanti/commit/41597857ba0bd0c7c6ebd7b5c80cdf9bd541bd86))
+* add filter option for directory and release sources ([#204](https://github.com/udondan/avanti/issues/204)) ([a69d706](https://github.com/udondan/avanti/commit/a69d706b12273fc19b012304c45f0bc0a1ed809a))
+* add followSymlink option to update symlink target content ([#209](https://github.com/udondan/avanti/issues/209)) ([5b2e67f](https://github.com/udondan/avanti/commit/5b2e67f62e350b6f7a4b2188cc4cf67173c57f8b))
+* add sudo option for writing to privileged file locations ([#215](https://github.com/udondan/avanti/issues/215)) ([862c0f8](https://github.com/udondan/avanti/commit/862c0f8a1be0e2c671fa9b0e8620ec52440ad45c))
+* **condition:** accept darwin and win32 as os condition values ([#232](https://github.com/udondan/avanti/issues/232)) ([80a3312](https://github.com/udondan/avanti/commit/80a331290b00254ac07cfd716686089f63f121f5))
+* **ini:** add INI deep merge with comment and key-order preservation ([#233](https://github.com/udondan/avanti/issues/233)) ([dc6a0fe](https://github.com/udondan/avanti/commit/dc6a0fee57084289520232547a480f7b37333d11))
+* normalize $latest to semver, add $recent and /pattern/ ref syntax ([#208](https://github.com/udondan/avanti/issues/208)) ([8c1506c](https://github.com/udondan/avanti/commit/8c1506cfd629f769de1e049eaff5ec5067c056f4))
+* replace post with on: event system ([#216](https://github.com/udondan/avanti/issues/216)) ([50bdcab](https://github.com/udondan/avanti/commit/50bdcab6e76911fb7c2752e15c89f515c6ed812e))
+* **symlink:** create filesystem symlinks instead of copying content ([#236](https://github.com/udondan/avanti/issues/236)) ([22db27a](https://github.com/udondan/avanti/commit/22db27afeec2445c383cda5d4a0ac9cefc136f1b))
+
+
+### Bug Fixes
+
+* expand tilde in --working-dir flag ([#205](https://github.com/udondan/avanti/issues/205)) ([cfcc5b8](https://github.com/udondan/avanti/commit/cfcc5b84ee8adfaa6e5b6d7dcf478b2aebbd6aa8))
+* **json:** preserve property order when insert-mode key is updated ([#217](https://github.com/udondan/avanti/issues/217)) ([6bad6e0](https://github.com/udondan/avanti/commit/6bad6e039116e281a02f65fdc819c4a822717fe2))
+* preserve YAML key order in insert mode when value is updated ([#228](https://github.com/udondan/avanti/issues/228)) ([5ed56e6](https://github.com/udondan/avanti/commit/5ed56e610c79d32a53d04826ba29d7011f1e19d8)), closes [#218](https://github.com/udondan/avanti/issues/218)
+* **toml:** preserve property order when insert-mode key is updated ([#227](https://github.com/udondan/avanti/issues/227)) ([eed9301](https://github.com/udondan/avanti/commit/eed9301a08a2ce7ef5d41f517e48b3d44a7c7d54))
+
 ## [0.24.0](https://github.com/udondan/avanti/compare/v0.23.1...v0.24.0) (2026-05-21)
 
 
