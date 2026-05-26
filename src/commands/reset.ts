@@ -3,7 +3,12 @@ import * as path from 'path';
 import { normalizeConfigKey, resolveConfigPath } from '../config';
 import { expandTilde } from '../paths';
 import { HistoryManager } from '../history';
-import { computeDiff, computeDeleteDiff, printDiffs } from '../diff';
+import {
+  computeDiff,
+  computeDeleteDiff,
+  computeSymlinkDiff,
+  printDiffs,
+} from '../diff';
 import { atomicWrite, WriteTarget } from '../writer';
 import { confirm } from '../prompt';
 import { FileDiff } from '../diff';
@@ -42,18 +47,45 @@ export function resetCommand(): Command {
       const writeTargets: WriteTarget[] = [];
       const deletions: string[] = [];
       const diffs: FileDiff[] = [];
+      let hasError = false;
 
       for (const meta of tracked) {
         if (meta.existedBeforeAvanti) {
           const original = history.readVersion(meta.absolutePath, 0);
           if (original === null) continue;
-          const d = computeDiff(meta.absolutePath, original);
-          if (d.hasChanges) {
-            writeTargets.push({
-              targetPath: meta.absolutePath,
-              content: original,
-            });
-            diffs.push(d);
+          if (meta.v0IsSymlink) {
+            if (process.platform === 'win32') {
+              console.error(
+                `symlink: ${meta.absolutePath}: cannot restore pre-avanti symlink on Windows`,
+              );
+              hasError = true;
+              continue;
+            }
+            const symlinkTarget = original.toString('utf8');
+            const d = computeSymlinkDiff(meta.absolutePath, symlinkTarget);
+            if (d.isDirectory) {
+              console.error(
+                `symlink: ${meta.absolutePath} is a directory; cannot restore symlink over directory`,
+              );
+              hasError = true;
+              diffs.push(d);
+            } else if (d.hasChanges) {
+              writeTargets.push({
+                targetPath: meta.absolutePath,
+                content: original,
+                symlinkTarget,
+              });
+              diffs.push(d);
+            }
+          } else {
+            const d = computeDiff(meta.absolutePath, original);
+            if (d.hasChanges) {
+              writeTargets.push({
+                targetPath: meta.absolutePath,
+                content: original,
+              });
+              diffs.push(d);
+            }
           }
         } else {
           const d = computeDeleteDiff(meta.absolutePath);
@@ -64,7 +96,7 @@ export function resetCommand(): Command {
         }
       }
 
-      if (diffs.length === 0) {
+      if (diffs.length === 0 && !hasError) {
         console.log(
           'Files are already at their pre-avanti state. Nothing to reset.',
         );
@@ -72,10 +104,16 @@ export function resetCommand(): Command {
       }
 
       const total = writeTargets.length + deletions.length;
-      console.log(
-        `This will restore ${total} tracked file(s) to their pre-avanti state:\n`,
-      );
-      printDiffs(diffs);
+      if (total > 0) {
+        console.log(
+          `This will restore ${total} tracked file(s) to their pre-avanti state:\n`,
+        );
+      }
+      if (diffs.length > 0) {
+        printDiffs(diffs);
+      }
+
+      if (hasError) process.exit(2);
 
       const yes = opts.yes ?? false;
       if (!yes) {

@@ -3,7 +3,12 @@ import * as path from 'path';
 import { normalizeConfigKey, resolveConfigPath } from '../config';
 import { expandTilde } from '../paths';
 import { HistoryManager } from '../history';
-import { computeDiff, computeDeleteDiff, printDiffs } from '../diff';
+import {
+  computeDiff,
+  computeDeleteDiff,
+  computeSymlinkDiff,
+  printDiffs,
+} from '../diff';
 import { atomicWrite, WriteTarget } from '../writer';
 import { confirm } from '../prompt';
 import { FileDiff } from '../diff';
@@ -65,7 +70,7 @@ export function revertCommand(): Command {
         // When reverting TO a specific pull, we want the state AFTER that pull
         let snapshot: Map<
           string,
-          { version: number; existedBeforeAvanti: boolean }
+          { version: number; existedBeforeAvanti: boolean; isSymlink?: boolean }
         >;
 
         if (pullId === undefined) {
@@ -75,7 +80,11 @@ export function revertCommand(): Command {
               ? history.getFilesAtPull(pulls[1].pullId)
               : new Map<
                   string,
-                  { version: number; existedBeforeAvanti: boolean }
+                  {
+                    version: number;
+                    existedBeforeAvanti: boolean;
+                    isSymlink?: boolean;
+                  }
                 >(); // no prior pull → everything goes to pre-avanti state
         } else {
           snapshot = history.getFilesAtPull(targetPullId);
@@ -85,6 +94,7 @@ export function revertCommand(): Command {
         const writeTargets: WriteTarget[] = [];
         const deletions: string[] = [];
         const diffs: FileDiff[] = [];
+        let hasError = false;
 
         const allTracked = history.listTrackedFiles();
 
@@ -97,23 +107,78 @@ export function revertCommand(): Command {
               entry.version,
             );
             if (content === null) continue;
-            const d = computeDiff(meta.absolutePath, content);
-            if (d.hasChanges) {
-              writeTargets.push({ targetPath: meta.absolutePath, content });
-              diffs.push(d);
+            if (entry.isSymlink) {
+              if (process.platform === 'win32') {
+                console.error(
+                  `symlink: ${meta.absolutePath}: cannot restore symlink on Windows`,
+                );
+                hasError = true;
+                continue;
+              }
+              const symlinkTarget = content.toString('utf8');
+              const d = computeSymlinkDiff(meta.absolutePath, symlinkTarget);
+              if (d.isDirectory) {
+                console.error(
+                  `symlink: ${meta.absolutePath} is a directory; cannot restore symlink over directory`,
+                );
+                hasError = true;
+                diffs.push(d);
+              } else if (d.hasChanges) {
+                writeTargets.push({
+                  targetPath: meta.absolutePath,
+                  content,
+                  symlinkTarget,
+                });
+                diffs.push(d);
+              }
+            } else {
+              const d = computeDiff(meta.absolutePath, content);
+              if (d.hasChanges) {
+                writeTargets.push({ targetPath: meta.absolutePath, content });
+                diffs.push(d);
+              }
             }
           } else {
             // File was not present at target pull — go to pre-avanti state
             if (meta.existedBeforeAvanti) {
               const original = history.readVersion(meta.absolutePath, 0);
               if (original !== null) {
-                const d = computeDiff(meta.absolutePath, original);
-                if (d.hasChanges) {
-                  writeTargets.push({
-                    targetPath: meta.absolutePath,
-                    content: original,
-                  });
-                  diffs.push(d);
+                if (meta.v0IsSymlink) {
+                  if (process.platform === 'win32') {
+                    console.error(
+                      `symlink: ${meta.absolutePath}: cannot restore pre-avanti symlink on Windows`,
+                    );
+                    hasError = true;
+                    continue;
+                  }
+                  const symlinkTarget = original.toString('utf8');
+                  const d = computeSymlinkDiff(
+                    meta.absolutePath,
+                    symlinkTarget,
+                  );
+                  if (d.isDirectory) {
+                    console.error(
+                      `symlink: ${meta.absolutePath} is a directory; cannot restore symlink over directory`,
+                    );
+                    hasError = true;
+                    diffs.push(d);
+                  } else if (d.hasChanges) {
+                    writeTargets.push({
+                      targetPath: meta.absolutePath,
+                      content: original,
+                      symlinkTarget,
+                    });
+                    diffs.push(d);
+                  }
+                } else {
+                  const d = computeDiff(meta.absolutePath, original);
+                  if (d.hasChanges) {
+                    writeTargets.push({
+                      targetPath: meta.absolutePath,
+                      content: original,
+                    });
+                    diffs.push(d);
+                  }
                 }
               }
             } else {
@@ -126,7 +191,7 @@ export function revertCommand(): Command {
           }
         }
 
-        if (diffs.length === 0) {
+        if (diffs.length === 0 && !hasError) {
           console.log(
             'Nothing to revert — files already match the target state.',
           );
@@ -139,7 +204,11 @@ export function revertCommand(): Command {
             ? `Undoing last pull (${shortId})`
             : `Reverting to state after pull ${shortId}`;
         console.log(`${label}:\n`);
-        printDiffs(diffs);
+        if (diffs.length > 0) {
+          printDiffs(diffs);
+        }
+
+        if (hasError) process.exit(2);
 
         const yes = opts.yes ?? false;
         if (!yes) {

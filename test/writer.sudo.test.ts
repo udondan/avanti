@@ -440,3 +440,158 @@ describe('sudoRun — mode-only chmod path', () => {
     ).toThrow();
   });
 });
+
+describe('sudoAtomicWrite — symlink path', () => {
+  it.skipIf(isWindows)(
+    'stages new symlink via mktemp+mv (atomic) not ln -sf',
+    () => {
+      const calls: string[][] = [];
+      mockSpawnSync.mockImplementation(
+        (_cmd: unknown, args: readonly string[]) => {
+          calls.push([...args]);
+          if (args.includes('stat') && args.includes('%u'))
+            return okResult('0');
+          if (args.includes('stat')) return okResult('644');
+          if (args.includes('test') && args.includes('-L')) return failResult();
+          if (args.includes('test') && args.includes('-d')) return failResult();
+          if (args.includes('test') && args.includes('-f')) return failResult();
+          if (args.includes('mktemp'))
+            return okResult('/etc/.avanti-symlink-tmp');
+          return okResult();
+        },
+      );
+
+      const target: SudoWriteTarget = {
+        targetPath: '/etc/link',
+        content: Buffer.from('/etc/hosts'),
+        symlinkTarget: '/etc/hosts',
+        sudo: true,
+      };
+      sudoAtomicWrite([target]);
+      const flat = calls.map((a) => a.join(' '));
+      expect(flat.some((c) => c.includes('mkdir'))).toBe(true);
+      // Must NOT use ln -sf (non-atomic)
+      expect(flat.some((c) => c.includes('ln') && c.includes('-sf'))).toBe(
+        false,
+      );
+      // Must create temp symlink with ln -s <target> <tmppath>
+      expect(
+        flat.some(
+          (c) =>
+            c.includes('ln') &&
+            c.includes('-s') &&
+            c.includes('/etc/hosts') &&
+            c.includes('/etc/.avanti-symlink-tmp'),
+        ),
+      ).toBe(true);
+      // Must atomically rename temp path over destination
+      expect(
+        flat.some(
+          (c) =>
+            c.includes('mv') &&
+            c.includes('/etc/.avanti-symlink-tmp') &&
+            c.includes(path.resolve('/etc/link')),
+        ),
+      ).toBe(true);
+    },
+  );
+
+  it.skipIf(isWindows)(
+    'throws when target path is an existing real directory',
+    () => {
+      mockSpawnSync.mockImplementation(
+        (_cmd: unknown, args: readonly string[]) => {
+          if (args.includes('stat') && args.includes('%u'))
+            return okResult('0');
+          if (args.includes('stat')) return okResult('644');
+          if (args.includes('test') && args.includes('-L')) return failResult();
+          if (args.includes('test') && args.includes('-d')) return okResult();
+          return okResult();
+        },
+      );
+
+      const target: SudoWriteTarget = {
+        targetPath: '/etc/conf.d',
+        content: Buffer.from('/etc/hosts'),
+        symlinkTarget: '/etc/hosts',
+        sudo: true,
+      };
+      expect(() => sudoAtomicWrite([target])).toThrow('is a directory');
+    },
+  );
+
+  it.skipIf(isWindows)(
+    'backs up an existing symlink then replaces atomically via mktemp+mv',
+    () => {
+      const calls: string[][] = [];
+      mockSpawnSync.mockImplementation(
+        (_cmd: unknown, args: readonly string[]) => {
+          calls.push([...args]);
+          if (args.includes('stat') && args.includes('%u'))
+            return okResult('0');
+          if (args.includes('stat')) return okResult('644');
+          // Target is a symlink (dir-refusal and backup-detection checks)
+          if (args.includes('test') && args.includes('-L')) return okResult();
+          if (args.includes('test') && args.includes('-d')) return failResult();
+          if (args.includes('test') && args.includes('-f')) return failResult();
+          // Distinguish backup mktemp from new-symlink mktemp by template pattern
+          if (args.includes('mktemp')) {
+            const tmpl = args.find((a) => a.includes('.avanti-'));
+            return okResult(
+              tmpl?.includes('backup')
+                ? '/etc/.avanti-backup-tmp'
+                : '/etc/.avanti-symlink-tmp',
+            );
+          }
+          if (args.includes('readlink')) return okResult('/etc/old-target');
+          return okResult();
+        },
+      );
+
+      const target: SudoWriteTarget = {
+        targetPath: '/etc/link',
+        content: Buffer.from('/etc/new-target'),
+        symlinkTarget: '/etc/new-target',
+        backupPath: '/etc/link.bak',
+        sudo: true,
+      };
+      sudoAtomicWrite([target]);
+      const flat = calls.map((a) => a.join(' '));
+      // Symlink backups use ln -s with an absolute target (not cp -pP) so the
+      // backup resolves correctly from the backup directory.
+      expect(flat.some((c) => c.includes('cp') && c.includes('-pP'))).toBe(
+        false,
+      );
+      expect(
+        flat.some(
+          (c) =>
+            c.includes('ln') &&
+            c.includes('-s') &&
+            c.includes('/etc/old-target'),
+        ),
+      ).toBe(true);
+      // Final replacement must NOT use ln -sf (non-atomic)
+      expect(flat.some((c) => c.includes('ln') && c.includes('-sf'))).toBe(
+        false,
+      );
+      // Must stage new symlink at temp path and rename atomically
+      expect(
+        flat.some(
+          (c) =>
+            c.includes('ln') &&
+            c.includes('-s') &&
+            c.includes('/etc/new-target') &&
+            c.includes('/etc/.avanti-symlink-tmp'),
+        ),
+      ).toBe(true);
+      expect(
+        flat.some(
+          (c) =>
+            c.includes('mv') &&
+            c.includes('/etc/.avanti-symlink-tmp') &&
+            c.includes(path.resolve('/etc/link')),
+        ),
+      ).toBe(true);
+    },
+  );
+});

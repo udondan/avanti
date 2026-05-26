@@ -10,6 +10,7 @@ export interface WriteTarget {
   backupPath?: string;
   writeInPlace?: boolean;
   sudo?: true | string;
+  symlinkTarget?: string;
 }
 
 export type SudoWriteTarget = WriteTarget & { sudo: true | string };
@@ -39,13 +40,165 @@ export function sudoAuth(sudo: true | string = true): void {
 // true batch atomicity would require a two-phase stage+rename via a privileged
 // helper, which is not implemented here.
 export function sudoAtomicWrite(targets: SudoWriteTarget[]): void {
-  const mvTargets = targets.filter((t) => !t.writeInPlace);
-  const inPlaceTargets = targets.filter((t) => t.writeInPlace);
+  const symlinkTargets = targets.filter((t) => t.symlinkTarget !== undefined);
+  const regularTargets = targets.filter((t) => t.symlinkTarget === undefined);
+  const mvTargets = regularTargets.filter((t) => !t.writeInPlace);
+  const inPlaceTargets = regularTargets.filter((t) => t.writeInPlace);
   for (const t of mvTargets) {
     sudoWriteMv(t);
   }
   for (const t of inPlaceTargets) {
     sudoWriteInPlace(t);
+  }
+  for (const t of symlinkTargets) {
+    sudoSymlinkWrite(t);
+  }
+}
+
+function sudoSymlinkWrite(t: SudoWriteTarget): void {
+  const sudo = t.sudo;
+  const resolvedTarget = path.resolve(t.targetPath);
+  const dir = path.dirname(resolvedTarget);
+
+  // Build the trusted-UID set (same policy as sudoWriteMv/sudoWriteInPlace):
+  // root, the invoking user, and the named sudo target user if applicable.
+  const trustedUids = buildTrustedUids(sudo);
+
+  // Validate existing ancestors BEFORE any privileged mkdir to avoid creating
+  // root-owned directories under untrusted/world-writable paths.
+  checkAncestorsSafe(sudo, t.targetPath, trustedUids, 'destination');
+  sudoRun(sudo, ['mkdir', '-p', '--', dir]);
+  // Re-validate after mkdir: intermediate directories created by mkdir -p were
+  // not covered by the pre-mkdir check.
+  checkAncestorsSafe(sudo, t.targetPath, trustedUids, 'destination');
+
+  // Refuse to write if the target path is an existing *real* directory: ln -sf
+  // would place the symlink inside it rather than replacing it. A symlink that
+  // points to a directory is fine — it can be atomically replaced.
+  if (
+    !sudoIsSymlink(sudo, t.targetPath) &&
+    sudoIsDirectory(sudo, t.targetPath)
+  ) {
+    throw new Error(
+      `symlink: ${t.targetPath} is a directory; refusing to replace it with a symlink`,
+    );
+  }
+
+  if (t.backupPath) {
+    // Only back up when the target path already holds a symlink or regular file.
+    // Skip backup when the path is absent (new file) to mirror sudoWriteMv.
+    const existingIsSymlink = sudoIsSymlink(sudo, t.targetPath);
+    const existingIsFile = !existingIsSymlink && sudoIsFile(sudo, t.targetPath);
+    if (existingIsSymlink || existingIsFile) {
+      const backupDir = path.dirname(t.backupPath);
+      const resolvedBackup = path.resolve(t.backupPath);
+      // Validate backup ancestors BEFORE privileged mkdir to avoid creating
+      // root-owned directories in an untrusted path.
+      checkAncestorsSafe(sudo, t.backupPath, trustedUids, 'backup');
+      sudoRun(sudo, ['mkdir', '-p', '--', backupDir]);
+      // Re-validate after mkdir: newly created intermediates are now present.
+      checkAncestorsSafe(sudo, t.backupPath, trustedUids, 'backup');
+      // Use mktemp + cp -pP + mv (same pattern as sudoWriteMv) to avoid following
+      // an existing symlink at backupPath. -P preserves symlinks; -p preserves
+      // timestamps and mode bits. Backup failure is fatal (matches sudoWriteMv).
+      const mktempBackup = spawnSync(
+        'sudo',
+        [
+          ...sudoUserArgs(sudo),
+          'mktemp',
+          path.join(path.resolve(backupDir), '.avanti-backup-XXXXXXXXXX'),
+        ],
+        { stdio: ['ignore', 'pipe', 'inherit'] },
+      );
+      if (mktempBackup.status !== 0 || mktempBackup.error) {
+        const detail = mktempBackup.error
+          ? mktempBackup.error.message
+          : `exit code ${mktempBackup.status ?? 'unknown'}`;
+        throw new Error(`sudo mktemp failed in ${backupDir}: ${detail}`);
+      }
+      const backupTmp = mktempBackup.stdout.toString().trim();
+      try {
+        if (existingIsSymlink) {
+          // Store the symlink as an absolute target so the backup resolves
+          // correctly from backupDir regardless of whether the original target
+          // was relative. mktemp already created a regular file; remove it
+          // before symlinking.
+          const rawLinkTarget = sudoReadlink(sudo, t.targetPath);
+          if (rawLinkTarget === null)
+            throw new Error(`sudoReadlink failed for ${t.targetPath}`);
+          const absLinkTarget = path.isAbsolute(rawLinkTarget)
+            ? rawLinkTarget
+            : path.resolve(path.dirname(resolvedTarget), rawLinkTarget);
+          sudoRun(sudo, ['rm', '-f', '--', backupTmp]);
+          sudoRun(sudo, ['ln', '-s', '--', absLinkTarget, backupTmp]);
+        } else {
+          sudoRun(sudo, ['cp', '-pP', '--', resolvedTarget, backupTmp]);
+        }
+        const backupIsDir =
+          spawnSync(
+            'sudo',
+            [...sudoUserArgs(sudo), 'test', '-d', resolvedBackup],
+            {
+              stdio: 'ignore',
+            },
+          ).status === 0;
+        if (backupIsDir) {
+          throw new Error(`backup path is a directory: ${t.backupPath}`);
+        }
+        sudoMv(sudo, backupTmp, resolvedBackup);
+      } catch (err) {
+        sudoRun(sudo, ['rm', '-f', '--', backupTmp]);
+        throw err;
+      }
+    } // end existingIsSymlink || existingIsFile
+  }
+
+  // Stage the new symlink at a temp path in the same directory, then rename
+  // atomically into place — same pattern as sudoWriteMv for files. ln -sf
+  // would call unlink+symlink with a visible window; rename(2) has none.
+  const mktempNew = spawnSync(
+    'sudo',
+    [
+      ...sudoUserArgs(sudo),
+      'mktemp',
+      path.join(dir, '.avanti-symlink-XXXXXXXXXX'),
+    ],
+    { stdio: ['ignore', 'pipe', 'inherit'] },
+  );
+  if (mktempNew.status !== 0 || mktempNew.error) {
+    const detail = mktempNew.error
+      ? mktempNew.error.message
+      : `exit code ${mktempNew.status ?? 'unknown'}`;
+    throw new Error(`sudo mktemp failed in ${dir}: ${detail}`);
+  }
+  const newTmp = mktempNew.stdout.toString().trim();
+  try {
+    // mktemp creates a regular file placeholder; remove it so we can create a
+    // symlink at that path.
+    sudoRun(sudo, ['rm', '-f', '--', newTmp]);
+    sudoRun(sudo, ['ln', '-s', '--', t.symlinkTarget!, newTmp]);
+    // macOS/BSD: mv without -T follows symlinks-to-directories, moving newTmp
+    // inside the target directory rather than replacing the symlink. Pre-remove
+    // only that case; rename(2) replaces symlinks-to-files atomically on all
+    // platforms. Linux uses mv -T which always calls rename(2) directly.
+    if (process.platform !== 'linux') {
+      const destIsSymlinkToDir =
+        sudoIsSymlink(sudo, t.targetPath) &&
+        spawnSync(
+          'sudo',
+          [...sudoUserArgs(sudo), 'test', '-d', resolvedTarget],
+          {
+            stdio: 'ignore',
+          },
+        ).status === 0;
+      if (destIsSymlinkToDir) {
+        sudoRun(sudo, ['rm', '-f', '--', resolvedTarget]);
+      }
+    }
+    sudoMv(sudo, newTmp, resolvedTarget);
+  } catch (err) {
+    sudoRun(sudo, ['rm', '-f', '--', newTmp]);
+    throw err;
   }
 }
 
@@ -111,6 +264,43 @@ export function sudoIsSymlink(
   );
   if (r.error) throw new Error(`sudo test -L failed: ${r.error.message}`);
   return r.status === 0;
+}
+
+export function sudoIsDirectory(
+  sudo: true | string,
+  targetPath: string,
+): boolean {
+  const r = spawnSync(
+    'sudo',
+    [...sudoUserArgs(sudo), 'test', '-d', path.resolve(targetPath)],
+    { stdio: 'ignore' },
+  );
+  if (r.error) throw new Error(`sudo test -d failed: ${r.error.message}`);
+  return r.status === 0;
+}
+
+export function sudoIsFile(sudo: true | string, targetPath: string): boolean {
+  const r = spawnSync(
+    'sudo',
+    [...sudoUserArgs(sudo), 'test', '-f', path.resolve(targetPath)],
+    { stdio: 'ignore' },
+  );
+  if (r.error) throw new Error(`sudo test -f failed: ${r.error.message}`);
+  return r.status === 0;
+}
+
+export function sudoReadlink(
+  sudo: true | string,
+  targetPath: string,
+): string | null {
+  const r = spawnSync(
+    'sudo',
+    [...sudoUserArgs(sudo), 'readlink', path.resolve(targetPath)],
+    { stdio: ['ignore', 'pipe', 'ignore'] },
+  );
+  if (r.error) throw new Error(`sudo readlink failed: ${r.error.message}`);
+  if (r.status !== 0) return null;
+  return r.stdout.toString().trim();
 }
 
 export function sudoRun(sudo: true | string, args: string[]): void {
@@ -738,12 +928,50 @@ export function atomicWrite(
 ): void {
   // Stage each file as a sibling temp file on the same filesystem as the
   // destination so that renameSync (rename(2)) is atomic on POSIX.
-  const mvTargets = targets.filter((t) => !t.writeInPlace);
-  const inPlaceTargets = targets.filter((t) => t.writeInPlace);
+  const symlinkTargets = targets.filter((t) => t.symlinkTarget !== undefined);
+  const regularTargets = targets.filter((t) => t.symlinkTarget === undefined);
+  const mvTargets = regularTargets.filter((t) => !t.writeInPlace);
+  const inPlaceTargets = regularTargets.filter((t) => t.writeInPlace);
+
+  // Symlinks and mv-target files both use a stage-then-rename approach so
+  // no destination path is touched until ALL staging AND backup work is done.
   const staged: Array<{ tmp: string; dest: string; effectiveMode?: number }> =
     [];
+  // Staged temp symlinks — renamed into place in Phase 3 alongside mv targets.
+  const stagedLinks: Array<{ tmp: string; dest: string }> = [];
   const backupTemps: string[] = [];
   try {
+    // Phase 0 (symlink staging): create temp symlinks but do NOT rename yet.
+    // Renames happen in Phase 3, after backups have captured the pre-write state.
+    if (symlinkTargets.length > 0 && process.platform === 'win32') {
+      throw new Error('symlink writes are not supported on Windows');
+    }
+    for (const t of symlinkTargets) {
+      const dir = path.dirname(t.targetPath);
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
+      let tmpLink: string;
+      for (;;) {
+        tmpLink = path.join(
+          dir,
+          '.' +
+            path.basename(t.targetPath) +
+            '.' +
+            crypto.randomBytes(8).toString('hex') +
+            '.avanti-tmp',
+        );
+        try {
+          fs.symlinkSync(t.symlinkTarget!, tmpLink);
+          break;
+        } catch (err) {
+          // Retry on collision — same strategy as O_EXCL temp files.
+          if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
+        }
+      }
+      stagedLinks.push({ tmp: tmpLink, dest: t.targetPath });
+    }
+
     // Phase 1 (mv targets): write all temp files. Backups are deferred to
     // Phase 2 so that a staging failure here never creates an orphaned backup
     // for a destination that hasn't been modified yet.
@@ -817,41 +1045,109 @@ export function atomicWrite(
       stagingEntry.effectiveMode = effectiveMode;
     }
 
+    // Pre-validate writeInPlace targets before Phase 2: if any is a symlink,
+    // Phase 4 will refuse to write through it. Fail early so no backup is
+    // created for a write that will never proceed.
+    for (const t of inPlaceTargets) {
+      const entry = fs.lstatSync(t.targetPath, { throwIfNoEntry: false });
+      if (entry?.isSymbolicLink()) {
+        throw new Error(
+          `writeInPlace: ${t.targetPath} is a symlink; refusing to follow`,
+        );
+      }
+    }
+
     // Phase 2: all staging succeeded — now create backups.
     // Phase 2a: copy each source file to a uniquely-named temp in the backup
     // dir. If any copy fails, no backup destination has been touched yet.
     const backupRenames: Array<{ tmp: string; dest: string }> = [];
     for (const t of targets) {
-      if (
-        t.backupPath &&
-        fs.lstatSync(t.targetPath, { throwIfNoEntry: false })?.isFile()
-      ) {
-        const backupDir = path.dirname(t.backupPath);
-        if (!fs.existsSync(backupDir)) {
-          fs.mkdirSync(backupDir, { recursive: true });
-        }
-        // Copy via a uniquely-named temp file then rename so that:
-        // (a) a symlink at backupPath is replaced, not followed, and
-        // (b) a predictable temp path cannot be pre-created as a symlink.
-        const backupTmp = path.join(
-          backupDir,
-          '.' +
-            path.basename(t.backupPath) +
-            '.' +
-            crypto.randomBytes(8).toString('hex') +
-            '.avanti-tmp',
+      if (!t.backupPath) continue;
+      const existing = fs.lstatSync(t.targetPath, { throwIfNoEntry: false });
+      if (!existing?.isFile() && !existing?.isSymbolicLink()) continue;
+      if (existing.isSymbolicLink() && process.platform === 'win32') {
+        // fs.symlinkSync requires elevated privileges on Windows; copyFileSync
+        // would dereference the link and copy its target's contents, which is
+        // misleading and can read files outside the working directory. Skip
+        // before creating backupDir so no empty directory is left behind.
+        console.warn(
+          `Warning: cannot back up symlink ${t.targetPath} on Windows; backup skipped.`,
         );
-        backupTemps.push(backupTmp);
-        fs.copyFileSync(t.targetPath, backupTmp);
-        backupRenames.push({ tmp: backupTmp, dest: t.backupPath });
+        continue;
       }
+      const backupDir = path.dirname(t.backupPath);
+      if (!fs.existsSync(backupDir)) {
+        fs.mkdirSync(backupDir, { recursive: true });
+      }
+      // Copy via a uniquely-named temp file then rename so that:
+      // (a) a symlink at backupPath is replaced, not followed, and
+      // (b) a predictable temp path cannot be pre-created as a symlink.
+      let backupTmp: string;
+      if (existing.isSymbolicLink()) {
+        // Preserve the symlink itself (not the file it points to) in the backup.
+        // Resolve relative targets to absolute so the backup symlink resolves
+        // correctly from backupDir, not just from the original link's directory.
+        const rawLinkTarget = fs.readlinkSync(t.targetPath);
+        const absLinkTarget = path.isAbsolute(rawLinkTarget)
+          ? rawLinkTarget
+          : path.resolve(path.dirname(t.targetPath), rawLinkTarget);
+        // Retry on EEXIST — same strategy as the symlink staging loop (Phase 0).
+        for (;;) {
+          backupTmp = path.join(
+            backupDir,
+            '.' +
+              path.basename(t.backupPath) +
+              '.' +
+              crypto.randomBytes(8).toString('hex') +
+              '.avanti-backup-tmp',
+          );
+          try {
+            fs.symlinkSync(absLinkTarget, backupTmp);
+            break;
+          } catch (err) {
+            if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
+          }
+        }
+      } else {
+        for (;;) {
+          backupTmp = path.join(
+            backupDir,
+            '.' +
+              path.basename(t.backupPath) +
+              '.' +
+              crypto.randomBytes(8).toString('hex') +
+              '.avanti-backup-tmp',
+          );
+          try {
+            fs.copyFileSync(
+              t.targetPath,
+              backupTmp,
+              fs.constants.COPYFILE_EXCL,
+            );
+            break;
+          } catch (err) {
+            if ((err as NodeJS.ErrnoException).code !== 'EEXIST') {
+              // copyFileSync may have created a partial file before failing
+              // (e.g. ENOSPC, I/O error). Remove it so no orphan is left.
+              fs.rmSync(backupTmp, { force: true });
+              throw err;
+            }
+          }
+        }
+      }
+      backupTemps.push(backupTmp);
+      backupRenames.push({ tmp: backupTmp, dest: t.backupPath });
     }
     // Phase 2b: all copies succeeded — rename each backup temp into place.
     for (const { tmp, dest } of backupRenames) {
       fs.renameSync(tmp, dest);
     }
 
-    // Phase 3: atomically rename each temp file into place
+    // Phase 3: atomically rename all staged temps (files and symlinks) into place.
+    // Only now are destination paths modified — all staging and backups succeeded.
+    for (const s of stagedLinks) {
+      fs.renameSync(s.tmp, s.dest);
+    }
     for (const s of staged) {
       fs.renameSync(s.tmp, s.dest);
       if (s.effectiveMode !== undefined) {
@@ -959,6 +1255,13 @@ export function atomicWrite(
       }
     }
   } finally {
+    for (const s of stagedLinks) {
+      try {
+        fs.rmSync(s.tmp, { force: true });
+      } catch {
+        // already renamed into place or never created
+      }
+    }
     for (const tmp of backupTemps) {
       try {
         fs.rmSync(tmp, { force: true });

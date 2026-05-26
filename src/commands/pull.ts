@@ -24,8 +24,10 @@ import { applyInsertMode } from '../processors/insert';
 import { isBinary } from '../binary';
 import {
   buildNewFileDiff,
+  buildNewSymlinkDiff,
   computeDiff,
   computeDeleteDiff,
+  computeSymlinkDiff,
   FileDiff,
   printDiffs,
 } from '../diff';
@@ -36,8 +38,10 @@ import {
   sudoAuth,
   sudoDelete,
   sudoFileExists,
+  sudoIsDirectory,
   sudoIsSymlink,
   sudoRead,
+  sudoReadlink,
   sudoRun,
   SudoWriteTarget,
   WriteTarget,
@@ -48,7 +52,14 @@ import {
   resolveFollowSymlink,
   resolveTargetPath,
 } from '../paths';
-import { AvantiConfig, FileEntry, OnHooks, Variables } from '../types';
+import {
+  AvantiConfig,
+  FileEntry,
+  LocalSrc,
+  OnHooks,
+  Variables,
+} from '../types';
+import { resolveSymlinkSrcPath } from '../sources/local';
 import { HistoryManager, PullLogFileRef, SourceShaRecord } from '../history';
 import { confirm } from '../prompt';
 import { applyUpdatedShas, writeUpdatedShas } from '../config-writeback';
@@ -245,6 +256,116 @@ async function runFetchLoop(
         }
         continue;
       }
+
+      // Symlink entries: resolve src path and create a symlink instead of
+      // fetching and writing file content.
+      if (!isSelf && entry.symlink) {
+        if (process.platform === 'win32') {
+          console.error(
+            `Error processing ${JSON.stringify(entry.src)}: symlink entries are not supported on Windows; use an \`if: { os: [linux, mac] }\` condition to gate symlink entries in cross-platform configs`,
+          );
+          hasError = true;
+          continue;
+        }
+        const targetPath = resolveTargetPath(entry, '', workingDir, vars);
+        if (Array.isArray(entry.src)) {
+          throw new Error(
+            `files["${entry.target}"].symlink: src must be a single local path, not an array`,
+          );
+        }
+        const rawSrc =
+          typeof entry.src === 'string'
+            ? entry.src
+            : (entry.src as LocalSrc).path;
+
+        // Honor optional: true — skip when the local source does not exist.
+        const isOptionalSrc =
+          !Array.isArray(entry.src) &&
+          typeof entry.src !== 'string' &&
+          !!(entry.src as LocalSrc).optional;
+        if (isOptionalSrc) {
+          const absSrc = resolveSymlinkSrcPath(
+            rawSrc,
+            workingDir,
+            preVars,
+            true,
+            targetPath,
+          );
+          if (!fs.existsSync(absSrc)) {
+            // Mark the target as skipped so stale cleanup does not treat a
+            // previously-managed path as unmanaged and delete/restore it.
+            skippedPaths.add(targetPath);
+            continue;
+          }
+        }
+
+        const symlinkTarget = resolveSymlinkSrcPath(
+          rawSrc,
+          workingDir,
+          preVars,
+          entry.symlink,
+          targetPath,
+        );
+        const diff = computeSymlinkDiff(targetPath, symlinkTarget);
+        // Symlinks cannot replace existing directories — error early so the
+        // write batch is not attempted and EISDIR is not thrown at rename time.
+        // Do not push to allDiffs here: allDiffs and writeTargets are parallel
+        // arrays; pushing diff without a matching writeTargets entry would
+        // misalign subsequent index-based lookups.
+        if (diff.isDirectory) {
+          console.error(
+            `Error processing ${JSON.stringify(entry.src)}: symlink: ${targetPath} is a directory; cannot replace with a symlink`,
+          );
+          hasError = true;
+          continue;
+        }
+        allDiffs.push(diff);
+        const symlinkContent = Buffer.from(symlinkTarget, 'utf8');
+        const symlinkBackupPath =
+          entry.backup && diff.hasChanges && !diff.isNew
+            ? resolveBackupPath(
+                entry.backup,
+                targetPath,
+                workingDir,
+                vars,
+                config.backup_roots ?? [],
+              )
+            : undefined;
+        writeTargets.push({
+          targetPath,
+          content: symlinkContent,
+          symlinkTarget,
+          backupPath: symlinkBackupPath,
+          sudo: entry.sudo,
+        });
+        if (entry.on && diff.hasChanges) {
+          fileHookContexts.push({
+            targetPath,
+            hooks: entry.on,
+            isNew: diff.isNew,
+          });
+        }
+        // Register the resolved src content (not the symlink target string) in
+        // pendingWrites so subsequent local entries that read through this symlink
+        // path see the actual file bytes, not the raw symlink target path.
+        const absSymlinkSrc = resolveSymlinkSrcPath(
+          rawSrc,
+          workingDir,
+          preVars,
+          true,
+          targetPath,
+        );
+        try {
+          const srcStat = fs.statSync(absSymlinkSrc, { throwIfNoEntry: false });
+          if (srcStat?.isFile()) {
+            pendingWrites.set(targetPath, fs.readFileSync(absSymlinkSrc));
+          }
+        } catch {
+          // src not readable — omit from pendingWrites
+        }
+        continue;
+      }
+
       const result = await fetchSource(
         entry,
         workingDir,
@@ -704,6 +825,7 @@ export function pullCommand(): Command {
       const staleDiffs: FileDiff[] = [];
       // Parallel array: staleDiffs index for each staleToRestore entry
       const staleRestoreDiffIndices: number[] = [];
+      let staleHasError = false;
 
       if (historyAvailable && !hasUnresolvableSkippedPath) {
         const lastFiles = history.getLastPullFiles();
@@ -726,22 +848,64 @@ export function pullCommand(): Command {
           if (meta.existedBeforeAvanti) {
             const original = history.readVersion(ref.absolutePath, 0);
             if (original !== null) {
-              staleToRestore.push({
-                targetPath: ref.absolutePath,
-                content: original,
-                sudo: meta.sudo,
-              });
-              staleRestoreDiffIndices.push(staleDiffs.length);
-              const staleDiff = computeDiff(ref.absolutePath, original);
-              // A missing file with empty v0 produces isNew=true but
-              // hasChanges=false and an empty patch, so formatDiff returns ''.
-              // Rebuild as a proper new-file diff so the confirmation output
-              // shows the recreate action and the patch is consistent.
-              staleDiffs.push(
-                staleDiff.isNew
-                  ? buildNewFileDiff(ref.absolutePath, original)
-                  : staleDiff,
-              );
+              if (meta.v0IsSymlink) {
+                if (process.platform === 'win32') {
+                  console.error(
+                    `symlink: ${ref.absolutePath}: cannot restore pre-avanti symlink on Windows`,
+                  );
+                  staleHasError = true;
+                  // Show the actual stored target so the user knows what cannot
+                  // be restored. No staleRestoreDiffIndices push — there is no
+                  // corresponding staleToRestore entry for error-only diffs.
+                  const symlinkTarget = original.toString('utf8');
+                  const warnDiff = buildNewSymlinkDiff(
+                    ref.absolutePath,
+                    symlinkTarget,
+                  );
+                  staleDiffs.push({ ...warnDiff, hasChanges: true });
+                } else {
+                  const symlinkTarget = original.toString('utf8');
+                  const staleDiff = computeSymlinkDiff(
+                    ref.absolutePath,
+                    symlinkTarget,
+                  );
+                  if (staleDiff.isDirectory) {
+                    console.error(
+                      `symlink: ${ref.absolutePath} is a directory; cannot restore symlink over directory`,
+                    );
+                    staleHasError = true;
+                    // No staleRestoreDiffIndices push — no corresponding
+                    // staleToRestore entry for this error-only diff.
+                    staleDiffs.push(staleDiff);
+                  } else if (staleDiff.hasChanges) {
+                    staleToRestore.push({
+                      targetPath: ref.absolutePath,
+                      content: original,
+                      symlinkTarget,
+                      sudo: meta.sudo,
+                    });
+                    staleRestoreDiffIndices.push(staleDiffs.length);
+                    staleDiffs.push(staleDiff);
+                  }
+                }
+              } else {
+                staleToRestore.push({
+                  targetPath: ref.absolutePath,
+                  content: original,
+                  sudo: meta.sudo,
+                });
+                staleRestoreDiffIndices.push(staleDiffs.length);
+                const staleDiff = computeDiff(ref.absolutePath, original);
+                // A missing file with empty v0 produces isNew=true but
+                // hasChanges=false and an empty patch, so formatDiff returns ''.
+                // Rebuild as a proper new-file diff so the confirmation output
+                // shows the recreate action and the patch is consistent.
+                staleDiffs.push(
+                  staleDiff.isNew
+                    ? buildNewFileDiff(ref.absolutePath, original)
+                    : staleDiff,
+                );
+              }
             } else {
               console.warn(
                 `Warning: cannot restore original for ${ref.absolutePath} — v0 was never captured (file was unreadable at first pull). Leaving file unchanged.`,
@@ -820,19 +984,50 @@ export function pullCommand(): Command {
             }
           }
           if (isNew) {
-            // File confirmed absent — rebuild as a proper new-file diff so
+            // File confirmed absent — rebuild as a proper new diff so
             // formatDiff shows the actual content instead of "unreadable".
-            allDiffs[i] = buildNewFileDiff(
-              allDiffs[i].targetPath,
-              writeTargets[i].content,
-              modeChange,
-            );
             // Clear backupPath: it was set assuming the file existed (conservative
             // lstatFailed default). Since the file is actually new, there is
             // nothing to back up and the backup should not be created.
+            if (writeTargets[i].symlinkTarget !== undefined) {
+              // Symlink entry — use buildNewSymlinkDiff instead of
+              // computeSymlinkDiff: the parent dir is still not searchable
+              // (EACCES), so calling computeSymlinkDiff would lstatSync-fail
+              // again and return isUnreadable rather than isNew:true.
+              allDiffs[i] = buildNewSymlinkDiff(
+                allDiffs[i].targetPath,
+                writeTargets[i].symlinkTarget!,
+              );
+            } else {
+              allDiffs[i] = buildNewFileDiff(
+                allDiffs[i].targetPath,
+                writeTargets[i].content,
+                modeChange,
+              );
+            }
             writeTargets[i] = { ...writeTargets[i], backupPath: undefined };
           } else {
-            allDiffs[i] = { ...allDiffs[i], isNew, modeChange };
+            let updatedDiff: FileDiff = { ...allDiffs[i], isNew, modeChange };
+            // For symlink entries, check whether the existing path is a real
+            // directory — ln -sf would place the symlink inside it rather than
+            // replacing it, so detect this now and surface an error before the
+            // write batch is attempted.
+            if (writeTargets[i].symlinkTarget !== undefined) {
+              const isSymlinkAtTarget = sudoIsSymlink(
+                writeTargets[i].sudo!,
+                writeTargets[i].targetPath,
+              );
+              if (
+                !isSymlinkAtTarget &&
+                sudoIsDirectory(
+                  writeTargets[i].sudo!,
+                  writeTargets[i].targetPath,
+                )
+              ) {
+                updatedDiff = { ...updatedDiff, isDirectory: true };
+              }
+            }
+            allDiffs[i] = updatedDiff;
           }
           // Propagate corrected isNew to the hook context so lifecycle hooks
           // receive the correct AVANTI_IS_NEW value.
@@ -844,13 +1039,53 @@ export function pullCommand(): Command {
           }
         }
       }
+      // Fail fast if any symlink write target is a real directory: ln -sf would
+      // place the symlink inside it rather than replacing it, so abort before
+      // prompting the user rather than failing mid-write-batch.
+      for (const d of allDiffs) {
+        if (d.isDirectory && d.isSymlink) {
+          console.error(
+            `symlink: ${d.targetPath} is a directory; cannot replace with a symlink`,
+          );
+        }
+      }
+      if (allDiffs.some((d) => d.isDirectory && d.isSymlink)) {
+        process.exit(2);
+      }
       // Post-auth idempotency: compare current file content via sudo against the
       // desired content. If they match, suppress the write for this entry.
       for (let i = 0; i < writeTargets.length; i++) {
         if (allDiffs[i].isUnreadable && writeTargets[i].sudo) {
-          // Skip idempotency read for symlinks: sudoRead follows symlinks and
-          // the write path replaces or refuses them; reading through a symlink
-          // here would compare against the wrong content.
+          if (writeTargets[i].symlinkTarget !== undefined) {
+            // Symlink entry: use sudo readlink to check whether the on-disk
+            // symlink already points to the desired target. If it does, the
+            // write is a no-op and the diff should be suppressed.
+            const current = sudoReadlink(
+              writeTargets[i].sudo!,
+              writeTargets[i].targetPath,
+            );
+            if (current !== null && current === writeTargets[i].symlinkTarget) {
+              const updatedHasChanges = allDiffs[i].modeChange !== undefined;
+              allDiffs[i] = {
+                ...allDiffs[i],
+                contentChanged: false,
+                hasChanges: updatedHasChanges,
+              };
+              if (!updatedHasChanges) {
+                const hookIdx = fileHookContexts.findIndex(
+                  (ctx) => ctx.targetPath === writeTargets[i].targetPath,
+                );
+                if (hookIdx >= 0) {
+                  fileHookContexts.splice(hookIdx, 1);
+                }
+              }
+            }
+            continue;
+          }
+          // For regular file entries: skip idempotency read when the existing
+          // path is a symlink — sudoRead follows symlinks and could compare
+          // against the wrong content (the symlink target's bytes, not the
+          // symlink itself).
           if (
             sudoIsSymlink(writeTargets[i].sudo!, writeTargets[i].targetPath)
           ) {
@@ -911,6 +1146,8 @@ export function pullCommand(): Command {
         allDiffs.some((d) => d.hasChanges) ||
         staleDiffs.some((d) => d.hasChanges);
       printDiffs([...allDiffs, ...staleDiffs]);
+
+      if (staleHasError) process.exit(2);
 
       // Show SHA mismatch summary when using --accept-changes
       if (opts.acceptChanges && firstPass.shaErrors.length > 0) {
@@ -1134,18 +1371,34 @@ export function pullCommand(): Command {
             // revert-to-original works even when the invoking user cannot read
             // the file directly.
             let v0Override: Buffer | undefined;
+            let v0IsSymlinkOverride = false;
             if (
               allDiffs[i].isUnreadable &&
               !allDiffs[i].isNew &&
               writeTargets[i].sudo &&
-              !history.getFileMeta(targetPath) &&
-              // Refuse symlinks: sudoRead follows them and could read an
-              // unintended privileged file before write-path checks run,
-              // persisting arbitrary content into the user's history.
-              !sudoIsSymlink(writeTargets[i].sudo!, targetPath)
+              !history.getFileMeta(targetPath)
             ) {
-              v0Override =
-                sudoRead(writeTargets[i].sudo!, targetPath) ?? undefined;
+              if (sudoIsSymlink(writeTargets[i].sudo!, targetPath)) {
+                if (writeTargets[i].symlinkTarget !== undefined) {
+                  // Destination is a symlink and so is the write target — read
+                  // the existing link target via sudoReadlink so v0 records the
+                  // original symlink destination for faithful revert/reset.
+                  const existingTarget = sudoReadlink(
+                    writeTargets[i].sudo!,
+                    targetPath,
+                  );
+                  if (existingTarget !== null) {
+                    v0Override = Buffer.from(existingTarget);
+                    v0IsSymlinkOverride = true;
+                  }
+                }
+                // If the write target is a regular file but the destination is a
+                // symlink, skip v0: sudoRead would follow the symlink and could
+                // read an unintended privileged file before write-path checks run.
+              } else {
+                v0Override =
+                  sudoRead(writeTargets[i].sudo!, targetPath) ?? undefined;
+              }
             }
             const { fileRef } = history.stageFileVersion(
               pullId,
@@ -1155,6 +1408,8 @@ export function pullCommand(): Command {
               sourceShaRecords,
               writeTargets[i].sudo,
               v0Override,
+              !!writeTargets[i].symlinkTarget,
+              v0IsSymlinkOverride,
             );
             stagedFileRefs.push(fileRef);
           } catch {

@@ -2,7 +2,13 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { beforeEach, afterEach, describe, it, expect } from 'vitest';
-import { computeDiff, computeDeleteDiff, formatDiff } from '../src/diff';
+import {
+  computeDiff,
+  computeDeleteDiff,
+  computeSymlinkDiff,
+  buildNewSymlinkDiff,
+  formatDiff,
+} from '../src/diff';
 import { resolveTargetPath } from '../src/paths';
 
 // Platform-agnostic working directory and root for tests.
@@ -338,6 +344,42 @@ describe('computeDiff — mode changes', () => {
       fs.symlinkSync(target, link);
       const result = computeDiff(link, Buffer.from('#!/bin/sh\n'), '0755');
       expect(result.modeChange).toBeUndefined();
+    },
+  );
+});
+
+// ── computeSymlinkDiff / buildNewSymlinkDiff ──────────────────────────────────
+
+describe('buildNewSymlinkDiff', () => {
+  it('returns isNew: true, hasChanges: true, isSymlink: true with patch containing the target', () => {
+    const result = buildNewSymlinkDiff('/some/link', '/etc/hosts');
+    expect(result.isNew).toBe(true);
+    expect(result.hasChanges).toBe(true);
+    expect(result.isSymlink).toBe(true);
+    expect(result.patch).toContain('-> /etc/hosts');
+  });
+});
+
+describe('computeSymlinkDiff — directory case', () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'avanti-symlink-diff-'));
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it.skipIf(process.platform === 'win32')(
+    'returns isDirectory: true when the target path is a directory',
+    () => {
+      const dir = path.join(tmpDir, 'existing-dir');
+      fs.mkdirSync(dir);
+      const result = computeSymlinkDiff(dir, '/etc/hosts');
+      expect(result.isDirectory).toBe(true);
+      expect(result.isSymlink).toBe(true);
+      expect(result.hasChanges).toBe(true);
     },
   );
 });

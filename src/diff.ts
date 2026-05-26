@@ -16,18 +16,60 @@ export interface FileDiff {
    *  meaning existence cannot be determined without elevated privileges. */
   lstatFailed?: boolean;
   modeChange?: { from: number; to: number };
+  isSymlink?: boolean;
+  /** True when the target path is an existing directory; symlinks cannot replace
+   *  directories, so pull should error rather than attempt the write. */
+  isDirectory?: boolean;
 }
 
 export function computeDeleteDiff(targetPath: string): FileDiff {
   let oldBuf: Buffer;
   try {
-    if (fs.lstatSync(targetPath, { throwIfNoEntry: false }) === undefined) {
+    const stat = fs.lstatSync(targetPath, { throwIfNoEntry: false });
+    if (stat === undefined) {
       return {
         targetPath,
         isNew: false,
         hasChanges: false,
         contentChanged: false,
         patch: '',
+      };
+    }
+    if (stat.isSymbolicLink()) {
+      let linkTarget: string;
+      try {
+        linkTarget = fs.readlinkSync(targetPath);
+      } catch (err) {
+        const code = (err as NodeJS.ErrnoException).code;
+        if (code !== 'EACCES' && code !== 'EPERM') throw err;
+        // Symlink exists but reading its target requires elevated privileges.
+        return {
+          targetPath,
+          isNew: false,
+          isDelete: true,
+          hasChanges: true,
+          contentChanged: true,
+          patch: '',
+          isUnreadable: true,
+          isSymlink: true,
+        };
+      }
+      const patch = createTwoFilesPatch(
+        targetPath,
+        '/dev/null',
+        `-> ${linkTarget}\n`,
+        '',
+        undefined,
+        'deleted',
+      );
+      return {
+        targetPath,
+        isNew: false,
+        isDelete: true,
+        hasChanges: true,
+        contentChanged: true,
+        patch,
+        isSymlink: true,
       };
     }
     oldBuf = fs.readFileSync(targetPath);
@@ -245,6 +287,152 @@ export function buildNewFileDiff(
   };
 }
 
+/** Build a new-symlink FileDiff without reading disk. Used when lstatFailed
+ *  initially but sudo confirms the path does not yet exist — calling
+ *  computeSymlinkDiff again would still EACCES on the parent directory. */
+export function buildNewSymlinkDiff(
+  targetPath: string,
+  symlinkTarget: string,
+): FileDiff {
+  const patch = createTwoFilesPatch(
+    '/dev/null',
+    targetPath,
+    '',
+    `-> ${symlinkTarget}\n`,
+    '',
+    'new symlink',
+  );
+  return {
+    targetPath,
+    isNew: true,
+    hasChanges: true,
+    contentChanged: true,
+    patch,
+    isSymlink: true,
+  };
+}
+
+export function computeSymlinkDiff(
+  targetPath: string,
+  symlinkTarget: string,
+): FileDiff {
+  let stat: ReturnType<typeof fs.lstatSync> | undefined;
+  try {
+    stat = fs.lstatSync(targetPath, { throwIfNoEntry: false });
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code !== 'EACCES' && code !== 'EPERM') throw err;
+    return {
+      targetPath,
+      isNew: false,
+      hasChanges: true,
+      contentChanged: true,
+      patch: '',
+      isUnreadable: true,
+      lstatFailed: true,
+      isSymlink: true,
+    };
+  }
+
+  if (stat === undefined) {
+    const patch = createTwoFilesPatch(
+      '/dev/null',
+      targetPath,
+      '',
+      `-> ${symlinkTarget}\n`,
+      '',
+      'new symlink',
+    );
+    return {
+      targetPath,
+      isNew: true,
+      hasChanges: true,
+      contentChanged: true,
+      patch,
+      isSymlink: true,
+    };
+  }
+
+  if (!stat.isSymbolicLink()) {
+    if (stat.isDirectory()) {
+      // Symlinks cannot replace existing directories — write will fail.
+      // Return a diff marked isDirectory so callers can surface an error
+      // rather than attempting a write that will fail with EISDIR.
+      return {
+        targetPath,
+        isNew: false,
+        hasChanges: true,
+        contentChanged: true,
+        patch: '',
+        isSymlink: true,
+        isDirectory: true,
+      };
+    }
+    const existingLabel = stat.isFile() ? 'regular file' : 'special file';
+    const patch = createTwoFilesPatch(
+      targetPath,
+      targetPath,
+      `[${existingLabel}]\n`,
+      `-> ${symlinkTarget}\n`,
+      `was ${existingLabel}`,
+      'replaced by symlink',
+    );
+    return {
+      targetPath,
+      isNew: false,
+      hasChanges: true,
+      contentChanged: true,
+      patch,
+      isSymlink: true,
+    };
+  }
+
+  let currentTarget: string;
+  try {
+    currentTarget = fs.readlinkSync(targetPath);
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code !== 'EACCES' && code !== 'EPERM') throw err;
+    return {
+      targetPath,
+      isNew: false,
+      hasChanges: true,
+      contentChanged: true,
+      patch: '',
+      isUnreadable: true,
+      isSymlink: true,
+    };
+  }
+
+  if (currentTarget === symlinkTarget) {
+    return {
+      targetPath,
+      isNew: false,
+      hasChanges: false,
+      contentChanged: false,
+      patch: '',
+      isSymlink: true,
+    };
+  }
+
+  const patch = createTwoFilesPatch(
+    targetPath,
+    targetPath,
+    `-> ${currentTarget}\n`,
+    `-> ${symlinkTarget}\n`,
+    'symlink target changed',
+    'symlink target changed',
+  );
+  return {
+    targetPath,
+    isNew: false,
+    hasChanges: true,
+    contentChanged: true,
+    patch,
+    isSymlink: true,
+  };
+}
+
 export function formatDiff(diff: FileDiff): string {
   if (!diff.hasChanges) return '';
 
@@ -256,6 +444,30 @@ export function formatDiff(diff: FileDiff): string {
     if (line.startsWith('-')) return chalk.red(line);
     return line;
   };
+
+  if (diff.isSymlink) {
+    if (diff.isDirectory) {
+      return (
+        chalk.bold(`--- ${diff.targetPath}\n+++ ${diff.targetPath}`) +
+        '\n' +
+        chalk.red(
+          '@@ ERROR: target is an existing directory; symlinks cannot replace directories @@',
+        )
+      );
+    }
+    if (diff.isUnreadable) {
+      const newPath = diff.isDelete ? '/dev/null' : diff.targetPath;
+      const label = diff.isDelete
+        ? 'symlink deleted (existing target unreadable — diff unavailable)'
+        : 'symlink (existing state unreadable)';
+      return (
+        chalk.bold(`--- ${diff.targetPath}\n+++ ${newPath}`) +
+        '\n' +
+        chalk.cyan(`@@ ${label} @@`)
+      );
+    }
+    return diff.patch.split('\n').map(colorLine).join('\n');
+  }
 
   let modeFrom = '';
   let modeTo = '';

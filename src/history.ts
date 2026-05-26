@@ -11,6 +11,8 @@ export interface FileHistoryMeta {
   existedBeforeAvanti: boolean;
   currentVersion: number;
   sudo?: true | string;
+  isSymlink?: boolean;
+  v0IsSymlink?: boolean;
   insertedFragment?: {
     raw: string;
     processed: string;
@@ -38,6 +40,7 @@ export interface PullLogFileRef {
   wasNew: boolean;
   sudo?: true | string;
   sources?: SourceShaRecord[];
+  isSymlink?: boolean;
 }
 
 export interface FileVersionInfo {
@@ -132,6 +135,8 @@ export class HistoryManager {
     sources?: SourceShaRecord[],
     sudo?: true | string,
     v0Override?: Buffer,
+    isSymlink?: boolean,
+    v0IsSymlinkOverride?: boolean,
   ): { version: number; fileRef: PullLogFileRef } {
     const slug = sha256(targetPath);
     const fileDir = path.join(this.filesDir, slug);
@@ -141,15 +146,58 @@ export class HistoryManager {
     let meta: FileHistoryMeta;
 
     let isFirstSeen = false;
+    let isSymlinkChanged = false;
     if (fs.existsSync(metaPath)) {
       meta = JSON.parse(fs.readFileSync(metaPath, 'utf8')) as FileHistoryMeta;
+      // Update isSymlink in memory only; persist after the version file write
+      // so that meta.json is never ahead of committed history if the pull aborts.
+      const newIsSymlink = isSymlink ? true : undefined;
+      if (meta.isSymlink !== newIsSymlink) {
+        meta.isSymlink = newIsSymlink;
+        isSymlinkChanged = true;
+      }
     } else {
       isFirstSeen = true;
       let existedBeforeAvanti = !isNew;
+      let v0IsSymlink = false;
       if (existedBeforeAvanti) {
         try {
-          const originalContent = fs.readFileSync(targetPath);
-          fs.writeFileSync(path.join(fileDir, 'v0'), originalContent);
+          let originalContent: Buffer;
+          if (isSymlink) {
+            // For a symlink entry, capture the previous symlink target (if any)
+            // rather than the content of the file it points to.
+            const stat = fs.lstatSync(targetPath, { throwIfNoEntry: false });
+            if (stat?.isSymbolicLink()) {
+              originalContent = Buffer.from(
+                fs.readlinkSync(targetPath),
+                'utf8',
+              );
+              v0IsSymlink = true;
+            } else if (stat?.isFile()) {
+              originalContent = fs.readFileSync(targetPath);
+            } else {
+              existedBeforeAvanti = false;
+              originalContent = Buffer.alloc(0);
+            }
+          } else {
+            // Even when the new entry is a regular file, the path may already
+            // hold a symlink. Use lstat so we capture the symlink itself (not
+            // the bytes it points to) and set v0IsSymlink accordingly — this
+            // lets reset/revert faithfully restore the pre-avanti symlink.
+            const stat = fs.lstatSync(targetPath, { throwIfNoEntry: false });
+            if (stat?.isSymbolicLink()) {
+              originalContent = Buffer.from(
+                fs.readlinkSync(targetPath),
+                'utf8',
+              );
+              v0IsSymlink = true;
+            } else {
+              originalContent = fs.readFileSync(targetPath);
+            }
+          }
+          if (existedBeforeAvanti) {
+            fs.writeFileSync(path.join(fileDir, 'v0'), originalContent);
+          }
         } catch (err) {
           const code = (err as NodeJS.ErrnoException).code;
           if (code !== 'EACCES' && code !== 'EPERM' && code !== 'ENOENT') {
@@ -157,6 +205,7 @@ export class HistoryManager {
           }
           if (v0Override !== undefined) {
             fs.writeFileSync(path.join(fileDir, 'v0'), v0Override);
+            if (v0IsSymlinkOverride) v0IsSymlink = true;
           } else if (code === 'ENOENT') {
             // Dangling symlink: lstatSync saw the symlink but readFileSync
             // followed it to a missing target. No usable original content
@@ -175,6 +224,8 @@ export class HistoryManager {
         firstSeenAt: new Date().toISOString(),
         existedBeforeAvanti,
         currentVersion: 0,
+        ...(isSymlink ? { isSymlink: true } : {}),
+        ...(v0IsSymlink ? { v0IsSymlink: true } : {}),
       };
     }
 
@@ -186,6 +237,8 @@ export class HistoryManager {
       const index = this.readIndex();
       index[targetPath] = slug;
       this.writeIndex(index);
+    } else if (isSymlinkChanged) {
+      fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2), 'utf8');
     }
 
     const fileRef: PullLogFileRef = {
@@ -195,6 +248,7 @@ export class HistoryManager {
       wasNew: isNew,
       ...(sudo ? { sudo } : {}),
       ...(sources !== undefined && { sources }),
+      ...(isSymlink ? { isSymlink: true } : {}),
     };
 
     return { version: nextVersion, fileRef };
@@ -331,38 +385,52 @@ export class HistoryManager {
 
   getFilesAtPull(
     pullId: string,
-  ): Map<string, { version: number; existedBeforeAvanti: boolean }> {
+  ): Map<
+    string,
+    { version: number; existedBeforeAvanti: boolean; isSymlink?: boolean }
+  > {
     const result = new Map<
       string,
-      { version: number; existedBeforeAvanti: boolean }
+      { version: number; existedBeforeAvanti: boolean; isSymlink?: boolean }
     >();
     const pulls = this.listPulls().slice().reverse(); // chronological
 
-    // Build state snapshot: for each file, find highest version at or before the target pull
+    // Build state snapshot: for each file, find highest version at or before the target pull.
+    // Track both version and isSymlink from the ref so revert uses per-version type info.
     let found = false;
-    const snapshot = new Map<string, number>(); // absolutePath → version at target pull
+    const snapshot = new Map<
+      string,
+      { version: number; isSymlink?: boolean }
+    >();
 
     for (const pull of pulls) {
       if (pull.pullId === pullId) {
         for (const ref of pull.files) {
-          snapshot.set(ref.absolutePath, ref.version);
+          snapshot.set(ref.absolutePath, {
+            version: ref.version,
+            isSymlink: ref.isSymlink,
+          });
         }
         found = true;
         break;
       }
       // Always overwrite so we capture the most recent version before the target pull
       for (const ref of pull.files) {
-        snapshot.set(ref.absolutePath, ref.version);
+        snapshot.set(ref.absolutePath, {
+          version: ref.version,
+          isSymlink: ref.isSymlink,
+        });
       }
     }
 
     if (!found) return result;
 
-    for (const [absolutePath, version] of snapshot) {
+    for (const [absolutePath, { version, isSymlink }] of snapshot) {
       const meta = this.getFileMeta(absolutePath);
       result.set(absolutePath, {
         version,
         existedBeforeAvanti: meta?.existedBeforeAvanti ?? false,
+        isSymlink,
       });
     }
 

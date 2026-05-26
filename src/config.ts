@@ -44,6 +44,7 @@ import { fetchHttp } from './sources/http';
 import { fetchGitHub } from './sources/github';
 import { fetchGitLab } from './sources/gitlab';
 import { fetchGit, isGitRemoteUrl, parseGitRemoteSpec } from './sources/git';
+import { isNonLocalSrcString } from './sources/local';
 
 export const SELF_KEY = '$self';
 
@@ -53,6 +54,14 @@ const CONFIG_CANDIDATES = [
   'avanti.yml',
   'avanti.yaml',
 ];
+
+function isLocalFileSrc(src: FileSrc): boolean {
+  if (typeof src === 'string') {
+    return !isNonLocalSrcString(src);
+  }
+  if (!('path' in src)) return false;
+  return !isNonLocalSrcString((src as { path: string }).path);
+}
 
 export function isRemoteConfigSpec(s: string): boolean {
   return (
@@ -353,6 +362,18 @@ export function parseConfigContent(content: string): AvantiConfig {
       fileEntry.writeInPlace = e['writeInPlace'];
     if (typeof e['followSymlink'] === 'boolean')
       fileEntry.followSymlink = e['followSymlink'];
+    if (e['symlink'] !== undefined) {
+      if (
+        e['symlink'] !== true &&
+        e['symlink'] !== 'absolute' &&
+        e['symlink'] !== 'relative'
+      ) {
+        throw new Error(
+          `files["${target}"].symlink: must be true, "absolute", or "relative"`,
+        );
+      }
+      fileEntry.symlink = e['symlink'];
+    }
     if (e['sudo'] !== undefined) {
       if (e['sudo'] === true) {
         fileEntry.sudo = true;
@@ -449,6 +470,11 @@ export function parseConfigContent(content: string): AvantiConfig {
     }
 
     if (e['extract'] !== undefined) {
+      if (fileEntry.symlink) {
+        throw new Error(
+          `files["${target}"].symlink: cannot be combined with extract:`,
+        );
+      }
       if (Array.isArray(src)) {
         throw new Error(
           `files["${target}"].extract: cannot be used with a list of sources`,
@@ -493,6 +519,108 @@ export function parseConfigContent(content: string): AvantiConfig {
       }
     }
 
+    if (fileEntry.symlink) {
+      if (target === SELF_KEY) {
+        throw new Error(
+          `files["${SELF_KEY}"].symlink: $self cannot be a symlink entry`,
+        );
+      }
+      if (target.endsWith('/') || target.endsWith(path.sep)) {
+        throw new Error(
+          `files["${target}"].symlink: target must be a single file path, not a directory pattern (remove the trailing slash)`,
+        );
+      }
+      if (Array.isArray(fileEntry.src)) {
+        throw new Error(
+          `files["${target}"].symlink: cannot be combined with a list of sources`,
+        );
+      }
+      if (!isLocalFileSrc(fileEntry.src)) {
+        throw new Error(
+          `files["${target}"].symlink: src must be a local path — ` +
+            `http, exec, github, gitlab, and other remote sources are not supported`,
+        );
+      }
+      if (typeof fileEntry.src !== 'string' && 'path' in fileEntry.src) {
+        const localSrc = fileEntry.src;
+        if (localSrc.sha) {
+          throw new Error(
+            `files["${target}"].symlink: cannot be combined with src.sha`,
+          );
+        }
+        if (localSrc.filter) {
+          throw new Error(
+            `files["${target}"].symlink: cannot be combined with src.filter`,
+          );
+        }
+        if (localSrc.if) {
+          throw new Error(
+            `files["${target}"].symlink: cannot be combined with src.if`,
+          );
+        }
+        if (localSrc.ifAny) {
+          throw new Error(
+            `files["${target}"].symlink: cannot be combined with src.ifAny`,
+          );
+        }
+      }
+      if (fileEntry.replace) {
+        throw new Error(
+          `files["${target}"].symlink: cannot be combined with replace:`,
+        );
+      }
+      if (fileEntry.template) {
+        throw new Error(
+          `files["${target}"].symlink: cannot be combined with template:`,
+        );
+      }
+      if (fileEntry.json) {
+        throw new Error(
+          `files["${target}"].symlink: cannot be combined with json:`,
+        );
+      }
+      if (fileEntry.yaml) {
+        throw new Error(
+          `files["${target}"].symlink: cannot be combined with yaml:`,
+        );
+      }
+      if (fileEntry.toml) {
+        throw new Error(
+          `files["${target}"].symlink: cannot be combined with toml:`,
+        );
+      }
+      if (fileEntry.ini) {
+        throw new Error(
+          `files["${target}"].symlink: cannot be combined with ini:`,
+        );
+      }
+      if (fileEntry.on?.write) {
+        throw new Error(
+          `files["${target}"].symlink: cannot be combined with on.write:`,
+        );
+      }
+      if (fileEntry.writeInPlace) {
+        throw new Error(
+          `files["${target}"].symlink: cannot be combined with writeInPlace:`,
+        );
+      }
+      if (fileEntry.strategy) {
+        throw new Error(
+          `files["${target}"].symlink: cannot be combined with strategy:`,
+        );
+      }
+      if (fileEntry.followSymlink) {
+        throw new Error(
+          `files["${target}"].symlink: cannot be combined with followSymlink:`,
+        );
+      }
+      if (fileEntry.mode) {
+        throw new Error(
+          `files["${target}"].symlink: cannot be combined with mode — symlinks do not have independent permission bits on POSIX`,
+        );
+      }
+    }
+
     let expandedTargets: string[];
     try {
       expandedTargets = expandBraces(target);
@@ -515,6 +643,15 @@ export function parseConfigContent(content: string): AvantiConfig {
         const suffix = parts.length > 0 ? ` (${parts.join('; ')})` : '';
         throw new Error(
           `files["${expandedTarget}"]: duplicate target${suffix}`,
+        );
+      }
+      if (
+        fileEntry.symlink &&
+        expandedTarget !== target &&
+        (expandedTarget.endsWith('/') || expandedTarget.endsWith(path.sep))
+      ) {
+        throw new Error(
+          `files["${expandedTarget}"] (expanded from "${target}").symlink: target must be a single file path, not a directory pattern (remove the trailing slash)`,
         );
       }
       files[expandedTarget] = { ...fileEntry, target: expandedTarget };

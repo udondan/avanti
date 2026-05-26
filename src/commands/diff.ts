@@ -16,7 +16,12 @@ import { applyReplace } from '../processors/replace';
 import { applyWriteHook } from '../processors/on';
 import { applyInsertMode } from '../processors/insert';
 import { isBinary } from '../binary';
-import { computeDiff, computeDeleteDiff, printDiffs } from '../diff';
+import {
+  computeDiff,
+  computeDeleteDiff,
+  computeSymlinkDiff,
+  printDiffs,
+} from '../diff';
 import { FileDiff } from '../diff';
 import {
   buildEntryPreVars,
@@ -24,7 +29,8 @@ import {
   resolveFollowSymlink,
   resolveTargetPath,
 } from '../paths';
-import { AvantiConfig, FileEntry, Variables } from '../types';
+import { AvantiConfig, FileEntry, LocalSrc, Variables } from '../types';
+import { resolveSymlinkSrcPath } from '../sources/local';
 import { HistoryManager } from '../history';
 import { resolveVariableSpec } from '../variables-remote';
 import { evaluateConditions } from '../condition';
@@ -114,6 +120,78 @@ async function runDiffLoop(
         )
       )
         continue;
+
+      if (!isSelf && entry.symlink) {
+        if (process.platform === 'win32') {
+          console.error(
+            `Error processing ${JSON.stringify(entry.src)}: symlink entries are not supported on Windows; use an \`if: { os: [linux, mac] }\` condition to gate symlink entries in cross-platform configs`,
+          );
+          hasError = true;
+          continue;
+        }
+        const targetPath = resolveTargetPath(entry, '', workingDir, vars);
+        if (Array.isArray(entry.src)) {
+          throw new Error(
+            `files["${entry.target}"].symlink: src must be a single local path, not an array`,
+          );
+        }
+        const rawSrc =
+          typeof entry.src === 'string'
+            ? entry.src
+            : (entry.src as LocalSrc).path;
+
+        // Honor optional: true — skip when the local source does not exist.
+        const isOptionalSrc =
+          !Array.isArray(entry.src) &&
+          typeof entry.src !== 'string' &&
+          !!(entry.src as LocalSrc).optional;
+        if (isOptionalSrc) {
+          const absSrc = resolveSymlinkSrcPath(
+            rawSrc,
+            workingDir,
+            preVars,
+            true,
+            targetPath,
+          );
+          if (!fs.existsSync(absSrc)) continue;
+        }
+
+        const symlinkTarget = resolveSymlinkSrcPath(
+          rawSrc,
+          workingDir,
+          preVars,
+          entry.symlink,
+          targetPath,
+        );
+        const d = computeSymlinkDiff(targetPath, symlinkTarget);
+        allDiffs.push(d);
+        if (d.isDirectory) {
+          console.error(
+            `Error processing ${JSON.stringify(entry.src)}: symlink: ${targetPath} is a directory; cannot replace with a symlink`,
+          );
+          hasError = true;
+        }
+        // Register the resolved src content (not the symlink target string) in
+        // pendingWrites so subsequent local entries that read through this symlink
+        // path see the actual file bytes, not the raw symlink target path.
+        const absSymlinkSrc = resolveSymlinkSrcPath(
+          rawSrc,
+          workingDir,
+          preVars,
+          true,
+          targetPath,
+        );
+        try {
+          const srcStat = fs.statSync(absSymlinkSrc, { throwIfNoEntry: false });
+          if (srcStat?.isFile()) {
+            pendingWrites.set(targetPath, fs.readFileSync(absSymlinkSrc));
+          }
+        } catch {
+          // src not readable — omit from pendingWrites
+        }
+        continue;
+      }
+
       const result = await fetchSource(
         entry,
         workingDir,
@@ -413,10 +491,16 @@ function diffAgainstHistory(
   }
 
   const diffs: FileDiff[] = [];
-  for (const [absolutePath, { version }] of snapshot) {
+  for (const [absolutePath, { version, isSymlink }] of snapshot) {
     const historicalContent = history.readVersion(absolutePath, version);
     if (historicalContent === null) continue;
-    diffs.push(computeDiff(absolutePath, historicalContent));
+    if (isSymlink) {
+      diffs.push(
+        computeSymlinkDiff(absolutePath, historicalContent.toString('utf8')),
+      );
+    } else {
+      diffs.push(computeDiff(absolutePath, historicalContent));
+    }
   }
 
   // Also account for files that would be deleted (tracked files not in this snapshot)

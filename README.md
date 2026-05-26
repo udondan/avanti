@@ -451,6 +451,7 @@ A brace group is only expanded when it contains **at least one comma** (e.g. `{f
 | `strategy`      | No       | Write strategy: `replace` _(default)_ — overwrite the target file entirely; `insert` — merge content into the existing file without clobbering unrelated content. See [Insert Mode](#insert-mode).                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | `writeInPlace`  | No       | If `true`, replaces file content in-place instead of using an atomic rename. Preserves the existing inode. **Not atomic** — use only when inode stability is required. Errors if the target is a symlink. See [Write in Place](#write-in-place).                                                                                                                                                                                                                                                                                                                                                                    |
 | `followSymlink` | No       | If `true` and the target path is a symlink, writes the fetched content to the **symlink's target** instead of replacing the symlink itself. The resolved target must not be a directory and must stay inside the working directory. See [Follow Symlink](#follow-symlink).                                                                                                                                                                                                                                                                                                                                          |
+| `symlink`       | No       | Create a symlink at the target path instead of writing file content. `src` must be a single local path. Use `true` or `"absolute"` to create an absolute symlink; use `"relative"` to express the symlink target as a path relative to the symlink's parent directory. Cannot be combined with `replace`, `template`, `json`, `yaml`, `toml`, `ini`, `on.write`, `extract`, `writeInPlace`, `strategy`, `followSymlink`, `mode`, or a list `src`. See [Symlink](#symlink).                                                                                                                                          |
 | `extract`       | No       | Unpack an archive (`.zip`, `.tar`, `.tar.gz`, `.tgz`) downloaded from a single-file source before writing. Target must end with `"/"`. Use `true` to extract all files, or a list of patterns to extract only matching entries. Cannot be combined with a list `src`. See [Extract](#extract).                                                                                                                                                                                                                                                                                                                      |
 | `sudo`          | No       | Write the file using elevated privileges. Use `true` to write as root, or a username string (e.g. `"www-data"`) to write as a specific user via `sudo -u`. avanti authenticates once per distinct identity before any writes — the OS sudo credential cache is reused for all subsequent operations within the same pull session. **POSIX only** — `pull` errors on Windows when any file has `sudo` set. **Note:** `sudo` is honored by `pull` only (including stale-file cleanup). The `revert` and `reset` commands restore files using normal (non-elevated) file operations and will fail on root-owned paths. |
 
@@ -1311,7 +1312,7 @@ files:
     backup: $dirname/$filename.bkp
 ```
 
-Backup only happens when the target is a regular file (not a symlink or directory). If the backup path already exists it is overwritten — use the [counter pattern](#counter-pattern) or `$datetime` when you want to keep every backup.
+Backup happens when the target path currently holds a regular file or a symlink — regardless of whether the entry being written is a regular file or a symlink entry. On POSIX, if the existing target is a symlink, the symlink itself (not the file it points to) is preserved in the backup; if the symlink had a relative target, avanti rewrites it to an absolute path so the backup symlink resolves correctly from the backup directory. On Windows, symlink backups are skipped (a warning is printed) because creating a symlink backup requires elevated privileges and dereferencing the link could read files outside the working directory. **Exception:** for regular-file entries with `sudo: true`, only existing regular files are backed up — if the current target is a symlink it is not backed up. For `symlink:` entries with `sudo: true`, the existing symlink (or regular file) at the target path is backed up before being replaced. Directory targets are never backed up. If the backup path already exists it is overwritten — use the [counter pattern](#counter-pattern) or `$datetime` when you want to keep every backup.
 
 #### Path variables
 
@@ -1424,6 +1425,46 @@ This is useful when a symlink is managed by another tool (e.g. a dotfile manager
 Dangling symlinks (a symlink chain whose endpoint does not yet exist) are supported: avanti follows the chain to the non-existent endpoint and creates the file there, subject to the same directory and working-directory constraints above.
 
 When the target path does not exist yet, or does not point to a symlink, `followSymlink` has no effect and the file is created or written normally.
+
+### Symlink
+
+Set `symlink: true` (or `symlink: "absolute"`) to create a filesystem symlink at the target path pointing to the `src` path, instead of copying the file's content. The `src` must be a single local path — remote sources (HTTP, GitHub, GitLab, exec, etc.) are not supported.
+
+```yaml
+files:
+  ~/.config/app/config.yml:
+    src: /opt/app/defaults/config.yml
+    symlink: true
+```
+
+Use `symlink: "relative"` to store the symlink target as a path relative to the symlink's parent directory. This is useful when you want symlinks that remain valid after the directory tree is moved or mounted at a different location:
+
+```yaml
+files:
+  configs/active:
+    src: configs/production.yml
+    symlink: relative # symlink points to production.yml rather than an absolute path
+```
+
+**How `diff` and `pull` handle symlinks:**
+
+- No symlink at the target path → create it (shown as a new entry in the diff)
+- Symlink already points to the correct target → no-op (no diff output, exit 0)
+- Symlink points to a different target → update it (diff shows old → new target)
+- A regular file exists at the target path → replace it with a symlink (shown in diff)
+
+The symlink itself is tracked in avanti's history, so `revert` and `reset` restore the symlink (including its target path) to the state recorded at the referenced pull.
+
+**Constraints** — `symlink` cannot be combined with:
+
+- `replace`, `template`, `json`, `yaml`, `toml`, `ini`, `on.write`, `extract` — content processors are meaningless for a symlink
+- `writeInPlace`, `strategy`, `followSymlink` — incompatible write strategies
+- `mode` — symlinks do not have independent permission bits on POSIX
+- A list `src` — a symlink has exactly one target
+- `src.sha`, `src.filter`, `src.if`, `src.ifAny` — object-form src options that only apply to fetched content
+- The `$self` key — the config file itself cannot be a symlink entry
+
+**POSIX only** — symlink entries are not supported on Windows. `pull` will error if a symlink entry is reached on win32. Use an `if: { os: [linux, mac] }` condition to gate symlink entries in cross-platform configs.
 
 ### Sudo
 
