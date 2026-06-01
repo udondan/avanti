@@ -116,8 +116,9 @@ export function resolveRelativeSrc(src: string, configBase: string): string {
     if (baseUrl.search) {
       const baseParams = new URLSearchParams(baseUrl.search);
       const resolvedParams = new URLSearchParams(resolvedUrl.search);
+      const overriddenKeys = new Set(resolvedParams.keys());
       for (const [key, val] of baseParams.entries()) {
-        if (!resolvedParams.has(key)) resolvedParams.append(key, val);
+        if (!overriddenKeys.has(key)) resolvedParams.append(key, val);
       }
       resolvedUrl.search = resolvedParams.toString();
     }
