@@ -142,7 +142,7 @@ describe('sudoReadlink', () => {
     expect(mockSpawnSync).toHaveBeenCalledWith(
       'sudo',
       ['readlink', path.resolve('/etc/link')],
-      expect.any(Object),
+      { stdio: ['ignore', 'pipe', 'ignore'] },
     );
   });
 
@@ -152,7 +152,7 @@ describe('sudoReadlink', () => {
     expect(mockSpawnSync).toHaveBeenCalledWith(
       'sudo',
       ['-u', 'nobody', 'readlink', path.resolve('/etc/link')],
-      expect.any(Object),
+      { stdio: ['ignore', 'pipe', 'ignore'] },
     );
   });
 
