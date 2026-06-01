@@ -150,7 +150,8 @@ function resolveRelativeGitHostSpec(
   const atIdx = rest.lastIndexOf('@');
   const dir = atIdx === -1 ? rest : rest.slice(0, atIdx);
   const ref = atIdx === -1 ? undefined : rest.slice(atIdx + 1);
-  const file = path.posix.join(dir, src);
+  const normalizedSrc = src.replace(/\\/g, '/');
+  const file = path.posix.join(dir, normalizedSrc);
   if (file.startsWith('../') || file === '..') {
     throw new Error(
       `Relative source path '${src}' escapes the repository root for config base '${configBase}'`,
@@ -169,7 +170,8 @@ function resolveRelativeGitRemoteSpec(src: string, configBase: string): string {
   const atIdx = rest.lastIndexOf('@');
   const dir = atIdx === -1 ? rest : rest.slice(0, atIdx);
   const ref = atIdx === -1 ? undefined : rest.slice(atIdx + 1);
-  const file = path.posix.join(dir, src);
+  const normalizedSrc = src.replace(/\\/g, '/');
+  const file = path.posix.join(dir, normalizedSrc);
   if (file.startsWith('../') || file === '..') {
     throw new Error(
       `Relative source path '${src}' escapes the repository root for config base '${configBase}'`,
