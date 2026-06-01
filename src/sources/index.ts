@@ -683,7 +683,13 @@ async function fetchOneSrc(
   // write target in this run should resolve to the future content, not whatever
   // is on disk (or in the cache from a previous iteration).
   if (pendingWrites !== undefined) {
-    const pending = pendingLocalFiles(src, workingDir, vars, pendingWrites);
+    const pending = pendingLocalFiles(
+      src,
+      workingDir,
+      vars,
+      pendingWrites,
+      configBase,
+    );
     if (pending !== null) {
       return { files: pending, record: buildRecord(src, pending, vars) };
     }
@@ -728,6 +734,7 @@ function pendingLocalFiles(
   workingDir: string,
   vars: Variables,
   pendingWrites: Map<string, Buffer>,
+  configBase?: string,
 ): Map<string, Buffer> | null {
   let rawPath: string | null = null;
   try {
@@ -738,10 +745,26 @@ function pendingLocalFiles(
         !resolved.startsWith('https://') &&
         !isGitRemoteUrl(resolved)
       ) {
-        rawPath = resolved;
+        const effective =
+          configBase !== undefined
+            ? resolveRelativeSrc(resolved, configBase)
+            : resolved;
+        if (
+          !effective.startsWith('http://') &&
+          !effective.startsWith('https://') &&
+          !isGitRemoteUrl(effective) &&
+          !effective.startsWith('github:') &&
+          !effective.startsWith('gitlab:')
+        ) {
+          rawPath = effective;
+        }
       }
     } else if ('path' in src) {
-      rawPath = resolveVars(src.path, vars);
+      const resolved = resolveVars(src.path, vars);
+      rawPath =
+        configBase !== undefined && !isRemoteConfigSpec(configBase)
+          ? resolveRelativeSrc(resolved, configBase)
+          : resolved;
     }
   } catch {
     return null;
