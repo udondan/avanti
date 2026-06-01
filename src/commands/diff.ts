@@ -55,7 +55,12 @@ async function runDiffLoop(
 ): Promise<DiffLoopResult> {
   let vars;
   try {
-    vars = await resolveVariableSpec(config.variables ?? {}, workingDir, cache);
+    vars = await resolveVariableSpec(
+      config.variables ?? {},
+      workingDir,
+      cache,
+      configBase,
+    );
   } catch (err: unknown) {
     console.error(err instanceof Error ? err.message : String(err));
     return { allDiffs: [], hasError: true };

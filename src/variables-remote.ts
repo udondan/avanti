@@ -82,6 +82,7 @@ export async function resolveVariableSpec(
   spec: VariableSpec,
   workingDir: string,
   cache?: FetchCache,
+  configBase?: string,
 ): Promise<Variables> {
   const resolved: Variables = Object.create(null) as Variables;
   let applyTemplate:
@@ -141,7 +142,15 @@ export async function resolveVariableSpec(
       };
       let result: FetchResult;
       try {
-        result = await fetchSource(synthetic, workingDir, resolved, cache);
+        result = await fetchSource(
+          synthetic,
+          workingDir,
+          resolved,
+          cache,
+          undefined,
+          undefined,
+          configBase,
+        );
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         throw new Error(`variables.${name}: failed to fetch source: ${msg}`, {

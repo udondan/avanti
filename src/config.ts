@@ -92,6 +92,13 @@ export function deriveConfigBase(configPath: string): string {
     const refSuffix = ref !== undefined ? `@${ref}` : '';
     return `gitlab:${project}:${dir}${refSuffix}`;
   }
+  if (isGitRemoteUrl(configPath)) {
+    const { repo, file, ref } = parseGitRemoteSpec(configPath);
+    const dir = path.posix.dirname(file);
+    const dirPart = dir === '.' ? '' : dir;
+    const refSuffix = ref !== undefined ? `@${ref}` : '';
+    return `${repo}//${dirPart}${refSuffix}`;
+  }
   return path.dirname(configPath);
 }
 
@@ -122,6 +129,9 @@ export function resolveRelativeSrc(src: string, configBase: string): string {
   if (configBase.startsWith('gitlab:')) {
     return resolveRelativeGitHostSpec(src, configBase, 'gitlab');
   }
+  if (isGitRemoteUrl(configBase)) {
+    return resolveRelativeGitRemoteSpec(src, configBase);
+  }
   return path.resolve(configBase, src);
 }
 
@@ -146,6 +156,25 @@ function resolveRelativeGitHostSpec(
   }
   const refSuffix = ref !== undefined ? `@${ref}` : '';
   return `${prefix}${id}:${file}${refSuffix}`;
+}
+
+function resolveRelativeGitRemoteSpec(src: string, configBase: string): string {
+  const schemeEnd = configBase.indexOf('://') + 3;
+  const separatorIdx = configBase.indexOf('//', schemeEnd);
+  const repo =
+    separatorIdx >= 0 ? configBase.slice(0, separatorIdx) : configBase;
+  const rest = separatorIdx >= 0 ? configBase.slice(separatorIdx + 2) : '';
+  const atIdx = rest.lastIndexOf('@');
+  const dir = atIdx === -1 ? rest : rest.slice(0, atIdx);
+  const ref = atIdx === -1 ? undefined : rest.slice(atIdx + 1);
+  const file = path.posix.join(dir, src);
+  if (file.startsWith('../') || file === '..') {
+    throw new Error(
+      `Relative source path '${src}' escapes the repository root for config base '${configBase}'`,
+    );
+  }
+  const refSuffix = ref !== undefined ? `@${ref}` : '';
+  return `${repo}//${file}${refSuffix}`;
 }
 
 export function normalizeConfigKey(spec: string): string {

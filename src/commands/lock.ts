@@ -43,9 +43,15 @@ export function lockCommand(): Command {
         process.exit(2);
       }
 
+      const configBase = deriveConfigBase(configPath);
       let vars;
       try {
-        vars = await resolveVariableSpec(config.variables ?? {}, workingDir);
+        vars = await resolveVariableSpec(
+          config.variables ?? {},
+          workingDir,
+          undefined,
+          configBase,
+        );
       } catch (err: unknown) {
         console.error(err instanceof Error ? err.message : String(err));
         process.exit(2);
@@ -55,7 +61,6 @@ export function lockCommand(): Command {
       }
       Object.assign(vars, buildDateVars());
       Object.assign(vars, buildSystemVars());
-      const configBase = deriveConfigBase(configPath);
       const toPin = new Map<string, string>(); // label → sha
       let hasError = false;
       let remoteSourceCount = 0;

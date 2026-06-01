@@ -107,6 +107,26 @@ describe('deriveConfigBase', () => {
       'gitlab:group/project:configs@v1',
     );
   });
+
+  it('returns directory prefix for a git+ssh:// config', () => {
+    expect(
+      deriveConfigBase(
+        'git+ssh://git@host/org/repo.git//configs/avanti.yml@main',
+      ),
+    ).toBe('git+ssh://git@host/org/repo.git//configs@main');
+  });
+
+  it('handles a git+ssh:// config at repo root (no subdirectory)', () => {
+    expect(
+      deriveConfigBase('git+ssh://git@host/org/repo.git//avanti.yml@main'),
+    ).toBe('git+ssh://git@host/org/repo.git//@main');
+  });
+
+  it('handles a git+ssh:// config without a ref', () => {
+    expect(
+      deriveConfigBase('git+ssh://git@host/org/repo.git//configs/avanti.yml'),
+    ).toBe('git+ssh://git@host/org/repo.git//configs');
+  });
 });
 
 describe('resolveRelativeSrc', () => {
@@ -204,6 +224,39 @@ describe('resolveRelativeSrc', () => {
   it('throws when a relative src escapes the repository root for a gitlab: config base', () => {
     expect(() =>
       resolveRelativeSrc('../../foo.sh', 'gitlab:group/project:configs'),
+    ).toThrow('escapes the repository root');
+  });
+
+  it('resolves a relative src against a git+ssh:// config base with ref', () => {
+    expect(
+      resolveRelativeSrc(
+        './scripts/foo.sh',
+        'git+ssh://git@host/org/repo.git//configs@main',
+      ),
+    ).toBe('git+ssh://git@host/org/repo.git//configs/scripts/foo.sh@main');
+  });
+
+  it('resolves a relative src against a git+ssh:// config base without ref', () => {
+    expect(
+      resolveRelativeSrc(
+        './scripts/foo.sh',
+        'git+ssh://git@host/org/repo.git//configs',
+      ),
+    ).toBe('git+ssh://git@host/org/repo.git//configs/scripts/foo.sh');
+  });
+
+  it('resolves a relative src from the root of a git+ssh:// repo', () => {
+    expect(
+      resolveRelativeSrc('./foo.sh', 'git+ssh://git@host/org/repo.git//@main'),
+    ).toBe('git+ssh://git@host/org/repo.git//foo.sh@main');
+  });
+
+  it('throws when a relative src escapes the repository root for a git+ssh:// config base', () => {
+    expect(() =>
+      resolveRelativeSrc(
+        '../../foo.sh',
+        'git+ssh://git@host/org/repo.git//configs@main',
+      ),
     ).toThrow('escapes the repository root');
   });
 });
