@@ -104,6 +104,7 @@ export function deriveConfigBase(configPath: string): string {
 
 export function resolveRelativeSrc(src: string, configBase: string): string {
   if (
+    src.startsWith('/') ||
     path.isAbsolute(src) ||
     src.startsWith('~/') ||
     isNonLocalSrcString(src)
