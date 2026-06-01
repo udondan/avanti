@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.26.0](https://github.com/udondan/avanti/compare/v0.25.0...v0.26.0) (2026-06-01)
+
+
+### Features
+
+* resolve relative source paths relative to config file location ([#244](https://github.com/udondan/avanti/issues/244)) ([3bde566](https://github.com/udondan/avanti/commit/3bde5669dc97f01c2c12b9c9daa8d6fdadd72ff4))
+
 ## [0.25.0](https://github.com/udondan/avanti/compare/v0.24.0...v0.25.0) (2026-05-26)
 
 
