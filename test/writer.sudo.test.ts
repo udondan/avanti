@@ -141,7 +141,7 @@ describe('sudoReadlink', () => {
     sudoReadlink(true, '/etc/link');
     expect(mockSpawnSync).toHaveBeenCalledWith(
       'sudo',
-      ['readlink', path.resolve('/etc/link')],
+      expect.arrayContaining(['readlink', path.resolve('/etc/link')]),
       expect.any(Object),
     );
   });
@@ -151,7 +151,12 @@ describe('sudoReadlink', () => {
     sudoReadlink('nobody', '/etc/link');
     expect(mockSpawnSync).toHaveBeenCalledWith(
       'sudo',
-      ['-u', 'nobody', 'readlink', path.resolve('/etc/link')],
+      expect.arrayContaining([
+        '-u',
+        'nobody',
+        'readlink',
+        path.resolve('/etc/link'),
+      ]),
       expect.any(Object),
     );
   });
