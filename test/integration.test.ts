@@ -221,11 +221,12 @@ describe('Integration', () => {
       );
     });
 
-    it('resolves a relative path: src relative to the config file directory for local configs', () => {
+    it('resolves a relative path: {path:} object src always resolves against workingDir, not the config directory', () => {
       const configDir = join(tmpDir, 'configs');
       mkdirSync(configDir);
-      const sourceFile = join(configDir, 'source.txt');
-      writeFileSync(sourceFile, 'from config dir via path');
+      // source.txt is in tmpDir (workingDir), not in configDir
+      const sourceFile = join(tmpDir, 'source.txt');
+      writeFileSync(sourceFile, 'from working dir via path');
 
       const configPath = join(configDir, 'avanti.yml');
       writeFileSync(
@@ -241,7 +242,7 @@ describe('Integration', () => {
       expect(stderr).toBe('');
       expect(exitCode).toBe(0);
       expect(readFileSync(join(tmpDir, 'output.txt'), 'utf8')).toBe(
-        'from config dir via path',
+        'from working dir via path',
       );
     });
 

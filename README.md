@@ -343,7 +343,7 @@ files:
     src: ./scripts/build.sh # fetches github:owner/repo:configs/scripts/build.sh
 ```
 
-Only local configs support `path:` object sources with relative paths. For remote configs, `path:` objects resolve against the working directory (since `path:` always means "local filesystem").
+The `path:` object source always refers to the local filesystem and its relative paths resolve against the working directory, regardless of whether the config file is local or remote.
 
 This is independent of where the config file lives only for targets. A config loaded from another location with `-c /shared/avanti.yml` writes target files into your working directory but reads sources from `/shared/`.
 

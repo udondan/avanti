@@ -67,7 +67,7 @@ mise exec -- bunx vitest run test/config.test.ts
 ### Source types (`src/sources/`)
 
 - **`http.ts`** (plain URL) — `fetch` with retry/rate-limit backoff
-- **`local.ts`** (plain path) — `fs` with recursive directory traversal; `~/` supported; relative paths are resolved relative to the config file's location (directory for local configs, same-scheme prefix for remote configs), NOT the working directory
+- **`local.ts`** (plain path) — `fs` with recursive directory traversal; `~/` supported; relative plain-string `src:` paths are resolved relative to the config file's location (directory for local configs, same-scheme prefix for remote configs), NOT the working directory; `path:` object sources always resolve relative to workingDir
 - **`exec.ts`** (`exec:`) — `child_process.execSync`
 - **`gitlab.ts`** (`gitlab:`) — shells out to `glab` CLI
 - **`github.ts`** (`github:`) — shells out to `gh` CLI
