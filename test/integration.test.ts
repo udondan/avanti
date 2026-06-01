@@ -197,6 +197,97 @@ describe('Integration', () => {
     });
   });
 
+  describe('config-relative source resolution', () => {
+    it('resolves a relative src path relative to the config file directory, not cwd', () => {
+      const configDir = join(tmpDir, 'configs');
+      mkdirSync(configDir);
+      const sourceFile = join(configDir, 'source.txt');
+      writeFileSync(sourceFile, 'from config dir');
+
+      const configPath = join(configDir, 'avanti.yml');
+      writeFileSync(
+        configPath,
+        `files:
+  ./output.txt:
+    src: ./source.txt
+`,
+      );
+
+      const { exitCode, stderr } = runAvanti(configPath, tmpDir);
+      expect(stderr).toBe('');
+      expect(exitCode).toBe(0);
+      expect(readFileSync(join(tmpDir, 'output.txt'), 'utf8')).toBe(
+        'from config dir',
+      );
+    });
+
+    it('resolves a relative path: src relative to the config file directory for local configs', () => {
+      const configDir = join(tmpDir, 'configs');
+      mkdirSync(configDir);
+      const sourceFile = join(configDir, 'source.txt');
+      writeFileSync(sourceFile, 'from config dir via path');
+
+      const configPath = join(configDir, 'avanti.yml');
+      writeFileSync(
+        configPath,
+        `files:
+  ./output.txt:
+    src:
+      path: ./source.txt
+`,
+      );
+
+      const { exitCode, stderr } = runAvanti(configPath, tmpDir);
+      expect(stderr).toBe('');
+      expect(exitCode).toBe(0);
+      expect(readFileSync(join(tmpDir, 'output.txt'), 'utf8')).toBe(
+        'from config dir via path',
+      );
+    });
+
+    it('does not affect absolute src paths', () => {
+      const configDir = join(tmpDir, 'configs');
+      mkdirSync(configDir);
+      const sourceFile = join(tmpDir, 'abs-source.txt');
+      writeFileSync(sourceFile, 'absolute source');
+
+      const configPath = join(configDir, 'avanti.yml');
+      writeFileSync(
+        configPath,
+        `files:
+  ./output.txt:
+    src: ${sourceFile}
+`,
+      );
+
+      const { exitCode } = runAvanti(configPath, tmpDir);
+      expect(exitCode).toBe(0);
+      expect(readFileSync(join(tmpDir, 'output.txt'), 'utf8')).toBe(
+        'absolute source',
+      );
+    });
+
+    it('when config is in cwd, relative src behaves as before (resolves to cwd)', () => {
+      const sourceFile = join(tmpDir, 'source.txt');
+      writeFileSync(sourceFile, 'cwd source');
+
+      const configPath = join(tmpDir, 'avanti.yml');
+      writeFileSync(
+        configPath,
+        `files:
+  ./output.txt:
+    src: ./source.txt
+`,
+      );
+
+      const { exitCode } = runAvanti(configPath, tmpDir);
+      expect(exitCode).toBe(0);
+      expect(readFileSync(join(tmpDir, 'output.txt'), 'utf8')).toBe(
+        'cwd source',
+      );
+    });
+  });
+
   describe('HTTP source', () => {
     it('fetches a file from a URL', { timeout: 30_000 }, () => {
       const config = writeConfig(

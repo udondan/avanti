@@ -1,6 +1,7 @@
 import { Command } from 'commander';
 import * as path from 'path';
 import {
+  deriveConfigBase,
   isRemoteConfigSpec,
   loadConfig,
   resolveConfigPath,
@@ -54,6 +55,7 @@ export function lockCommand(): Command {
       }
       Object.assign(vars, buildDateVars());
       Object.assign(vars, buildSystemVars());
+      const configBase = deriveConfigBase(configPath);
       const toPin = new Map<string, string>(); // label → sha
       let hasError = false;
       let remoteSourceCount = 0;
@@ -81,6 +83,8 @@ export function lockCommand(): Command {
             preVars,
             undefined,
             isSelf ? () => configPath : undefined,
+            undefined,
+            configBase,
           );
           remoteSourceCount += result.sourceRecords.length;
           for (const rec of result.sourceRecords) {

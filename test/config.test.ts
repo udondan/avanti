@@ -3,11 +3,13 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import {
+  deriveConfigBase,
   loadConfig,
   isRemoteConfigSpec,
   normalizeConfigKey,
   parseConfigContent,
   resolveConfigPath,
+  resolveRelativeSrc,
   SELF_KEY,
 } from '../src/config';
 import { parseGitRemoteSpec } from '../src/sources/git';
@@ -59,6 +61,124 @@ describe('normalizeConfigKey', () => {
     expect(
       normalizeConfigKey('git+ssh://git@host/org/repo.git//avanti.yml'),
     ).toBe('git+ssh://git@host/org/repo.git//avanti.yml');
+  });
+});
+
+describe('deriveConfigBase', () => {
+  it('returns dirname for a local config path', () => {
+    expect(deriveConfigBase('/home/user/configs/avanti.yml')).toBe(
+      '/home/user/configs',
+    );
+  });
+
+  it('returns directory portion of an HTTP config URL', () => {
+    expect(deriveConfigBase('https://example.com/configs/avanti.yml')).toBe(
+      'https://example.com/configs/',
+    );
+  });
+
+  it('handles an HTTP config at the URL root', () => {
+    expect(deriveConfigBase('https://example.com/avanti.yml')).toBe(
+      'https://example.com/',
+    );
+  });
+
+  it('returns directory prefix for a github: config', () => {
+    expect(deriveConfigBase('github:owner/repo:configs/avanti.yml')).toBe(
+      'github:owner/repo:configs',
+    );
+  });
+
+  it('preserves ref in github: config base', () => {
+    expect(deriveConfigBase('github:owner/repo:configs/avanti.yml@main')).toBe(
+      'github:owner/repo:configs@main',
+    );
+  });
+
+  it('handles github: config at repo root (no dir)', () => {
+    expect(deriveConfigBase('github:owner/repo:avanti.yml')).toBe(
+      'github:owner/repo:',
+    );
+  });
+
+  it('returns directory prefix for a gitlab: config', () => {
+    expect(deriveConfigBase('gitlab:group/project:configs/avanti.yml@v1')).toBe(
+      'gitlab:group/project:configs@v1',
+    );
+  });
+});
+
+describe('resolveRelativeSrc', () => {
+  it('resolves a relative src against a local config dir', () => {
+    expect(resolveRelativeSrc('./scripts/foo.sh', '/home/user/configs')).toBe(
+      '/home/user/configs/scripts/foo.sh',
+    );
+  });
+
+  it('resolves a dotless relative src against a local config dir', () => {
+    expect(resolveRelativeSrc('scripts/foo.sh', '/home/user/configs')).toBe(
+      '/home/user/configs/scripts/foo.sh',
+    );
+  });
+
+  it('resolves .. traversal in a relative src against a local config dir', () => {
+    expect(resolveRelativeSrc('../sibling/foo.sh', '/home/user/configs')).toBe(
+      '/home/user/sibling/foo.sh',
+    );
+  });
+
+  it('leaves absolute src unchanged', () => {
+    expect(resolveRelativeSrc('/abs/foo.sh', '/home/user/configs')).toBe(
+      '/abs/foo.sh',
+    );
+  });
+
+  it('leaves tilde-prefixed src unchanged', () => {
+    expect(resolveRelativeSrc('~/foo.sh', '/home/user/configs')).toBe(
+      '~/foo.sh',
+    );
+  });
+
+  it('leaves an http:// src unchanged', () => {
+    expect(
+      resolveRelativeSrc('http://example.com/foo.sh', '/home/user/configs'),
+    ).toBe('http://example.com/foo.sh');
+  });
+
+  it('leaves a github: src unchanged', () => {
+    expect(
+      resolveRelativeSrc('github:owner/repo:file.sh', '/home/user/configs'),
+    ).toBe('github:owner/repo:file.sh');
+  });
+
+  it('resolves a relative src against an HTTP config base', () => {
+    expect(
+      resolveRelativeSrc('./scripts/foo.sh', 'https://example.com/configs/'),
+    ).toBe('https://example.com/configs/scripts/foo.sh');
+  });
+
+  it('resolves a relative src against a github: config base', () => {
+    expect(
+      resolveRelativeSrc('./scripts/foo.sh', 'github:owner/repo:configs'),
+    ).toBe('github:owner/repo:configs/scripts/foo.sh');
+  });
+
+  it('preserves ref when resolving against a github: config base', () => {
+    expect(
+      resolveRelativeSrc('./scripts/foo.sh', 'github:owner/repo:configs@main'),
+    ).toBe('github:owner/repo:configs/scripts/foo.sh@main');
+  });
+
+  it('resolves a relative src from the root of a github: repo', () => {
+    expect(resolveRelativeSrc('./foo.sh', 'github:owner/repo:')).toBe(
+      'github:owner/repo:foo.sh',
+    );
+  });
+
+  it('resolves a relative src against a gitlab: config base', () => {
+    expect(
+      resolveRelativeSrc('./scripts/foo.sh', 'gitlab:group/project:configs@v1'),
+    ).toBe('gitlab:group/project:configs/scripts/foo.sh@v1');
   });
 });
 

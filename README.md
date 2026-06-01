@@ -327,9 +327,25 @@ Use `--yes` to skip the prompt. The history log is preserved — you can still r
 
 ## Working Directory
 
-All relative `src` and `target` paths are resolved relative to the **working directory** — the directory where you invoke `avanti`, or the path given with `-w`.
+Relative `src` and `target` paths are resolved against different bases:
 
-This is independent of where the config file lives. A config loaded from another directory with `-c /shared/avanti.yml` still resolves all paths from your working directory (or the one you specify with `-w`).
+- **`target` paths** (map keys) — resolved relative to the **working directory** (where you invoke `avanti`, or the path given with `-w`). This controls where pulled files land on disk.
+- **`src` paths** (local string or `path:` sources) — resolved relative to the **config file's location**. If the config is a local file, relative sources resolve relative to its directory. If the config is remote (GitHub, GitLab, HTTPS), relative sources resolve to the same remote location.
+
+This means a config at `./configs/avanti.yml` can use `src: ./templates/foo.sh` to reference `./configs/templates/foo.sh`, regardless of what working directory you pass with `-w`.
+
+For remote configs, relative source paths are resolved within the same remote context:
+
+```yaml
+# config loaded from github:owner/repo:configs/avanti.yml
+files:
+  dist/script.sh:
+    src: ./scripts/build.sh # fetches github:owner/repo:configs/scripts/build.sh
+```
+
+Only local configs support `path:` object sources with relative paths. For remote configs, `path:` objects resolve against the working directory (since `path:` always means "local filesystem").
+
+This is independent of where the config file lives only for targets. A config loaded from another location with `-c /shared/avanti.yml` writes target files into your working directory but reads sources from `/shared/`.
 
 The path given to `-w` supports tilde expansion: `~` resolves to the home directory and `~/some/path` resolves to a subdirectory of it:
 
@@ -463,7 +479,10 @@ A brace group is only expanded when it contains **at least one comma** (e.g. `{f
 src: https://example.com/file.txt
 src: ~/templates/file.txt
 src: /absolute/path/file.txt
+src: ./relative/path/file.txt   # relative to the config file's directory
 ```
+
+Relative paths (no leading `/` or `~/`) are resolved relative to the config file's location, not the working directory. If the config is a local file at `./configs/avanti.yml`, then `src: ./scripts/build.sh` fetches `./configs/scripts/build.sh`. For remote configs (GitHub, HTTPS, etc.), relative paths resolve within the same remote context.
 
 **Map** — for path, url, exec, gitlab, github, bitbucket, git, aws_s3,
 aws_secrets_manager, aws_systems_manager_parameter, vault, http, raw:

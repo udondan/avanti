@@ -33,6 +33,12 @@ import { mergeIni, formatIni } from '../processors/ini';
 import { isBinary } from '../binary';
 import { applyFilter } from '../filter';
 import { extractArchive, detectArchiveFormat } from '../extract';
+import {
+  isRemoteConfigSpec,
+  parseGitHubSpec,
+  parseGitLabSpec,
+  resolveRelativeSrc,
+} from '../config';
 
 const JSON_EXTENSIONS = new Set(['.json', '.jsonc']);
 const YAML_EXTENSIONS = new Set(['.yaml', '.yml']);
@@ -423,6 +429,7 @@ async function _fetchOneSrcRaw(
   src: FileSrc,
   workingDir: string,
   vars: Variables,
+  configBase?: string,
 ): Promise<{ files: Map<string, Buffer>; skipped?: boolean }> {
   if (isVerbose())
     verbose(
@@ -431,16 +438,30 @@ async function _fetchOneSrcRaw(
 
   if (typeof src === 'string') {
     const resolved = resolveVars(src, vars);
-    if (resolved.startsWith('http://') || resolved.startsWith('https://')) {
-      const content = await fetchHttp(resolved);
-      const filename = inferFilenameFromUrl(resolved) ?? 'download';
+    const effective =
+      configBase !== undefined
+        ? resolveRelativeSrc(resolved, configBase)
+        : resolved;
+    if (effective.startsWith('http://') || effective.startsWith('https://')) {
+      const content = await fetchHttp(effective);
+      const filename = inferFilenameFromUrl(effective) ?? 'download';
       return { files: new Map([[filename, content]]) };
     }
-    if (isGitRemoteUrl(resolved)) {
-      const { repo, file, ref } = parseGitRemoteSpec(resolved);
+    if (isGitRemoteUrl(effective)) {
+      const { repo, file, ref } = parseGitRemoteSpec(effective);
       return { files: fetchGit(repo, file, ref).files };
     }
-    return { files: fetchLocal(resolved, workingDir).files };
+    if (effective.startsWith('github:')) {
+      const { repo, file, ref } = parseGitHubSpec(effective);
+      const result = await fetchGitHub(repo, file, ref);
+      return { files: result.files };
+    }
+    if (effective.startsWith('gitlab:')) {
+      const { project, file, ref } = parseGitLabSpec(effective);
+      const result = await fetchGitLab(project, file, ref);
+      return { files: result.files };
+    }
+    return { files: fetchLocal(effective, workingDir).files };
   }
 
   if ('raw' in src) {
@@ -453,7 +474,11 @@ async function _fetchOneSrcRaw(
 
   if ('path' in src) {
     const resolved = resolveVars(src.path, vars);
-    const result = fetchLocal(resolved, workingDir, src.optional ?? false);
+    const effective =
+      configBase !== undefined && !isRemoteConfigSpec(configBase)
+        ? resolveRelativeSrc(resolved, configBase)
+        : resolved;
+    const result = fetchLocal(effective, workingDir, src.optional ?? false);
     if (result.missing) {
       return { files: new Map(), skipped: true };
     }
@@ -605,6 +630,7 @@ async function fetchOneSrc(
   cache?: FetchCache,
   getTargetPath: () => string = () => '',
   pendingWrites?: Map<string, Buffer>,
+  configBase?: string,
 ): Promise<{
   files: Map<string, Buffer>;
   record: SourceFetchRecord | null;
@@ -654,7 +680,7 @@ async function fetchOneSrc(
       );
     files = cached.files;
   } else {
-    const raw = await _fetchOneSrcRaw(src, workingDir, vars);
+    const raw = await _fetchOneSrcRaw(src, workingDir, vars, configBase);
     files = raw.files;
     skipped = raw.skipped;
     // Don't cache skipped results: if optional changes to required between
@@ -753,6 +779,7 @@ export async function fetchSource(
   cache?: FetchCache,
   getTargetPathOverride?: () => string,
   pendingWrites?: Map<string, Buffer>,
+  configBase?: string,
 ): Promise<FetchResult> {
   const { src } = entry;
 
@@ -773,6 +800,7 @@ export async function fetchSource(
           cache,
           getTargetPath,
           pendingWrites,
+          configBase,
         );
         if (skipped) continue;
         assertTextFiles(files, `source ${i}`);
@@ -830,6 +858,7 @@ export async function fetchSource(
     cache,
     getTargetPath,
     pendingWrites,
+    configBase,
   );
   if (skipped) return { files: new Map(), sourceRecords: [], allSkipped: true };
 
