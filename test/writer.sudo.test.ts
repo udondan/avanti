@@ -5,6 +5,7 @@ import {
   sudoAtomicWrite,
   sudoDelete,
   sudoRead,
+  sudoReadlink,
   sudoFileExists,
   sudoUserArgs,
   sudoRun,
@@ -120,6 +121,48 @@ describe('sudoRead', () => {
       'sudo',
       expect.arrayContaining(['-u', 'nobody', 'cat', '--']),
       expect.any(Object),
+    );
+  });
+});
+
+describe('sudoReadlink', () => {
+  it('returns trimmed symlink target on success', () => {
+    mockSpawnSync.mockReturnValue(okResult('/etc/hosts\n'));
+    expect(sudoReadlink(true, '/etc/link')).toBe('/etc/hosts');
+  });
+
+  it('returns null when readlink exits non-zero', () => {
+    mockSpawnSync.mockReturnValue(failResult());
+    expect(sudoReadlink(true, '/etc/link')).toBeNull();
+  });
+
+  it('calls sudo readlink with resolved path for root', () => {
+    mockSpawnSync.mockReturnValue(okResult('/target'));
+    sudoReadlink(true, '/etc/link');
+    expect(mockSpawnSync).toHaveBeenCalledWith(
+      'sudo',
+      ['readlink', path.resolve('/etc/link')],
+      { stdio: ['ignore', 'pipe', 'ignore'] },
+    );
+  });
+
+  it('calls sudo -u <name> readlink for a named user', () => {
+    mockSpawnSync.mockReturnValue(okResult('/target'));
+    sudoReadlink('nobody', '/etc/link');
+    expect(mockSpawnSync).toHaveBeenCalledWith(
+      'sudo',
+      ['-u', 'nobody', 'readlink', path.resolve('/etc/link')],
+      { stdio: ['ignore', 'pipe', 'ignore'] },
+    );
+  });
+
+  it('throws when spawnSync returns an error', () => {
+    mockSpawnSync.mockReturnValue({
+      ...failResult(),
+      error: new Error('ENOENT'),
+    });
+    expect(() => sudoReadlink(true, '/etc/link')).toThrow(
+      'sudo readlink failed',
     );
   });
 });
