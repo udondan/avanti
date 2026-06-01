@@ -82,19 +82,26 @@ export function deriveConfigBase(configPath: string): string {
   }
   if (configPath.startsWith('github:')) {
     const { repo, file, ref } = parseGitHubSpec(configPath);
-    const dir = file.includes('/') ? file.slice(0, file.lastIndexOf('/')) : '';
+    const normalizedFile = file.replace(/\\/g, '/');
+    const dir = normalizedFile.includes('/')
+      ? normalizedFile.slice(0, normalizedFile.lastIndexOf('/'))
+      : '';
     const refSuffix = ref !== undefined ? `@${ref}` : '';
     return `github:${repo}:${dir}${refSuffix}`;
   }
   if (configPath.startsWith('gitlab:')) {
     const { project, file, ref } = parseGitLabSpec(configPath);
-    const dir = file.includes('/') ? file.slice(0, file.lastIndexOf('/')) : '';
+    const normalizedFile = file.replace(/\\/g, '/');
+    const dir = normalizedFile.includes('/')
+      ? normalizedFile.slice(0, normalizedFile.lastIndexOf('/'))
+      : '';
     const refSuffix = ref !== undefined ? `@${ref}` : '';
     return `gitlab:${project}:${dir}${refSuffix}`;
   }
   if (isGitRemoteUrl(configPath)) {
     const { repo, file, ref } = parseGitRemoteSpec(configPath);
-    const dir = path.posix.dirname(file);
+    const normalizedFile = file.replace(/\\/g, '/');
+    const dir = path.posix.dirname(normalizedFile);
     const dirPart = dir === '.' ? '' : dir;
     const refSuffix = ref !== undefined ? `@${ref}` : '';
     return `${repo}//${dirPart}${refSuffix}`;
