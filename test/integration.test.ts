@@ -287,6 +287,37 @@ describe('Integration', () => {
         'cwd source',
       );
     });
+
+    it('resolves a relative variable src: path relative to the config file directory', () => {
+      const configDir = join(tmpDir, 'configs');
+      mkdirSync(configDir);
+      // token.txt lives next to the config, not in workingDir
+      writeFileSync(join(configDir, 'token.txt'), 'secret-value');
+      // template source also lives next to the config
+      writeFileSync(join(configDir, 'template.txt'), 'TOKEN=PLACEHOLDER');
+
+      const configPath = join(configDir, 'avanti.yml');
+      writeFileSync(
+        configPath,
+        `variables:
+  token:
+    src: ./token.txt
+files:
+  ./output.txt:
+    src: ./template.txt
+    replace:
+      - from: PLACEHOLDER
+        to: $token
+`,
+      );
+
+      const { exitCode, stderr } = runAvanti(configPath, tmpDir);
+      expect(stderr).toBe('');
+      expect(exitCode).toBe(0);
+      expect(readFileSync(join(tmpDir, 'output.txt'), 'utf8')).toBe(
+        'TOKEN=secret-value',
+      );
+    });
   });
 
   describe('HTTP source', () => {
