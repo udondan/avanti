@@ -119,7 +119,8 @@ export function resolveRelativeSrc(src: string, configBase: string): string {
     return src;
   }
   if (configBase.startsWith('http://') || configBase.startsWith('https://')) {
-    const resolvedUrl = new URL(src, configBase);
+    const normalizedSrc = src.replace(/\\/g, '/');
+    const resolvedUrl = new URL(normalizedSrc, configBase);
     const baseUrl = new URL(configBase);
     if (baseUrl.search) {
       const baseParams = new URLSearchParams(baseUrl.search);
