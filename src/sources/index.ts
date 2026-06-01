@@ -452,13 +452,35 @@ async function _fetchOneSrcRaw(
       return { files: fetchGit(repo, file, ref).files };
     }
     if (effective.startsWith('github:')) {
-      const { repo, file, ref } = parseGitHubSpec(effective);
-      const result = await fetchGitHub(repo, file, ref);
+      let parsedGh: ReturnType<typeof parseGitHubSpec>;
+      try {
+        parsedGh = parseGitHubSpec(effective);
+      } catch {
+        throw new Error(
+          `Invalid github source spec "${effective}". Expected: github:owner/repo:path/to/file[@ref]`,
+        );
+      }
+      const result = await fetchGitHub(
+        parsedGh.repo,
+        parsedGh.file,
+        parsedGh.ref,
+      );
       return { files: result.files };
     }
     if (effective.startsWith('gitlab:')) {
-      const { project, file, ref } = parseGitLabSpec(effective);
-      const result = await fetchGitLab(project, file, ref);
+      let parsedGl: ReturnType<typeof parseGitLabSpec>;
+      try {
+        parsedGl = parseGitLabSpec(effective);
+      } catch {
+        throw new Error(
+          `Invalid gitlab source spec "${effective}". Expected: gitlab:group/project:path/to/file[@ref]`,
+        );
+      }
+      const result = await fetchGitLab(
+        parsedGl.project,
+        parsedGl.file,
+        parsedGl.ref,
+      );
       return { files: result.files };
     }
     return { files: fetchLocal(effective, workingDir).files };

@@ -330,7 +330,7 @@ Use `--yes` to skip the prompt. The history log is preserved — you can still r
 Relative `src` and `target` paths are resolved against different bases:
 
 - **`target` paths** (map keys) — resolved relative to the **working directory** (where you invoke `avanti`, or the path given with `-w`). This controls where pulled files land on disk.
-- **`src` paths** (local string or `path:` sources) — resolved relative to the **config file's location**. If the config is a local file, relative sources resolve relative to its directory. If the config is remote (GitHub, GitLab, HTTPS), relative sources resolve to the same remote location.
+- **`src` paths** (plain string) — resolved relative to the **config file's location**. If the config is a local file, relative sources resolve relative to its directory. If the config is remote (GitHub, GitLab, HTTPS, `git+ssh://`), relative plain-string sources resolve to the same remote location. `path:` object sources always resolve relative to the working directory (they always refer to local files).
 
 This means a config at `./configs/avanti.yml` can use `src: ./templates/foo.sh` to reference `./configs/templates/foo.sh`, regardless of what working directory you pass with `-w`.
 
@@ -482,7 +482,7 @@ src: /absolute/path/file.txt
 src: ./relative/path/file.txt   # relative to the config file's directory
 ```
 
-Relative paths (no leading `/` or `~/`) are resolved relative to the config file's location, not the working directory. If the config is a local file at `./configs/avanti.yml`, then `src: ./scripts/build.sh` fetches `./configs/scripts/build.sh`. For remote configs (GitHub, HTTPS, etc.), relative paths resolve within the same remote context.
+Relative paths (no leading `/` or `~/`) are resolved relative to the config file's location, not the working directory. If the config is a local file at `./configs/avanti.yml`, then `src: ./scripts/build.sh` fetches `./configs/scripts/build.sh`. For remote configs (GitHub, HTTPS, `git+ssh://`, etc.), a relative src resolves within the same remote context — it becomes a remote source of the same type, not a local file.
 
 **Map** — for path, url, exec, gitlab, github, bitbucket, git, aws_s3,
 aws_secrets_manager, aws_systems_manager_parameter, vault, http, raw:
