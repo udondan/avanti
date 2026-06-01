@@ -66,8 +66,9 @@ describe('normalizeConfigKey', () => {
 
 describe('deriveConfigBase', () => {
   it('returns dirname for a local config path', () => {
-    expect(deriveConfigBase('/home/user/configs/avanti.yml')).toBe(
-      '/home/user/configs',
+    const configPath = path.join(os.tmpdir(), 'configs', 'avanti.yml');
+    expect(deriveConfigBase(configPath)).toBe(
+      path.join(os.tmpdir(), 'configs'),
     );
   });
 
@@ -110,51 +111,64 @@ describe('deriveConfigBase', () => {
 
 describe('resolveRelativeSrc', () => {
   it('resolves a relative src against a local config dir', () => {
-    expect(resolveRelativeSrc('./scripts/foo.sh', '/home/user/configs')).toBe(
-      '/home/user/configs/scripts/foo.sh',
+    const configDir = path.join(os.tmpdir(), 'configs');
+    expect(resolveRelativeSrc('./scripts/foo.sh', configDir)).toBe(
+      path.join(configDir, 'scripts', 'foo.sh'),
     );
   });
 
   it('resolves a dotless relative src against a local config dir', () => {
-    expect(resolveRelativeSrc('scripts/foo.sh', '/home/user/configs')).toBe(
-      '/home/user/configs/scripts/foo.sh',
+    const configDir = path.join(os.tmpdir(), 'configs');
+    expect(resolveRelativeSrc('scripts/foo.sh', configDir)).toBe(
+      path.join(configDir, 'scripts', 'foo.sh'),
     );
   });
 
   it('resolves .. traversal in a relative src against a local config dir', () => {
-    expect(resolveRelativeSrc('../sibling/foo.sh', '/home/user/configs')).toBe(
-      '/home/user/sibling/foo.sh',
+    const configDir = path.join(os.tmpdir(), 'configs');
+    expect(resolveRelativeSrc('../sibling/foo.sh', configDir)).toBe(
+      path.join(os.tmpdir(), 'sibling', 'foo.sh'),
     );
   });
 
   it('leaves absolute src unchanged', () => {
-    expect(resolveRelativeSrc('/abs/foo.sh', '/home/user/configs')).toBe(
-      '/abs/foo.sh',
-    );
+    const absPath = path.join(os.tmpdir(), 'foo.sh');
+    const configDir = path.join(os.tmpdir(), 'configs');
+    expect(resolveRelativeSrc(absPath, configDir)).toBe(absPath);
   });
 
   it('leaves tilde-prefixed src unchanged', () => {
-    expect(resolveRelativeSrc('~/foo.sh', '/home/user/configs')).toBe(
-      '~/foo.sh',
-    );
+    const configDir = path.join(os.tmpdir(), 'configs');
+    expect(resolveRelativeSrc('~/foo.sh', configDir)).toBe('~/foo.sh');
   });
 
   it('leaves an http:// src unchanged', () => {
-    expect(
-      resolveRelativeSrc('http://example.com/foo.sh', '/home/user/configs'),
-    ).toBe('http://example.com/foo.sh');
+    const configDir = path.join(os.tmpdir(), 'configs');
+    expect(resolveRelativeSrc('http://example.com/foo.sh', configDir)).toBe(
+      'http://example.com/foo.sh',
+    );
   });
 
   it('leaves a github: src unchanged', () => {
-    expect(
-      resolveRelativeSrc('github:owner/repo:file.sh', '/home/user/configs'),
-    ).toBe('github:owner/repo:file.sh');
+    const configDir = path.join(os.tmpdir(), 'configs');
+    expect(resolveRelativeSrc('github:owner/repo:file.sh', configDir)).toBe(
+      'github:owner/repo:file.sh',
+    );
   });
 
   it('resolves a relative src against an HTTP config base', () => {
     expect(
       resolveRelativeSrc('./scripts/foo.sh', 'https://example.com/configs/'),
     ).toBe('https://example.com/configs/scripts/foo.sh');
+  });
+
+  it('resolves a relative src against an HTTP config base with query parameters', () => {
+    expect(
+      resolveRelativeSrc(
+        './scripts/foo.sh',
+        'https://example.com/configs/?token=123',
+      ),
+    ).toBe('https://example.com/configs/scripts/foo.sh?token=123');
   });
 
   it('resolves a relative src against a github: config base', () => {
@@ -179,6 +193,18 @@ describe('resolveRelativeSrc', () => {
     expect(
       resolveRelativeSrc('./scripts/foo.sh', 'gitlab:group/project:configs@v1'),
     ).toBe('gitlab:group/project:configs/scripts/foo.sh@v1');
+  });
+
+  it('throws when a relative src escapes the repository root for a github: config base', () => {
+    expect(() =>
+      resolveRelativeSrc('../../foo.sh', 'github:owner/repo:configs'),
+    ).toThrow('escapes the repository root');
+  });
+
+  it('throws when a relative src escapes the repository root for a gitlab: config base', () => {
+    expect(() =>
+      resolveRelativeSrc('../../foo.sh', 'gitlab:group/project:configs'),
+    ).toThrow('escapes the repository root');
   });
 });
 

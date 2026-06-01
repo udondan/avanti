@@ -104,8 +104,17 @@ export function resolveRelativeSrc(src: string, configBase: string): string {
     return src;
   }
   if (configBase.startsWith('http://') || configBase.startsWith('https://')) {
-    const base = configBase.endsWith('/') ? configBase : `${configBase}/`;
-    return new URL(src, base).href;
+    const resolvedUrl = new URL(src, configBase);
+    const baseUrl = new URL(configBase);
+    if (baseUrl.search) {
+      const baseParams = new URLSearchParams(baseUrl.search);
+      const resolvedParams = new URLSearchParams(resolvedUrl.search);
+      for (const [key, val] of baseParams.entries()) {
+        if (!resolvedParams.has(key)) resolvedParams.append(key, val);
+      }
+      resolvedUrl.search = resolvedParams.toString();
+    }
+    return resolvedUrl.href;
   }
   if (configBase.startsWith('github:')) {
     return resolveRelativeGitHostSpec(src, configBase, 'github');
@@ -130,6 +139,11 @@ function resolveRelativeGitHostSpec(
   const dir = atIdx === -1 ? rest : rest.slice(0, atIdx);
   const ref = atIdx === -1 ? undefined : rest.slice(atIdx + 1);
   const file = path.posix.join(dir, src);
+  if (file.startsWith('../') || file === '..') {
+    throw new Error(
+      `Relative source path '${src}' escapes the repository root for config base '${configBase}'`,
+    );
+  }
   const refSuffix = ref !== undefined ? `@${ref}` : '';
   return `${prefix}${id}:${file}${refSuffix}`;
 }
