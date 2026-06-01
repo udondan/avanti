@@ -2,6 +2,7 @@ import { Command } from 'commander';
 import * as fs from 'fs';
 import * as path from 'path';
 import {
+  deriveConfigBase,
   isRemoteConfigSpec,
   loadConfig,
   normalizeConfigKey,
@@ -50,10 +51,16 @@ async function runDiffLoop(
   cache?: FetchCache,
   configPath?: string,
   history?: HistoryManager,
+  configBase?: string,
 ): Promise<DiffLoopResult> {
   let vars;
   try {
-    vars = await resolveVariableSpec(config.variables ?? {}, workingDir, cache);
+    vars = await resolveVariableSpec(
+      config.variables ?? {},
+      workingDir,
+      cache,
+      configBase,
+    );
   } catch (err: unknown) {
     console.error(err instanceof Error ? err.message : String(err));
     return { allDiffs: [], hasError: true };
@@ -199,6 +206,7 @@ async function runDiffLoop(
         cache,
         isSelf && configPath !== undefined ? () => configPath : undefined,
         pendingWrites,
+        configBase,
       );
       for (const rec of result.sourceRecords) {
         if (!rec.matched) {
@@ -347,6 +355,7 @@ export function diffCommand(): Command {
           normalizeConfigKey(configPath),
           workingDir,
         );
+        const configBase = deriveConfigBase(configPath);
         const firstPass = await runDiffLoop(
           config,
           workingDir,
@@ -354,6 +363,7 @@ export function diffCommand(): Command {
           fetchCache,
           configPath,
           history,
+          configBase,
         );
         let { allDiffs, hasError } = firstPass;
 
@@ -394,6 +404,7 @@ export function diffCommand(): Command {
               fetchCache,
               configPath,
               history,
+              configBase,
             );
 
             if (next.hasError) {
@@ -428,6 +439,7 @@ export function diffCommand(): Command {
                 fetchCache,
                 configPath,
                 history,
+                configBase,
               );
               allDiffs = second.allDiffs;
               hasError = second.hasError;

@@ -3,11 +3,13 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import {
+  deriveConfigBase,
   loadConfig,
   isRemoteConfigSpec,
   normalizeConfigKey,
   parseConfigContent,
   resolveConfigPath,
+  resolveRelativeSrc,
   SELF_KEY,
 } from '../src/config';
 import { parseGitRemoteSpec } from '../src/sources/git';
@@ -59,6 +61,203 @@ describe('normalizeConfigKey', () => {
     expect(
       normalizeConfigKey('git+ssh://git@host/org/repo.git//avanti.yml'),
     ).toBe('git+ssh://git@host/org/repo.git//avanti.yml');
+  });
+});
+
+describe('deriveConfigBase', () => {
+  it('returns dirname for a local config path', () => {
+    const configPath = path.join(os.tmpdir(), 'configs', 'avanti.yml');
+    expect(deriveConfigBase(configPath)).toBe(
+      path.join(os.tmpdir(), 'configs'),
+    );
+  });
+
+  it('returns directory portion of an HTTP config URL', () => {
+    expect(deriveConfigBase('https://example.com/configs/avanti.yml')).toBe(
+      'https://example.com/configs/',
+    );
+  });
+
+  it('handles an HTTP config at the URL root', () => {
+    expect(deriveConfigBase('https://example.com/avanti.yml')).toBe(
+      'https://example.com/',
+    );
+  });
+
+  it('returns directory prefix for a github: config', () => {
+    expect(deriveConfigBase('github:owner/repo:configs/avanti.yml')).toBe(
+      'github:owner/repo:configs',
+    );
+  });
+
+  it('preserves ref in github: config base', () => {
+    expect(deriveConfigBase('github:owner/repo:configs/avanti.yml@main')).toBe(
+      'github:owner/repo:configs@main',
+    );
+  });
+
+  it('handles github: config at repo root (no dir)', () => {
+    expect(deriveConfigBase('github:owner/repo:avanti.yml')).toBe(
+      'github:owner/repo:',
+    );
+  });
+
+  it('returns directory prefix for a gitlab: config', () => {
+    expect(deriveConfigBase('gitlab:group/project:configs/avanti.yml@v1')).toBe(
+      'gitlab:group/project:configs@v1',
+    );
+  });
+
+  it('returns directory prefix for a git+ssh:// config', () => {
+    expect(
+      deriveConfigBase(
+        'git+ssh://git@host/org/repo.git//configs/avanti.yml@main',
+      ),
+    ).toBe('git+ssh://git@host/org/repo.git//configs@main');
+  });
+
+  it('handles a git+ssh:// config at repo root (no subdirectory)', () => {
+    expect(
+      deriveConfigBase('git+ssh://git@host/org/repo.git//avanti.yml@main'),
+    ).toBe('git+ssh://git@host/org/repo.git//@main');
+  });
+
+  it('handles a git+ssh:// config without a ref', () => {
+    expect(
+      deriveConfigBase('git+ssh://git@host/org/repo.git//configs/avanti.yml'),
+    ).toBe('git+ssh://git@host/org/repo.git//configs');
+  });
+});
+
+describe('resolveRelativeSrc', () => {
+  it('resolves a relative src against a local config dir', () => {
+    const configDir = path.join(os.tmpdir(), 'configs');
+    expect(resolveRelativeSrc('./scripts/foo.sh', configDir)).toBe(
+      path.join(configDir, 'scripts', 'foo.sh'),
+    );
+  });
+
+  it('resolves a dotless relative src against a local config dir', () => {
+    const configDir = path.join(os.tmpdir(), 'configs');
+    expect(resolveRelativeSrc('scripts/foo.sh', configDir)).toBe(
+      path.join(configDir, 'scripts', 'foo.sh'),
+    );
+  });
+
+  it('resolves .. traversal in a relative src against a local config dir', () => {
+    const configDir = path.join(os.tmpdir(), 'configs');
+    expect(resolveRelativeSrc('../sibling/foo.sh', configDir)).toBe(
+      path.join(os.tmpdir(), 'sibling', 'foo.sh'),
+    );
+  });
+
+  it('leaves absolute src unchanged', () => {
+    const absPath = path.join(os.tmpdir(), 'foo.sh');
+    const configDir = path.join(os.tmpdir(), 'configs');
+    expect(resolveRelativeSrc(absPath, configDir)).toBe(absPath);
+  });
+
+  it('leaves tilde-prefixed src unchanged', () => {
+    const configDir = path.join(os.tmpdir(), 'configs');
+    expect(resolveRelativeSrc('~/foo.sh', configDir)).toBe('~/foo.sh');
+  });
+
+  it('leaves an http:// src unchanged', () => {
+    const configDir = path.join(os.tmpdir(), 'configs');
+    expect(resolveRelativeSrc('http://example.com/foo.sh', configDir)).toBe(
+      'http://example.com/foo.sh',
+    );
+  });
+
+  it('leaves a github: src unchanged', () => {
+    const configDir = path.join(os.tmpdir(), 'configs');
+    expect(resolveRelativeSrc('github:owner/repo:file.sh', configDir)).toBe(
+      'github:owner/repo:file.sh',
+    );
+  });
+
+  it('resolves a relative src against an HTTP config base', () => {
+    expect(
+      resolveRelativeSrc('./scripts/foo.sh', 'https://example.com/configs/'),
+    ).toBe('https://example.com/configs/scripts/foo.sh');
+  });
+
+  it('resolves a relative src against an HTTP config base with query parameters', () => {
+    expect(
+      resolveRelativeSrc(
+        './scripts/foo.sh',
+        'https://example.com/configs/?token=123',
+      ),
+    ).toBe('https://example.com/configs/scripts/foo.sh?token=123');
+  });
+
+  it('resolves a relative src against a github: config base', () => {
+    expect(
+      resolveRelativeSrc('./scripts/foo.sh', 'github:owner/repo:configs'),
+    ).toBe('github:owner/repo:configs/scripts/foo.sh');
+  });
+
+  it('preserves ref when resolving against a github: config base', () => {
+    expect(
+      resolveRelativeSrc('./scripts/foo.sh', 'github:owner/repo:configs@main'),
+    ).toBe('github:owner/repo:configs/scripts/foo.sh@main');
+  });
+
+  it('resolves a relative src from the root of a github: repo', () => {
+    expect(resolveRelativeSrc('./foo.sh', 'github:owner/repo:')).toBe(
+      'github:owner/repo:foo.sh',
+    );
+  });
+
+  it('resolves a relative src against a gitlab: config base', () => {
+    expect(
+      resolveRelativeSrc('./scripts/foo.sh', 'gitlab:group/project:configs@v1'),
+    ).toBe('gitlab:group/project:configs/scripts/foo.sh@v1');
+  });
+
+  it('throws when a relative src escapes the repository root for a github: config base', () => {
+    expect(() =>
+      resolveRelativeSrc('../../foo.sh', 'github:owner/repo:configs'),
+    ).toThrow('escapes the repository root');
+  });
+
+  it('throws when a relative src escapes the repository root for a gitlab: config base', () => {
+    expect(() =>
+      resolveRelativeSrc('../../foo.sh', 'gitlab:group/project:configs'),
+    ).toThrow('escapes the repository root');
+  });
+
+  it('resolves a relative src against a git+ssh:// config base with ref', () => {
+    expect(
+      resolveRelativeSrc(
+        './scripts/foo.sh',
+        'git+ssh://git@host/org/repo.git//configs@main',
+      ),
+    ).toBe('git+ssh://git@host/org/repo.git//configs/scripts/foo.sh@main');
+  });
+
+  it('resolves a relative src against a git+ssh:// config base without ref', () => {
+    expect(
+      resolveRelativeSrc(
+        './scripts/foo.sh',
+        'git+ssh://git@host/org/repo.git//configs',
+      ),
+    ).toBe('git+ssh://git@host/org/repo.git//configs/scripts/foo.sh');
+  });
+
+  it('resolves a relative src from the root of a git+ssh:// repo', () => {
+    expect(
+      resolveRelativeSrc('./foo.sh', 'git+ssh://git@host/org/repo.git//@main'),
+    ).toBe('git+ssh://git@host/org/repo.git//foo.sh@main');
+  });
+
+  it('throws when a relative src escapes the repository root for a git+ssh:// config base', () => {
+    expect(() =>
+      resolveRelativeSrc(
+        '../../foo.sh',
+        'git+ssh://git@host/org/repo.git//configs@main',
+      ),
+    ).toThrow('escapes the repository root');
   });
 });
 

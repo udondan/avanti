@@ -2,6 +2,7 @@ import { Command } from 'commander';
 import * as fs from 'fs';
 import * as path from 'path';
 import {
+  deriveConfigBase,
   isRemoteConfigSpec,
   loadConfig,
   normalizeConfigKey,
@@ -107,10 +108,16 @@ async function runFetchLoop(
   cache?: FetchCache,
   configPath?: string,
   history?: HistoryManager,
+  configBase?: string,
 ): Promise<FetchLoopResult> {
   let vars;
   try {
-    vars = await resolveVariableSpec(config.variables ?? {}, workingDir, cache);
+    vars = await resolveVariableSpec(
+      config.variables ?? {},
+      workingDir,
+      cache,
+      configBase,
+    );
   } catch (err: unknown) {
     console.error(err instanceof Error ? err.message : String(err));
     return {
@@ -373,6 +380,7 @@ async function runFetchLoop(
         cache,
         isSelf && configPath !== undefined ? () => configPath : undefined,
         pendingWrites,
+        configBase,
       );
 
       if (result.allSkipped && !isSelf) {
@@ -621,6 +629,7 @@ export function pullCommand(): Command {
 
       const fetchCache: FetchCache = new Map();
       const dateVars = buildDateVars();
+      const configBase = deriveConfigBase(configPath);
       const firstPass = await runFetchLoop(
         config,
         workingDir,
@@ -628,6 +637,7 @@ export function pullCommand(): Command {
         fetchCache,
         configPath,
         history,
+        configBase,
       );
       let { writeTargets, allDiffs, sourceRecordsByTarget } = firstPass;
       let fileHookContexts = firstPass.fileHookContexts;
@@ -690,6 +700,7 @@ export function pullCommand(): Command {
             fetchCache,
             configPath,
             history,
+            configBase,
           );
 
           if (next.hasError) {
@@ -742,6 +753,7 @@ export function pullCommand(): Command {
               fetchCache,
               configPath,
               history,
+              configBase,
             );
             if (second.hasError) {
               console.error('Aborting due to errors.');

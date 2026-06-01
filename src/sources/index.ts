@@ -33,6 +33,11 @@ import { mergeIni, formatIni } from '../processors/ini';
 import { isBinary } from '../binary';
 import { applyFilter } from '../filter';
 import { extractArchive, detectArchiveFormat } from '../extract';
+import {
+  parseGitHubSpec,
+  parseGitLabSpec,
+  resolveRelativeSrc,
+} from '../config';
 
 const JSON_EXTENSIONS = new Set(['.json', '.jsonc']);
 const YAML_EXTENSIONS = new Set(['.yaml', '.yml']);
@@ -423,6 +428,7 @@ async function _fetchOneSrcRaw(
   src: FileSrc,
   workingDir: string,
   vars: Variables,
+  configBase?: string,
 ): Promise<{ files: Map<string, Buffer>; skipped?: boolean }> {
   if (isVerbose())
     verbose(
@@ -431,16 +437,52 @@ async function _fetchOneSrcRaw(
 
   if (typeof src === 'string') {
     const resolved = resolveVars(src, vars);
-    if (resolved.startsWith('http://') || resolved.startsWith('https://')) {
-      const content = await fetchHttp(resolved);
-      const filename = inferFilenameFromUrl(resolved) ?? 'download';
+    const effective =
+      configBase !== undefined
+        ? resolveRelativeSrc(resolved, configBase)
+        : resolved;
+    if (effective.startsWith('http://') || effective.startsWith('https://')) {
+      const content = await fetchHttp(effective);
+      const filename = inferFilenameFromUrl(effective) ?? 'download';
       return { files: new Map([[filename, content]]) };
     }
-    if (isGitRemoteUrl(resolved)) {
-      const { repo, file, ref } = parseGitRemoteSpec(resolved);
+    if (isGitRemoteUrl(effective)) {
+      const { repo, file, ref } = parseGitRemoteSpec(effective);
       return { files: fetchGit(repo, file, ref).files };
     }
-    return { files: fetchLocal(resolved, workingDir).files };
+    if (effective.startsWith('github:')) {
+      let parsedGh: ReturnType<typeof parseGitHubSpec>;
+      try {
+        parsedGh = parseGitHubSpec(effective);
+      } catch {
+        throw new Error(
+          `Invalid github source spec "${effective}". Expected: github:owner/repo:path/to/file[@ref]`,
+        );
+      }
+      const result = await fetchGitHub(
+        parsedGh.repo,
+        parsedGh.file,
+        parsedGh.ref,
+      );
+      return { files: result.files };
+    }
+    if (effective.startsWith('gitlab:')) {
+      let parsedGl: ReturnType<typeof parseGitLabSpec>;
+      try {
+        parsedGl = parseGitLabSpec(effective);
+      } catch {
+        throw new Error(
+          `Invalid gitlab source spec "${effective}". Expected: gitlab:group/project:path/to/file[@ref]`,
+        );
+      }
+      const result = await fetchGitLab(
+        parsedGl.project,
+        parsedGl.file,
+        parsedGl.ref,
+      );
+      return { files: result.files };
+    }
+    return { files: fetchLocal(effective, workingDir).files };
   }
 
   if ('raw' in src) {
@@ -605,6 +647,7 @@ async function fetchOneSrc(
   cache?: FetchCache,
   getTargetPath: () => string = () => '',
   pendingWrites?: Map<string, Buffer>,
+  configBase?: string,
 ): Promise<{
   files: Map<string, Buffer>;
   record: SourceFetchRecord | null;
@@ -635,7 +678,13 @@ async function fetchOneSrc(
   // write target in this run should resolve to the future content, not whatever
   // is on disk (or in the cache from a previous iteration).
   if (pendingWrites !== undefined) {
-    const pending = pendingLocalFiles(src, workingDir, vars, pendingWrites);
+    const pending = pendingLocalFiles(
+      src,
+      workingDir,
+      vars,
+      pendingWrites,
+      configBase,
+    );
     if (pending !== null) {
       return { files: pending, record: buildRecord(src, pending, vars) };
     }
@@ -654,7 +703,7 @@ async function fetchOneSrc(
       );
     files = cached.files;
   } else {
-    const raw = await _fetchOneSrcRaw(src, workingDir, vars);
+    const raw = await _fetchOneSrcRaw(src, workingDir, vars, configBase);
     files = raw.files;
     skipped = raw.skipped;
     // Don't cache skipped results: if optional changes to required between
@@ -680,6 +729,7 @@ function pendingLocalFiles(
   workingDir: string,
   vars: Variables,
   pendingWrites: Map<string, Buffer>,
+  configBase?: string,
 ): Map<string, Buffer> | null {
   let rawPath: string | null = null;
   try {
@@ -690,7 +740,19 @@ function pendingLocalFiles(
         !resolved.startsWith('https://') &&
         !isGitRemoteUrl(resolved)
       ) {
-        rawPath = resolved;
+        const effective =
+          configBase !== undefined
+            ? resolveRelativeSrc(resolved, configBase)
+            : resolved;
+        if (
+          !effective.startsWith('http://') &&
+          !effective.startsWith('https://') &&
+          !isGitRemoteUrl(effective) &&
+          !effective.startsWith('github:') &&
+          !effective.startsWith('gitlab:')
+        ) {
+          rawPath = effective;
+        }
       }
     } else if ('path' in src) {
       rawPath = resolveVars(src.path, vars);
@@ -753,6 +815,7 @@ export async function fetchSource(
   cache?: FetchCache,
   getTargetPathOverride?: () => string,
   pendingWrites?: Map<string, Buffer>,
+  configBase?: string,
 ): Promise<FetchResult> {
   const { src } = entry;
 
@@ -773,6 +836,7 @@ export async function fetchSource(
           cache,
           getTargetPath,
           pendingWrites,
+          configBase,
         );
         if (skipped) continue;
         assertTextFiles(files, `source ${i}`);
@@ -830,6 +894,7 @@ export async function fetchSource(
     cache,
     getTargetPath,
     pendingWrites,
+    configBase,
   );
   if (skipped) return { files: new Map(), sourceRecords: [], allSkipped: true };
 

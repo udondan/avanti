@@ -56,9 +56,9 @@ mise exec -- bunx vitest run test/config.test.ts
 ### Data flow
 
 1. `cli.ts` — Commander.js entry point; global flags: `--config`, `--working-dir`
-2. `config.ts` — Resolves and parses the config file; auto-detects `.avanti.yml`, `.avanti.yaml`, `avanti.yml`, `avanti.yaml` (case-insensitive) when no explicit `--config` path is given
+2. `config.ts` — Resolves and parses the config file; auto-detects `.avanti.yml`, `.avanti.yaml`, `avanti.yml`, `avanti.yaml` (case-insensitive) when no explicit `--config` path is given; exports `deriveConfigBase()` (called by command layers to compute the config directory/prefix) and `resolveRelativeSrc()` (called by `sources/index.ts` at fetch time)
 3. `variables.ts` — Validates and resolves `$varname` (config variables) and `$env:NAME` (env vars) in strings; `$latest` and `$recent` are reserved variable names (alongside `$self`); `/pattern/` is a ref syntax form handled by `ref.ts` and the per-source resolvers, not a variable name
-4. `sources/index.ts` — Orchestrates fetching across all source types
+4. `sources/index.ts` — Orchestrates fetching across all source types; resolves relative plain-string `src:` paths against `configBase` via `resolveRelativeSrc()` before dispatching; `path:` object sources always resolve against `workingDir`
 5. `processors/` — Transforms fetched content (replacements, shell pipes, JSON/YAML merge)
 6. `diff.ts` — Computes and renders git-diff-style output
 7. `writer.ts` — Stages writes to a temp dir, then atomically commits
@@ -67,7 +67,7 @@ mise exec -- bunx vitest run test/config.test.ts
 ### Source types (`src/sources/`)
 
 - **`http.ts`** (plain URL) — `fetch` with retry/rate-limit backoff
-- **`local.ts`** (plain path) — `fs` with recursive directory traversal; `~/` supported
+- **`local.ts`** (plain path) — `fs` with recursive directory traversal; `~/` supported; always receives an already-resolved path (relative-path resolution against `configBase` or `workingDir` is handled upstream in `sources/index.ts` before dispatch)
 - **`exec.ts`** (`exec:`) — `child_process.execSync`
 - **`gitlab.ts`** (`gitlab:`) — shells out to `glab` CLI
 - **`github.ts`** (`github:`) — shells out to `gh` CLI

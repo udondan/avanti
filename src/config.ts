@@ -73,6 +73,121 @@ export function isRemoteConfigSpec(s: string): boolean {
   );
 }
 
+export function deriveConfigBase(configPath: string): string {
+  if (configPath.startsWith('http://') || configPath.startsWith('https://')) {
+    const url = new URL(configPath);
+    const lastSlash = url.pathname.lastIndexOf('/');
+    url.pathname = lastSlash >= 0 ? url.pathname.slice(0, lastSlash + 1) : '/';
+    return url.toString();
+  }
+  if (configPath.startsWith('github:')) {
+    const { repo, file, ref } = parseGitHubSpec(configPath);
+    const normalizedFile = file.replace(/\\/g, '/');
+    const dir = normalizedFile.includes('/')
+      ? normalizedFile.slice(0, normalizedFile.lastIndexOf('/'))
+      : '';
+    const refSuffix = ref !== undefined ? `@${ref}` : '';
+    return `github:${repo}:${dir}${refSuffix}`;
+  }
+  if (configPath.startsWith('gitlab:')) {
+    const { project, file, ref } = parseGitLabSpec(configPath);
+    const normalizedFile = file.replace(/\\/g, '/');
+    const dir = normalizedFile.includes('/')
+      ? normalizedFile.slice(0, normalizedFile.lastIndexOf('/'))
+      : '';
+    const refSuffix = ref !== undefined ? `@${ref}` : '';
+    return `gitlab:${project}:${dir}${refSuffix}`;
+  }
+  if (isGitRemoteUrl(configPath)) {
+    const { repo, file, ref } = parseGitRemoteSpec(configPath);
+    const normalizedFile = file.replace(/\\/g, '/');
+    const dir = path.posix.dirname(normalizedFile);
+    const dirPart = dir === '.' ? '' : dir;
+    const refSuffix = ref !== undefined ? `@${ref}` : '';
+    return `${repo}//${dirPart}${refSuffix}`;
+  }
+  return path.dirname(configPath);
+}
+
+export function resolveRelativeSrc(src: string, configBase: string): string {
+  if (
+    src.startsWith('/') ||
+    path.isAbsolute(src) ||
+    src.startsWith('~/') ||
+    isNonLocalSrcString(src)
+  ) {
+    return src;
+  }
+  if (configBase.startsWith('http://') || configBase.startsWith('https://')) {
+    const normalizedSrc = src.replace(/\\/g, '/');
+    const resolvedUrl = new URL(normalizedSrc, configBase);
+    const baseUrl = new URL(configBase);
+    if (baseUrl.search) {
+      const baseParams = new URLSearchParams(baseUrl.search);
+      const resolvedParams = new URLSearchParams(resolvedUrl.search);
+      const overriddenKeys = new Set(resolvedParams.keys());
+      for (const [key, val] of baseParams.entries()) {
+        if (!overriddenKeys.has(key)) resolvedParams.append(key, val);
+      }
+      resolvedUrl.search = resolvedParams.toString();
+    }
+    return resolvedUrl.href;
+  }
+  if (configBase.startsWith('github:')) {
+    return resolveRelativeGitHostSpec(src, configBase, 'github');
+  }
+  if (configBase.startsWith('gitlab:')) {
+    return resolveRelativeGitHostSpec(src, configBase, 'gitlab');
+  }
+  if (isGitRemoteUrl(configBase)) {
+    return resolveRelativeGitRemoteSpec(src, configBase);
+  }
+  return path.resolve(configBase, src);
+}
+
+function resolveGitRelativePath(
+  rest: string,
+  src: string,
+  configBase: string,
+): { file: string; refSuffix: string } {
+  const atIdx = rest.lastIndexOf('@');
+  const dir = atIdx === -1 ? rest : rest.slice(0, atIdx);
+  const ref = atIdx === -1 ? undefined : rest.slice(atIdx + 1);
+  const normalizedSrc = src.replace(/\\/g, '/');
+  const file = path.posix.join(dir, normalizedSrc);
+  if (file.startsWith('../') || file === '..') {
+    throw new Error(
+      `Relative source path '${src}' escapes the repository root for config base '${configBase}'`,
+    );
+  }
+  const refSuffix = ref !== undefined ? `@${ref}` : '';
+  return { file, refSuffix };
+}
+
+function resolveRelativeGitHostSpec(
+  src: string,
+  configBase: string,
+  scheme: 'github' | 'gitlab',
+): string {
+  const prefix = `${scheme}:`;
+  const body = configBase.slice(prefix.length);
+  const colonIdx = body.indexOf(':');
+  const id = colonIdx >= 0 ? body.slice(0, colonIdx) : body;
+  const rest = colonIdx >= 0 ? body.slice(colonIdx + 1) : '';
+  const { file, refSuffix } = resolveGitRelativePath(rest, src, configBase);
+  return `${prefix}${id}:${file}${refSuffix}`;
+}
+
+function resolveRelativeGitRemoteSpec(src: string, configBase: string): string {
+  const schemeEnd = configBase.indexOf('://') + 3;
+  const separatorIdx = configBase.indexOf('//', schemeEnd);
+  const repo =
+    separatorIdx >= 0 ? configBase.slice(0, separatorIdx) : configBase;
+  const rest = separatorIdx >= 0 ? configBase.slice(separatorIdx + 2) : '';
+  const { file, refSuffix } = resolveGitRelativePath(rest, src, configBase);
+  return `${repo}//${file}${refSuffix}`;
+}
+
 export function normalizeConfigKey(spec: string): string {
   if (spec.startsWith('github:') || spec.startsWith('gitlab:')) {
     const atIdx = spec.lastIndexOf('@');
@@ -108,7 +223,7 @@ export function resolveConfigPath(explicit?: string): string {
 }
 
 // Parses github:owner/repo:path/to/file.yml[@ref]
-function parseGitHubSpec(spec: string): {
+export function parseGitHubSpec(spec: string): {
   repo: string;
   file: string;
   ref: string | undefined;
@@ -134,7 +249,7 @@ function parseGitHubSpec(spec: string): {
 }
 
 // Parses gitlab:group/project:path/to/file.yml[@ref]
-function parseGitLabSpec(spec: string): {
+export function parseGitLabSpec(spec: string): {
   project: string;
   file: string;
   ref: string | undefined;

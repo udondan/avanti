@@ -327,9 +327,25 @@ Use `--yes` to skip the prompt. The history log is preserved — you can still r
 
 ## Working Directory
 
-All relative `src` and `target` paths are resolved relative to the **working directory** — the directory where you invoke `avanti`, or the path given with `-w`.
+Relative `src` and `target` paths are resolved against different bases:
 
-This is independent of where the config file lives. A config loaded from another directory with `-c /shared/avanti.yml` still resolves all paths from your working directory (or the one you specify with `-w`).
+- **`target` paths** (map keys) — resolved relative to the **working directory** (where you invoke `avanti`, or the path given with `-w`). This controls where pulled files land on disk.
+- **`src` paths** (plain string, for fetching content) — resolved relative to the **config file's location**. If the config is a local file, relative sources resolve relative to its directory. If the config is remote (GitHub, GitLab, HTTPS, `git+ssh://`), relative plain-string sources resolve to the same remote location. **Exception:** when `symlink:` is set, `src` is the symlink target path (always a local filesystem path) and resolves against the working directory — it is never config-relative. `path:` object sources also always resolve relative to the working directory.
+
+This means a config at `./configs/avanti.yml` can use `src: ./templates/foo.sh` to reference `./configs/templates/foo.sh`, regardless of what working directory you pass with `-w`.
+
+For remote configs, relative source paths are resolved within the same remote context:
+
+```yaml
+# config loaded from github:owner/repo:configs/avanti.yml
+files:
+  dist/script.sh:
+    src: ./scripts/build.sh # fetches github:owner/repo:configs/scripts/build.sh
+```
+
+The `path:` object source always refers to the local filesystem and its relative paths resolve against the working directory, regardless of whether the config file is local or remote.
+
+This is independent of where the config file lives only for targets. A config loaded from another location with `-c /shared/avanti.yml` writes target files into your working directory but reads sources from `/shared/`.
 
 The path given to `-w` supports tilde expansion: `~` resolves to the home directory and `~/some/path` resolves to a subdirectory of it:
 
@@ -457,13 +473,20 @@ A brace group is only expanded when it contains **at least one comma** (e.g. `{f
 
 ### Source Types
 
-**Plain string** — HTTP/HTTPS URL or local path:
+**Plain string** — HTTP/HTTPS URL, local path, or remote source spec (`github:`, `gitlab:`, `git+ssh://`, etc.):
 
 ```yaml
 src: https://example.com/file.txt
 src: ~/templates/file.txt
 src: /absolute/path/file.txt
+src: ./relative/path/file.txt   # relative to the config file's directory
 ```
+
+Relative paths (no leading `/` or `~/`) are resolved relative to the config file's location, not the working directory. If the config is a local file at `./configs/avanti.yml`, then `src: ./scripts/build.sh` fetches `./configs/scripts/build.sh`. For remote configs, a relative src resolves within the same remote context — it becomes a remote source of the same type, not a local file:
+
+- Config `github:owner/repo:configs/avanti.yml` + `src: ./scripts/build.sh` → fetches `github:owner/repo:configs/scripts/build.sh`
+- Config `https://example.com/configs/avanti.yml` + `src: ./scripts/build.sh` → fetches `https://example.com/configs/scripts/build.sh`
+- Config `git+ssh://git@host/org/repo.git//configs/avanti.yml@main` + `src: ./scripts/build.sh` → fetches `git+ssh://git@host/org/repo.git//configs/scripts/build.sh@main`
 
 **Map** — for path, url, exec, gitlab, github, bitbucket, git, aws_s3,
 aws_secrets_manager, aws_systems_manager_parameter, vault, http, raw:
