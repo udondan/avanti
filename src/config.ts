@@ -137,6 +137,25 @@ export function resolveRelativeSrc(src: string, configBase: string): string {
   return path.resolve(configBase, src);
 }
 
+function resolveGitRelativePath(
+  rest: string,
+  src: string,
+  configBase: string,
+): { file: string; refSuffix: string } {
+  const atIdx = rest.lastIndexOf('@');
+  const dir = atIdx === -1 ? rest : rest.slice(0, atIdx);
+  const ref = atIdx === -1 ? undefined : rest.slice(atIdx + 1);
+  const normalizedSrc = src.replace(/\\/g, '/');
+  const file = path.posix.join(dir, normalizedSrc);
+  if (file.startsWith('../') || file === '..') {
+    throw new Error(
+      `Relative source path '${src}' escapes the repository root for config base '${configBase}'`,
+    );
+  }
+  const refSuffix = ref !== undefined ? `@${ref}` : '';
+  return { file, refSuffix };
+}
+
 function resolveRelativeGitHostSpec(
   src: string,
   configBase: string,
@@ -147,17 +166,7 @@ function resolveRelativeGitHostSpec(
   const colonIdx = body.indexOf(':');
   const id = colonIdx >= 0 ? body.slice(0, colonIdx) : body;
   const rest = colonIdx >= 0 ? body.slice(colonIdx + 1) : '';
-  const atIdx = rest.lastIndexOf('@');
-  const dir = atIdx === -1 ? rest : rest.slice(0, atIdx);
-  const ref = atIdx === -1 ? undefined : rest.slice(atIdx + 1);
-  const normalizedSrc = src.replace(/\\/g, '/');
-  const file = path.posix.join(dir, normalizedSrc);
-  if (file.startsWith('../') || file === '..') {
-    throw new Error(
-      `Relative source path '${src}' escapes the repository root for config base '${configBase}'`,
-    );
-  }
-  const refSuffix = ref !== undefined ? `@${ref}` : '';
+  const { file, refSuffix } = resolveGitRelativePath(rest, src, configBase);
   return `${prefix}${id}:${file}${refSuffix}`;
 }
 
@@ -167,17 +176,7 @@ function resolveRelativeGitRemoteSpec(src: string, configBase: string): string {
   const repo =
     separatorIdx >= 0 ? configBase.slice(0, separatorIdx) : configBase;
   const rest = separatorIdx >= 0 ? configBase.slice(separatorIdx + 2) : '';
-  const atIdx = rest.lastIndexOf('@');
-  const dir = atIdx === -1 ? rest : rest.slice(0, atIdx);
-  const ref = atIdx === -1 ? undefined : rest.slice(atIdx + 1);
-  const normalizedSrc = src.replace(/\\/g, '/');
-  const file = path.posix.join(dir, normalizedSrc);
-  if (file.startsWith('../') || file === '..') {
-    throw new Error(
-      `Relative source path '${src}' escapes the repository root for config base '${configBase}'`,
-    );
-  }
-  const refSuffix = ref !== undefined ? `@${ref}` : '';
+  const { file, refSuffix } = resolveGitRelativePath(rest, src, configBase);
   return `${repo}//${file}${refSuffix}`;
 }
 
