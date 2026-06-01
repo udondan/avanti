@@ -473,7 +473,7 @@ A brace group is only expanded when it contains **at least one comma** (e.g. `{f
 
 ### Source Types
 
-**Plain string** — HTTP/HTTPS URL or local path:
+**Plain string** — HTTP/HTTPS URL, local path, or remote source spec (`github:`, `gitlab:`, `git+ssh://`, etc.):
 
 ```yaml
 src: https://example.com/file.txt
