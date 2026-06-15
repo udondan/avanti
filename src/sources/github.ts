@@ -42,6 +42,14 @@ function apiHeaders(): Record<string, string> {
   return headers;
 }
 
+async function githubHttpError(res: Response, context: string): Promise<Error> {
+  const body = (await res.json().catch(() => null)) as {
+    message?: string;
+  } | null;
+  const detail = body?.message ? `: ${body.message}` : '';
+  return new Error(`${context}: HTTP ${res.status}${detail}`);
+}
+
 function shouldFallback(status: number): boolean {
   return status === 401 || status === 403 || status === 404;
 }
@@ -135,8 +143,9 @@ async function fetchPathInfo(
   if (shouldFallback(res.status) && withCliFallback && isGhAvailable()) {
     return fetchPathInfoViaCli(repo, filePath, ref, host);
   }
-  throw new Error(
-    `Failed to fetch ${filePath} from ${repo}@${ref}: HTTP ${res.status}`,
+  throw await githubHttpError(
+    res,
+    `Failed to fetch ${filePath} from ${repo}@${ref}`,
   );
 }
 
@@ -217,8 +226,9 @@ async function listTree(
     if (shouldFallback(res.status) && withCliFallback && isGhAvailable()) {
       return listTreeViaCli(repo, dirPath, ref, host);
     }
-    throw new Error(
-      `Failed to list tree ${dirPath} in ${repo}@${ref}: HTTP ${res.status}`,
+    throw await githubHttpError(
+      res,
+      `Failed to list tree ${dirPath} in ${repo}@${ref}`,
     );
   }
   const data = (await res.json()) as {
@@ -276,11 +286,16 @@ async function findHighestSemverTagApi(
       `${getApiBase(host)}/repos/${repo}/tags?per_page=${perPage}&page=${page}`,
       { headers: apiHeaders() },
     );
-    if (!res.ok)
+    if (!res.ok) {
+      const body = (await res.json().catch(() => null)) as {
+        message?: string;
+      } | null;
+      const detail = body?.message ? `: ${body.message}` : '';
       throw new HttpError(
         res.status,
-        `Failed to list tags for ${repo}: HTTP ${res.status}`,
+        `Failed to list tags for ${repo}: HTTP ${res.status}${detail}`,
       );
+    }
     const tags = (await res.json()) as Array<{ name: string }>;
     const candidate = maxSemverTag(tags.map((t) => t.name));
     if (candidate && (!best || maxSemverTag([best, candidate]) === candidate))
@@ -301,11 +316,16 @@ async function findTagMatchingPatternApi(
       `${getApiBase(host)}/repos/${repo}/tags?per_page=${perPage}&page=${page}`,
       { headers: apiHeaders() },
     );
-    if (!res.ok)
+    if (!res.ok) {
+      const body = (await res.json().catch(() => null)) as {
+        message?: string;
+      } | null;
+      const detail = body?.message ? `: ${body.message}` : '';
       throw new HttpError(
         res.status,
-        `Failed to list tags for ${repo}: HTTP ${res.status}`,
+        `Failed to list tags for ${repo}: HTTP ${res.status}${detail}`,
       );
+    }
     const tags = (await res.json()) as Array<{ name: string }>;
     const found = tags.find((t) => pattern.test(t.name));
     if (found) return found.name;
@@ -553,9 +573,13 @@ async function fetchReleaseAssetsViaApi(
     { headers: apiHeaders() },
   );
   if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as {
+      message?: string;
+    } | null;
+    const detail = body?.message ? `: ${body.message}` : '';
     throw new HttpError(
       res.status,
-      `Failed to fetch release ${tag} from ${repo}: HTTP ${res.status}`,
+      `Failed to fetch release ${tag} from ${repo}: HTTP ${res.status}${detail}`,
     );
   }
   const rel = (await res.json()) as { assets: GitHubAsset[] };
