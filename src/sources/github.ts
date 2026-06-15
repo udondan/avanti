@@ -42,11 +42,15 @@ function apiHeaders(): Record<string, string> {
   return headers;
 }
 
-async function githubHttpError(res: Response, context: string): Promise<Error> {
+async function getErrorDetail(res: Response): Promise<string> {
   const body = (await res.json().catch(() => null)) as {
     message?: string;
   } | null;
-  const detail = body?.message ? `: ${body.message}` : '';
+  return body?.message ? `: ${body.message}` : '';
+}
+
+async function githubHttpError(res: Response, context: string): Promise<Error> {
+  const detail = await getErrorDetail(res);
   return new Error(`${context}: HTTP ${res.status}${detail}`);
 }
 
@@ -287,10 +291,7 @@ async function findHighestSemverTagApi(
       { headers: apiHeaders() },
     );
     if (!res.ok) {
-      const body = (await res.json().catch(() => null)) as {
-        message?: string;
-      } | null;
-      const detail = body?.message ? `: ${body.message}` : '';
+      const detail = await getErrorDetail(res);
       throw new HttpError(
         res.status,
         `Failed to list tags for ${repo}: HTTP ${res.status}${detail}`,
@@ -317,10 +318,7 @@ async function findTagMatchingPatternApi(
       { headers: apiHeaders() },
     );
     if (!res.ok) {
-      const body = (await res.json().catch(() => null)) as {
-        message?: string;
-      } | null;
-      const detail = body?.message ? `: ${body.message}` : '';
+      const detail = await getErrorDetail(res);
       throw new HttpError(
         res.status,
         `Failed to list tags for ${repo}: HTTP ${res.status}${detail}`,
@@ -573,10 +571,7 @@ async function fetchReleaseAssetsViaApi(
     { headers: apiHeaders() },
   );
   if (!res.ok) {
-    const body = (await res.json().catch(() => null)) as {
-      message?: string;
-    } | null;
-    const detail = body?.message ? `: ${body.message}` : '';
+    const detail = await getErrorDetail(res);
     throw new HttpError(
       res.status,
       `Failed to fetch release ${tag} from ${repo}: HTTP ${res.status}${detail}`,
