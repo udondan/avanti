@@ -44,16 +44,19 @@ function apiHeaders(): Record<string, string> {
 
 async function getErrorDetail(res: Response): Promise<string> {
   const contentType = res.headers.get('content-type');
-  if (!contentType || !contentType.includes('application/json')) return '';
+  if (!contentType || !contentType.includes('json')) return '';
   const body = (await res.json().catch(() => null)) as {
     message?: string;
   } | null;
   return body?.message ? `: ${body.message}` : '';
 }
 
-async function githubHttpError(res: Response, context: string): Promise<Error> {
+async function githubHttpError(
+  res: Response,
+  context: string,
+): Promise<HttpError> {
   const detail = await getErrorDetail(res);
-  return new Error(`${context}: HTTP ${res.status}${detail}`);
+  return new HttpError(res.status, `${context}: HTTP ${res.status}${detail}`);
 }
 
 function shouldFallback(status: number): boolean {
@@ -293,11 +296,7 @@ async function findHighestSemverTagApi(
       { headers: apiHeaders() },
     );
     if (!res.ok) {
-      const detail = await getErrorDetail(res);
-      throw new HttpError(
-        res.status,
-        `Failed to list tags for ${repo}: HTTP ${res.status}${detail}`,
-      );
+      throw await githubHttpError(res, `Failed to list tags for ${repo}`);
     }
     const tags = (await res.json()) as Array<{ name: string }>;
     const candidate = maxSemverTag(tags.map((t) => t.name));
@@ -320,11 +319,7 @@ async function findTagMatchingPatternApi(
       { headers: apiHeaders() },
     );
     if (!res.ok) {
-      const detail = await getErrorDetail(res);
-      throw new HttpError(
-        res.status,
-        `Failed to list tags for ${repo}: HTTP ${res.status}${detail}`,
-      );
+      throw await githubHttpError(res, `Failed to list tags for ${repo}`);
     }
     const tags = (await res.json()) as Array<{ name: string }>;
     const found = tags.find((t) => pattern.test(t.name));
@@ -572,10 +567,9 @@ async function fetchReleaseAssetsViaApi(
     { headers: apiHeaders() },
   );
   if (!res.ok) {
-    const detail = await getErrorDetail(res);
-    throw new HttpError(
-      res.status,
-      `Failed to fetch release ${tag} from ${repo}: HTTP ${res.status}${detail}`,
+    throw await githubHttpError(
+      res,
+      `Failed to fetch release ${tag} from ${repo}`,
     );
   }
   const rel = (await res.json()) as { assets: GitHubAsset[] };
