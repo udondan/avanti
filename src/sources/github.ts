@@ -48,7 +48,9 @@ async function getErrorDetail(res: Response): Promise<string> {
   const body = (await res.json().catch(() => null)) as {
     message?: string;
   } | null;
-  return body?.message ? `: ${body.message}` : '';
+  return typeof body?.message === 'string' && body.message
+    ? `: ${body.message}`
+    : '';
 }
 
 async function githubHttpError(
