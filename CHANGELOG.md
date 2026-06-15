@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.26.1](https://github.com/udondan/avanti/compare/v0.26.0...v0.26.1) (2026-06-15)
+
+
+### Bug Fixes
+
+* **github:** include GitHub API error message in HTTP error output ([#269](https://github.com/udondan/avanti/issues/269)) ([7c0ed3f](https://github.com/udondan/avanti/commit/7c0ed3fe89fa35653322545ee016f68f82459c68))
+
 ## [0.26.0](https://github.com/udondan/avanti/compare/v0.25.0...v0.26.0) (2026-06-01)
 
 
