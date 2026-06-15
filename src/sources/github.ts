@@ -448,8 +448,9 @@ async function resolveRef(
       if (shouldFallback(relRes.status) && withCliFallback && isGhAvailable()) {
         return resolveRefViaCli(repo, ref!, host);
       }
-      throw new Error(
-        `Failed to resolve "${ref}" for ${repo}: HTTP ${relRes.status}`,
+      throw await githubHttpError(
+        relRes,
+        `Failed to resolve "${ref}" for ${repo}`,
       );
     }
     let found: string | null;
@@ -499,9 +500,7 @@ async function resolveRef(
   if (shouldFallback(tagRes.status) && withCliFallback && isGhAvailable()) {
     return resolveRefViaCli(repo, ref!, host);
   }
-  throw new Error(
-    `Failed to resolve "${ref}" for ${repo}: HTTP ${tagRes.status}`,
-  );
+  throw await githubHttpError(tagRes, `Failed to resolve "${ref}" for ${repo}`);
 }
 
 function resolveRefViaCli(repo: string, ref: string, host?: string): string {
@@ -591,8 +590,9 @@ async function fetchReleaseAssetsViaApi(
         },
       );
       if (!dlRes.ok) {
-        throw new Error(
-          `Failed to download release asset "${asset.name}" from ${repo}@${tag}: HTTP ${dlRes.status}`,
+        throw await githubHttpError(
+          dlRes,
+          `Failed to download release asset "${asset.name}" from ${repo}@${tag}`,
         );
       }
       return [
