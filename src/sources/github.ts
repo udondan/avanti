@@ -42,6 +42,25 @@ function apiHeaders(): Record<string, string> {
   return headers;
 }
 
+async function getErrorDetail(res: Response): Promise<string> {
+  const contentType = res.headers.get('content-type');
+  if (!contentType || !contentType.toLowerCase().includes('json')) return '';
+  const body = (await res.json().catch(() => null)) as {
+    message?: string;
+  } | null;
+  return typeof body?.message === 'string' && body.message
+    ? `: ${body.message}`
+    : '';
+}
+
+async function githubHttpError(
+  res: Response,
+  context: string,
+): Promise<HttpError> {
+  const detail = await getErrorDetail(res);
+  return new HttpError(res.status, `${context}: HTTP ${res.status}${detail}`);
+}
+
 function shouldFallback(status: number): boolean {
   return status === 401 || status === 403 || status === 404;
 }
@@ -135,8 +154,9 @@ async function fetchPathInfo(
   if (shouldFallback(res.status) && withCliFallback && isGhAvailable()) {
     return fetchPathInfoViaCli(repo, filePath, ref, host);
   }
-  throw new Error(
-    `Failed to fetch ${filePath} from ${repo}@${ref}: HTTP ${res.status}`,
+  throw await githubHttpError(
+    res,
+    `Failed to fetch ${filePath} from ${repo}@${ref}`,
   );
 }
 
@@ -217,8 +237,9 @@ async function listTree(
     if (shouldFallback(res.status) && withCliFallback && isGhAvailable()) {
       return listTreeViaCli(repo, dirPath, ref, host);
     }
-    throw new Error(
-      `Failed to list tree ${dirPath} in ${repo}@${ref}: HTTP ${res.status}`,
+    throw await githubHttpError(
+      res,
+      `Failed to list tree ${dirPath} in ${repo}@${ref}`,
     );
   }
   const data = (await res.json()) as {
@@ -276,11 +297,9 @@ async function findHighestSemverTagApi(
       `${getApiBase(host)}/repos/${repo}/tags?per_page=${perPage}&page=${page}`,
       { headers: apiHeaders() },
     );
-    if (!res.ok)
-      throw new HttpError(
-        res.status,
-        `Failed to list tags for ${repo}: HTTP ${res.status}`,
-      );
+    if (!res.ok) {
+      throw await githubHttpError(res, `Failed to list tags for ${repo}`);
+    }
     const tags = (await res.json()) as Array<{ name: string }>;
     const candidate = maxSemverTag(tags.map((t) => t.name));
     if (candidate && (!best || maxSemverTag([best, candidate]) === candidate))
@@ -301,11 +320,9 @@ async function findTagMatchingPatternApi(
       `${getApiBase(host)}/repos/${repo}/tags?per_page=${perPage}&page=${page}`,
       { headers: apiHeaders() },
     );
-    if (!res.ok)
-      throw new HttpError(
-        res.status,
-        `Failed to list tags for ${repo}: HTTP ${res.status}`,
-      );
+    if (!res.ok) {
+      throw await githubHttpError(res, `Failed to list tags for ${repo}`);
+    }
     const tags = (await res.json()) as Array<{ name: string }>;
     const found = tags.find((t) => pattern.test(t.name));
     if (found) return found.name;
@@ -430,8 +447,9 @@ async function resolveRef(
       if (shouldFallback(relRes.status) && withCliFallback && isGhAvailable()) {
         return resolveRefViaCli(repo, ref!, host);
       }
-      throw new Error(
-        `Failed to resolve "${ref}" for ${repo}: HTTP ${relRes.status}`,
+      throw await githubHttpError(
+        relRes,
+        `Failed to resolve "${ref}" for ${repo}`,
       );
     }
     let found: string | null;
@@ -481,9 +499,7 @@ async function resolveRef(
   if (shouldFallback(tagRes.status) && withCliFallback && isGhAvailable()) {
     return resolveRefViaCli(repo, ref!, host);
   }
-  throw new Error(
-    `Failed to resolve "${ref}" for ${repo}: HTTP ${tagRes.status}`,
-  );
+  throw await githubHttpError(tagRes, `Failed to resolve "${ref}" for ${repo}`);
 }
 
 function resolveRefViaCli(repo: string, ref: string, host?: string): string {
@@ -553,9 +569,9 @@ async function fetchReleaseAssetsViaApi(
     { headers: apiHeaders() },
   );
   if (!res.ok) {
-    throw new HttpError(
-      res.status,
-      `Failed to fetch release ${tag} from ${repo}: HTTP ${res.status}`,
+    throw await githubHttpError(
+      res,
+      `Failed to fetch release ${tag} from ${repo}`,
     );
   }
   const rel = (await res.json()) as { assets: GitHubAsset[] };
@@ -572,8 +588,9 @@ async function fetchReleaseAssetsViaApi(
         },
       );
       if (!dlRes.ok) {
-        throw new Error(
-          `Failed to download release asset "${asset.name}" from ${repo}@${tag}: HTTP ${dlRes.status}`,
+        throw await githubHttpError(
+          dlRes,
+          `Failed to download release asset "${asset.name}" from ${repo}@${tag}`,
         );
       }
       return [
