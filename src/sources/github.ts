@@ -44,7 +44,7 @@ function apiHeaders(): Record<string, string> {
 
 async function getErrorDetail(res: Response): Promise<string> {
   const contentType = res.headers.get('content-type');
-  if (!contentType || !contentType.includes('json')) return '';
+  if (!contentType || !contentType.toLowerCase().includes('json')) return '';
   const body = (await res.json().catch(() => null)) as {
     message?: string;
   } | null;
