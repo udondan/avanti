@@ -118,7 +118,7 @@ describe('fetchGitLabRelease — CLI fallback', () => {
           stdout: makeReleaseMetaJson({ name: 'artifact.tar.gz' }),
         }),
       )
-      .mockReturnValueOnce(makeSpawnResult({ status: 1 })) // glab auth token → no stored token
+      .mockReturnValueOnce(makeSpawnResult({ status: 1 })) // glab auth status --show-token → no token
       .mockReturnValueOnce(makeSpawnResult({ status: 0 })); // glab release download
 
     const result = await fetchGitLabRelease('group/project', 'v1.0.0');
@@ -142,7 +142,7 @@ describe('fetchGitLabRelease — CLI fallback', () => {
           stdout: makeReleaseMetaJson({ name: 'pkg.zip' }),
         }),
       )
-      .mockReturnValueOnce(makeSpawnResult({ status: 1 })) // glab auth token → no stored token
+      .mockReturnValueOnce(makeSpawnResult({ status: 1 })) // glab auth status --show-token → no token
       .mockReturnValueOnce(makeSpawnResult({ status: 0 })); // glab release download
 
     const result = await fetchGitLabRelease('group/project', 'v1.0.0');
@@ -232,7 +232,7 @@ describe('fetchGitLabRelease — CLI path (via: cli)', () => {
           stdout: makeReleaseMetaJson({ direct_asset_url: directUrl }),
         }),
       )
-      .mockReturnValueOnce(makeSpawnResult({ status: 1 })) // glab auth token --hostname → no token
+      .mockReturnValueOnce(makeSpawnResult({ status: 1 })) // glab auth status --show-token --hostname → no token
       .mockReturnValueOnce(makeSpawnResult({ status: 0 })); // glab release download
 
     const result = await fetchGitLabRelease(
@@ -247,10 +247,11 @@ describe('fetchGitLabRelease — CLI path (via: cli)', () => {
     // Metadata: glab api --hostname git.example.com projects/...
     expect(calls[0][1]).toContain('--hostname');
     expect(calls[0][1]).toContain('git.example.com');
-    // resolveToken: glab auth token --hostname git.example.com
+    // resolveToken: glab auth status --show-token --hostname git.example.com
     expect(calls[1][1]).toEqual([
       'auth',
-      'token',
+      'status',
+      '--show-token',
       '--hostname',
       'git.example.com',
     ]);

@@ -38,15 +38,18 @@ function apiHeaders(): Record<string, string> {
 }
 
 // Returns the best available auth token: env var first, then glab's stored
-// credentials (glab auth token, available since glab v1.44).
+// credentials via `glab auth status --show-token` (output: "Token found: <t>").
 function resolveToken(host?: string): string | undefined {
   const envToken = process.env.GITLAB_TOKEN ?? process.env.GITLAB_PRIVATE_TOKEN;
   if (envToken) return envToken;
-  const res = spawnSync('glab', ['auth', 'token', ...hostnameArgs(host)], {
-    encoding: 'utf8',
-  });
-  const t = res.status === 0 ? res.stdout?.trim() : undefined;
-  return t || undefined;
+  const res = spawnSync(
+    'glab',
+    ['auth', 'status', '--show-token', ...hostnameArgs(host)],
+    { encoding: 'utf8' },
+  );
+  if (res.status !== 0 || !res.stdout) return undefined;
+  const match = res.stdout.match(/Token found:\s*(\S+)/);
+  return match?.[1] ?? undefined;
 }
 
 function shouldFallback(status: number): boolean {
