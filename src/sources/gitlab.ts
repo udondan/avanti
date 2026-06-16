@@ -37,6 +37,18 @@ function apiHeaders(): Record<string, string> {
   return headers;
 }
 
+// Returns the best available auth token: env var first, then glab's stored
+// credentials (glab auth token, available since glab v1.44).
+function resolveToken(host?: string): string | undefined {
+  const envToken = process.env.GITLAB_TOKEN ?? process.env.GITLAB_PRIVATE_TOKEN;
+  if (envToken) return envToken;
+  const res = spawnSync('glab', ['auth', 'token', ...hostnameArgs(host)], {
+    encoding: 'utf8',
+  });
+  const t = res.status === 0 ? res.stdout?.trim() : undefined;
+  return t || undefined;
+}
+
 function shouldFallback(status: number): boolean {
   return status === 401 || status === 403 || status === 404;
 }
@@ -114,29 +126,6 @@ function glabApiBinary(
   if (res.status === 0) verbose(`  -> glab ok (${res.stdout.length} bytes)`);
   else verbose(`  -> glab failed (exit ${res.status})`);
   return res;
-}
-
-// Downloads a binary asset via glab api, writing stdout directly to a temp file
-// so the spawnSync maxBuffer cap is not hit for large release artifacts.
-function glabApiBinaryToFile(endpoint: string, host?: string): Buffer {
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'avanti-glab-'));
-  const tmpFile = path.join(tmpDir, 'asset');
-  const args = ['api', ...hostnameArgs(host), endpoint];
-  verbose(`gitlab: glab fallback: glab ${args.join(' ')}`);
-  const fd = fs.openSync(tmpFile, 'w');
-  const result = spawnSync('glab', args, { stdio: ['ignore', fd, 'pipe'] });
-  fs.closeSync(fd);
-  try {
-    if (result.error) throw new Error(`glab error: ${result.error.message}`);
-    if (result.status !== 0) {
-      const stderr = result.stderr ? result.stderr.toString('utf8') : '';
-      throw new Error(`glab api failed (exit ${result.status}): ${stderr}`);
-    }
-    verbose('  -> glab ok');
-    return fs.readFileSync(tmpFile);
-  } finally {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
-  }
 }
 
 async function findGitLabTagMatchingPatternApi(
@@ -930,9 +919,6 @@ async function fetchReleaseLinksViaCli(
   tag: string,
   host?: string,
 ): Promise<Map<string, Buffer>> {
-  const rawHost = getHost(host);
-  const gitlabHost = new URL(`https://${rawHost}`).host;
-
   const endpoint = `projects/${encodeURIComponent(project)}/releases/${encodeURIComponent(tag)}`;
   const metaRes = glabApi(endpoint, host);
   if (metaRes.status !== 0) {
@@ -948,46 +934,59 @@ async function fetchReleaseLinksViaCli(
   if (!links.length) {
     throw new Error(`No release assets found for ${project}@${tag}`);
   }
+
+  const token = resolveToken(host);
   const files = new Map<string, Buffer>();
-  for (const link of links) {
-    // direct_asset_url is correct; link.url may have a double-slash bug when
-    // the GitLab instance External URL was configured with a trailing slash
-    const downloadUrl = link.direct_asset_url ?? link.url;
-    const linkHost = new URL(downloadUrl).host;
-    const dlHeaders =
-      linkHost === gitlabHost ? apiHeaders() : { 'User-Agent': 'avanti' };
-    const hasToken = 'PRIVATE-TOKEN' in dlHeaders;
-    // When no env-var token is present and the URL is on the GitLab host, skip
-    // fetch — GitLab can return 200 with an HTML sign-in page for unauthenticated
-    // requests, which a status check alone cannot detect. Use glab (which has
-    // its own stored credentials) and write to a temp file to avoid the
-    // spawnSync maxBuffer cap. When a token is available, use host-bound
-    // redirect handling so PRIVATE-TOKEN is not forwarded to external asset
-    // hosts (S3/GCS) on redirect.
-    if (!hasToken && linkHost === gitlabHost) {
-      files.set(
-        path.basename(link.name),
-        glabApiBinaryToFile(downloadUrl, host),
-      );
-    } else {
+
+  if (token) {
+    // Authenticated HTTP fetch per asset. Use the actual download URL host (not
+    // getHost() which defaults to gitlab.com) so fetchWithHostBoundRedirects
+    // strips PRIVATE-TOKEN correctly on cross-domain redirects (e.g. to S3/GCS).
+    for (const link of links) {
+      // direct_asset_url is correct; link.url may have a double-slash bug when
+      // the GitLab instance External URL was configured with a trailing slash
+      const downloadUrl = link.direct_asset_url ?? link.url;
+      const linkHost = new URL(downloadUrl).host;
       const dlRes = await fetchWithHostBoundRedirects(
         downloadUrl,
-        dlHeaders,
-        gitlabHost,
+        { 'User-Agent': 'avanti', 'PRIVATE-TOKEN': token },
+        linkHost,
       );
       if (!dlRes.ok) {
-        files.set(
-          path.basename(link.name),
-          glabApiBinaryToFile(downloadUrl, host),
-        );
-      } else {
-        files.set(
-          path.basename(link.name),
-          Buffer.from(await dlRes.arrayBuffer()),
+        throw new Error(
+          `Failed to download release asset "${link.name}" from ${project}@${tag}: HTTP ${dlRes.status}`,
         );
       }
+      files.set(
+        path.basename(link.name),
+        Buffer.from(await dlRes.arrayBuffer()),
+      );
+    }
+  } else {
+    // No token resolvable (old glab without `auth token` subcommand, no env
+    // vars). Fall back to glab release download which uses glab's own
+    // authenticated HTTP client and handles redirects correctly.
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'avanti-glab-'));
+    try {
+      const args = ['release', 'download', tag, '-R', project, '-D', tmpDir];
+      verbose(`gitlab: glab release download ${args.join(' ')}`);
+      const dlRes = spawnSync('glab', args, { encoding: 'utf8' });
+      if (dlRes.error) throw new Error(`glab error: ${dlRes.error.message}`);
+      if (dlRes.status !== 0) {
+        throw new Error(
+          `glab release download failed (exit ${dlRes.status}): ${dlRes.stderr}`,
+        );
+      }
+      for (const link of links) {
+        const name = path.basename(link.name);
+        const fp = path.join(tmpDir, name);
+        if (fs.existsSync(fp)) files.set(name, fs.readFileSync(fp));
+      }
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
     }
   }
+
   if (!files.size) {
     throw new Error(`No release assets found for ${project}@${tag}`);
   }

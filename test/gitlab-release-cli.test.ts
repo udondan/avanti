@@ -10,10 +10,8 @@ vi.mock('fs', async (importOriginal) => {
   const actual = await importOriginal<typeof import('fs')>();
   return {
     ...actual,
+    existsSync: vi.fn(),
     mkdtempSync: vi.fn(),
-    openSync: vi.fn(),
-    closeSync: vi.fn(),
-    readdirSync: vi.fn(),
     readFileSync: vi.fn(),
     rmSync: vi.fn(),
   };
@@ -23,6 +21,7 @@ import { spawnSync, type SpawnSyncReturns } from 'child_process';
 import * as fs from 'fs';
 import type { MockInstance } from 'vitest';
 
+const mockExistsSync = fs.existsSync as unknown as MockInstance;
 const mockMkdtempSync = fs.mkdtempSync as unknown as MockInstance;
 const mockReadFileSync = fs.readFileSync as unknown as MockInstance;
 
@@ -79,6 +78,15 @@ function makeReleaseMetaJson(opts: {
   });
 }
 
+// Sets up mocks for the no-token fallback path (glab release download → read file).
+function setupNoTokenFallback(fileContent: string | Buffer) {
+  mockMkdtempSync.mockReturnValueOnce('/tmp/fake-avanti-glab');
+  mockExistsSync.mockReturnValueOnce(true);
+  mockReadFileSync.mockReturnValueOnce(
+    typeof fileContent === 'string' ? Buffer.from(fileContent) : fileContent,
+  );
+}
+
 beforeEach(() => {
   vi.resetAllMocks();
   vi.spyOn(_testable, 'sleep').mockResolvedValue(undefined);
@@ -96,20 +104,22 @@ afterEach(() => {
 
 describe('fetchGitLabRelease — CLI fallback', () => {
   it('falls back to CLI when API returns 401', async () => {
-    vi.spyOn(globalThis, 'fetch')
-      .mockResolvedValueOnce(new Response('Unauthorized', { status: 401 }))
-      .mockResolvedValueOnce(new Response('artifact bytes', { status: 200 }));
-
-    mockSpawnSync.mockReturnValueOnce(makeGlabAvailable()).mockReturnValueOnce(
-      makeSpawnResult({
-        status: 0,
-        stdout: makeReleaseMetaJson({
-          name: 'artifact.tar.gz',
-          direct_asset_url:
-            'https://git.example.com/group/project/-/releases/v1.0.0/downloads/artifact.tar.gz',
-        }),
-      }),
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response('Unauthorized', { status: 401 }),
     );
+
+    setupNoTokenFallback('artifact bytes');
+
+    mockSpawnSync
+      .mockReturnValueOnce(makeGlabAvailable())
+      .mockReturnValueOnce(
+        makeSpawnResult({
+          status: 0,
+          stdout: makeReleaseMetaJson({ name: 'artifact.tar.gz' }),
+        }),
+      )
+      .mockReturnValueOnce(makeSpawnResult({ status: 1 })) // glab auth token → no stored token
+      .mockReturnValueOnce(makeSpawnResult({ status: 0 })); // glab release download
 
     const result = await fetchGitLabRelease('group/project', 'v1.0.0');
     expect(result.files.get('artifact.tar.gz')?.toString()).toBe(
@@ -118,20 +128,22 @@ describe('fetchGitLabRelease — CLI fallback', () => {
   });
 
   it('falls back to CLI on network error', async () => {
-    vi.spyOn(globalThis, 'fetch')
-      .mockRejectedValueOnce(new TypeError('fetch failed'))
-      .mockResolvedValueOnce(new Response('zip bytes', { status: 200 }));
-
-    mockSpawnSync.mockReturnValueOnce(makeGlabAvailable()).mockReturnValueOnce(
-      makeSpawnResult({
-        status: 0,
-        stdout: makeReleaseMetaJson({
-          name: 'pkg.zip',
-          direct_asset_url:
-            'https://git.example.com/group/project/-/releases/v1.0.0/downloads/pkg.zip',
-        }),
-      }),
+    vi.spyOn(globalThis, 'fetch').mockRejectedValueOnce(
+      new TypeError('fetch failed'),
     );
+
+    setupNoTokenFallback('zip bytes');
+
+    mockSpawnSync
+      .mockReturnValueOnce(makeGlabAvailable())
+      .mockReturnValueOnce(
+        makeSpawnResult({
+          status: 0,
+          stdout: makeReleaseMetaJson({ name: 'pkg.zip' }),
+        }),
+      )
+      .mockReturnValueOnce(makeSpawnResult({ status: 1 })) // glab auth token → no stored token
+      .mockReturnValueOnce(makeSpawnResult({ status: 0 })); // glab release download
 
     const result = await fetchGitLabRelease('group/project', 'v1.0.0');
     expect(result.files.get('pkg.zip')?.toString()).toBe('zip bytes');
@@ -139,7 +151,8 @@ describe('fetchGitLabRelease — CLI fallback', () => {
 });
 
 describe('fetchGitLabRelease — CLI path (via: cli)', () => {
-  it('uses direct_asset_url when present instead of buggy url', async () => {
+  it('uses direct_asset_url instead of buggy url when token is available', async () => {
+    process.env.GITLAB_TOKEN = 'test-token';
     const directUrl =
       'https://git.example.com/group/project/-/releases/v1.0.0/downloads/artifact.tar.gz';
 
@@ -175,7 +188,8 @@ describe('fetchGitLabRelease — CLI path (via: cli)', () => {
     );
   });
 
-  it('falls back to link.url when direct_asset_url is absent', async () => {
+  it('falls back to link.url when direct_asset_url is absent and token is available', async () => {
+    process.env.GITLAB_TOKEN = 'test-token';
     const linkUrl =
       'https://git.example.com/group/project/-/releases/v1.0.0/downloads/artifact.tar.gz';
 
@@ -205,15 +219,11 @@ describe('fetchGitLabRelease — CLI path (via: cli)', () => {
     expect(fetchCalls[0][0]).toBe(linkUrl);
   });
 
-  it('passes --hostname to both glab calls when no env-var token is present', async () => {
+  it('passes --hostname to glab api and glab auth token; omits it from glab release download', async () => {
     const directUrl =
       'https://git.example.com/group/project/-/releases/v1.0.0/downloads/artifact.tar.gz';
 
-    // When host matches gitlabHost and no GITLAB_TOKEN is set, glabApiBinaryToFile
-    // is used for the download (to avoid GitLab returning a 200 HTML sign-in page
-    // to an unauthenticated fetch). Set up the fs and spawnSync mocks for it.
-    mockMkdtempSync.mockReturnValueOnce('/tmp/fake-avanti-glab');
-    mockReadFileSync.mockReturnValueOnce(Buffer.from('data'));
+    setupNoTokenFallback('data');
 
     mockSpawnSync
       .mockReturnValueOnce(
@@ -222,7 +232,8 @@ describe('fetchGitLabRelease — CLI path (via: cli)', () => {
           stdout: makeReleaseMetaJson({ direct_asset_url: directUrl }),
         }),
       )
-      .mockReturnValueOnce(makeSpawnResult({ status: 0 }));
+      .mockReturnValueOnce(makeSpawnResult({ status: 1 })) // glab auth token --hostname → no token
+      .mockReturnValueOnce(makeSpawnResult({ status: 0 })); // glab release download
 
     const result = await fetchGitLabRelease(
       'group/project',
@@ -236,9 +247,16 @@ describe('fetchGitLabRelease — CLI path (via: cli)', () => {
     // Metadata: glab api --hostname git.example.com projects/...
     expect(calls[0][1]).toContain('--hostname');
     expect(calls[0][1]).toContain('git.example.com');
-    // Download: glab api --hostname git.example.com <direct URL> (via glabApiBinaryToFile)
-    expect(calls[1][1]).toContain('--hostname');
-    expect(calls[1][1]).toContain('git.example.com');
-    expect(calls[1][1]).toContain(directUrl);
+    // resolveToken: glab auth token --hostname git.example.com
+    expect(calls[1][1]).toEqual([
+      'auth',
+      'token',
+      '--hostname',
+      'git.example.com',
+    ]);
+    // Download: glab release download (no --hostname — glab uses its configured default host)
+    expect(calls[2][1]).toContain('release');
+    expect(calls[2][1]).toContain('download');
+    expect(calls[2][1]).not.toContain('--hostname');
   });
 });
