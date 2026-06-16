@@ -90,25 +90,20 @@ afterEach(() => {
 
 describe('fetchGitLabRelease — CLI fallback', () => {
   it('falls back to CLI when API returns 401', async () => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
-      new Response('Unauthorized', { status: 401 }),
-    );
+    vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response('Unauthorized', { status: 401 }))
+      .mockResolvedValueOnce(new Response('artifact bytes', { status: 200 }));
 
-    mockSpawnSync
-      .mockReturnValueOnce(makeGlabAvailable())
-      .mockReturnValueOnce(
-        makeSpawnResult({
-          status: 0,
-          stdout: makeReleaseMetaJson({
-            name: 'artifact.tar.gz',
-            direct_asset_url:
-              'https://git.example.com/group/project/-/releases/v1.0.0/downloads/artifact.tar.gz',
-          }),
+    mockSpawnSync.mockReturnValueOnce(makeGlabAvailable()).mockReturnValueOnce(
+      makeSpawnResult({
+        status: 0,
+        stdout: makeReleaseMetaJson({
+          name: 'artifact.tar.gz',
+          direct_asset_url:
+            'https://git.example.com/group/project/-/releases/v1.0.0/downloads/artifact.tar.gz',
         }),
-      )
-      .mockReturnValueOnce(
-        makeSpawnResult({ status: 0, stdout: Buffer.from('artifact bytes') }),
-      );
+      }),
+    );
 
     const result = await fetchGitLabRelease('group/project', 'v1.0.0');
     expect(result.files.get('artifact.tar.gz')?.toString()).toBe(
@@ -117,25 +112,20 @@ describe('fetchGitLabRelease — CLI fallback', () => {
   });
 
   it('falls back to CLI on network error', async () => {
-    vi.spyOn(globalThis, 'fetch').mockRejectedValueOnce(
-      new TypeError('fetch failed'),
-    );
+    vi.spyOn(globalThis, 'fetch')
+      .mockRejectedValueOnce(new TypeError('fetch failed'))
+      .mockResolvedValueOnce(new Response('zip bytes', { status: 200 }));
 
-    mockSpawnSync
-      .mockReturnValueOnce(makeGlabAvailable())
-      .mockReturnValueOnce(
-        makeSpawnResult({
-          status: 0,
-          stdout: makeReleaseMetaJson({
-            name: 'pkg.zip',
-            direct_asset_url:
-              'https://git.example.com/group/project/-/releases/v1.0.0/downloads/pkg.zip',
-          }),
+    mockSpawnSync.mockReturnValueOnce(makeGlabAvailable()).mockReturnValueOnce(
+      makeSpawnResult({
+        status: 0,
+        stdout: makeReleaseMetaJson({
+          name: 'pkg.zip',
+          direct_asset_url:
+            'https://git.example.com/group/project/-/releases/v1.0.0/downloads/pkg.zip',
         }),
-      )
-      .mockReturnValueOnce(
-        makeSpawnResult({ status: 0, stdout: Buffer.from('zip bytes') }),
-      );
+      }),
+    );
 
     const result = await fetchGitLabRelease('group/project', 'v1.0.0');
     expect(result.files.get('pkg.zip')?.toString()).toBe('zip bytes');
@@ -147,19 +137,19 @@ describe('fetchGitLabRelease — CLI path (via: cli)', () => {
     const directUrl =
       'https://git.example.com/group/project/-/releases/v1.0.0/downloads/artifact.tar.gz';
 
-    mockSpawnSync
-      .mockReturnValueOnce(
-        makeSpawnResult({
-          status: 0,
-          stdout: makeReleaseMetaJson({
-            url: 'https://git.example.com//-/project/1/uploads/abc/artifact.tar.gz',
-            direct_asset_url: directUrl,
-          }),
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response('file content', { status: 200 }),
+    );
+
+    mockSpawnSync.mockReturnValueOnce(
+      makeSpawnResult({
+        status: 0,
+        stdout: makeReleaseMetaJson({
+          url: 'https://git.example.com//-/project/1/uploads/abc/artifact.tar.gz',
+          direct_asset_url: directUrl,
         }),
-      )
-      .mockReturnValueOnce(
-        makeSpawnResult({ status: 0, stdout: Buffer.from('file content') }),
-      );
+      }),
+    );
 
     const result = await fetchGitLabRelease(
       'group/project',
@@ -170,25 +160,29 @@ describe('fetchGitLabRelease — CLI path (via: cli)', () => {
     expect(result.files.get('artifact.tar.gz')?.toString()).toBe(
       'file content',
     );
-    const calls = mockSpawnSync.mock.calls;
-    expect(calls[1][1]).toContain(directUrl);
-    expect(calls[1][1]).not.toContain('https://git.example.com//-/project/');
+
+    const fetchCalls = (globalThis.fetch as ReturnType<typeof vi.fn>).mock
+      .calls;
+    expect(fetchCalls[0][0]).toBe(directUrl);
+    expect(fetchCalls[0][0]).not.toContain(
+      'https://git.example.com//-/project/',
+    );
   });
 
   it('falls back to link.url when direct_asset_url is absent', async () => {
     const linkUrl =
       'https://git.example.com/group/project/-/releases/v1.0.0/downloads/artifact.tar.gz';
 
-    mockSpawnSync
-      .mockReturnValueOnce(
-        makeSpawnResult({
-          status: 0,
-          stdout: makeReleaseMetaJson({ url: linkUrl }),
-        }),
-      )
-      .mockReturnValueOnce(
-        makeSpawnResult({ status: 0, stdout: Buffer.from('file content') }),
-      );
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response('file content', { status: 200 }),
+    );
+
+    mockSpawnSync.mockReturnValueOnce(
+      makeSpawnResult({
+        status: 0,
+        stdout: makeReleaseMetaJson({ url: linkUrl }),
+      }),
+    );
 
     const result = await fetchGitLabRelease(
       'group/project',
@@ -199,24 +193,26 @@ describe('fetchGitLabRelease — CLI path (via: cli)', () => {
     expect(result.files.get('artifact.tar.gz')?.toString()).toBe(
       'file content',
     );
-    const calls = mockSpawnSync.mock.calls;
-    expect(calls[1][1]).toContain(linkUrl);
+
+    const fetchCalls = (globalThis.fetch as ReturnType<typeof vi.fn>).mock
+      .calls;
+    expect(fetchCalls[0][0]).toBe(linkUrl);
   });
 
-  it('passes --hostname to both metadata call and download call', async () => {
+  it('passes --hostname to metadata glab call; download uses fetch with direct URL', async () => {
     const directUrl =
       'https://git.example.com/group/project/-/releases/v1.0.0/downloads/artifact.tar.gz';
 
-    mockSpawnSync
-      .mockReturnValueOnce(
-        makeSpawnResult({
-          status: 0,
-          stdout: makeReleaseMetaJson({ direct_asset_url: directUrl }),
-        }),
-      )
-      .mockReturnValueOnce(
-        makeSpawnResult({ status: 0, stdout: Buffer.from('data') }),
-      );
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response('data', { status: 200 }),
+    );
+
+    mockSpawnSync.mockReturnValueOnce(
+      makeSpawnResult({
+        status: 0,
+        stdout: makeReleaseMetaJson({ direct_asset_url: directUrl }),
+      }),
+    );
 
     const result = await fetchGitLabRelease(
       'group/project',
@@ -230,9 +226,10 @@ describe('fetchGitLabRelease — CLI path (via: cli)', () => {
     // Metadata: glab api --hostname git.example.com projects/...
     expect(calls[0][1]).toContain('--hostname');
     expect(calls[0][1]).toContain('git.example.com');
-    // Download: glab api --hostname git.example.com <full-url>
-    expect(calls[1][1]).toContain('--hostname');
-    expect(calls[1][1]).toContain('git.example.com');
-    expect(calls[1][1]).toContain(directUrl);
+
+    // Download: fetch is used (not glab), called with the direct URL
+    const fetchCalls = (globalThis.fetch as ReturnType<typeof vi.fn>).mock
+      .calls;
+    expect(fetchCalls[0][0]).toBe(directUrl);
   });
 });
