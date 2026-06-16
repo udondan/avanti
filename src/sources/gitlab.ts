@@ -883,10 +883,10 @@ function fetchReleaseLinksViaCli(
     );
   }
   const rel = JSON.parse(metaRes.stdout) as {
-    assets: { links: GitLabReleaseLink[] };
+    assets?: { links?: GitLabReleaseLink[] };
   };
-  let links = rel.assets.links.filter((l) => l.link_type === 'package');
-  if (!links.length) links = rel.assets.links;
+  let links = rel.assets?.links?.filter((l) => l.link_type === 'package') ?? [];
+  if (!links.length) links = rel.assets?.links ?? [];
   if (!links.length) {
     throw new Error(`No release assets found for ${project}@${tag}`);
   }
@@ -895,7 +895,7 @@ function fetchReleaseLinksViaCli(
     // direct_asset_url is correct; link.url may have a double-slash bug when
     // the GitLab instance External URL was configured with a trailing slash
     const downloadUrl = link.direct_asset_url ?? link.url;
-    const dlRes = glabRunBinary(['api', downloadUrl]);
+    const dlRes = glabApiBinary(downloadUrl, host);
     if (dlRes.status !== 0) {
       throw new Error(
         `Failed to download release ${tag} from ${project}: ${dlRes.stderr}`,

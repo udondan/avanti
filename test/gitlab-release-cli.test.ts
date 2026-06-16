@@ -203,7 +203,7 @@ describe('fetchGitLabRelease — CLI path (via: cli)', () => {
     expect(calls[1][1]).toContain(linkUrl);
   });
 
-  it('passes --hostname to metadata call but not to download call', async () => {
+  it('passes --hostname to both metadata call and download call', async () => {
     const directUrl =
       'https://git.example.com/group/project/-/releases/v1.0.0/downloads/artifact.tar.gz';
 
@@ -230,8 +230,9 @@ describe('fetchGitLabRelease — CLI path (via: cli)', () => {
     // Metadata: glab api --hostname git.example.com projects/...
     expect(calls[0][1]).toContain('--hostname');
     expect(calls[0][1]).toContain('git.example.com');
-    // Download: glab api <full-url> — no --hostname
-    expect(calls[1][1]).not.toContain('--hostname');
+    // Download: glab api --hostname git.example.com <full-url>
+    expect(calls[1][1]).toContain('--hostname');
+    expect(calls[1][1]).toContain('git.example.com');
     expect(calls[1][1]).toContain(directUrl);
   });
 });
