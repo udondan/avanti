@@ -116,6 +116,29 @@ function glabApiBinary(
   return res;
 }
 
+// Downloads a binary asset via glab api, writing stdout directly to a temp file
+// so the spawnSync maxBuffer cap is not hit for large release artifacts.
+function glabApiBinaryToFile(endpoint: string, host?: string): Buffer {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'avanti-glab-'));
+  const tmpFile = path.join(tmpDir, 'asset');
+  const args = ['api', ...hostnameArgs(host), endpoint];
+  verbose(`gitlab: glab fallback: glab ${args.join(' ')}`);
+  const fd = fs.openSync(tmpFile, 'w');
+  const result = spawnSync('glab', args, { stdio: ['ignore', fd, 'pipe'] });
+  fs.closeSync(fd);
+  try {
+    if (result.error) throw new Error(`glab error: ${result.error.message}`);
+    if (result.status !== 0) {
+      const stderr = result.stderr ? result.stderr.toString('utf8') : '';
+      throw new Error(`glab api failed (exit ${result.status}): ${stderr}`);
+    }
+    verbose('  -> glab ok');
+    return fs.readFileSync(tmpFile);
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+}
+
 async function findGitLabTagMatchingPatternApi(
   project: string,
   pattern: RegExp,
@@ -629,6 +652,7 @@ function fetchDirectoryViaArchiveViaCli(
 interface GitLabReleaseLink {
   name: string;
   url: string;
+  direct_asset_url?: string;
   link_type: string;
 }
 
@@ -826,6 +850,34 @@ function resolveReleaseTagViaCli(
   return tags[0].name;
 }
 
+// Follows HTTP redirects while ensuring the PRIVATE-TOKEN header is only sent
+// to the originating GitLab host, not forwarded to external redirect targets
+// (e.g. pre-signed S3/GCS URLs that release assets may redirect to).
+async function fetchWithHostBoundRedirects(
+  url: string,
+  headers: Record<string, string>,
+  gitlabHost: string,
+  maxRedirects = 5,
+): Promise<Response> {
+  let currentUrl = url;
+  let currentHeaders = headers;
+  for (let i = 0; i <= maxRedirects; i++) {
+    const res = await fetchWithRetry(currentUrl, {
+      headers: currentHeaders,
+      redirect: 'manual',
+    });
+    if (res.status < 300 || res.status >= 400) return res;
+    const location = res.headers.get('location');
+    if (!location) return res;
+    const resolvedLocation = new URL(location, currentUrl).href;
+    const redirectHost = new URL(resolvedLocation).host;
+    currentHeaders =
+      redirectHost === gitlabHost ? headers : { 'User-Agent': 'avanti' };
+    currentUrl = resolvedLocation;
+  }
+  throw new Error(`Too many redirects fetching ${url}`);
+}
+
 async function fetchReleaseLinksViaApi(
   project: string,
   tag: string,
@@ -853,10 +905,15 @@ async function fetchReleaseLinksViaApi(
   }
   const entries = await Promise.all(
     links.map(async (link): Promise<[string, Buffer]> => {
-      const linkHost = new URL(link.url).host;
+      const downloadUrl = link.direct_asset_url ?? link.url;
+      const linkHost = new URL(downloadUrl).host;
       const headers =
         linkHost === gitlabHost ? apiHeaders() : { 'User-Agent': 'avanti' };
-      const dlRes = await fetchWithRetry(link.url, { headers });
+      const dlRes = await fetchWithHostBoundRedirects(
+        downloadUrl,
+        headers,
+        gitlabHost,
+      );
       if (!dlRes.ok) {
         throw new Error(
           `Failed to download release asset "${link.name}" from ${project}@${tag}: HTTP ${dlRes.status}`,
@@ -868,38 +925,73 @@ async function fetchReleaseLinksViaApi(
   return new Map(entries);
 }
 
-function fetchReleaseLinksViaCli(
+async function fetchReleaseLinksViaCli(
   project: string,
   tag: string,
   host?: string,
-): Map<string, Buffer> {
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'avanti-gl-rel-'));
-  try {
-    const args = [
-      'release',
-      'download',
-      tag,
-      '--repo',
-      project,
-      ...hostnameArgs(host),
-    ];
-    verbose(`gitlab: glab release download: glab ${args.join(' ')}`);
-    const result = spawnSync('glab', args, { encoding: 'utf8', cwd: tmpDir });
-    if (result.error) throw new Error(`glab error: ${result.error.message}`);
-    if (result.status !== 0) {
-      throw new Error(
-        `Failed to download release ${tag} from ${project}: ${result.stderr ?? ''}`,
-      );
-    }
-    const files = new Map<string, Buffer>();
-    collectFiles(tmpDir, tmpDir, files);
-    if (!files.size) {
-      throw new Error(`No release assets found for ${project}@${tag}`);
-    }
-    return files;
-  } finally {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+): Promise<Map<string, Buffer>> {
+  const rawHost = getHost(host);
+  const gitlabHost = new URL(`https://${rawHost}`).host;
+
+  const endpoint = `projects/${encodeURIComponent(project)}/releases/${encodeURIComponent(tag)}`;
+  const metaRes = glabApi(endpoint, host);
+  if (metaRes.status !== 0) {
+    throw new Error(
+      `Failed to fetch release ${tag} from ${project}: ${metaRes.stderr}`,
+    );
   }
+  const rel = JSON.parse(metaRes.stdout) as {
+    assets?: { links?: GitLabReleaseLink[] };
+  };
+  let links = rel.assets?.links?.filter((l) => l.link_type === 'package') ?? [];
+  if (!links.length) links = rel.assets?.links ?? [];
+  if (!links.length) {
+    throw new Error(`No release assets found for ${project}@${tag}`);
+  }
+  const files = new Map<string, Buffer>();
+  for (const link of links) {
+    // direct_asset_url is correct; link.url may have a double-slash bug when
+    // the GitLab instance External URL was configured with a trailing slash
+    const downloadUrl = link.direct_asset_url ?? link.url;
+    const linkHost = new URL(downloadUrl).host;
+    const dlHeaders =
+      linkHost === gitlabHost ? apiHeaders() : { 'User-Agent': 'avanti' };
+    const hasToken = 'PRIVATE-TOKEN' in dlHeaders;
+    // When no env-var token is present and the URL is on the GitLab host, skip
+    // fetch — GitLab can return 200 with an HTML sign-in page for unauthenticated
+    // requests, which a status check alone cannot detect. Use glab (which has
+    // its own stored credentials) and write to a temp file to avoid the
+    // spawnSync maxBuffer cap. When a token is available, use host-bound
+    // redirect handling so PRIVATE-TOKEN is not forwarded to external asset
+    // hosts (S3/GCS) on redirect.
+    if (!hasToken && linkHost === gitlabHost) {
+      files.set(
+        path.basename(link.name),
+        glabApiBinaryToFile(downloadUrl, host),
+      );
+    } else {
+      const dlRes = await fetchWithHostBoundRedirects(
+        downloadUrl,
+        dlHeaders,
+        gitlabHost,
+      );
+      if (!dlRes.ok) {
+        files.set(
+          path.basename(link.name),
+          glabApiBinaryToFile(downloadUrl, host),
+        );
+      } else {
+        files.set(
+          path.basename(link.name),
+          Buffer.from(await dlRes.arrayBuffer()),
+        );
+      }
+    }
+  }
+  if (!files.size) {
+    throw new Error(`No release assets found for ${project}@${tag}`);
+  }
+  return files;
 }
 
 export async function fetchGitLabRelease(
@@ -914,7 +1006,7 @@ export async function fetchGitLabRelease(
 
   if (transports[0] === 'cli') {
     try {
-      return { files: fetchReleaseLinksViaCli(project, tag, host) };
+      return { files: await fetchReleaseLinksViaCli(project, tag, host) };
     } catch (e) {
       if (!transports.includes('api')) throw e;
     }
@@ -926,7 +1018,7 @@ export async function fetchGitLabRelease(
   } catch (e) {
     if (isNetworkError(e) && withCliFallback && isGlabAvailable()) {
       verbose(`gitlab: HTTP fetch failed, falling back to glab`);
-      return { files: fetchReleaseLinksViaCli(project, tag, host) };
+      return { files: await fetchReleaseLinksViaCli(project, tag, host) };
     }
     if (
       e instanceof HttpError &&
@@ -935,7 +1027,7 @@ export async function fetchGitLabRelease(
       isGlabAvailable()
     ) {
       verbose(`gitlab: API returned ${e.status}, falling back to glab`);
-      return { files: fetchReleaseLinksViaCli(project, tag, host) };
+      return { files: await fetchReleaseLinksViaCli(project, tag, host) };
     }
     throw e;
   }
