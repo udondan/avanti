@@ -629,6 +629,7 @@ function fetchDirectoryViaArchiveViaCli(
 interface GitLabReleaseLink {
   name: string;
   url: string;
+  direct_asset_url?: string;
   link_type: string;
 }
 
@@ -853,10 +854,11 @@ async function fetchReleaseLinksViaApi(
   }
   const entries = await Promise.all(
     links.map(async (link): Promise<[string, Buffer]> => {
-      const linkHost = new URL(link.url).host;
+      const downloadUrl = link.direct_asset_url ?? link.url;
+      const linkHost = new URL(downloadUrl).host;
       const headers =
         linkHost === gitlabHost ? apiHeaders() : { 'User-Agent': 'avanti' };
-      const dlRes = await fetchWithRetry(link.url, { headers });
+      const dlRes = await fetchWithRetry(downloadUrl, { headers });
       if (!dlRes.ok) {
         throw new Error(
           `Failed to download release asset "${link.name}" from ${project}@${tag}: HTTP ${dlRes.status}`,
@@ -873,33 +875,38 @@ function fetchReleaseLinksViaCli(
   tag: string,
   host?: string,
 ): Map<string, Buffer> {
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'avanti-gl-rel-'));
-  try {
-    const args = [
-      'release',
-      'download',
-      tag,
-      '--repo',
-      project,
-      ...hostnameArgs(host),
-    ];
-    verbose(`gitlab: glab release download: glab ${args.join(' ')}`);
-    const result = spawnSync('glab', args, { encoding: 'utf8', cwd: tmpDir });
-    if (result.error) throw new Error(`glab error: ${result.error.message}`);
-    if (result.status !== 0) {
+  const endpoint = `projects/${encodeURIComponent(project)}/releases/${encodeURIComponent(tag)}`;
+  const metaRes = glabApi(endpoint, host);
+  if (metaRes.status !== 0) {
+    throw new Error(
+      `Failed to fetch release ${tag} from ${project}: ${metaRes.stderr}`,
+    );
+  }
+  const rel = JSON.parse(metaRes.stdout) as {
+    assets: { links: GitLabReleaseLink[] };
+  };
+  let links = rel.assets.links.filter((l) => l.link_type === 'package');
+  if (!links.length) links = rel.assets.links;
+  if (!links.length) {
+    throw new Error(`No release assets found for ${project}@${tag}`);
+  }
+  const files = new Map<string, Buffer>();
+  for (const link of links) {
+    // direct_asset_url is correct; link.url may have a double-slash bug when
+    // the GitLab instance External URL was configured with a trailing slash
+    const downloadUrl = link.direct_asset_url ?? link.url;
+    const dlRes = glabRunBinary(['api', downloadUrl]);
+    if (dlRes.status !== 0) {
       throw new Error(
-        `Failed to download release ${tag} from ${project}: ${result.stderr ?? ''}`,
+        `Failed to download release ${tag} from ${project}: ${dlRes.stderr}`,
       );
     }
-    const files = new Map<string, Buffer>();
-    collectFiles(tmpDir, tmpDir, files);
-    if (!files.size) {
-      throw new Error(`No release assets found for ${project}@${tag}`);
-    }
-    return files;
-  } finally {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    files.set(path.basename(link.name), dlRes.stdout);
   }
+  if (!files.size) {
+    throw new Error(`No release assets found for ${project}@${tag}`);
+  }
+  return files;
 }
 
 export async function fetchGitLabRelease(

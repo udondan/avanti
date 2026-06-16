@@ -18,7 +18,6 @@ vi.mock('fs', async (importOriginal) => {
 });
 
 import { spawnSync, type SpawnSyncReturns } from 'child_process';
-import * as fs from 'fs';
 import type { MockInstance } from 'vitest';
 
 const mockSpawnSync = spawnSync as unknown as MockInstance<
@@ -28,11 +27,6 @@ const mockSpawnSync = spawnSync as unknown as MockInstance<
     options: object,
   ) => SpawnSyncReturns<string | Buffer>
 >;
-
-const mockMkdtempSync = fs.mkdtempSync as unknown as MockInstance;
-const mockReaddirSync = fs.readdirSync as unknown as MockInstance;
-const mockReadFileSync = fs.readFileSync as unknown as MockInstance;
-const mockRmSync = fs.rmSync as unknown as MockInstance;
 
 function makeSpawnResult(opts: {
   stdout?: string | Buffer;
@@ -55,14 +49,36 @@ function makeGlabAvailable() {
   return makeSpawnResult({ stdout: 'glab version 1.0.0', status: 0 });
 }
 
+function makeReleaseMetaJson(opts: {
+  name?: string;
+  url?: string;
+  direct_asset_url?: string;
+  link_type?: string;
+}) {
+  return JSON.stringify({
+    assets: {
+      links: [
+        {
+          name: opts.name ?? 'artifact.tar.gz',
+          url:
+            opts.url ??
+            'https://git.example.com//-/project/1/uploads/abc/artifact.tar.gz',
+          ...(opts.direct_asset_url !== undefined
+            ? { direct_asset_url: opts.direct_asset_url }
+            : {}),
+          link_type: opts.link_type ?? 'package',
+        },
+      ],
+    },
+  });
+}
+
 beforeEach(() => {
   vi.resetAllMocks();
   vi.spyOn(_testable, 'sleep').mockResolvedValue(undefined);
   delete process.env.GITLAB_TOKEN;
   delete process.env.GITLAB_PRIVATE_TOKEN;
   delete process.env.GITLAB_HOST;
-  mockMkdtempSync.mockReturnValue('/tmp/avanti-test-gl-rel');
-  mockRmSync.mockReturnValue(undefined);
 });
 
 afterEach(() => {
@@ -78,14 +94,21 @@ describe('fetchGitLabRelease — CLI fallback', () => {
       new Response('Unauthorized', { status: 401 }),
     );
 
-    mockReaddirSync.mockReturnValueOnce([
-      { name: 'artifact.tar.gz', isDirectory: () => false, isFile: () => true },
-    ]);
-    mockReadFileSync.mockReturnValueOnce(Buffer.from('artifact bytes'));
-
     mockSpawnSync
       .mockReturnValueOnce(makeGlabAvailable())
-      .mockReturnValueOnce(makeSpawnResult({ status: 0 }));
+      .mockReturnValueOnce(
+        makeSpawnResult({
+          status: 0,
+          stdout: makeReleaseMetaJson({
+            name: 'artifact.tar.gz',
+            direct_asset_url:
+              'https://git.example.com/group/project/-/releases/v1.0.0/downloads/artifact.tar.gz',
+          }),
+        }),
+      )
+      .mockReturnValueOnce(
+        makeSpawnResult({ status: 0, stdout: Buffer.from('artifact bytes') }),
+      );
 
     const result = await fetchGitLabRelease('group/project', 'v1.0.0');
     expect(result.files.get('artifact.tar.gz')?.toString()).toBe(
@@ -98,16 +121,117 @@ describe('fetchGitLabRelease — CLI fallback', () => {
       new TypeError('fetch failed'),
     );
 
-    mockReaddirSync.mockReturnValueOnce([
-      { name: 'pkg.zip', isDirectory: () => false, isFile: () => true },
-    ]);
-    mockReadFileSync.mockReturnValueOnce(Buffer.from('zip bytes'));
-
     mockSpawnSync
       .mockReturnValueOnce(makeGlabAvailable())
-      .mockReturnValueOnce(makeSpawnResult({ status: 0 }));
+      .mockReturnValueOnce(
+        makeSpawnResult({
+          status: 0,
+          stdout: makeReleaseMetaJson({
+            name: 'pkg.zip',
+            direct_asset_url:
+              'https://git.example.com/group/project/-/releases/v1.0.0/downloads/pkg.zip',
+          }),
+        }),
+      )
+      .mockReturnValueOnce(
+        makeSpawnResult({ status: 0, stdout: Buffer.from('zip bytes') }),
+      );
 
     const result = await fetchGitLabRelease('group/project', 'v1.0.0');
     expect(result.files.get('pkg.zip')?.toString()).toBe('zip bytes');
+  });
+});
+
+describe('fetchGitLabRelease — CLI path (via: cli)', () => {
+  it('uses direct_asset_url when present instead of buggy url', async () => {
+    const directUrl =
+      'https://git.example.com/group/project/-/releases/v1.0.0/downloads/artifact.tar.gz';
+
+    mockSpawnSync
+      .mockReturnValueOnce(
+        makeSpawnResult({
+          status: 0,
+          stdout: makeReleaseMetaJson({
+            url: 'https://git.example.com//-/project/1/uploads/abc/artifact.tar.gz',
+            direct_asset_url: directUrl,
+          }),
+        }),
+      )
+      .mockReturnValueOnce(
+        makeSpawnResult({ status: 0, stdout: Buffer.from('file content') }),
+      );
+
+    const result = await fetchGitLabRelease(
+      'group/project',
+      'v1.0.0',
+      undefined,
+      'cli',
+    );
+    expect(result.files.get('artifact.tar.gz')?.toString()).toBe(
+      'file content',
+    );
+    const calls = mockSpawnSync.mock.calls;
+    expect(calls[1][1]).toContain(directUrl);
+    expect(calls[1][1]).not.toContain('https://git.example.com//-/project/');
+  });
+
+  it('falls back to link.url when direct_asset_url is absent', async () => {
+    const linkUrl =
+      'https://git.example.com/group/project/-/releases/v1.0.0/downloads/artifact.tar.gz';
+
+    mockSpawnSync
+      .mockReturnValueOnce(
+        makeSpawnResult({
+          status: 0,
+          stdout: makeReleaseMetaJson({ url: linkUrl }),
+        }),
+      )
+      .mockReturnValueOnce(
+        makeSpawnResult({ status: 0, stdout: Buffer.from('file content') }),
+      );
+
+    const result = await fetchGitLabRelease(
+      'group/project',
+      'v1.0.0',
+      undefined,
+      'cli',
+    );
+    expect(result.files.get('artifact.tar.gz')?.toString()).toBe(
+      'file content',
+    );
+    const calls = mockSpawnSync.mock.calls;
+    expect(calls[1][1]).toContain(linkUrl);
+  });
+
+  it('passes --hostname to metadata call but not to download call', async () => {
+    const directUrl =
+      'https://git.example.com/group/project/-/releases/v1.0.0/downloads/artifact.tar.gz';
+
+    mockSpawnSync
+      .mockReturnValueOnce(
+        makeSpawnResult({
+          status: 0,
+          stdout: makeReleaseMetaJson({ direct_asset_url: directUrl }),
+        }),
+      )
+      .mockReturnValueOnce(
+        makeSpawnResult({ status: 0, stdout: Buffer.from('data') }),
+      );
+
+    const result = await fetchGitLabRelease(
+      'group/project',
+      'v1.0.0',
+      'git.example.com',
+      'cli',
+    );
+    expect(result.files.get('artifact.tar.gz')?.toString()).toBe('data');
+
+    const calls = mockSpawnSync.mock.calls;
+    // Metadata: glab api --hostname git.example.com projects/...
+    expect(calls[0][1]).toContain('--hostname');
+    expect(calls[0][1]).toContain('git.example.com');
+    // Download: glab api <full-url> — no --hostname
+    expect(calls[1][1]).not.toContain('--hostname');
+    expect(calls[1][1]).toContain(directUrl);
   });
 });
