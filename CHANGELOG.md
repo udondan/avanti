@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.26.3](https://github.com/udondan/avanti/compare/v0.26.2...v0.26.3) (2026-06-16)
+
+
+### Bug Fixes
+
+* **gitlab:** resolve token from glab stored credentials for CLI release downloads ([#275](https://github.com/udondan/avanti/issues/275)) ([e9dc7db](https://github.com/udondan/avanti/commit/e9dc7dbaf6c5132686d32eb7238060cb4dd0bbc2))
+
 ## [0.26.2](https://github.com/udondan/avanti/compare/v0.26.1...v0.26.2) (2026-06-16)
 
 
