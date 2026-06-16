@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.26.2](https://github.com/udondan/avanti/compare/v0.26.1...v0.26.2) (2026-06-16)
+
+
+### Bug Fixes
+
+* **gitlab:** use direct_asset_url for release asset downloads ([#273](https://github.com/udondan/avanti/issues/273)) ([c62c3a0](https://github.com/udondan/avanti/commit/c62c3a02dca60833234b768c913f80f3b907f962))
+
 ## [0.26.1](https://github.com/udondan/avanti/compare/v0.26.0...v0.26.1) (2026-06-15)
 
 
