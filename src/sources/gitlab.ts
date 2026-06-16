@@ -827,6 +827,33 @@ function resolveReleaseTagViaCli(
   return tags[0].name;
 }
 
+// Follows HTTP redirects while ensuring the PRIVATE-TOKEN header is only sent
+// to the originating GitLab host, not forwarded to external redirect targets
+// (e.g. pre-signed S3/GCS URLs that release assets may redirect to).
+async function fetchWithHostBoundRedirects(
+  url: string,
+  headers: Record<string, string>,
+  gitlabHost: string,
+  maxRedirects = 5,
+): Promise<Response> {
+  let currentUrl = url;
+  let currentHeaders = headers;
+  for (let i = 0; i <= maxRedirects; i++) {
+    const res = await fetchWithRetry(currentUrl, {
+      headers: currentHeaders,
+      redirect: 'manual',
+    });
+    if (res.status < 300 || res.status >= 400) return res;
+    const location = res.headers.get('location');
+    if (!location) return res;
+    const redirectHost = new URL(location, `https://${gitlabHost}`).host;
+    currentHeaders =
+      redirectHost === gitlabHost ? headers : { 'User-Agent': 'avanti' };
+    currentUrl = location;
+  }
+  throw new Error(`Too many redirects fetching ${url}`);
+}
+
 async function fetchReleaseLinksViaApi(
   project: string,
   tag: string,
@@ -858,7 +885,11 @@ async function fetchReleaseLinksViaApi(
       const linkHost = new URL(downloadUrl).host;
       const headers =
         linkHost === gitlabHost ? apiHeaders() : { 'User-Agent': 'avanti' };
-      const dlRes = await fetchWithRetry(downloadUrl, { headers });
+      const dlRes = await fetchWithHostBoundRedirects(
+        downloadUrl,
+        headers,
+        gitlabHost,
+      );
       if (!dlRes.ok) {
         throw new Error(
           `Failed to download release asset "${link.name}" from ${project}@${tag}: HTTP ${dlRes.status}`,
