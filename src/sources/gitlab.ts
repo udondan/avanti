@@ -954,28 +954,38 @@ async function fetchReleaseLinksViaCli(
     // the GitLab instance External URL was configured with a trailing slash
     const downloadUrl = link.direct_asset_url ?? link.url;
     const linkHost = new URL(downloadUrl).host;
-    // Use host-bound redirect handling so PRIVATE-TOKEN is never forwarded to
-    // external asset hosts (e.g. S3/GCS) when GitLab redirects on download.
-    // If fetch returns non-ok (e.g. 401 — no env-var token, glab config auth
-    // needed), fall back to glab writing to a temp file to avoid spawnSync's
-    // maxBuffer cap for large release artifacts.
     const dlHeaders =
       linkHost === gitlabHost ? apiHeaders() : { 'User-Agent': 'avanti' };
-    const dlRes = await fetchWithHostBoundRedirects(
-      downloadUrl,
-      dlHeaders,
-      gitlabHost,
-    );
-    if (!dlRes.ok) {
+    const hasToken = 'PRIVATE-TOKEN' in dlHeaders;
+    // When no env-var token is present and the URL is on the GitLab host, skip
+    // fetch — GitLab can return 200 with an HTML sign-in page for unauthenticated
+    // requests, which a status check alone cannot detect. Use glab (which has
+    // its own stored credentials) and write to a temp file to avoid the
+    // spawnSync maxBuffer cap. When a token is available, use host-bound
+    // redirect handling so PRIVATE-TOKEN is not forwarded to external asset
+    // hosts (S3/GCS) on redirect.
+    if (!hasToken && linkHost === gitlabHost) {
       files.set(
         path.basename(link.name),
         glabApiBinaryToFile(downloadUrl, host),
       );
     } else {
-      files.set(
-        path.basename(link.name),
-        Buffer.from(await dlRes.arrayBuffer()),
+      const dlRes = await fetchWithHostBoundRedirects(
+        downloadUrl,
+        dlHeaders,
+        gitlabHost,
       );
+      if (!dlRes.ok) {
+        files.set(
+          path.basename(link.name),
+          glabApiBinaryToFile(downloadUrl, host),
+        );
+      } else {
+        files.set(
+          path.basename(link.name),
+          Buffer.from(await dlRes.arrayBuffer()),
+        );
+      }
     }
   }
   if (!files.size) {

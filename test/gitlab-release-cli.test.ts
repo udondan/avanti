@@ -11,6 +11,8 @@ vi.mock('fs', async (importOriginal) => {
   return {
     ...actual,
     mkdtempSync: vi.fn(),
+    openSync: vi.fn(),
+    closeSync: vi.fn(),
     readdirSync: vi.fn(),
     readFileSync: vi.fn(),
     rmSync: vi.fn(),
@@ -18,7 +20,11 @@ vi.mock('fs', async (importOriginal) => {
 });
 
 import { spawnSync, type SpawnSyncReturns } from 'child_process';
+import * as fs from 'fs';
 import type { MockInstance } from 'vitest';
+
+const mockMkdtempSync = fs.mkdtempSync as unknown as MockInstance;
+const mockReadFileSync = fs.readFileSync as unknown as MockInstance;
 
 const mockSpawnSync = spawnSync as unknown as MockInstance<
   (
@@ -199,20 +205,24 @@ describe('fetchGitLabRelease — CLI path (via: cli)', () => {
     expect(fetchCalls[0][0]).toBe(linkUrl);
   });
 
-  it('passes --hostname to metadata glab call; download uses fetch with direct URL', async () => {
+  it('passes --hostname to both glab calls when no env-var token is present', async () => {
     const directUrl =
       'https://git.example.com/group/project/-/releases/v1.0.0/downloads/artifact.tar.gz';
 
-    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
-      new Response('data', { status: 200 }),
-    );
+    // When host matches gitlabHost and no GITLAB_TOKEN is set, glabApiBinaryToFile
+    // is used for the download (to avoid GitLab returning a 200 HTML sign-in page
+    // to an unauthenticated fetch). Set up the fs and spawnSync mocks for it.
+    mockMkdtempSync.mockReturnValueOnce('/tmp/fake-avanti-glab');
+    mockReadFileSync.mockReturnValueOnce(Buffer.from('data'));
 
-    mockSpawnSync.mockReturnValueOnce(
-      makeSpawnResult({
-        status: 0,
-        stdout: makeReleaseMetaJson({ direct_asset_url: directUrl }),
-      }),
-    );
+    mockSpawnSync
+      .mockReturnValueOnce(
+        makeSpawnResult({
+          status: 0,
+          stdout: makeReleaseMetaJson({ direct_asset_url: directUrl }),
+        }),
+      )
+      .mockReturnValueOnce(makeSpawnResult({ status: 0 }));
 
     const result = await fetchGitLabRelease(
       'group/project',
@@ -226,10 +236,9 @@ describe('fetchGitLabRelease — CLI path (via: cli)', () => {
     // Metadata: glab api --hostname git.example.com projects/...
     expect(calls[0][1]).toContain('--hostname');
     expect(calls[0][1]).toContain('git.example.com');
-
-    // Download: fetch is used (not glab), called with the direct URL
-    const fetchCalls = (globalThis.fetch as ReturnType<typeof vi.fn>).mock
-      .calls;
-    expect(fetchCalls[0][0]).toBe(directUrl);
+    // Download: glab api --hostname git.example.com <direct URL> (via glabApiBinaryToFile)
+    expect(calls[1][1]).toContain('--hostname');
+    expect(calls[1][1]).toContain('git.example.com');
+    expect(calls[1][1]).toContain(directUrl);
   });
 });
