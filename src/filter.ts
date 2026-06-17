@@ -68,7 +68,20 @@ function matchesCompiled(key: string, compiled: CompiledPattern): boolean {
 }
 
 export function compilePatterns(patterns: string[]): CompiledPattern[] {
-  return patterns.map(compilePattern);
+  const flat: string[] = [];
+  for (const p of patterns) {
+    // Expand braces into individual alternatives first so that combined
+    // patterns like "tool-{amd64,arm64}-*.tar.gz" have their glob wildcard
+    // compiled correctly (brace kind performs exact string lookup, not glob).
+    // Directory-prefix patterns (ending with "/") are left unexpanded to
+    // preserve the existing error for brace+prefix combinations.
+    if (p.includes('{') && !p.endsWith('/')) {
+      flat.push(...expandBraces(p));
+    } else {
+      flat.push(p);
+    }
+  }
+  return flat.map(compilePattern);
 }
 
 export function matchesAnyPattern(

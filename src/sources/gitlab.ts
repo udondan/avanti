@@ -992,6 +992,7 @@ async function fetchReleaseLinksViaApi(
     links = links.filter((l) =>
       matchesAnyPattern(path.basename(l.name), compiled),
     );
+    if (links.length === 0) return new Map();
   }
   const hasToken = !!(
     process.env.GITLAB_TOKEN ?? process.env.GITLAB_PRIVATE_TOKEN
@@ -1066,17 +1067,12 @@ async function fetchReleaseLinksViaCli(
   if (!links.length) {
     throw new Error(`No release assets found for ${project}@${tag}`);
   }
-  if (preFilter && preFilter.length > 0) {
-    const compiled = compilePatterns(preFilter);
-    links = links.filter((l) =>
-      matchesAnyPattern(path.basename(l.name), compiled),
-    );
-  }
-
   const files = new Map<string, Buffer>();
   const explicitGitlabHost =
     host?.trim() || process.env.GITLAB_HOST?.trim() || undefined;
-  // Pre-determine the trusted GitLab host for token scoping, in priority order:
+  // Pre-determine the trusted GitLab host for token scoping from the FULL link
+  // list (before any preFilter is applied) so that host inference is not
+  // affected by which links the filter keeps. Priority order:
   // 1. Explicit config (host:/GITLAB_HOST) — authoritative
   // 2. Any link's direct_asset_url host — direct_asset_url always points to the
   //    GitLab instance, so any occurrence across the link set reliably identifies it
@@ -1089,6 +1085,14 @@ async function fetchReleaseLinksViaCli(
         l.direct_asset_url ? new URL(l.direct_asset_url).host : null,
       )
       .find((h): h is string => h !== null);
+
+  if (preFilter && preFilter.length > 0) {
+    const compiled = compilePatterns(preFilter);
+    links = links.filter((l) =>
+      matchesAnyPattern(path.basename(l.name), compiled),
+    );
+    if (links.length === 0) return new Map();
+  }
   // Resolve after knownGitlabHost so we can pass the inferred host (from
   // direct_asset_url) when no explicit host is configured. This lets resolveToken
   // issue a --hostname-scoped glab auth lookup even without an explicit host: config,
@@ -1160,6 +1164,13 @@ async function fetchReleaseLinksViaCli(
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'avanti-glab-'));
     try {
       const args = ['release', 'download', tag, '-R', project, '-D', tmpDir];
+      // When a preFilter is active, pass each matching asset name explicitly
+      // so glab only downloads the selected assets instead of the full release.
+      if (preFilter && preFilter.length > 0) {
+        for (const link of links) {
+          args.push('-a', path.basename(link.name));
+        }
+      }
       verbose(`gitlab: glab ${args.join(' ')}`);
       const dlRes = spawnSync('glab', args, { encoding: 'utf8' });
       if (dlRes.error) throw new Error(`glab error: ${dlRes.error.message}`);
