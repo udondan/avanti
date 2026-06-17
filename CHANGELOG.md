@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.26.5](https://github.com/udondan/avanti/compare/v0.26.4...v0.26.5) (2026-06-17)
+
+
+### Bug Fixes
+
+* **gitlab:** rewrite upload URLs to API path to avoid auth-dropping redirect ([#279](https://github.com/udondan/avanti/issues/279)) ([8ca1ced](https://github.com/udondan/avanti/commit/8ca1cedf30f8f418816e7124d27fbfc95311e6ca))
+
 ## [0.26.4](https://github.com/udondan/avanti/compare/v0.26.3...v0.26.4) (2026-06-17)
 
 
