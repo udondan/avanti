@@ -37,6 +37,36 @@ function apiHeaders(): Record<string, string> {
   return headers;
 }
 
+// Extracts the token from `glab auth status --show-token` output for a specific
+// host. The output is grouped by instance (one section per configured host);
+// host headers appear at column 0 (no leading whitespace) while details are
+// indented. We find the section for targetHost (matching the bare name or the
+// ssh.* variant that glab may store internally) and return the "Token found:"
+// value from within that section only, avoiding wrong-instance token selection
+// in multi-instance configs where the first regex match could be for a
+// different host that appears earlier in the output.
+function tokenForHost(output: string, targetHost: string): string | undefined {
+  const normalized = targetHost.toLowerCase().replace(/^ssh\./, '');
+  const lines = output.split('\n');
+  let inSection = false;
+  for (const line of lines) {
+    // Host headers start at column 0 (not indented)
+    if (line.length > 0 && line[0] !== ' ' && line[0] !== '\t') {
+      const t = line.trim().toLowerCase();
+      inSection =
+        t === normalized ||
+        t === 'ssh.' + normalized ||
+        t.startsWith(normalized + ' ') ||
+        t.startsWith('ssh.' + normalized + ' ');
+    }
+    if (inSection) {
+      const m = line.match(/Token found:\s*(\S+)/);
+      if (m) return m[1];
+    }
+  }
+  return undefined;
+}
+
 // Returns the best available auth token: env var first, then glab's stored
 // credentials via `glab auth status --show-token`.
 // glab may store the instance under a different hostname key (e.g.
@@ -71,31 +101,16 @@ function resolveToken(host?: string): string | undefined {
           })()
         : spawnSync('glab', args, { encoding: 'utf8' });
     const output = (res.stdout ?? '') + (res.stderr ?? '');
-    const match = output.match(/Token found:\s*(\S+)/);
-    if (match?.[1]) {
+    // For the scoped attempt (--hostname): output is already host-scoped, use
+    // simple regex. For the fallback (no --hostname): extract the token from the
+    // specific host section to avoid returning the wrong instance's token when
+    // multiple instances are configured.
+    const token =
+      i > 0 && configuredHost
+        ? tokenForHost(output, configuredHost)
+        : output.match(/Token found:\s*(\S+)/)?.[1];
+    if (token) {
       if (i > 0 && configuredHost) {
-        // Verify the fallback token belongs to the configured host by checking
-        // that the host (or its ssh.* variant) appears in the glab output. If
-        // it doesn't, the token is from a different glab context (e.g. gitlab.com)
-        // and must not be used for the private instance.
-        const normalizedTarget = configuredHost
-          .toLowerCase()
-          .replace(/^ssh\./, '');
-        const hostInOutput = output.split('\n').some((line) => {
-          const t = line.trim().toLowerCase();
-          return (
-            t === normalizedTarget ||
-            t === 'ssh.' + normalizedTarget ||
-            t.startsWith(normalizedTarget + ' ') ||
-            t.startsWith('ssh.' + normalizedTarget + ' ')
-          );
-        });
-        if (!hostInOutput) {
-          verbose(
-            `gitlab: skipping unscoped glab token (configured host ${configuredHost} not confirmed in auth output)`,
-          );
-          continue;
-        }
         verbose(
           `gitlab: resolved auth token via glab auth status (no --hostname, host verified)`,
         );
@@ -106,7 +121,7 @@ function resolveToken(host?: string): string | undefined {
       } else {
         verbose(`gitlab: resolved auth token via glab auth status`);
       }
-      return match[1];
+      return token;
     }
   }
   return undefined;
@@ -1013,13 +1028,24 @@ async function fetchReleaseLinksViaCli(
       // the GitLab instance External URL was configured with a trailing slash
       const downloadUrl = link.direct_asset_url ?? link.url;
       const linkHost = new URL(downloadUrl).host;
-      const gitlabHost = explicitGitlabHost ?? linkHost;
+      // Determine the trusted GitLab host. When explicitly configured (host:/
+      // GITLAB_HOST), use that. Otherwise infer from direct_asset_url, which
+      // always points to the GitLab instance itself (unlike link.url which may
+      // be an external CDN). Without either, skip the token to avoid leaking it
+      // to external release-link hosts (e.g. S3, GCS).
+      const inferredGitlabHost =
+        explicitGitlabHost ??
+        (link.direct_asset_url
+          ? new URL(link.direct_asset_url).host
+          : undefined);
       const dlHeaders: Record<string, string> = { 'User-Agent': 'avanti' };
-      if (linkHost === gitlabHost) dlHeaders['PRIVATE-TOKEN'] = token;
+      if (inferredGitlabHost !== undefined && linkHost === inferredGitlabHost) {
+        dlHeaders['PRIVATE-TOKEN'] = token;
+      }
       const dlRes = await fetchWithHostBoundRedirects(
         downloadUrl,
         dlHeaders,
-        gitlabHost,
+        inferredGitlabHost ?? linkHost,
       );
       if (!dlRes.ok) {
         throw new Error(
