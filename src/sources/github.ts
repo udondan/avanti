@@ -638,7 +638,7 @@ function fetchReleaseAssetsViaCli(
     // resulting glob as a separate --pattern arg.
     if (preFilter && preFilter.length > 0) {
       const hasRegex = preFilter.some(
-        (p) => p.startsWith('/') && p.endsWith('/'),
+        (p) => p.length > 2 && p.startsWith('/') && p.endsWith('/'),
       );
       if (!hasRegex) {
         const expanded: string[] = [];
