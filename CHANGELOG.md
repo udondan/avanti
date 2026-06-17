@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.26.4](https://github.com/udondan/avanti/compare/v0.26.3...v0.26.4) (2026-06-17)
+
+
+### Bug Fixes
+
+* **gitlab:** check stdout+stderr for token and add hostname fallback in resolveToken ([#277](https://github.com/udondan/avanti/issues/277)) ([87e1471](https://github.com/udondan/avanti/commit/87e14719b5fbdd1526560981a65c9867296f93ad))
+
 ## [0.26.3](https://github.com/udondan/avanti/compare/v0.26.2...v0.26.3) (2026-06-16)
 
 
