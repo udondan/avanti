@@ -1,7 +1,6 @@
 type CompiledPattern =
   | { kind: 'exact'; value: string }
   | { kind: 'regex'; re: RegExp }
-  | { kind: 'brace'; expanded: Set<string> }
   | { kind: 'prefix'; value: string }
   | { kind: 'glob'; re: RegExp };
 
@@ -50,9 +49,6 @@ function compilePattern(pattern: string): CompiledPattern {
     }
     return { kind: 'prefix', value: pattern };
   }
-  if (pattern.includes('{')) {
-    return { kind: 'brace', expanded: new Set(expandBraces(pattern)) };
-  }
   if (pattern.includes('*') || pattern.includes('?')) {
     return { kind: 'glob', re: globToRegex(pattern) };
   }
@@ -62,7 +58,6 @@ function compilePattern(pattern: string): CompiledPattern {
 function matchesCompiled(key: string, compiled: CompiledPattern): boolean {
   if (compiled.kind === 'regex') return compiled.re.test(key);
   if (compiled.kind === 'glob') return compiled.re.test(key);
-  if (compiled.kind === 'brace') return compiled.expanded.has(key);
   if (compiled.kind === 'prefix') return key.startsWith(compiled.value);
   return compiled.value === key;
 }
