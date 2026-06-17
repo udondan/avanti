@@ -102,14 +102,17 @@ function resolveToken(host?: string): string | undefined {
           })()
         : spawnSync('glab', args, { encoding: 'utf8' });
     const output = (res.stdout ?? '') + (res.stderr ?? '');
-    // For the scoped attempt (--hostname): output is already host-scoped, use
-    // simple regex. For the fallback (no --hostname): extract the token from the
-    // specific host section to avoid returning the wrong instance's token when
-    // multiple instances are configured.
+    // For the scoped attempt (--hostname): only accept the token when glab exits 0
+    // to avoid using a stale token that glab still prints in the error output while
+    // indicating the credential is invalid. For the fallback (no --hostname with
+    // --all): extract the token from the specific host section so we never return
+    // a different instance's token in multi-instance configs.
     const token =
       i > 0 && configuredHost
         ? tokenForHost(output, configuredHost)
-        : output.match(/Token found:\s*(\S+)/)?.[1];
+        : res.status === 0
+          ? output.match(/Token found:\s*(\S+)/)?.[1]
+          : undefined;
     if (token) {
       if (i > 0 && configuredHost) {
         verbose(
@@ -1014,7 +1017,6 @@ async function fetchReleaseLinksViaCli(
     throw new Error(`No release assets found for ${project}@${tag}`);
   }
 
-  const token = resolveToken(host);
   const files = new Map<string, Buffer>();
   const explicitGitlabHost =
     host?.trim() || process.env.GITLAB_HOST?.trim() || undefined;
@@ -1031,6 +1033,11 @@ async function fetchReleaseLinksViaCli(
         l.direct_asset_url ? new URL(l.direct_asset_url).host : null,
       )
       .find((h): h is string => h !== null);
+  // Resolve after knownGitlabHost so we can pass the inferred host (from
+  // direct_asset_url) when no explicit host is configured. This lets resolveToken
+  // issue a --hostname-scoped glab auth lookup even without an explicit host: config,
+  // preventing a multi-instance glab config from returning the wrong instance's token.
+  const token = resolveToken(knownGitlabHost ?? host);
 
   if (token) {
     for (const link of links) {
@@ -1039,8 +1046,10 @@ async function fetchReleaseLinksViaCli(
       const downloadUrl = link.direct_asset_url ?? link.url;
       const linkHost = new URL(downloadUrl).host;
       // Use the pre-computed GitLab host if known; otherwise fall back to the
-      // link's own host (old GitLab without direct_asset_url, same-host assumption)
-      const gitlabHost = knownGitlabHost ?? linkHost;
+      // link's own host (old GitLab without direct_asset_url, same-host assumption).
+      // Normalize the ssh. prefix: glab may store the credential under ssh.<host>
+      // but direct_asset_url always uses the bare HTTP hostname for comparison.
+      const gitlabHost = (knownGitlabHost ?? linkHost).replace(/^ssh\./, '');
       const dlHeaders: Record<string, string> = { 'User-Agent': 'avanti' };
       if (linkHost === gitlabHost) dlHeaders['PRIVATE-TOKEN'] = token;
       const dlRes = await fetchWithHostBoundRedirects(
