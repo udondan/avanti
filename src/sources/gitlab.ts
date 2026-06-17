@@ -1164,13 +1164,10 @@ async function fetchReleaseLinksViaCli(
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'avanti-glab-'));
     try {
       const args = ['release', 'download', tag, '-R', project, '-D', tmpDir];
-      // When a preFilter is active, pass each matching asset name explicitly
-      // so glab only downloads the selected assets instead of the full release.
-      if (preFilter && preFilter.length > 0) {
-        for (const link of links) {
-          args.push('-n', link.name);
-        }
-      }
+      // glab release download has no asset-name/pattern flag that allows
+      // selecting individual assets; it downloads all of them. The pre-filtered
+      // links array already holds only the matching assets, so the read loop
+      // below picks up only those files from the temp dir.
       verbose(`gitlab: glab ${args.join(' ')}`);
       const dlRes = spawnSync('glab', args, { encoding: 'utf8' });
       if (dlRes.error) throw new Error(`glab error: ${dlRes.error.message}`);
