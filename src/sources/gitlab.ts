@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { fetchWithRetry, redactUrl } from '../fetch';
+import { compilePatterns, matchesAnyPattern } from '../filter';
 import { verbose } from '../logger';
 import {
   isLatestSentinel,
@@ -964,6 +965,7 @@ async function fetchReleaseLinksViaApi(
   project: string,
   tag: string,
   host?: string,
+  preFilter?: string[],
 ): Promise<Map<string, Buffer>> {
   const rawHost = getHost(host);
   const gitlabHost = new URL(`https://${rawHost}`).host;
@@ -984,6 +986,13 @@ async function fetchReleaseLinksViaApi(
   if (!links.length) links = rel.assets.links;
   if (!links.length) {
     throw new Error(`No release assets found for ${project}@${tag}`);
+  }
+  if (preFilter && preFilter.length > 0) {
+    const compiled = compilePatterns(preFilter);
+    links = links.filter((l) =>
+      matchesAnyPattern(path.basename(l.name), compiled),
+    );
+    if (links.length === 0) return new Map();
   }
   const hasToken = !!(
     process.env.GITLAB_TOKEN ?? process.env.GITLAB_PRIVATE_TOKEN
@@ -1041,6 +1050,7 @@ async function fetchReleaseLinksViaCli(
   project: string,
   tag: string,
   host?: string,
+  preFilter?: string[],
 ): Promise<Map<string, Buffer>> {
   const endpoint = `projects/${encodeURIComponent(project)}/releases/${encodeURIComponent(tag)}`;
   const metaRes = glabApi(endpoint, host);
@@ -1057,11 +1067,12 @@ async function fetchReleaseLinksViaCli(
   if (!links.length) {
     throw new Error(`No release assets found for ${project}@${tag}`);
   }
-
   const files = new Map<string, Buffer>();
   const explicitGitlabHost =
     host?.trim() || process.env.GITLAB_HOST?.trim() || undefined;
-  // Pre-determine the trusted GitLab host for token scoping, in priority order:
+  // Pre-determine the trusted GitLab host for token scoping from the FULL link
+  // list (before any preFilter is applied) so that host inference is not
+  // affected by which links the filter keeps. Priority order:
   // 1. Explicit config (host:/GITLAB_HOST) — authoritative
   // 2. Any link's direct_asset_url host — direct_asset_url always points to the
   //    GitLab instance, so any occurrence across the link set reliably identifies it
@@ -1074,6 +1085,14 @@ async function fetchReleaseLinksViaCli(
         l.direct_asset_url ? new URL(l.direct_asset_url).host : null,
       )
       .find((h): h is string => h !== null);
+
+  if (preFilter && preFilter.length > 0) {
+    const compiled = compilePatterns(preFilter);
+    links = links.filter((l) =>
+      matchesAnyPattern(path.basename(l.name), compiled),
+    );
+    if (links.length === 0) return new Map();
+  }
   // Resolve after knownGitlabHost so we can pass the inferred host (from
   // direct_asset_url) when no explicit host is configured. This lets resolveToken
   // issue a --hostname-scoped glab auth lookup even without an explicit host: config,
@@ -1145,6 +1164,10 @@ async function fetchReleaseLinksViaCli(
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'avanti-glab-'));
     try {
       const args = ['release', 'download', tag, '-R', project, '-D', tmpDir];
+      // glab release download has no asset-name/pattern flag that allows
+      // selecting individual assets; it downloads all of them. The pre-filtered
+      // links array already holds only the matching assets, so the read loop
+      // below picks up only those files from the temp dir.
       verbose(`gitlab: glab ${args.join(' ')}`);
       const dlRes = spawnSync('glab', args, { encoding: 'utf8' });
       if (dlRes.error) throw new Error(`glab error: ${dlRes.error.message}`);
@@ -1174,6 +1197,7 @@ export async function fetchGitLabRelease(
   release: string,
   host?: string,
   via?: Via | Via[],
+  preFilter?: string[],
 ): Promise<GitLabResult> {
   const transports = normalizeVia(via);
   const tag = await resolveReleaseTag(project, release, host, transports);
@@ -1181,7 +1205,9 @@ export async function fetchGitLabRelease(
 
   if (transports[0] === 'cli') {
     try {
-      return { files: await fetchReleaseLinksViaCli(project, tag, host) };
+      return {
+        files: await fetchReleaseLinksViaCli(project, tag, host, preFilter),
+      };
     } catch (e) {
       if (!transports.includes('api')) throw e;
     }
@@ -1189,11 +1215,15 @@ export async function fetchGitLabRelease(
 
   const withCliFallback = transports[0] === 'api' && transports.includes('cli');
   try {
-    return { files: await fetchReleaseLinksViaApi(project, tag, host) };
+    return {
+      files: await fetchReleaseLinksViaApi(project, tag, host, preFilter),
+    };
   } catch (e) {
     if (isNetworkError(e) && withCliFallback && isGlabAvailable()) {
       verbose(`gitlab: HTTP fetch failed, falling back to glab`);
-      return { files: await fetchReleaseLinksViaCli(project, tag, host) };
+      return {
+        files: await fetchReleaseLinksViaCli(project, tag, host, preFilter),
+      };
     }
     if (
       e instanceof HttpError &&
@@ -1202,7 +1232,9 @@ export async function fetchGitLabRelease(
       isGlabAvailable()
     ) {
       verbose(`gitlab: API returned ${e.status}, falling back to glab`);
-      return { files: await fetchReleaseLinksViaCli(project, tag, host) };
+      return {
+        files: await fetchReleaseLinksViaCli(project, tag, host, preFilter),
+      };
     }
     throw e;
   }

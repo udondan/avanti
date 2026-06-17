@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { fetchWithRetry } from '../fetch';
+import { compilePatterns, expandBraces, matchesAnyPattern } from '../filter';
 import { verbose } from '../logger';
 import {
   isLatestSentinel,
@@ -563,6 +564,7 @@ async function fetchReleaseAssetsViaApi(
   repo: string,
   tag: string,
   host?: string,
+  preFilter?: string[],
 ): Promise<Map<string, Buffer>> {
   const res = await fetchWithRetry(
     `${getApiBase(host)}/repos/${repo}/releases/tags/${encodeURIComponent(tag)}`,
@@ -578,8 +580,16 @@ async function fetchReleaseAssetsViaApi(
   if (!rel.assets.length) {
     throw new Error(`No release assets found for ${repo}@${tag}`);
   }
+  let assets = rel.assets;
+  if (preFilter && preFilter.length > 0) {
+    const compiled = compilePatterns(preFilter);
+    assets = assets.filter((a) =>
+      matchesAnyPattern(path.basename(a.name), compiled),
+    );
+    if (assets.length === 0) return new Map();
+  }
   const entries = await Promise.all(
-    rel.assets.map(async (asset): Promise<[string, Buffer]> => {
+    assets.map(async (asset): Promise<[string, Buffer]> => {
       const dlRes = await fetchWithRetry(
         `${getApiBase(host)}/repos/${repo}/releases/assets/${asset.id}`,
         {
@@ -606,6 +616,7 @@ function fetchReleaseAssetsViaCli(
   repo: string,
   tag: string,
   host?: string,
+  preFilter?: string[],
 ): Map<string, Buffer> {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'avanti-gh-rel-'));
   try {
@@ -619,6 +630,30 @@ function fetchReleaseAssetsViaCli(
       tmpDir,
       ...hostnameArgs(host),
     ];
+    // Pass each filter pattern as --pattern so gh only fetches matching
+    // assets. gh's --pattern is glob-only: regex patterns (/pat/) and brace
+    // expansions ({a,b}) are not understood. Detect any regex pattern and fall
+    // back to downloading all assets (the compiled filter below handles
+    // correctness). For non-regex filters, expand braces first and pass each
+    // resulting glob as a separate --pattern arg.
+    if (preFilter && preFilter.length > 0) {
+      const hasRegex = preFilter.some(
+        (p) => p.length > 2 && p.startsWith('/') && p.endsWith('/'),
+      );
+      if (!hasRegex) {
+        const expanded: string[] = [];
+        for (const p of preFilter) {
+          if (p.includes('{') && !p.endsWith('/')) {
+            expanded.push(...expandBraces(p));
+          } else {
+            expanded.push(p);
+          }
+        }
+        for (const p of expanded) {
+          args.push('--pattern', p);
+        }
+      }
+    }
     verbose(`github: gh release download: gh ${args.join(' ')}`);
     const result = ghRun(args);
     if (result.status !== 0) {
@@ -626,13 +661,20 @@ function fetchReleaseAssetsViaCli(
         `Failed to download release ${tag} from ${repo}: ${result.stderr}`,
       );
     }
+    const compiled =
+      preFilter && preFilter.length > 0
+        ? compilePatterns(preFilter)
+        : undefined;
     const files = new Map<string, Buffer>();
     for (const entry of fs.readdirSync(tmpDir, { withFileTypes: true })) {
-      if (entry.isFile()) {
+      if (
+        entry.isFile() &&
+        (!compiled || matchesAnyPattern(entry.name, compiled))
+      ) {
         files.set(entry.name, fs.readFileSync(path.join(tmpDir, entry.name)));
       }
     }
-    if (!files.size) {
+    if (!files.size && !preFilter?.length) {
       throw new Error(`No release assets found for ${repo}@${tag}`);
     }
     return files;
@@ -646,6 +688,7 @@ export async function fetchGitHubRelease(
   release: string,
   host?: string,
   via?: Via | Via[],
+  preFilter?: string[],
 ): Promise<GitHubResult> {
   const transports = normalizeVia(via);
   const tag = await resolveRef(repo, release, host, transports);
@@ -653,7 +696,7 @@ export async function fetchGitHubRelease(
 
   if (transports[0] === 'cli') {
     try {
-      return { files: fetchReleaseAssetsViaCli(repo, tag, host) };
+      return { files: fetchReleaseAssetsViaCli(repo, tag, host, preFilter) };
     } catch (e) {
       if (!transports.includes('api')) throw e;
     }
@@ -661,11 +704,13 @@ export async function fetchGitHubRelease(
 
   const withCliFallback = transports[0] === 'api' && transports.includes('cli');
   try {
-    return { files: await fetchReleaseAssetsViaApi(repo, tag, host) };
+    return {
+      files: await fetchReleaseAssetsViaApi(repo, tag, host, preFilter),
+    };
   } catch (e) {
     if (isNetworkError(e) && withCliFallback && isGhAvailable()) {
       verbose(`github: HTTP fetch failed, falling back to gh`);
-      return { files: fetchReleaseAssetsViaCli(repo, tag, host) };
+      return { files: fetchReleaseAssetsViaCli(repo, tag, host, preFilter) };
     }
     if (
       e instanceof HttpError &&
@@ -674,7 +719,7 @@ export async function fetchGitHubRelease(
       isGhAvailable()
     ) {
       verbose(`github: API returned ${e.status}, falling back to gh`);
-      return { files: fetchReleaseAssetsViaCli(repo, tag, host) };
+      return { files: fetchReleaseAssetsViaCli(repo, tag, host, preFilter) };
     }
     throw e;
   }

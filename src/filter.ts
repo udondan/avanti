@@ -1,8 +1,28 @@
 type CompiledPattern =
   | { kind: 'exact'; value: string }
   | { kind: 'regex'; re: RegExp }
-  | { kind: 'brace'; expanded: Set<string> }
-  | { kind: 'prefix'; value: string };
+  | { kind: 'prefix'; value: string }
+  | { kind: 'glob'; re: RegExp };
+
+function globToRegex(pattern: string): RegExp {
+  let re = '^';
+  let lastCh = '';
+  for (let i = 0; i < pattern.length; i++) {
+    const ch = pattern[i];
+    if (ch === '*') {
+      if (lastCh !== '*') re += '.*';
+    } else if (ch === '?') {
+      re += '.';
+    } else if (/[.+^${}()|[\]\\]/.test(ch)) {
+      re += '\\' + ch;
+    } else {
+      re += ch;
+    }
+    lastCh = ch;
+  }
+  re += '$';
+  return new RegExp(re);
+}
 
 function compilePattern(pattern: string): CompiledPattern {
   if (pattern.length > 2 && pattern.startsWith('/') && pattern.endsWith('/')) {
@@ -31,28 +51,52 @@ function compilePattern(pattern: string): CompiledPattern {
     }
     return { kind: 'prefix', value: pattern };
   }
-  if (pattern.includes('{')) {
-    return { kind: 'brace', expanded: new Set(expandBraces(pattern)) };
+  if (pattern.includes('*') || pattern.includes('?')) {
+    return { kind: 'glob', re: globToRegex(pattern) };
   }
   return { kind: 'exact', value: pattern };
 }
 
 function matchesCompiled(key: string, compiled: CompiledPattern): boolean {
   if (compiled.kind === 'regex') return compiled.re.test(key);
-  if (compiled.kind === 'brace') return compiled.expanded.has(key);
+  if (compiled.kind === 'glob') return compiled.re.test(key);
   if (compiled.kind === 'prefix') return key.startsWith(compiled.value);
   return compiled.value === key;
+}
+
+export function compilePatterns(patterns: string[]): CompiledPattern[] {
+  const flat: string[] = [];
+  for (const p of patterns) {
+    // Expand braces into individual alternatives first so that combined
+    // patterns like "tool-{amd64,arm64}-*.tar.gz" have their glob wildcard
+    // compiled correctly (brace kind performs exact string lookup, not glob).
+    // Directory-prefix patterns (ending with "/") are left unexpanded to
+    // preserve the existing error for brace+prefix combinations.
+    if (p.includes('{') && !p.endsWith('/')) {
+      flat.push(...expandBraces(p));
+    } else {
+      flat.push(p);
+    }
+  }
+  return flat.map(compilePattern);
+}
+
+export function matchesAnyPattern(
+  key: string,
+  compiled: CompiledPattern[],
+): boolean {
+  const normalizedKey = key.replace(/\\/g, '/');
+  return compiled.some((p) => matchesCompiled(normalizedKey, p));
 }
 
 export function applyFilter(
   files: Map<string, Buffer>,
   patterns: string[],
 ): Map<string, Buffer> {
-  const compiled = patterns.map(compilePattern);
+  const compiled = compilePatterns(patterns);
   const result = new Map<string, Buffer>();
   for (const [key, value] of files) {
-    const normalizedKey = key.replace(/\\/g, '/');
-    if (compiled.some((p) => matchesCompiled(normalizedKey, p))) {
+    if (matchesAnyPattern(key, compiled)) {
       result.set(key, value);
     }
   }

@@ -286,6 +286,13 @@ function cacheKeyForSrc(src: FileSrc, vars: Variables): string {
     const via = viaStr === 'api,cli' ? '' : `(${viaStr})`;
     if ('release' in src.github) {
       base = `github${host}:${resolveVars(src.github.repo, vars)}:release:${resolveVars(src.github.release, vars)}${via}`;
+      // Include the filter in the cache key: the fetch is pre-filtered before
+      // caching, so two entries with different filters on the same release must
+      // not share a cache slot.
+      const f = src.filter;
+      if (f && f.length > 0) {
+        base += `\x00filter:${JSON.stringify(f.map((p) => resolveVars(p, vars)))}`;
+      }
     } else {
       const ref = src.github.ref ? `@${resolveVars(src.github.ref, vars)}` : '';
       base = `github${host}:${resolveVars(src.github.repo, vars)}:${resolveVars(src.github.file, vars)}${ref}${via}`;
@@ -301,6 +308,13 @@ function cacheKeyForSrc(src: FileSrc, vars: Variables): string {
     const via = viaStr === 'api,cli' ? '' : `(${viaStr})`;
     if ('release' in src.gitlab) {
       base = `gitlab${host}:${resolveVars(src.gitlab.project, vars)}:release:${resolveVars(src.gitlab.release, vars)}${via}`;
+      // Include the filter in the cache key for release sources: the fetch is
+      // pre-filtered before caching, so two entries with different filters on
+      // the same release must not share a cache slot.
+      const f = src.filter;
+      if (f && f.length > 0) {
+        base += `\x00filter:${JSON.stringify(f.map((p) => resolveVars(p, vars)))}`;
+      }
     } else {
       const ref = src.gitlab.ref ? `@${resolveVars(src.gitlab.ref, vars)}` : '';
       base = `gitlab${host}:${resolveVars(src.gitlab.project, vars)}:${resolveVars(src.gitlab.file, vars)}${ref}${via}`;
@@ -539,11 +553,13 @@ async function _fetchOneSrcRaw(
         : undefined;
     let result: { files: Map<string, Buffer> };
     if ('release' in src.gitlab) {
+      const preFilter = src.filter?.map((p) => resolveVars(p, vars));
       result = await fetchGitLabRelease(
         resolveVars(src.gitlab.project, vars),
         resolveVars(src.gitlab.release, vars),
         host,
         src.gitlab.via,
+        preFilter,
       );
     } else {
       result = await fetchGitLab(
@@ -564,11 +580,13 @@ async function _fetchOneSrcRaw(
         : undefined;
     let result: { files: Map<string, Buffer> };
     if ('release' in src.github) {
+      const preFilter = src.filter?.map((p) => resolveVars(p, vars));
       result = await fetchGitHubRelease(
         resolveVars(src.github.repo, vars),
         resolveVars(src.github.release, vars),
         host,
         src.github.via,
+        preFilter,
       );
     } else {
       result = await fetchGitHub(
