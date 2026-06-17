@@ -256,8 +256,9 @@ describe('fetchGitLabRelease — CLI path (via: cli)', () => {
       '--hostname',
       'git.example.com',
     ]);
-    // resolveToken attempt 2: without --hostname (glab may use ssh.hostname key)
-    expect(calls[2][1]).toEqual(['auth', 'status', '--show-token']);
+    // resolveToken attempt 2: --all to enumerate every configured instance
+    // regardless of current git context (so tokenForHost can find ssh.* entries)
+    expect(calls[2][1]).toEqual(['auth', 'status', '--show-token', '--all']);
     // Download: glab release download (no --hostname)
     expect(calls[3][1]).toContain('release');
     expect(calls[3][1]).toContain('download');

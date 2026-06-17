@@ -83,10 +83,11 @@ function resolveToken(host?: string): string | undefined {
   const configuredHost = host?.trim() || process.env.GITLAB_HOST?.trim();
   if (hostnameArgs(host).length > 0) {
     // Fallback without --hostname in case glab uses a different key for this
-    // instance (e.g. ssh.git.example.com vs git.example.com). Unset GITLAB_HOST
-    // so glab picks its stored default context, not the env-var-configured one
-    // that we already tried with --hostname.
-    attempts.push(['auth', 'status', '--show-token']);
+    // instance (e.g. ssh.git.example.com vs git.example.com). Use --all to
+    // enumerate every configured instance regardless of the current git context,
+    // then tokenForHost() picks the right section. Unset GITLAB_HOST so glab
+    // doesn't re-apply the env-override we already tried with --hostname.
+    attempts.push(['auth', 'status', '--show-token', '--all']);
   }
   for (let i = 0; i < attempts.length; i++) {
     const args = attempts[i];
@@ -1015,12 +1016,21 @@ async function fetchReleaseLinksViaCli(
 
   const token = resolveToken(host);
   const files = new Map<string, Buffer>();
-  // When a GitLab host is explicitly configured, scope the token to that host
-  // so it is never sent to external asset link URLs. When no host is configured
-  // we trust that direct_asset_url/url belongs to the GitLab instance (true for
-  // package-type links) and fall back to the link's own host.
   const explicitGitlabHost =
     host?.trim() || process.env.GITLAB_HOST?.trim() || undefined;
+  // Pre-determine the trusted GitLab host for token scoping, in priority order:
+  // 1. Explicit config (host:/GITLAB_HOST) — authoritative
+  // 2. Any link's direct_asset_url host — direct_asset_url always points to the
+  //    GitLab instance, so any occurrence across the link set reliably identifies it
+  // 3. undefined — fall back per-link to link.url's host (old GitLab instances
+  //    that never populate direct_asset_url; all links are same-host there)
+  const knownGitlabHost =
+    explicitGitlabHost ??
+    links
+      .map((l) =>
+        l.direct_asset_url ? new URL(l.direct_asset_url).host : null,
+      )
+      .find((h): h is string => h !== null);
 
   if (token) {
     for (const link of links) {
@@ -1028,24 +1038,15 @@ async function fetchReleaseLinksViaCli(
       // the GitLab instance External URL was configured with a trailing slash
       const downloadUrl = link.direct_asset_url ?? link.url;
       const linkHost = new URL(downloadUrl).host;
-      // Determine the trusted GitLab host. When explicitly configured (host:/
-      // GITLAB_HOST), use that. Otherwise infer from direct_asset_url, which
-      // always points to the GitLab instance itself (unlike link.url which may
-      // be an external CDN). Without either, skip the token to avoid leaking it
-      // to external release-link hosts (e.g. S3, GCS).
-      const inferredGitlabHost =
-        explicitGitlabHost ??
-        (link.direct_asset_url
-          ? new URL(link.direct_asset_url).host
-          : undefined);
+      // Use the pre-computed GitLab host if known; otherwise fall back to the
+      // link's own host (old GitLab without direct_asset_url, same-host assumption)
+      const gitlabHost = knownGitlabHost ?? linkHost;
       const dlHeaders: Record<string, string> = { 'User-Agent': 'avanti' };
-      if (inferredGitlabHost !== undefined && linkHost === inferredGitlabHost) {
-        dlHeaders['PRIVATE-TOKEN'] = token;
-      }
+      if (linkHost === gitlabHost) dlHeaders['PRIVATE-TOKEN'] = token;
       const dlRes = await fetchWithHostBoundRedirects(
         downloadUrl,
         dlHeaders,
-        inferredGitlabHost ?? linkHost,
+        gitlabHost,
       );
       if (!dlRes.ok) {
         throw new Error(
