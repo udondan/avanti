@@ -219,7 +219,7 @@ describe('fetchGitLabRelease — CLI path (via: cli)', () => {
     expect(fetchCalls[0][0]).toBe(linkUrl);
   });
 
-  it('passes --hostname to glab api and glab auth token; omits it from glab release download', async () => {
+  it('passes --hostname to glab api and first auth status; falls back to no --hostname for auth status', async () => {
     const directUrl =
       'https://git.example.com/group/project/-/releases/v1.0.0/downloads/artifact.tar.gz';
 
@@ -232,7 +232,8 @@ describe('fetchGitLabRelease — CLI path (via: cli)', () => {
           stdout: makeReleaseMetaJson({ direct_asset_url: directUrl }),
         }),
       )
-      .mockReturnValueOnce(makeSpawnResult({ status: 1 })) // glab auth status --show-token --hostname → no token
+      .mockReturnValueOnce(makeSpawnResult({ status: 1 })) // glab auth status --hostname → no token (glab uses different key)
+      .mockReturnValueOnce(makeSpawnResult({ status: 1 })) // glab auth status (no hostname) → no token either
       .mockReturnValueOnce(makeSpawnResult({ status: 0 })); // glab release download
 
     const result = await fetchGitLabRelease(
@@ -247,7 +248,7 @@ describe('fetchGitLabRelease — CLI path (via: cli)', () => {
     // Metadata: glab api --hostname git.example.com projects/...
     expect(calls[0][1]).toContain('--hostname');
     expect(calls[0][1]).toContain('git.example.com');
-    // resolveToken: glab auth status --show-token --hostname git.example.com
+    // resolveToken attempt 1: with --hostname
     expect(calls[1][1]).toEqual([
       'auth',
       'status',
@@ -255,9 +256,12 @@ describe('fetchGitLabRelease — CLI path (via: cli)', () => {
       '--hostname',
       'git.example.com',
     ]);
-    // Download: glab release download (no --hostname — glab uses its configured default host)
-    expect(calls[2][1]).toContain('release');
-    expect(calls[2][1]).toContain('download');
-    expect(calls[2][1]).not.toContain('--hostname');
+    // resolveToken attempt 2: --all to enumerate every configured instance
+    // regardless of current git context (so tokenForHost can find ssh.* entries)
+    expect(calls[2][1]).toEqual(['auth', 'status', '--show-token', '--all']);
+    // Download: glab release download (no --hostname)
+    expect(calls[3][1]).toContain('release');
+    expect(calls[3][1]).toContain('download');
+    expect(calls[3][1]).not.toContain('--hostname');
   });
 });

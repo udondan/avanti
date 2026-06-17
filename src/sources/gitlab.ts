@@ -37,19 +37,98 @@ function apiHeaders(): Record<string, string> {
   return headers;
 }
 
+// Extracts the token from `glab auth status --show-token` output for a specific
+// host. The output is grouped by instance (one section per configured host);
+// host headers appear at column 0 (no leading whitespace) while details are
+// indented. We find the section for targetHost (matching the bare name or the
+// ssh.* variant that glab may store internally) and return the "Token found:"
+// value from within that section only, avoiding wrong-instance token selection
+// in multi-instance configs where the first regex match could be for a
+// different host that appears earlier in the output.
+function tokenForHost(output: string, targetHost: string): string | undefined {
+  const normalized = targetHost.toLowerCase().replace(/^ssh\./, '');
+  const lines = output.split('\n');
+  let inSection = false;
+  for (const line of lines) {
+    // Host headers start at column 0 (not indented)
+    if (line.length > 0 && line[0] !== ' ' && line[0] !== '\t') {
+      const t = line.trim().toLowerCase();
+      inSection =
+        t === normalized ||
+        t === 'ssh.' + normalized ||
+        t.startsWith(normalized + ' ') ||
+        t.startsWith('ssh.' + normalized + ' ');
+    }
+    if (inSection) {
+      const m = line.match(/Token found:\s*(\S+)/);
+      if (m) return m[1];
+    }
+  }
+  return undefined;
+}
+
 // Returns the best available auth token: env var first, then glab's stored
-// credentials via `glab auth status --show-token` (output: "Token found: <t>").
+// credentials via `glab auth status --show-token`.
+// glab may store the instance under a different hostname key (e.g.
+// ssh.hostname when the avanti config uses hostname), so we try with
+// --hostname first and fall back to no --hostname to get any available token.
+// Output may be on stdout or stderr depending on glab version, so we check
+// both streams.
 function resolveToken(host?: string): string | undefined {
   const envToken = process.env.GITLAB_TOKEN ?? process.env.GITLAB_PRIVATE_TOKEN;
   if (envToken) return envToken;
-  const res = spawnSync(
-    'glab',
+  const attempts: string[][] = [
     ['auth', 'status', '--show-token', ...hostnameArgs(host)],
-    { encoding: 'utf8' },
-  );
-  if (res.status !== 0 || !res.stdout) return undefined;
-  const match = res.stdout.match(/Token found:\s*(\S+)/);
-  return match?.[1] ?? undefined;
+  ];
+  const configuredHost = host?.trim() || process.env.GITLAB_HOST?.trim();
+  if (hostnameArgs(host).length > 0) {
+    // Fallback without --hostname in case glab uses a different key for this
+    // instance (e.g. ssh.git.example.com vs git.example.com). Use --all to
+    // enumerate every configured instance regardless of the current git context,
+    // then tokenForHost() picks the right section. Unset GITLAB_HOST so glab
+    // doesn't re-apply the env-override we already tried with --hostname.
+    attempts.push(['auth', 'status', '--show-token', '--all']);
+  }
+  for (let i = 0; i < attempts.length; i++) {
+    const args = attempts[i];
+    // For the fallback attempt, unset GITLAB_HOST so glab picks its stored
+    // default context rather than the env-override we already tried with --hostname.
+    const res =
+      i > 0
+        ? (() => {
+            const env = { ...process.env };
+            delete env['GITLAB_HOST'];
+            return spawnSync('glab', args, { encoding: 'utf8', env });
+          })()
+        : spawnSync('glab', args, { encoding: 'utf8' });
+    const output = (res.stdout ?? '') + (res.stderr ?? '');
+    // For the scoped attempt (--hostname): only accept the token when glab exits 0
+    // to avoid using a stale token that glab still prints in the error output while
+    // indicating the credential is invalid. For the fallback (no --hostname with
+    // --all): extract the token from the specific host section so we never return
+    // a different instance's token in multi-instance configs.
+    const token =
+      i > 0 && configuredHost
+        ? tokenForHost(output, configuredHost)
+        : res.status === 0
+          ? output.match(/Token found:\s*(\S+)/)?.[1]
+          : undefined;
+    if (token) {
+      if (i > 0 && configuredHost) {
+        verbose(
+          `gitlab: resolved auth token via glab auth status (no --hostname, host verified)`,
+        );
+      } else if (i > 0) {
+        verbose(
+          `gitlab: resolved auth token via glab auth status (no --hostname; token may be for a different instance)`,
+        );
+      } else {
+        verbose(`gitlab: resolved auth token via glab auth status`);
+      }
+      return token;
+    }
+  }
+  return undefined;
 }
 
 function shouldFallback(status: number): boolean {
@@ -938,22 +1017,45 @@ async function fetchReleaseLinksViaCli(
     throw new Error(`No release assets found for ${project}@${tag}`);
   }
 
-  const token = resolveToken(host);
   const files = new Map<string, Buffer>();
+  const explicitGitlabHost =
+    host?.trim() || process.env.GITLAB_HOST?.trim() || undefined;
+  // Pre-determine the trusted GitLab host for token scoping, in priority order:
+  // 1. Explicit config (host:/GITLAB_HOST) — authoritative
+  // 2. Any link's direct_asset_url host — direct_asset_url always points to the
+  //    GitLab instance, so any occurrence across the link set reliably identifies it
+  // 3. undefined — fall back per-link to link.url's host (old GitLab instances
+  //    that never populate direct_asset_url; all links are same-host there)
+  const knownGitlabHost =
+    explicitGitlabHost ??
+    links
+      .map((l) =>
+        l.direct_asset_url ? new URL(l.direct_asset_url).host : null,
+      )
+      .find((h): h is string => h !== null);
+  // Resolve after knownGitlabHost so we can pass the inferred host (from
+  // direct_asset_url) when no explicit host is configured. This lets resolveToken
+  // issue a --hostname-scoped glab auth lookup even without an explicit host: config,
+  // preventing a multi-instance glab config from returning the wrong instance's token.
+  const token = resolveToken(knownGitlabHost ?? host);
 
   if (token) {
-    // Authenticated HTTP fetch per asset. Use the actual download URL host (not
-    // getHost() which defaults to gitlab.com) so fetchWithHostBoundRedirects
-    // strips PRIVATE-TOKEN correctly on cross-domain redirects (e.g. to S3/GCS).
     for (const link of links) {
       // direct_asset_url is correct; link.url may have a double-slash bug when
       // the GitLab instance External URL was configured with a trailing slash
       const downloadUrl = link.direct_asset_url ?? link.url;
       const linkHost = new URL(downloadUrl).host;
+      // Use the pre-computed GitLab host if known; otherwise fall back to the
+      // link's own host (old GitLab without direct_asset_url, same-host assumption).
+      // Normalize the ssh. prefix: glab may store the credential under ssh.<host>
+      // but direct_asset_url always uses the bare HTTP hostname for comparison.
+      const gitlabHost = (knownGitlabHost ?? linkHost).replace(/^ssh\./, '');
+      const dlHeaders: Record<string, string> = { 'User-Agent': 'avanti' };
+      if (linkHost === gitlabHost) dlHeaders['PRIVATE-TOKEN'] = token;
       const dlRes = await fetchWithHostBoundRedirects(
         downloadUrl,
-        { 'User-Agent': 'avanti', 'PRIVATE-TOKEN': token },
-        linkHost,
+        dlHeaders,
+        gitlabHost,
       );
       if (!dlRes.ok) {
         throw new Error(
@@ -966,13 +1068,15 @@ async function fetchReleaseLinksViaCli(
       );
     }
   } else {
-    // No token resolvable (old glab without `auth token` subcommand, no env
-    // vars). Fall back to glab release download which uses glab's own
-    // authenticated HTTP client and handles redirects correctly.
+    // No token resolvable. Last resort: glab release download, which uses
+    // glab's own authenticated HTTP client. NOTE: this will fail with 404 for
+    // GitLab instances where the External URL has a trailing slash (the same
+    // double-slash URL bug). Set GITLAB_TOKEN or GITLAB_PRIVATE_TOKEN to use
+    // the authenticated HTTP fetch path instead.
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'avanti-glab-'));
     try {
       const args = ['release', 'download', tag, '-R', project, '-D', tmpDir];
-      verbose(`gitlab: glab release download ${args.join(' ')}`);
+      verbose(`gitlab: glab ${args.join(' ')}`);
       const dlRes = spawnSync('glab', args, { encoding: 'utf8' });
       if (dlRes.error) throw new Error(`glab error: ${dlRes.error.message}`);
       if (dlRes.status !== 0) {
