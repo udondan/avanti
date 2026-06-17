@@ -38,18 +38,33 @@ function apiHeaders(): Record<string, string> {
 }
 
 // Returns the best available auth token: env var first, then glab's stored
-// credentials via `glab auth status --show-token` (output: "Token found: <t>").
+// credentials via `glab auth status --show-token`.
+// glab may store the instance under a different hostname key (e.g.
+// ssh.hostname when the avanti config uses hostname), so we try with
+// --hostname first and fall back to no --hostname to get any available token.
+// Output may be on stdout or stderr depending on glab version, so we check
+// both streams.
 function resolveToken(host?: string): string | undefined {
   const envToken = process.env.GITLAB_TOKEN ?? process.env.GITLAB_PRIVATE_TOKEN;
   if (envToken) return envToken;
-  const res = spawnSync(
-    'glab',
+  const attempts: string[][] = [
     ['auth', 'status', '--show-token', ...hostnameArgs(host)],
-    { encoding: 'utf8' },
-  );
-  if (res.status !== 0 || !res.stdout) return undefined;
-  const match = res.stdout.match(/Token found:\s*(\S+)/);
-  return match?.[1] ?? undefined;
+  ];
+  if (hostnameArgs(host).length > 0) {
+    // Fallback without --hostname in case glab uses a different key for this
+    // instance (e.g. ssh.git.example.com vs git.example.com).
+    attempts.push(['auth', 'status', '--show-token']);
+  }
+  for (const args of attempts) {
+    const res = spawnSync('glab', args, { encoding: 'utf8' });
+    const output = (res.stdout ?? '') + (res.stderr ?? '');
+    const match = output.match(/Token found:\s*(\S+)/);
+    if (match?.[1]) {
+      verbose(`gitlab: resolved auth token via glab auth status`);
+      return match[1];
+    }
+  }
+  return undefined;
 }
 
 function shouldFallback(status: number): boolean {
@@ -966,13 +981,15 @@ async function fetchReleaseLinksViaCli(
       );
     }
   } else {
-    // No token resolvable (old glab without `auth token` subcommand, no env
-    // vars). Fall back to glab release download which uses glab's own
-    // authenticated HTTP client and handles redirects correctly.
+    // No token resolvable. Last resort: glab release download, which uses
+    // glab's own authenticated HTTP client. NOTE: this will fail with 404 for
+    // GitLab instances where the External URL has a trailing slash (the same
+    // double-slash URL bug). Set GITLAB_TOKEN or GITLAB_PRIVATE_TOKEN to use
+    // the authenticated HTTP fetch path instead.
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'avanti-glab-'));
     try {
       const args = ['release', 'download', tag, '-R', project, '-D', tmpDir];
-      verbose(`gitlab: glab release download ${args.join(' ')}`);
+      verbose(`gitlab: glab ${args.join(' ')}`);
       const dlRes = spawnSync('glab', args, { encoding: 'utf8' });
       if (dlRes.error) throw new Error(`glab error: ${dlRes.error.message}`);
       if (dlRes.status !== 0) {
