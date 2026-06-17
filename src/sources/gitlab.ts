@@ -926,7 +926,7 @@ function resolveReleaseTagViaCli(
 // (/api/v4/projects/<id>/uploads/...) authenticates properly with PRIVATE-TOKEN.
 function rewriteToApiUploadUrl(url: string): string | undefined {
   const m = url.match(
-    /^(https?:\/\/[^/]+)\/*\/-\/project\/(\d+)\/uploads\/(.+)$/,
+    /^(https?:\/\/[^/]+.*?)\/*\/-\/project\/(\d+)\/uploads\/(.+)$/,
   );
   if (!m) return undefined;
   return `${m[1]}/api/v4/projects/${m[2]}/uploads/${m[3]}`;
