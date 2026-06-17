@@ -1168,7 +1168,7 @@ async function fetchReleaseLinksViaCli(
       // so glab only downloads the selected assets instead of the full release.
       if (preFilter && preFilter.length > 0) {
         for (const link of links) {
-          args.push('-a', path.basename(link.name));
+          args.push('-n', path.basename(link.name));
         }
       }
       verbose(`gitlab: glab ${args.join(' ')}`);

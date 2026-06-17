@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { fetchWithRetry } from '../fetch';
-import { compilePatterns, matchesAnyPattern } from '../filter';
+import { compilePatterns, expandBraces, matchesAnyPattern } from '../filter';
 import { verbose } from '../logger';
 import {
   isLatestSentinel,
@@ -631,12 +631,27 @@ function fetchReleaseAssetsViaCli(
       ...hostnameArgs(host),
     ];
     // Pass each filter pattern as --pattern so gh only fetches matching
-    // assets. gh's --pattern uses shell globs; our filter also supports
-    // regex (/pattern/) — those are passed through and may over-download,
-    // but the compiled filter below guarantees correctness either way.
+    // assets. gh's --pattern is glob-only: regex patterns (/pat/) and brace
+    // expansions ({a,b}) are not understood. Detect any regex pattern and fall
+    // back to downloading all assets (the compiled filter below handles
+    // correctness). For non-regex filters, expand braces first and pass each
+    // resulting glob as a separate --pattern arg.
     if (preFilter && preFilter.length > 0) {
-      for (const p of preFilter) {
-        args.push('--pattern', p);
+      const hasRegex = preFilter.some(
+        (p) => p.length > 2 && p.startsWith('/') && p.endsWith('/'),
+      );
+      if (!hasRegex) {
+        const expanded: string[] = [];
+        for (const p of preFilter) {
+          if (p.includes('{') && !p.endsWith('/')) {
+            expanded.push(...expandBraces(p));
+          } else {
+            expanded.push(p);
+          }
+        }
+        for (const p of expanded) {
+          args.push('--pattern', p);
+        }
       }
     }
     verbose(`github: gh release download: gh ${args.join(' ')}`);
