@@ -990,11 +990,13 @@ async function fetchReleaseLinksViaApi(
   );
   const entries = await Promise.all(
     links.map(async (link): Promise<[string, Buffer]> => {
-      // Only rewrite to the API upload path when a token is available;
-      // the API upload endpoint requires authentication.
-      const apiUploadUrl = hasToken
-        ? rewriteToApiUploadUrl(link.url)
-        : undefined;
+      // Only rewrite to the API upload path when a token is available and the
+      // link URL is on the known GitLab host — external links must not be rewritten.
+      const urlHost = new URL(link.url).host;
+      const apiUploadUrl =
+        hasToken && urlHost === gitlabHost
+          ? rewriteToApiUploadUrl(link.url)
+          : undefined;
       let downloadUrl = apiUploadUrl ?? link.direct_asset_url ?? link.url;
       let linkHost = new URL(downloadUrl).host;
       let headers =
@@ -1080,16 +1082,18 @@ async function fetchReleaseLinksViaCli(
 
   if (token) {
     for (const link of links) {
+      const urlHost = new URL(link.url).host;
+      // Use the pre-computed GitLab host if known; otherwise fall back to the
+      // link.url host (link.url is always a GitLab URL, unlike direct_asset_url
+      // which can redirect to external S3/GCS). Normalize the ssh. prefix.
+      const gitlabHost = (knownGitlabHost ?? urlHost).replace(/^ssh\./, '');
       // Rewrite upload URLs to the API path which supports PRIVATE-TOKEN auth.
       // Web upload URLs (/-/project/<id>/uploads/...) drop the token on redirect.
-      const apiUploadUrl = rewriteToApiUploadUrl(link.url);
+      // Only rewrite links on the known GitLab host; external links must not be rewritten.
+      const apiUploadUrl =
+        urlHost === gitlabHost ? rewriteToApiUploadUrl(link.url) : undefined;
       let downloadUrl = apiUploadUrl ?? link.direct_asset_url ?? link.url;
       let linkHost = new URL(downloadUrl).host;
-      // Use the pre-computed GitLab host if known; otherwise fall back to the
-      // link's own host (old GitLab without direct_asset_url, same-host assumption).
-      // Normalize the ssh. prefix: glab may store the credential under ssh.<host>
-      // but direct_asset_url always uses the bare HTTP hostname for comparison.
-      const gitlabHost = (knownGitlabHost ?? linkHost).replace(/^ssh\./, '');
       const dlHeaders: Record<string, string> = { 'User-Agent': 'avanti' };
       if (linkHost === gitlabHost) dlHeaders['PRIVATE-TOKEN'] = token;
       verbose(`gitlab: downloading ${redactUrl(downloadUrl)}`);
@@ -1108,10 +1112,16 @@ async function fetchReleaseLinksViaCli(
           );
           downloadUrl = fallback;
           linkHost = new URL(downloadUrl).host;
-          if (linkHost === gitlabHost) dlHeaders['PRIVATE-TOKEN'] = token;
+          // Use a fresh headers object for the retry — dlHeaders may contain
+          // PRIVATE-TOKEN from the initial attempt and must not be forwarded to
+          // an external host (e.g. S3/GCS) on the retry.
+          const retryHeaders: Record<string, string> = {
+            'User-Agent': 'avanti',
+          };
+          if (linkHost === gitlabHost) retryHeaders['PRIVATE-TOKEN'] = token;
           dlRes = await fetchWithHostBoundRedirects(
             downloadUrl,
-            dlHeaders,
+            retryHeaders,
             gitlabHost,
           );
         }
