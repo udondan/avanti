@@ -55,12 +55,21 @@ function resolveToken(host?: string): string | undefined {
     // instance (e.g. ssh.git.example.com vs git.example.com).
     attempts.push(['auth', 'status', '--show-token']);
   }
-  for (const args of attempts) {
+  for (let i = 0; i < attempts.length; i++) {
+    const args = attempts[i];
     const res = spawnSync('glab', args, { encoding: 'utf8' });
     const output = (res.stdout ?? '') + (res.stderr ?? '');
     const match = output.match(/Token found:\s*(\S+)/);
     if (match?.[1]) {
-      verbose(`gitlab: resolved auth token via glab auth status`);
+      if (i > 0) {
+        // Token found without --hostname: it may belong to glab's default
+        // context rather than ${host}. Verify if auth fails unexpectedly.
+        verbose(
+          `gitlab: resolved auth token via glab auth status (no --hostname; token may be for a different instance)`,
+        );
+      } else {
+        verbose(`gitlab: resolved auth token via glab auth status`);
+      }
       return match[1];
     }
   }
@@ -955,20 +964,26 @@ async function fetchReleaseLinksViaCli(
 
   const token = resolveToken(host);
   const files = new Map<string, Buffer>();
+  // When a GitLab host is explicitly configured, scope the token to that host
+  // so it is never sent to external asset link URLs. When no host is configured
+  // we trust that direct_asset_url/url belongs to the GitLab instance (true for
+  // package-type links) and fall back to the link's own host.
+  const explicitGitlabHost =
+    host?.trim() || process.env.GITLAB_HOST?.trim() || undefined;
 
   if (token) {
-    // Authenticated HTTP fetch per asset. Use the actual download URL host (not
-    // getHost() which defaults to gitlab.com) so fetchWithHostBoundRedirects
-    // strips PRIVATE-TOKEN correctly on cross-domain redirects (e.g. to S3/GCS).
     for (const link of links) {
       // direct_asset_url is correct; link.url may have a double-slash bug when
       // the GitLab instance External URL was configured with a trailing slash
       const downloadUrl = link.direct_asset_url ?? link.url;
       const linkHost = new URL(downloadUrl).host;
+      const gitlabHost = explicitGitlabHost ?? linkHost;
+      const dlHeaders: Record<string, string> = { 'User-Agent': 'avanti' };
+      if (linkHost === gitlabHost) dlHeaders['PRIVATE-TOKEN'] = token;
       const dlRes = await fetchWithHostBoundRedirects(
         downloadUrl,
-        { 'User-Agent': 'avanti', 'PRIVATE-TOKEN': token },
-        linkHost,
+        dlHeaders,
+        gitlabHost,
       );
       if (!dlRes.ok) {
         throw new Error(
