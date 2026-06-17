@@ -921,6 +921,17 @@ function resolveReleaseTagViaCli(
   return tags[0].name;
 }
 
+// GitLab's web upload URLs (/-/project/<id>/uploads/...) drop the PRIVATE-TOKEN
+// header when they redirect, resulting in 404. The equivalent API endpoint
+// (/api/v4/projects/<id>/uploads/...) authenticates properly with PRIVATE-TOKEN.
+function rewriteToApiUploadUrl(url: string): string | undefined {
+  const m = url.match(
+    /^(https?:\/\/[^/]+)\/*\/-\/project\/(\d+)\/uploads\/(.+)$/,
+  );
+  if (!m) return undefined;
+  return `${m[1]}/api/v4/projects/${m[2]}/uploads/${m[3]}`;
+}
+
 // Follows HTTP redirects while ensuring the PRIVATE-TOKEN header is only sent
 // to the originating GitLab host, not forwarded to external redirect targets
 // (e.g. pre-signed S3/GCS URLs that release assets may redirect to).
@@ -976,10 +987,12 @@ async function fetchReleaseLinksViaApi(
   }
   const entries = await Promise.all(
     links.map(async (link): Promise<[string, Buffer]> => {
-      const downloadUrl = link.direct_asset_url ?? link.url;
+      const downloadUrl =
+        rewriteToApiUploadUrl(link.url) ?? link.direct_asset_url ?? link.url;
       const linkHost = new URL(downloadUrl).host;
       const headers =
         linkHost === gitlabHost ? apiHeaders() : { 'User-Agent': 'avanti' };
+      verbose(`gitlab: downloading ${downloadUrl}`);
       const dlRes = await fetchWithHostBoundRedirects(
         downloadUrl,
         headers,
@@ -1041,9 +1054,10 @@ async function fetchReleaseLinksViaCli(
 
   if (token) {
     for (const link of links) {
-      // direct_asset_url is correct; link.url may have a double-slash bug when
-      // the GitLab instance External URL was configured with a trailing slash
-      const downloadUrl = link.direct_asset_url ?? link.url;
+      // Rewrite upload URLs to the API path which supports PRIVATE-TOKEN auth.
+      // Web upload URLs (/-/project/<id>/uploads/...) drop the token on redirect.
+      const downloadUrl =
+        rewriteToApiUploadUrl(link.url) ?? link.direct_asset_url ?? link.url;
       const linkHost = new URL(downloadUrl).host;
       // Use the pre-computed GitLab host if known; otherwise fall back to the
       // link's own host (old GitLab without direct_asset_url, same-host assumption).
@@ -1052,6 +1066,7 @@ async function fetchReleaseLinksViaCli(
       const gitlabHost = (knownGitlabHost ?? linkHost).replace(/^ssh\./, '');
       const dlHeaders: Record<string, string> = { 'User-Agent': 'avanti' };
       if (linkHost === gitlabHost) dlHeaders['PRIVATE-TOKEN'] = token;
+      verbose(`gitlab: downloading ${downloadUrl}`);
       const dlRes = await fetchWithHostBoundRedirects(
         downloadUrl,
         dlHeaders,
