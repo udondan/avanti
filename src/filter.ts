@@ -6,10 +6,11 @@ type CompiledPattern =
 
 function globToRegex(pattern: string): RegExp {
   let re = '^';
+  let lastCh = '';
   for (let i = 0; i < pattern.length; i++) {
     const ch = pattern[i];
     if (ch === '*') {
-      re += '.*';
+      if (lastCh !== '*') re += '.*';
     } else if (ch === '?') {
       re += '.';
     } else if (/[.+^${}()|[\]\\]/.test(ch)) {
@@ -17,6 +18,7 @@ function globToRegex(pattern: string): RegExp {
     } else {
       re += ch;
     }
+    lastCh = ch;
   }
   re += '$';
   return new RegExp(re);
@@ -70,7 +72,7 @@ export function compilePatterns(patterns: string[]): CompiledPattern[] {
     // compiled correctly (brace kind performs exact string lookup, not glob).
     // Directory-prefix patterns (ending with "/") are left unexpanded to
     // preserve the existing error for brace+prefix combinations.
-    if (p.includes('{') && !p.startsWith('/') && !p.endsWith('/')) {
+    if (p.includes('{') && !p.endsWith('/')) {
       flat.push(...expandBraces(p));
     } else {
       flat.push(p);
