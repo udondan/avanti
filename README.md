@@ -617,12 +617,13 @@ The optional `filter` field narrows which files are kept when a source returns m
 
 `filter` is a list of one or more patterns. A file is kept if **any** pattern matches its path relative to the source root (the filename for flat sources like release assets, or the relative path for directory sources). Paths are always matched using forward slashes (`/`) regardless of the platform — on Windows, write `subdir/file.yml`, not `subdir\file.yml`.
 
-| Pattern            | Matches                                                                                |
-| ------------------ | -------------------------------------------------------------------------------------- |
-| `exact.png`        | Exact string equality                                                                  |
-| `subdir/`          | Directory prefix — all entries whose path starts with `subdir/`                        |
-| `file-{a,b,c}.yml` | Brace-expanded alternatives — `file-a.yml`, `file-b.yml`, `file-c.yml`                 |
-| `/^some.*\.jpg/`   | JavaScript regular expression (delimited by `/`) tested against the full relative path |
+| Pattern                 | Matches                                                                                |
+| ----------------------- | -------------------------------------------------------------------------------------- |
+| `exact.png`             | Exact string equality                                                                  |
+| `subdir/`               | Directory prefix — all entries whose path starts with `subdir/`                        |
+| `file-{a,b,c}.yml`      | Brace-expanded alternatives — `file-a.yml`, `file-b.yml`, `file-c.yml`                 |
+| `tool_*_darwin_arm64.*` | Glob — `*` matches any sequence of characters, `?` matches any single character        |
+| `/^some.*\.jpg/`        | JavaScript regular expression (delimited by `/`) tested against the full relative path |
 
 ```yaml
 files:
@@ -635,6 +636,7 @@ files:
         - exact-match.png
         - dist/ # all files under dist/
         - checksums-{amd64,arm64}.txt
+        - tool_*_darwin_arm64.tar.gz
         - /^some.*\.jpg/
 ```
 

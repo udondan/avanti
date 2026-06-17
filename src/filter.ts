@@ -2,7 +2,26 @@ type CompiledPattern =
   | { kind: 'exact'; value: string }
   | { kind: 'regex'; re: RegExp }
   | { kind: 'brace'; expanded: Set<string> }
-  | { kind: 'prefix'; value: string };
+  | { kind: 'prefix'; value: string }
+  | { kind: 'glob'; re: RegExp };
+
+function globToRegex(pattern: string): RegExp {
+  let re = '^';
+  for (let i = 0; i < pattern.length; i++) {
+    const ch = pattern[i];
+    if (ch === '*') {
+      re += '.*';
+    } else if (ch === '?') {
+      re += '.';
+    } else if (/[.+^${}()|[\]\\]/.test(ch)) {
+      re += '\\' + ch;
+    } else {
+      re += ch;
+    }
+  }
+  re += '$';
+  return new RegExp(re);
+}
 
 function compilePattern(pattern: string): CompiledPattern {
   if (pattern.length > 2 && pattern.startsWith('/') && pattern.endsWith('/')) {
@@ -34,25 +53,40 @@ function compilePattern(pattern: string): CompiledPattern {
   if (pattern.includes('{')) {
     return { kind: 'brace', expanded: new Set(expandBraces(pattern)) };
   }
+  if (pattern.includes('*') || pattern.includes('?')) {
+    return { kind: 'glob', re: globToRegex(pattern) };
+  }
   return { kind: 'exact', value: pattern };
 }
 
 function matchesCompiled(key: string, compiled: CompiledPattern): boolean {
   if (compiled.kind === 'regex') return compiled.re.test(key);
+  if (compiled.kind === 'glob') return compiled.re.test(key);
   if (compiled.kind === 'brace') return compiled.expanded.has(key);
   if (compiled.kind === 'prefix') return key.startsWith(compiled.value);
   return compiled.value === key;
+}
+
+export function compilePatterns(patterns: string[]): CompiledPattern[] {
+  return patterns.map(compilePattern);
+}
+
+export function matchesAnyPattern(
+  key: string,
+  compiled: CompiledPattern[],
+): boolean {
+  const normalizedKey = key.replace(/\\/g, '/');
+  return compiled.some((p) => matchesCompiled(normalizedKey, p));
 }
 
 export function applyFilter(
   files: Map<string, Buffer>,
   patterns: string[],
 ): Map<string, Buffer> {
-  const compiled = patterns.map(compilePattern);
+  const compiled = compilePatterns(patterns);
   const result = new Map<string, Buffer>();
   for (const [key, value] of files) {
-    const normalizedKey = key.replace(/\\/g, '/');
-    if (compiled.some((p) => matchesCompiled(normalizedKey, p))) {
+    if (matchesAnyPattern(key, compiled)) {
       result.set(key, value);
     }
   }

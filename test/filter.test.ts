@@ -102,6 +102,44 @@ describe('applyFilter — regex', () => {
   });
 });
 
+describe('applyFilter — glob', () => {
+  it('matches with * wildcard', () => {
+    const files = mapOf({
+      'genai-headroom-proxy_1.3.0_darwin_arm64.tar.gz': '',
+      'genai-headroom-proxy_1.3.0_linux_amd64.tar.gz': '',
+      'genai-headroom-proxy_1.3.0_windows_amd64.zip': '',
+    });
+    const result = applyFilter(files, [
+      'genai-headroom-proxy_*_darwin_arm64.tar.gz',
+    ]);
+    expect([...result.keys()]).toEqual([
+      'genai-headroom-proxy_1.3.0_darwin_arm64.tar.gz',
+    ]);
+  });
+
+  it('matches with ? wildcard for a single character', () => {
+    const files = mapOf({
+      'file-a.txt': '',
+      'file-b.txt': '',
+      'file-ab.txt': '',
+    });
+    const result = applyFilter(files, ['file-?.txt']);
+    expect([...result.keys()].sort()).toEqual(['file-a.txt', 'file-b.txt']);
+  });
+
+  it('does not treat . as a regex wildcard', () => {
+    const files = mapOf({ fileXtxt: '', 'file.txt': '' });
+    const result = applyFilter(files, ['file.txt']);
+    expect([...result.keys()]).toEqual(['file.txt']);
+  });
+
+  it('* matches across dots and underscores', () => {
+    const files = mapOf({ 'foo_1.2.3_bar.tar.gz': '', 'foo_other.zip': '' });
+    const result = applyFilter(files, ['foo_*.tar.gz']);
+    expect([...result.keys()]).toEqual(['foo_1.2.3_bar.tar.gz']);
+  });
+});
+
 describe('applyFilter — mixed patterns', () => {
   it('combines exact, brace, and regex patterns', () => {
     const files = mapOf({

@@ -539,11 +539,13 @@ async function _fetchOneSrcRaw(
         : undefined;
     let result: { files: Map<string, Buffer> };
     if ('release' in src.gitlab) {
+      const preFilter = src.filter?.map((p) => resolveVars(p, vars));
       result = await fetchGitLabRelease(
         resolveVars(src.gitlab.project, vars),
         resolveVars(src.gitlab.release, vars),
         host,
         src.gitlab.via,
+        preFilter,
       );
     } else {
       result = await fetchGitLab(

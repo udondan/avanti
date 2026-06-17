@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { fetchWithRetry, redactUrl } from '../fetch';
+import { compilePatterns, matchesAnyPattern } from '../filter';
 import { verbose } from '../logger';
 import {
   isLatestSentinel,
@@ -964,6 +965,7 @@ async function fetchReleaseLinksViaApi(
   project: string,
   tag: string,
   host?: string,
+  preFilter?: string[],
 ): Promise<Map<string, Buffer>> {
   const rawHost = getHost(host);
   const gitlabHost = new URL(`https://${rawHost}`).host;
@@ -984,6 +986,12 @@ async function fetchReleaseLinksViaApi(
   if (!links.length) links = rel.assets.links;
   if (!links.length) {
     throw new Error(`No release assets found for ${project}@${tag}`);
+  }
+  if (preFilter && preFilter.length > 0) {
+    const compiled = compilePatterns(preFilter);
+    links = links.filter((l) =>
+      matchesAnyPattern(path.basename(l.name), compiled),
+    );
   }
   const hasToken = !!(
     process.env.GITLAB_TOKEN ?? process.env.GITLAB_PRIVATE_TOKEN
@@ -1041,6 +1049,7 @@ async function fetchReleaseLinksViaCli(
   project: string,
   tag: string,
   host?: string,
+  preFilter?: string[],
 ): Promise<Map<string, Buffer>> {
   const endpoint = `projects/${encodeURIComponent(project)}/releases/${encodeURIComponent(tag)}`;
   const metaRes = glabApi(endpoint, host);
@@ -1056,6 +1065,12 @@ async function fetchReleaseLinksViaCli(
   if (!links.length) links = rel.assets?.links ?? [];
   if (!links.length) {
     throw new Error(`No release assets found for ${project}@${tag}`);
+  }
+  if (preFilter && preFilter.length > 0) {
+    const compiled = compilePatterns(preFilter);
+    links = links.filter((l) =>
+      matchesAnyPattern(path.basename(l.name), compiled),
+    );
   }
 
   const files = new Map<string, Buffer>();
@@ -1174,6 +1189,7 @@ export async function fetchGitLabRelease(
   release: string,
   host?: string,
   via?: Via | Via[],
+  preFilter?: string[],
 ): Promise<GitLabResult> {
   const transports = normalizeVia(via);
   const tag = await resolveReleaseTag(project, release, host, transports);
@@ -1181,7 +1197,9 @@ export async function fetchGitLabRelease(
 
   if (transports[0] === 'cli') {
     try {
-      return { files: await fetchReleaseLinksViaCli(project, tag, host) };
+      return {
+        files: await fetchReleaseLinksViaCli(project, tag, host, preFilter),
+      };
     } catch (e) {
       if (!transports.includes('api')) throw e;
     }
@@ -1189,11 +1207,15 @@ export async function fetchGitLabRelease(
 
   const withCliFallback = transports[0] === 'api' && transports.includes('cli');
   try {
-    return { files: await fetchReleaseLinksViaApi(project, tag, host) };
+    return {
+      files: await fetchReleaseLinksViaApi(project, tag, host, preFilter),
+    };
   } catch (e) {
     if (isNetworkError(e) && withCliFallback && isGlabAvailable()) {
       verbose(`gitlab: HTTP fetch failed, falling back to glab`);
-      return { files: await fetchReleaseLinksViaCli(project, tag, host) };
+      return {
+        files: await fetchReleaseLinksViaCli(project, tag, host, preFilter),
+      };
     }
     if (
       e instanceof HttpError &&
@@ -1202,7 +1224,9 @@ export async function fetchGitLabRelease(
       isGlabAvailable()
     ) {
       verbose(`gitlab: API returned ${e.status}, falling back to glab`);
-      return { files: await fetchReleaseLinksViaCli(project, tag, host) };
+      return {
+        files: await fetchReleaseLinksViaCli(project, tag, host, preFilter),
+      };
     }
     throw e;
   }
