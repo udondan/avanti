@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.27.0](https://github.com/udondan/avanti/compare/v0.26.5...v0.27.0) (2026-06-17)
+
+
+### Features
+
+* **filter:** glob wildcards + pre-filter GitLab release assets before download ([#281](https://github.com/udondan/avanti/issues/281)) ([96e90af](https://github.com/udondan/avanti/commit/96e90af82f2eaaa2091083eb55680107bf3627e6))
+
 ## [0.26.5](https://github.com/udondan/avanti/compare/v0.26.4...v0.26.5) (2026-06-17)
 
 
