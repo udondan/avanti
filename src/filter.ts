@@ -70,7 +70,7 @@ export function compilePatterns(patterns: string[]): CompiledPattern[] {
     // compiled correctly (brace kind performs exact string lookup, not glob).
     // Directory-prefix patterns (ending with "/") are left unexpanded to
     // preserve the existing error for brace+prefix combinations.
-    if (p.includes('{') && !p.endsWith('/')) {
+    if (p.includes('{') && !p.startsWith('/') && !p.endsWith('/')) {
       flat.push(...expandBraces(p));
     } else {
       flat.push(p);

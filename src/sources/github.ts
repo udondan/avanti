@@ -637,9 +637,7 @@ function fetchReleaseAssetsViaCli(
     // correctness). For non-regex filters, expand braces first and pass each
     // resulting glob as a separate --pattern arg.
     if (preFilter && preFilter.length > 0) {
-      const hasRegex = preFilter.some(
-        (p) => p.length > 2 && p.startsWith('/') && p.endsWith('/'),
-      );
+      const hasRegex = preFilter.some((p) => p.startsWith('/'));
       if (!hasRegex) {
         const expanded: string[] = [];
         for (const p of preFilter) {
