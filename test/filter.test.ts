@@ -138,6 +138,19 @@ describe('applyFilter — glob', () => {
     const result = applyFilter(files, ['foo_*.tar.gz']);
     expect([...result.keys()]).toEqual(['foo_1.2.3_bar.tar.gz']);
   });
+
+  it('supports combined brace and glob patterns', () => {
+    const files = mapOf({
+      'tool-amd64-1.0.0.tar.gz': '',
+      'tool-arm64-2.0.0.tar.gz': '',
+      'other-file.txt': '',
+    });
+    const result = applyFilter(files, ['tool-{amd64,arm64}-*.tar.gz']);
+    expect([...result.keys()].sort()).toEqual([
+      'tool-amd64-1.0.0.tar.gz',
+      'tool-arm64-2.0.0.tar.gz',
+    ]);
+  });
 });
 
 describe('applyFilter — mixed patterns', () => {
