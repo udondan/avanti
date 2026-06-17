@@ -50,20 +50,56 @@ function resolveToken(host?: string): string | undefined {
   const attempts: string[][] = [
     ['auth', 'status', '--show-token', ...hostnameArgs(host)],
   ];
+  const configuredHost = host?.trim() || process.env.GITLAB_HOST?.trim();
   if (hostnameArgs(host).length > 0) {
     // Fallback without --hostname in case glab uses a different key for this
-    // instance (e.g. ssh.git.example.com vs git.example.com).
+    // instance (e.g. ssh.git.example.com vs git.example.com). Unset GITLAB_HOST
+    // so glab picks its stored default context, not the env-var-configured one
+    // that we already tried with --hostname.
     attempts.push(['auth', 'status', '--show-token']);
   }
   for (let i = 0; i < attempts.length; i++) {
     const args = attempts[i];
-    const res = spawnSync('glab', args, { encoding: 'utf8' });
+    // For the fallback attempt, unset GITLAB_HOST so glab picks its stored
+    // default context rather than the env-override we already tried with --hostname.
+    const res =
+      i > 0
+        ? (() => {
+            const env = { ...process.env };
+            delete env['GITLAB_HOST'];
+            return spawnSync('glab', args, { encoding: 'utf8', env });
+          })()
+        : spawnSync('glab', args, { encoding: 'utf8' });
     const output = (res.stdout ?? '') + (res.stderr ?? '');
     const match = output.match(/Token found:\s*(\S+)/);
     if (match?.[1]) {
-      if (i > 0) {
-        // Token found without --hostname: it may belong to glab's default
-        // context rather than ${host}. Verify if auth fails unexpectedly.
+      if (i > 0 && configuredHost) {
+        // Verify the fallback token belongs to the configured host by checking
+        // that the host (or its ssh.* variant) appears in the glab output. If
+        // it doesn't, the token is from a different glab context (e.g. gitlab.com)
+        // and must not be used for the private instance.
+        const normalizedTarget = configuredHost
+          .toLowerCase()
+          .replace(/^ssh\./, '');
+        const hostInOutput = output.split('\n').some((line) => {
+          const t = line.trim().toLowerCase();
+          return (
+            t === normalizedTarget ||
+            t === 'ssh.' + normalizedTarget ||
+            t.startsWith(normalizedTarget + ' ') ||
+            t.startsWith('ssh.' + normalizedTarget + ' ')
+          );
+        });
+        if (!hostInOutput) {
+          verbose(
+            `gitlab: skipping unscoped glab token (configured host ${configuredHost} not confirmed in auth output)`,
+          );
+          continue;
+        }
+        verbose(
+          `gitlab: resolved auth token via glab auth status (no --hostname, host verified)`,
+        );
+      } else if (i > 0) {
         verbose(
           `gitlab: resolved auth token via glab auth status (no --hostname; token may be for a different instance)`,
         );
