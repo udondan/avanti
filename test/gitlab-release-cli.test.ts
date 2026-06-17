@@ -151,10 +151,12 @@ describe('fetchGitLabRelease — CLI fallback', () => {
 });
 
 describe('fetchGitLabRelease — CLI path (via: cli)', () => {
-  it('uses direct_asset_url instead of buggy url when token is available', async () => {
+  it('rewrites upload URL to API path to avoid auth-dropping redirect', async () => {
     process.env.GITLAB_TOKEN = 'test-token';
-    const directUrl =
-      'https://git.example.com/group/project/-/releases/v1.0.0/downloads/artifact.tar.gz';
+    const uploadUrl =
+      'https://git.example.com//-/project/1/uploads/abc/artifact.tar.gz';
+    const apiUploadUrl =
+      'https://git.example.com/api/v4/projects/1/uploads/abc/artifact.tar.gz';
 
     vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
       new Response('file content', { status: 200 }),
@@ -164,8 +166,9 @@ describe('fetchGitLabRelease — CLI path (via: cli)', () => {
       makeSpawnResult({
         status: 0,
         stdout: makeReleaseMetaJson({
-          url: 'https://git.example.com//-/project/1/uploads/abc/artifact.tar.gz',
-          direct_asset_url: directUrl,
+          url: uploadUrl,
+          direct_asset_url:
+            'https://git.example.com/group/project/-/releases/v1.0.0/downloads/artifact.tar.gz',
         }),
       }),
     );
@@ -182,10 +185,8 @@ describe('fetchGitLabRelease — CLI path (via: cli)', () => {
 
     const fetchCalls = (globalThis.fetch as ReturnType<typeof vi.fn>).mock
       .calls;
-    expect(fetchCalls[0][0]).toBe(directUrl);
-    expect(fetchCalls[0][0]).not.toContain(
-      'https://git.example.com//-/project/',
-    );
+    expect(fetchCalls[0][0]).toBe(apiUploadUrl);
+    expect(fetchCalls[0][0]).not.toContain('//-/project/');
   });
 
   it('falls back to link.url when direct_asset_url is absent and token is available', async () => {

@@ -2,7 +2,7 @@ import { spawnSync } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { fetchWithRetry } from '../fetch';
+import { fetchWithRetry, redactUrl } from '../fetch';
 import { verbose } from '../logger';
 import {
   isLatestSentinel,
@@ -921,6 +921,17 @@ function resolveReleaseTagViaCli(
   return tags[0].name;
 }
 
+// GitLab's web upload URLs (/-/project/<id>/uploads/...) drop the PRIVATE-TOKEN
+// header when they redirect, resulting in 404. The equivalent API endpoint
+// (/api/v4/projects/<id>/uploads/...) authenticates properly with PRIVATE-TOKEN.
+function rewriteToApiUploadUrl(url: string): string | undefined {
+  const m = url.match(
+    /^(https?:\/\/[^/]+.*?)\/*\/-\/project\/(\d+)\/uploads\/(.+)$/,
+  );
+  if (!m) return undefined;
+  return `${m[1]}/api/v4/projects/${m[2]}/uploads/${m[3]}`;
+}
+
 // Follows HTTP redirects while ensuring the PRIVATE-TOKEN header is only sent
 // to the originating GitLab host, not forwarded to external redirect targets
 // (e.g. pre-signed S3/GCS URLs that release assets may redirect to).
@@ -974,17 +985,47 @@ async function fetchReleaseLinksViaApi(
   if (!links.length) {
     throw new Error(`No release assets found for ${project}@${tag}`);
   }
+  const hasToken = !!(
+    process.env.GITLAB_TOKEN ?? process.env.GITLAB_PRIVATE_TOKEN
+  );
   const entries = await Promise.all(
     links.map(async (link): Promise<[string, Buffer]> => {
-      const downloadUrl = link.direct_asset_url ?? link.url;
-      const linkHost = new URL(downloadUrl).host;
-      const headers =
+      // Only rewrite to the API upload path when a token is available and the
+      // link URL is on the known GitLab host — external links must not be rewritten.
+      const urlHost = new URL(link.url).host;
+      const apiUploadUrl =
+        hasToken && urlHost === gitlabHost
+          ? rewriteToApiUploadUrl(link.url)
+          : undefined;
+      let downloadUrl = apiUploadUrl ?? link.direct_asset_url ?? link.url;
+      let linkHost = new URL(downloadUrl).host;
+      let headers =
         linkHost === gitlabHost ? apiHeaders() : { 'User-Agent': 'avanti' };
-      const dlRes = await fetchWithHostBoundRedirects(
+      verbose(`gitlab: downloading ${redactUrl(downloadUrl)}`);
+      let dlRes = await fetchWithHostBoundRedirects(
         downloadUrl,
         headers,
         gitlabHost,
       );
+      // If the API upload endpoint returns 404 (older GitLab without that endpoint),
+      // retry with direct_asset_url as the compatibility fallback.
+      if (!dlRes.ok && dlRes.status === 404 && apiUploadUrl) {
+        const fallback = link.direct_asset_url ?? link.url;
+        if (fallback !== downloadUrl) {
+          verbose(
+            `gitlab: API upload endpoint not found, retrying with ${redactUrl(fallback)}`,
+          );
+          downloadUrl = fallback;
+          linkHost = new URL(downloadUrl).host;
+          headers =
+            linkHost === gitlabHost ? apiHeaders() : { 'User-Agent': 'avanti' };
+          dlRes = await fetchWithHostBoundRedirects(
+            downloadUrl,
+            headers,
+            gitlabHost,
+          );
+        }
+      }
       if (!dlRes.ok) {
         throw new Error(
           `Failed to download release asset "${link.name}" from ${project}@${tag}: HTTP ${dlRes.status}`,
@@ -1041,22 +1082,50 @@ async function fetchReleaseLinksViaCli(
 
   if (token) {
     for (const link of links) {
-      // direct_asset_url is correct; link.url may have a double-slash bug when
-      // the GitLab instance External URL was configured with a trailing slash
-      const downloadUrl = link.direct_asset_url ?? link.url;
-      const linkHost = new URL(downloadUrl).host;
+      const urlHost = new URL(link.url).host;
       // Use the pre-computed GitLab host if known; otherwise fall back to the
-      // link's own host (old GitLab without direct_asset_url, same-host assumption).
-      // Normalize the ssh. prefix: glab may store the credential under ssh.<host>
-      // but direct_asset_url always uses the bare HTTP hostname for comparison.
-      const gitlabHost = (knownGitlabHost ?? linkHost).replace(/^ssh\./, '');
+      // link.url host (link.url is always a GitLab URL, unlike direct_asset_url
+      // which can redirect to external S3/GCS). Normalize the ssh. prefix.
+      const gitlabHost = (knownGitlabHost ?? urlHost).replace(/^ssh\./, '');
+      // Rewrite upload URLs to the API path which supports PRIVATE-TOKEN auth.
+      // Web upload URLs (/-/project/<id>/uploads/...) drop the token on redirect.
+      // Only rewrite links on the known GitLab host; external links must not be rewritten.
+      const apiUploadUrl =
+        urlHost === gitlabHost ? rewriteToApiUploadUrl(link.url) : undefined;
+      let downloadUrl = apiUploadUrl ?? link.direct_asset_url ?? link.url;
+      let linkHost = new URL(downloadUrl).host;
       const dlHeaders: Record<string, string> = { 'User-Agent': 'avanti' };
       if (linkHost === gitlabHost) dlHeaders['PRIVATE-TOKEN'] = token;
-      const dlRes = await fetchWithHostBoundRedirects(
+      verbose(`gitlab: downloading ${redactUrl(downloadUrl)}`);
+      let dlRes = await fetchWithHostBoundRedirects(
         downloadUrl,
         dlHeaders,
         gitlabHost,
       );
+      // If the API upload endpoint returns 404 (older GitLab without that endpoint),
+      // retry with direct_asset_url as the compatibility fallback.
+      if (!dlRes.ok && dlRes.status === 404 && apiUploadUrl) {
+        const fallback = link.direct_asset_url ?? link.url;
+        if (fallback !== downloadUrl) {
+          verbose(
+            `gitlab: API upload endpoint not found, retrying with ${redactUrl(fallback)}`,
+          );
+          downloadUrl = fallback;
+          linkHost = new URL(downloadUrl).host;
+          // Use a fresh headers object for the retry — dlHeaders may contain
+          // PRIVATE-TOKEN from the initial attempt and must not be forwarded to
+          // an external host (e.g. S3/GCS) on the retry.
+          const retryHeaders: Record<string, string> = {
+            'User-Agent': 'avanti',
+          };
+          if (linkHost === gitlabHost) retryHeaders['PRIVATE-TOKEN'] = token;
+          dlRes = await fetchWithHostBoundRedirects(
+            downloadUrl,
+            retryHeaders,
+            gitlabHost,
+          );
+        }
+      }
       if (!dlRes.ok) {
         throw new Error(
           `Failed to download release asset "${link.name}" from ${project}@${tag}: HTTP ${dlRes.status}`,
