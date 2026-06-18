@@ -364,9 +364,11 @@ function getSudoOwnerUid(
     const uid = parseInt(gnu.stdout.toString().trim(), 10);
     if (!isNaN(uid)) return uid;
   }
+  // BSD stat follows symlinks by default (without any flag). Use -h to lstat
+  // the symlink itself when followSymlink is false; -L to explicitly follow.
   const bsdArgs = followSymlink
     ? [...sudoUserArgs(sudo), 'stat', '-L', '-f', '%u', absPath]
-    : [...sudoUserArgs(sudo), 'stat', '-f', '%u', absPath];
+    : [...sudoUserArgs(sudo), 'stat', '-h', '-f', '%u', absPath];
   const bsd = spawnSync('sudo', bsdArgs, {
     stdio: ['inherit', 'pipe', 'ignore'],
   });
