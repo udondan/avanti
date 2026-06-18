@@ -418,11 +418,14 @@ export function getSudoFileMode(
 }
 
 // Verifies that a directory is safe to use as a mktemp staging location.
-// Rejects directories that are group- or world-writable (mode & 0o022) because
-// any member of the group or any local user could rename the just-created temp
-// path to a symlink before the subsequent tee/cp opens it, redirecting the
-// privileged write. When trustedUids is provided, also rejects directories
-// whose owner UID is not in that set — the owner can always rename entries.
+// Rejects directories that are group- or world-writable (mode & 0o022) WITHOUT
+// the sticky bit — any member of the group or any local user could rename the
+// just-created temp path to a symlink before the subsequent tee/cp opens it,
+// redirecting the privileged write. Directories with the sticky bit set (e.g.
+// /tmp on Linux) are safe: the sticky bit prevents users from renaming entries
+// they do not own, neutralising the rename-to-symlink attack.
+// When trustedUids is provided, also rejects directories whose owner UID is not
+// in that set — the owner can always rename entries regardless of the sticky bit.
 function checkDirSafe(
   sudo: true | string,
   absDir: string,
@@ -439,7 +442,7 @@ function checkDirSafe(
   // sudo cannot locate the cached credential).
   try {
     const s = fs.statSync(absDir);
-    mode = s.mode & 0o777;
+    mode = s.mode & 0o7777; // include sticky/setuid/setgid bits for the safety check
     ownerUid = s.uid;
   } catch (e) {
     const code = (e as NodeJS.ErrnoException).code;
@@ -451,7 +454,13 @@ function checkDirSafe(
     ownerUid = getSudoOwnerUid(sudo, absDir);
   }
 
-  if (mode !== undefined && !isNaN(mode) && mode & 0o022) {
+  // A directory is unsafe when it is group- or world-writable AND does NOT have
+  // the sticky bit set. With the sticky bit (e.g. /tmp on Linux, mode 01777),
+  // only the file owner can rename or remove entries, so the rename-to-symlink
+  // attack is neutralised.
+  const isWritable = mode !== undefined && !isNaN(mode) && !!(mode & 0o022);
+  const hasSticky = mode !== undefined && !isNaN(mode) && !!(mode & 0o1000);
+  if (isWritable && !hasSticky) {
     throw new Error(
       `sudo write: ${label} directory ${absDir} is group- or world-writable; ` +
         `cannot safely create a temp file here (TOCTOU risk).`,
