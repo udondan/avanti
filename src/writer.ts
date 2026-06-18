@@ -440,10 +440,34 @@ function checkDirSafe(
   // repeated password prompts when sudo credential caching is unavailable
   // (e.g. timestamp_timeout=0 or when all stdio fds are non-TTY so macOS
   // sudo cannot locate the cached credential).
+  //
+  // Use lstatSync so that symlink ancestors are visible. When a path component
+  // is a symlink inside a sticky world-writable directory (e.g. /tmp/link/),
+  // the sticky bit only prevents *other* users from renaming the symlink — the
+  // symlink's own owner can still rename it, redirecting privileged writes.
+  // Checking the symlink's UID (not its target's UID) catches this case.
   try {
-    const s = fs.statSync(absDir);
-    mode = s.mode & 0o7777; // include sticky/setuid/setgid bits for the safety check
-    ownerUid = s.uid;
+    const lst = fs.lstatSync(absDir);
+    if (lst.isSymbolicLink()) {
+      // For symlinks: the owner can rename the link regardless of the parent's
+      // sticky bit. Use the symlink's UID for the ownership check.
+      ownerUid = lst.uid;
+      // Follow the link to get the target directory's mode for the writable check.
+      try {
+        const s = fs.statSync(absDir);
+        mode = s.mode & 0o7777;
+      } catch (e2) {
+        const code2 = (e2 as NodeJS.ErrnoException).code;
+        if (code2 === 'ENOENT') return; // dangling symlink — target is gone
+        if (code2 !== 'EACCES') throw e2;
+        // Symlink target is unreadable; fall back to sudo for mode only.
+        const modeStr = getSudoFileMode(sudo, absDir);
+        if (modeStr) mode = parseInt(modeStr, 8);
+      }
+    } else {
+      mode = lst.mode & 0o7777;
+      ownerUid = lst.uid;
+    }
   } catch (e) {
     const code = (e as NodeJS.ErrnoException).code;
     if (code === 'ENOENT') return; // directory does not exist yet; mkdir -p will create it

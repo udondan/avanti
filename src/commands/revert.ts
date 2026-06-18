@@ -256,11 +256,16 @@ export function revertCommand(): Command {
         }
 
         try {
-          atomicWrite(regularTargets, deletions);
+          // Perform privileged operations first: if sudo fails, the
+          // unprivileged writes have not yet happened, keeping the project in a
+          // consistent (if incomplete) state.
           if (sudoTargets.length > 0) sudoAtomicWrite(sudoTargets);
           for (const [p, sv] of sudoDeletions) {
-            sudoDelete(p, sv);
+            if (!sudoDelete(p, sv)) {
+              throw new Error(`sudo delete failed for ${p}`);
+            }
           }
+          atomicWrite(regularTargets, deletions);
           const total =
             writeTargets.length + deletions.length + sudoDeletions.size;
           console.log(`Reverted ${total} file(s).`);
