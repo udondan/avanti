@@ -12,7 +12,6 @@ import {
 import {
   atomicWrite,
   sudoAtomicWrite,
-  sudoAuth,
   sudoDelete,
   SudoWriteTarget,
   WriteTarget,
@@ -141,19 +140,6 @@ export function resetCommand(): Command {
       const isSudoTarget = (t: WriteTarget): t is SudoWriteTarget => !!t.sudo;
       const regularTargets = writeTargets.filter((t) => !t.sudo);
       const sudoTargets = writeTargets.filter(isSudoTarget);
-
-      const sudoValues = new Set<true | string>([
-        ...sudoTargets.map((t) => t.sudo),
-        ...sudoDeletions.values(),
-      ]);
-      for (const sv of sudoValues) {
-        try {
-          sudoAuth(sv);
-        } catch (err: unknown) {
-          console.error(err instanceof Error ? err.message : String(err));
-          process.exit(2);
-        }
-      }
 
       try {
         // Perform privileged operations first: if sudo fails, the

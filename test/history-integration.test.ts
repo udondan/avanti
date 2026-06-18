@@ -541,10 +541,10 @@ describe('history integration', () => {
 
         const targetFile = join(tmpDir, 'sudo-managed.txt');
         expect(existsSync(targetFile)).toBe(true);
-        // Confirm that sudo was actually invoked during the write (tee writes content).
+        // Confirm that sudo was actually invoked during the write (worker process).
         expect(existsSync(fakeSudoLog)).toBe(true);
         const pullCalls = readFileSync(fakeSudoLog, 'utf8');
-        expect(pullCalls).toContain('tee');
+        expect(pullCalls).toContain('privileged-worker.js');
 
         // Remove the entry from config and reset the call log.
         // The next pull's stale-cleanup should use the stored sudo identity to delete.

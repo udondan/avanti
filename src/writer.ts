@@ -1,7 +1,9 @@
 import * as crypto from 'crypto';
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 import { spawnSync } from 'child_process';
+import type { WriteOp } from './privileged-worker';
 
 export interface WriteTarget {
   targetPath: string;
@@ -19,186 +21,128 @@ export function sudoUserArgs(sudo: true | string): string[] {
   return typeof sudo === 'string' ? ['-u', sudo] : [];
 }
 
-export function sudoAuth(sudo: true | string = true): void {
-  if (process.platform === 'win32') {
-    throw new Error('sudo is not supported on Windows');
-  }
-  const result = spawnSync('sudo', [...sudoUserArgs(sudo), '-v'], {
-    stdio: 'inherit',
-  });
-  if (result.status !== 0 || result.error) {
-    const detail = result.error
-      ? result.error.message
-      : `exit code ${result.status ?? 'unknown'}`;
-    throw new Error(`sudo authentication failed: ${detail}`);
-  }
-}
-
-// Each target is written atomically (mktemp → tee → mv for mv-style; tee for
-// in-place), but the batch is NOT collectively atomic: a failure mid-way leaves
-// earlier targets already written. This mirrors the shell-level constraint —
-// true batch atomicity would require a two-phase stage+rename via a privileged
-// helper, which is not implemented here.
-export function sudoAtomicWrite(targets: SudoWriteTarget[]): void {
-  const symlinkTargets = targets.filter((t) => t.symlinkTarget !== undefined);
-  const regularTargets = targets.filter((t) => t.symlinkTarget === undefined);
-  const mvTargets = regularTargets.filter((t) => !t.writeInPlace);
-  const inPlaceTargets = regularTargets.filter((t) => t.writeInPlace);
-  for (const t of mvTargets) {
-    sudoWriteMv(t);
-  }
-  for (const t of inPlaceTargets) {
-    sudoWriteInPlace(t);
-  }
-  for (const t of symlinkTargets) {
-    sudoSymlinkWrite(t);
-  }
-}
-
-function sudoSymlinkWrite(t: SudoWriteTarget): void {
-  const sudo = t.sudo;
-  const resolvedTarget = path.resolve(t.targetPath);
-  const dir = path.dirname(resolvedTarget);
-
-  // Build the trusted-UID set (same policy as sudoWriteMv/sudoWriteInPlace):
-  // root, the invoking user, and the named sudo target user if applicable.
-  const trustedUids = buildTrustedUids(sudo);
-
-  // Validate existing ancestors BEFORE any privileged mkdir to avoid creating
-  // root-owned directories under untrusted/world-writable paths.
-  checkAncestorsSafe(sudo, t.targetPath, trustedUids, 'destination');
-  sudoRun(sudo, ['mkdir', '-p', '--', dir]);
-  // Re-validate after mkdir: intermediate directories created by mkdir -p were
-  // not covered by the pre-mkdir check.
-  checkAncestorsSafe(sudo, t.targetPath, trustedUids, 'destination');
-
-  // Refuse to write if the target path is an existing *real* directory: ln -sf
-  // would place the symlink inside it rather than replacing it. A symlink that
-  // points to a directory is fine — it can be atomically replaced.
-  if (
-    !sudoIsSymlink(sudo, t.targetPath) &&
-    sudoIsDirectory(sudo, t.targetPath)
-  ) {
-    throw new Error(
-      `symlink: ${t.targetPath} is a directory; refusing to replace it with a symlink`,
-    );
-  }
-
-  if (t.backupPath) {
-    // Only back up when the target path already holds a symlink or regular file.
-    // Skip backup when the path is absent (new file) to mirror sudoWriteMv.
-    const existingIsSymlink = sudoIsSymlink(sudo, t.targetPath);
-    const existingIsFile = !existingIsSymlink && sudoIsFile(sudo, t.targetPath);
-    if (existingIsSymlink || existingIsFile) {
-      const backupDir = path.dirname(t.backupPath);
-      const resolvedBackup = path.resolve(t.backupPath);
-      // Validate backup ancestors BEFORE privileged mkdir to avoid creating
-      // root-owned directories in an untrusted path.
-      checkAncestorsSafe(sudo, t.backupPath, trustedUids, 'backup');
-      sudoRun(sudo, ['mkdir', '-p', '--', backupDir]);
-      // Re-validate after mkdir: newly created intermediates are now present.
-      checkAncestorsSafe(sudo, t.backupPath, trustedUids, 'backup');
-      // Use mktemp + cp -pP + mv (same pattern as sudoWriteMv) to avoid following
-      // an existing symlink at backupPath. -P preserves symlinks; -p preserves
-      // timestamps and mode bits. Backup failure is fatal (matches sudoWriteMv).
-      const mktempBackup = spawnSync(
-        'sudo',
-        [
-          ...sudoUserArgs(sudo),
-          'mktemp',
-          path.join(path.resolve(backupDir), '.avanti-backup-XXXXXXXXXX'),
-        ],
-        { stdio: ['ignore', 'pipe', 'inherit'] },
-      );
-      if (mktempBackup.status !== 0 || mktempBackup.error) {
-        const detail = mktempBackup.error
-          ? mktempBackup.error.message
-          : `exit code ${mktempBackup.status ?? 'unknown'}`;
-        throw new Error(`sudo mktemp failed in ${backupDir}: ${detail}`);
-      }
-      const backupTmp = mktempBackup.stdout.toString().trim();
-      try {
-        if (existingIsSymlink) {
-          // Store the symlink as an absolute target so the backup resolves
-          // correctly from backupDir regardless of whether the original target
-          // was relative. mktemp already created a regular file; remove it
-          // before symlinking.
-          const rawLinkTarget = sudoReadlink(sudo, t.targetPath);
-          if (rawLinkTarget === null)
-            throw new Error(`sudoReadlink failed for ${t.targetPath}`);
-          const absLinkTarget = path.isAbsolute(rawLinkTarget)
-            ? rawLinkTarget
-            : path.resolve(path.dirname(resolvedTarget), rawLinkTarget);
-          sudoRun(sudo, ['rm', '-f', '--', backupTmp]);
-          sudoRun(sudo, ['ln', '-s', '--', absLinkTarget, backupTmp]);
-        } else {
-          sudoRun(sudo, ['cp', '-pP', '--', resolvedTarget, backupTmp]);
-        }
-        const backupIsDir =
-          spawnSync(
-            'sudo',
-            [...sudoUserArgs(sudo), 'test', '-d', resolvedBackup],
-            {
-              stdio: ['inherit', 'ignore', 'ignore'],
-            },
-          ).status === 0;
-        if (backupIsDir) {
-          throw new Error(`backup path is a directory: ${t.backupPath}`);
-        }
-        sudoMv(sudo, backupTmp, resolvedBackup);
-      } catch (err) {
-        sudoRun(sudo, ['rm', '-f', '--', backupTmp]);
-        throw err;
-      }
-    } // end existingIsSymlink || existingIsFile
-  }
-
-  // Stage the new symlink at a temp path in the same directory, then rename
-  // atomically into place — same pattern as sudoWriteMv for files. ln -sf
-  // would call unlink+symlink with a visible window; rename(2) has none.
-  const mktempNew = spawnSync(
+function runPrivilegedWorker(sudo: true | string, ops: WriteOp[]): void {
+  // When running via tsx (TypeScript source, __filename ends in .ts), the
+  // compiled worker is one level up in dist/. In production (dist/writer.js),
+  // the worker is a sibling.
+  const workerPath = __filename.endsWith('.ts')
+    ? path.resolve(__dirname, '..', 'dist', 'privileged-worker.js')
+    : path.join(__dirname, 'privileged-worker.js');
+  const result = spawnSync(
     'sudo',
-    [
-      ...sudoUserArgs(sudo),
-      'mktemp',
-      path.join(dir, '.avanti-symlink-XXXXXXXXXX'),
-    ],
-    { stdio: ['ignore', 'pipe', 'inherit'] },
+    [...sudoUserArgs(sudo), 'node', workerPath],
+    {
+      input: JSON.stringify({ ops }),
+      stdio: ['pipe', 'pipe', 'inherit'],
+      encoding: 'utf8',
+      maxBuffer: 10 * 1024 * 1024,
+    },
   );
-  if (mktempNew.status !== 0 || mktempNew.error) {
-    const detail = mktempNew.error
-      ? mktempNew.error.message
-      : `exit code ${mktempNew.status ?? 'unknown'}`;
-    throw new Error(`sudo mktemp failed in ${dir}: ${detail}`);
+  if (result.error) throw result.error;
+  if (result.status !== 0) {
+    throw new Error(`privileged worker failed (exit ${result.status})`);
   }
-  const newTmp = mktempNew.stdout.toString().trim();
+  const { results } = JSON.parse(result.stdout) as {
+    results: Array<{ ok: boolean; error?: string }>;
+  };
+  for (const r of results) {
+    if (!r.ok) throw new Error(r.error ?? 'privileged worker op failed');
+  }
+}
+
+// Each target is written atomically inside the privileged worker process, but
+// the batch is NOT collectively atomic: a failure mid-way leaves earlier targets
+// already written. All targets sharing the same sudo identity are dispatched in
+// a single worker invocation — one sudo password prompt per distinct identity.
+export function sudoAtomicWrite(targets: SudoWriteTarget[]): void {
+  if (targets.length === 0) return;
+
+  // eslint-disable-next-line @typescript-eslint/no-deprecated
+  const mask = process.umask();
+  const defaultMode = (0o666 & ~mask).toString(8).padStart(4, '0');
+
+  // Validate ancestor safety for all targets before any privileged work.
+  // checkAncestorsSafe prefers lstatSync (0 sudo calls) for world-readable
+  // paths like /usr/local/bin; sudo stat is only used for unreadable ancestors.
+  for (const t of targets) {
+    const trustedUids = buildTrustedUids(t.sudo);
+    checkAncestorsSafe(t.sudo, t.targetPath, trustedUids, 'destination');
+    if (t.backupPath) {
+      checkAncestorsSafe(t.sudo, t.backupPath, trustedUids, 'backup');
+    }
+  }
+
+  // Write content to temp files owned by the calling user (mode 0o600).
+  // Root can always read these, so the worker has access regardless of sudo identity.
+  const contentTemps: string[] = [];
   try {
-    // mktemp creates a regular file placeholder; remove it so we can create a
-    // symlink at that path.
-    sudoRun(sudo, ['rm', '-f', '--', newTmp]);
-    sudoRun(sudo, ['ln', '-s', '--', t.symlinkTarget!, newTmp]);
-    // macOS/BSD: mv without -T follows symlinks-to-directories, moving newTmp
-    // inside the target directory rather than replacing the symlink. Pre-remove
-    // only that case; rename(2) replaces symlinks-to-files atomically on all
-    // platforms. Linux uses mv -T which always calls rename(2) directly.
-    if (process.platform !== 'linux') {
-      const destIsSymlinkToDir =
-        sudoIsSymlink(sudo, t.targetPath) &&
-        spawnSync(
-          'sudo',
-          [...sudoUserArgs(sudo), 'test', '-d', resolvedTarget],
-          {
-            stdio: ['inherit', 'ignore', 'ignore'],
+    const targetOps: Array<{ sudo: true | string; op: WriteOp }> = [];
+
+    for (const t of targets) {
+      if (t.symlinkTarget !== undefined) {
+        targetOps.push({
+          sudo: t.sudo,
+          op: {
+            type: 'write-symlink',
+            targetPath: t.targetPath,
+            symlinkTarget: t.symlinkTarget,
+            backupPath: t.backupPath,
           },
-        ).status === 0;
-      if (destIsSymlinkToDir) {
-        sudoRun(sudo, ['rm', '-f', '--', resolvedTarget]);
+        });
+      } else {
+        const tmpPath = path.join(
+          os.tmpdir(),
+          `.avanti-content-${crypto.randomBytes(8).toString('hex')}.dat`,
+        );
+        const fd = fs.openSync(tmpPath, 'wx', 0o600);
+        fs.closeSync(fd);
+        contentTemps.push(tmpPath);
+        fs.writeFileSync(tmpPath, t.content);
+
+        targetOps.push({
+          sudo: t.sudo,
+          op: t.writeInPlace
+            ? {
+                type: 'write-in-place',
+                targetPath: t.targetPath,
+                contentSrc: tmpPath,
+                mode: t.mode,
+                defaultMode,
+                backupPath: t.backupPath,
+              }
+            : {
+                type: 'write-mv',
+                targetPath: t.targetPath,
+                contentSrc: tmpPath,
+                mode: t.mode,
+                defaultMode,
+                backupPath: t.backupPath,
+              },
+        });
       }
     }
-    sudoMv(sudo, newTmp, resolvedTarget);
-  } catch (err) {
-    sudoRun(sudo, ['rm', '-f', '--', newTmp]);
-    throw err;
+
+    // Group ops by sudo identity; one worker invocation per group.
+    const groups = new Map<true | string, WriteOp[]>();
+    for (const { sudo, op } of targetOps) {
+      const existing = groups.get(sudo);
+      if (existing) {
+        existing.push(op);
+      } else {
+        groups.set(sudo, [op]);
+      }
+    }
+    for (const [sudo, ops] of groups) {
+      runPrivilegedWorker(sudo, ops);
+    }
+  } finally {
+    for (const tmp of contentTemps) {
+      try {
+        fs.unlinkSync(tmp);
+      } catch {
+        // best-effort cleanup
+      }
+    }
   }
 }
 
@@ -210,7 +154,7 @@ export function sudoRead(sudo: true | string, filePath: string): Buffer | null {
   const result = spawnSync(
     'sudo',
     [...sudoUserArgs(sudo), 'cat', '--', absPath],
-    { stdio: ['ignore', 'pipe', 'inherit'], maxBuffer: 100 * 1024 * 1024 },
+    { stdio: ['inherit', 'pipe', 'inherit'], maxBuffer: 100 * 1024 * 1024 },
   );
   if (result.error) {
     // Distinguish buffer overflow (file too large to manage via sudo) from a
@@ -279,16 +223,6 @@ export function sudoIsDirectory(
   return r.status === 0;
 }
 
-export function sudoIsFile(sudo: true | string, targetPath: string): boolean {
-  const r = spawnSync(
-    'sudo',
-    [...sudoUserArgs(sudo), 'test', '-f', path.resolve(targetPath)],
-    { stdio: ['inherit', 'ignore', 'ignore'] },
-  );
-  if (r.error) throw new Error(`sudo test -f failed: ${r.error.message}`);
-  return r.status === 0;
-}
-
 export function sudoReadlink(
   sudo: true | string,
   targetPath: string,
@@ -296,7 +230,7 @@ export function sudoReadlink(
   const r = spawnSync(
     'sudo',
     [...sudoUserArgs(sudo), 'readlink', path.resolve(targetPath)],
-    { stdio: ['ignore', 'pipe', 'ignore'] },
+    { stdio: ['inherit', 'pipe', 'ignore'] },
   );
   if (r.error) throw new Error(`sudo readlink failed: ${r.error.message}`);
   if (r.status !== 0) return null;
@@ -319,20 +253,6 @@ export function sudoRun(sudo: true | string, args: string[]): void {
 // mv refuses to move src *inside* dst when dst is a directory — preventing a
 // TOCTOU race where dst is swapped for a directory after the precheck. BSD mv
 // (macOS) does not support -T, so the flag is omitted on non-Linux platforms.
-function sudoMv(sudo: true | string, src: string, dst: string): void {
-  const atomicFlag = process.platform === 'linux' ? ['-T'] : [];
-  const r = spawnSync(
-    'sudo',
-    [...sudoUserArgs(sudo), 'mv', ...atomicFlag, '--', src, dst],
-    { stdio: 'inherit' },
-  );
-  if (r.status !== 0 || r.error) {
-    const detail = r.error
-      ? r.error.message
-      : `exit code ${r.status ?? 'unknown'}`;
-    throw new Error(`sudo mv failed for ${dst}: ${detail}`);
-  }
-}
 
 // Returns the UID of the file/directory owner via sudo stat, trying GNU stat
 // (-c %u) then BSD/macOS stat (-f %u). Returns undefined when the path does
@@ -613,455 +533,6 @@ function checkAncestorsSafe(
   }
   for (const ancestor of ancestors) {
     checkDirSafe(sudo, ancestor, trustedUids, `${label} ancestor`);
-  }
-}
-
-function sudoWriteMv(t: SudoWriteTarget): void {
-  const sudo = t.sudo;
-  const dir = path.dirname(t.targetPath);
-
-  // Build the trusted-UID set for this operation. Includes root (0), the
-  // invoking user (who already owns the process and cannot be attacked by an
-  // outside party when operating in their own dirs), and the named sudo target
-  // user if applicable. This set is reused for all directory safety checks so
-  // that the same ownership policy applies to both the staging dir and the
-  // backup dir.
-  const trustedUids = buildTrustedUids(sudo);
-
-  // Validate existing ancestors BEFORE any privileged mkdir: creating root-owned
-  // directories in an untrusted/world-writable path is itself a side effect that
-  // must be prevented.
-  checkAncestorsSafe(sudo, t.targetPath, trustedUids, 'destination');
-
-  // Safe to create the destination directory now that all existing ancestors
-  // have been validated.
-  sudoRun(sudo, ['mkdir', '-p', '--', dir]);
-  // Re-validate the full ancestor chain after mkdir: when mkdir -p created
-  // intermediate directories, those new dirs were not covered by the pre-mkdir
-  // checkAncestorsSafe above (they didn't exist then). Re-running it validates
-  // every level, including any newly created intermediates and the final dir.
-  checkAncestorsSafe(sudo, t.targetPath, trustedUids, 'destination');
-
-  // Capture existing mode before writing so we can restore it after mv.
-  // Explicit config mode wins; existing dest mode used as fallback.
-  const existingMode = t.mode ? undefined : getSudoFileMode(sudo, t.targetPath);
-
-  // Use sudo mktemp for exclusive O_EXCL creation — prevents symlink/hardlink tricks
-  // if the destination directory is writable by other users.
-  // path.resolve(dir) ensures the template is always an absolute path, so mktemp
-  // never misinterprets it as an option (macOS mktemp doesn't support '--').
-  const mktempResult = spawnSync(
-    'sudo',
-    [
-      ...sudoUserArgs(sudo),
-      'mktemp',
-      path.join(path.resolve(dir), '.avanti-XXXXXXXXXX'),
-    ],
-    { stdio: ['ignore', 'pipe', 'inherit'] },
-  );
-  if (mktempResult.status !== 0 || mktempResult.error) {
-    const detail = mktempResult.error
-      ? mktempResult.error.message
-      : `exit code ${mktempResult.status ?? 'unknown'}`;
-    throw new Error(`sudo mktemp failed in ${dir}: ${detail}`);
-  }
-  const tmpFile = mktempResult.stdout.toString().trim();
-  let backupTmp: string | undefined;
-
-  try {
-    // No '--' before tmpFile: BSD tee(1) on macOS does not support '--', and
-    // the mktemp-generated path is always absolute so it cannot start with '-'.
-    const tee = spawnSync('sudo', [...sudoUserArgs(sudo), 'tee', tmpFile], {
-      input: t.content,
-      stdio: ['pipe', 'ignore', 'inherit'],
-    });
-    if (tee.status !== 0 || tee.error) {
-      const detail = tee.error
-        ? tee.error.message
-        : `exit code ${tee.status ?? 'unknown'}`;
-      throw new Error(`sudo write failed for ${t.targetPath}: ${detail}`);
-    }
-
-    if (t.backupPath) {
-      const resolvedTarget = path.resolve(t.targetPath);
-      const isSymlink = spawnSync(
-        'sudo',
-        [...sudoUserArgs(sudo), 'test', '-L', resolvedTarget],
-        { stdio: ['inherit', 'ignore', 'ignore'] },
-      );
-      const isFile =
-        isSymlink.status !== 0 &&
-        spawnSync(
-          'sudo',
-          [...sudoUserArgs(sudo), 'test', '-f', resolvedTarget],
-          { stdio: ['inherit', 'ignore', 'ignore'] },
-        ).status === 0;
-      if (isFile) {
-        const backupDir = path.dirname(t.backupPath);
-        // Validate backup ancestors BEFORE privileged mkdir to avoid creating
-        // root-owned directories in an untrusted path.
-        checkAncestorsSafe(sudo, t.backupPath, trustedUids, 'backup');
-        sudoRun(sudo, ['mkdir', '-p', '--', backupDir]);
-        // Re-validate the full backup ancestor chain after mkdir: intermediate
-        // directories created by mkdir -p were not checked before (they didn't
-        // exist). Re-running checkAncestorsSafe covers all levels including
-        // newly created intermediates and the final backupDir.
-        checkAncestorsSafe(sudo, t.backupPath, trustedUids, 'backup');
-        // Use sudo mktemp so the backup temp is created with O_EXCL under
-        // the privileged identity, preventing a symlink race in the backup
-        // directory. path.resolve(backupDir) guarantees an absolute template.
-        const mktempBackup = spawnSync(
-          'sudo',
-          [
-            ...sudoUserArgs(sudo),
-            'mktemp',
-            path.join(path.resolve(backupDir), '.avanti-backup-XXXXXXXXXX'),
-          ],
-          { stdio: ['ignore', 'pipe', 'inherit'] },
-        );
-        if (mktempBackup.status !== 0 || mktempBackup.error) {
-          const detail = mktempBackup.error
-            ? mktempBackup.error.message
-            : `exit code ${mktempBackup.status ?? 'unknown'}`;
-          throw new Error(`sudo mktemp failed in ${backupDir}: ${detail}`);
-        }
-        backupTmp = mktempBackup.stdout.toString().trim();
-        // -p preserves the source file's mode bits on the backup copy.
-        sudoRun(sudo, ['cp', '-p', '--', resolvedTarget, backupTmp]);
-        const resolvedBackup = path.resolve(t.backupPath);
-        // test -d follows symlinks, so this also catches symlinks-to-directories.
-        // mv into a symlink-to-directory moves the file inside the directory rather
-        // than replacing the symlink, which would silently write to the wrong place.
-        const backupIsDir =
-          spawnSync(
-            'sudo',
-            [...sudoUserArgs(sudo), 'test', '-d', resolvedBackup],
-            { stdio: ['inherit', 'ignore', 'ignore'] },
-          ).status === 0;
-        if (backupIsDir) {
-          throw new Error(`backup path is a directory: ${t.backupPath}`);
-        }
-        sudoMv(sudo, backupTmp, resolvedBackup);
-        backupTmp = undefined; // renamed into place — no cleanup needed
-      }
-    }
-
-    const resolvedTarget = path.resolve(t.targetPath);
-    const destIsSymlink =
-      spawnSync('sudo', [...sudoUserArgs(sudo), 'test', '-L', resolvedTarget], {
-        stdio: ['inherit', 'ignore', 'ignore'],
-      }).status === 0;
-    if (destIsSymlink) {
-      // Linux: sudoMv uses mv -T which atomically replaces any path including
-      // symlinks — rename(2) is used directly, no pre-rm needed.
-      // macOS/BSD: mv follows symlinks-to-directories and would move tmpFile
-      // inside the symlink target instead of replacing the symlink. Pre-rm
-      // only that case; symlinks-to-files are replaced atomically by rename(2).
-      if (process.platform !== 'linux') {
-        const destSymlinkIsDir =
-          spawnSync(
-            'sudo',
-            [...sudoUserArgs(sudo), 'test', '-d', resolvedTarget],
-            { stdio: ['inherit', 'ignore', 'ignore'] },
-          ).status === 0;
-        if (destSymlinkIsDir) {
-          sudoRun(sudo, ['rm', '-f', '--', resolvedTarget]);
-        }
-      }
-    } else {
-      // Only throw for a real directory (not through a symlink).
-      const destIsDir =
-        spawnSync(
-          'sudo',
-          [...sudoUserArgs(sudo), 'test', '-d', resolvedTarget],
-          { stdio: ['inherit', 'ignore', 'ignore'] },
-        ).status === 0;
-      if (destIsDir) {
-        throw new Error(`target path is a directory: ${t.targetPath}`);
-      }
-    }
-    sudoMv(sudo, tmpFile, resolvedTarget);
-
-    // On non-Linux, mv lacks -T so it silently moves the temp file *inside* dst
-    // if dst was swapped for a directory between the precheck and the rename.
-    // Verify the target landed as a regular file to detect this race.
-    if (process.platform !== 'linux') {
-      const landed = spawnSync(
-        'sudo',
-        [...sudoUserArgs(sudo), 'test', '-f', resolvedTarget],
-        { stdio: ['inherit', 'ignore', 'ignore'] },
-      );
-      if (landed.status !== 0) {
-        throw new Error(
-          `sudo mv: file did not land at expected path ${t.targetPath} (destination may have been swapped)`,
-        );
-      }
-    }
-
-    // Apply mode: explicit config value wins; existing dest mode is used as fallback
-    // for updates so sudo mv doesn't silently change permissions. For new files with
-    // no explicit mode, derive from the process umask (0o666 & ~umask) so sudo and
-    // non-sudo writes produce the same default permissions.
-    // process.umask() is deprecated due to worker-thread race concerns; avanti is a
-    // single-threaded CLI so the race does not apply.
-    // eslint-disable-next-line @typescript-eslint/no-deprecated
-    const mask = process.umask();
-    const defaultMode = (0o666 & ~mask).toString(8).padStart(4, '0');
-    const effectiveMode = t.mode ?? existingMode ?? defaultMode;
-    sudoRun(sudo, ['chmod', '--', effectiveMode, resolvedTarget]);
-  } finally {
-    try {
-      sudoRun(sudo, ['rm', '-f', '--', tmpFile]);
-    } catch {
-      // best-effort cleanup
-    }
-    if (backupTmp) {
-      try {
-        sudoRun(sudo, ['rm', '-f', '--', backupTmp]);
-      } catch {
-        // best-effort cleanup
-      }
-    }
-  }
-}
-
-function sudoWriteInPlace(t: SudoWriteTarget): void {
-  const sudo = t.sudo;
-  const dir = path.dirname(t.targetPath);
-
-  // Validate ancestors BEFORE any privileged mkdir: creating root-owned
-  // directories in an untrusted/world-writable path is itself a side effect
-  // that must be prevented.
-  //
-  // Reject writeInPlace when any ancestor directory (from / down to dir) could
-  // be raced. Checking only the immediate parent is insufficient: a symlink
-  // anywhere in the path (e.g. /tmp/link/file where /tmp is world-writable)
-  // can be swapped between the preflight checks and the sudo tee, redirecting
-  // the privileged write. Validate every ancestor so that a world-writable or
-  // untrusted directory anywhere in the path is detected and rejected.
-  // Two checks per ancestor:
-  // 1. Mode bits: group-write (0o020) or others-write (0o002) allow any member
-  //    of the group or any local user to swap a component → reject.
-  // 2. Owner UID: the directory owner can always modify its contents and could
-  //    race even when group/other write bits are clear.
-  //    Trusted UIDs: root (0), invoking user, and named sudo target user.
-  // Use mv-style writes (writeInPlace: false) for targets in untrusted paths.
-  const trustedUids = buildTrustedUids(sudo);
-  // Collect every ancestor from / to dir (inclusive), without resolving
-  // symlinks (path.resolve only canonicalises . and .., not symlink targets).
-  const ancestors: string[] = [];
-  let anc = path.resolve(t.targetPath);
-  while (true) {
-    anc = path.dirname(anc);
-    ancestors.unshift(anc);
-    if (anc === path.dirname(anc)) break; // reached filesystem root
-  }
-  for (const ancestor of ancestors) {
-    const ancModeStr = getSudoFileMode(sudo, ancestor);
-    if (ancModeStr) {
-      const ancMode = parseInt(ancModeStr, 8);
-      if (!isNaN(ancMode) && ancMode & 0o022) {
-        throw new Error(
-          `writeInPlace: ancestor directory ${ancestor} is group- or world-writable; ` +
-            `sudo writeInPlace cannot be used safely here due to TOCTOU risk. ` +
-            `Remove writeInPlace: true to use atomic mv-style writes instead.`,
-        );
-      }
-    }
-    const ancOwnerUid = getSudoOwnerUid(sudo, ancestor);
-    if (ancOwnerUid !== undefined && !trustedUids.has(ancOwnerUid)) {
-      throw new Error(
-        `writeInPlace: ancestor directory ${ancestor} is owned by UID ${ancOwnerUid}, ` +
-          `not a trusted identity for this sudo operation; ` +
-          `sudo writeInPlace cannot be used safely here due to TOCTOU risk. ` +
-          `Remove writeInPlace: true to use atomic mv-style writes instead.`,
-      );
-    }
-  }
-
-  // Safe to create the destination directory now that all existing ancestors
-  // have been validated.
-  sudoRun(sudo, ['mkdir', '-p', '--', dir]);
-  // Re-validate the full ancestor chain after mkdir: intermediate directories
-  // created by mkdir -p were not covered by the pre-mkdir checkAncestorsSafe
-  // (they didn't exist then). Re-running it validates all levels including
-  // any newly created intermediates and the final destination directory.
-  checkAncestorsSafe(sudo, t.targetPath, trustedUids, 'destination');
-
-  let backupTmp: string | undefined;
-  const resolvedTarget = path.resolve(t.targetPath);
-  let preTeeMode: string | undefined;
-  let modeApplied = false;
-
-  try {
-    if (t.backupPath) {
-      const isSymlink = spawnSync(
-        'sudo',
-        [...sudoUserArgs(sudo), 'test', '-L', resolvedTarget],
-        { stdio: ['inherit', 'ignore', 'ignore'] },
-      );
-      const isFile =
-        isSymlink.status !== 0 &&
-        spawnSync(
-          'sudo',
-          [...sudoUserArgs(sudo), 'test', '-f', resolvedTarget],
-          { stdio: ['inherit', 'ignore', 'ignore'] },
-        ).status === 0;
-      if (isFile) {
-        const backupDir = path.dirname(t.backupPath);
-        // Validate backup ancestors BEFORE privileged mkdir.
-        checkAncestorsSafe(sudo, t.backupPath, trustedUids, 'backup');
-        sudoRun(sudo, ['mkdir', '-p', '--', backupDir]);
-        // Re-validate the full backup ancestor chain after mkdir: intermediate
-        // directories created by mkdir -p were not covered before (they didn't
-        // exist). Re-running covers all levels including newly created
-        // intermediates and the final backupDir.
-        checkAncestorsSafe(sudo, t.backupPath, trustedUids, 'backup');
-        // Use sudo mktemp for O_EXCL creation — prevents symlink race in backupDir.
-        const mktempBackup = spawnSync(
-          'sudo',
-          [
-            ...sudoUserArgs(sudo),
-            'mktemp',
-            path.join(path.resolve(backupDir), '.avanti-backup-XXXXXXXXXX'),
-          ],
-          { stdio: ['ignore', 'pipe', 'inherit'] },
-        );
-        if (mktempBackup.status !== 0 || mktempBackup.error) {
-          const detail = mktempBackup.error
-            ? mktempBackup.error.message
-            : `exit code ${mktempBackup.status ?? 'unknown'}`;
-          throw new Error(`sudo mktemp failed in ${backupDir}: ${detail}`);
-        }
-        backupTmp = mktempBackup.stdout.toString().trim();
-        // -p preserves the source file's mode bits on the backup copy.
-        sudoRun(sudo, ['cp', '-p', '--', resolvedTarget, backupTmp]);
-        const resolvedBackup = path.resolve(t.backupPath);
-        // test -d follows symlinks, so this also catches symlinks-to-directories.
-        // mv into a symlink-to-directory moves the file inside the directory rather
-        // than replacing the symlink, which would silently write to the wrong place.
-        const backupIsDir =
-          spawnSync(
-            'sudo',
-            [...sudoUserArgs(sudo), 'test', '-d', resolvedBackup],
-            { stdio: ['inherit', 'ignore', 'ignore'] },
-          ).status === 0;
-        if (backupIsDir) {
-          throw new Error(`backup path is a directory: ${t.backupPath}`);
-        }
-        sudoMv(sudo, backupTmp, resolvedBackup);
-        backupTmp = undefined;
-      }
-    }
-
-    // Refuse symlinks (sudo tee would follow them to an unintended target)
-    // and refuse non-regular files (FIFOs, devices, sockets), mirroring the
-    // non-sudo writeInPlace path.
-    const symlinkCheck = spawnSync(
-      'sudo',
-      [...sudoUserArgs(sudo), 'test', '-L', resolvedTarget],
-      { stdio: ['inherit', 'ignore', 'ignore'] },
-    );
-    if (symlinkCheck.status === 0) {
-      throw new Error(
-        `writeInPlace: ${t.targetPath} is a symlink; refusing to follow`,
-      );
-    }
-    const existsCheck = spawnSync(
-      'sudo',
-      [...sudoUserArgs(sudo), 'test', '-e', resolvedTarget],
-      { stdio: ['inherit', 'ignore', 'ignore'] },
-    );
-    if (existsCheck.status === 0) {
-      const regularCheck = spawnSync(
-        'sudo',
-        [...sudoUserArgs(sudo), 'test', '-f', resolvedTarget],
-        { stdio: ['inherit', 'ignore', 'ignore'] },
-      );
-      if (regularCheck.status !== 0) {
-        throw new Error(
-          `writeInPlace: ${t.targetPath} is not a regular file; refusing to write`,
-        );
-      }
-    }
-
-    const isNewFile = existsCheck.status !== 0;
-    // eslint-disable-next-line @typescript-eslint/no-deprecated
-    const mask = process.umask();
-    const defaultMode = (0o666 & ~mask).toString(8).padStart(4, '0');
-    const effectiveMode = t.mode ?? (isNewFile ? defaultMode : undefined);
-
-    if (isNewFile && effectiveMode !== undefined) {
-      // Pre-create with an owner-writable mode so tee can write regardless of
-      // the requested final mode. Using the final mode directly would break
-      // named-user (sudo:"user") writes when that mode removes the write bit
-      // (e.g. 0400 or 0444): install creates the file then the subsequent
-      // sudo -u user tee cannot open it for writing. Creating with 0600 keeps
-      // the window minimal (only owner can read/write during the tee phase)
-      // while ensuring tee always succeeds. The final mode is applied after.
-      // resolvedTarget is always absolute so no '--' needed after '-m'.
-      sudoRun(sudo, ['install', '-m', '0600', '/dev/null', resolvedTarget]);
-    }
-
-    // For existing files, temporarily ensure owner-write so tee can open the
-    // file even when its current mode has no write bit (e.g. 0400/0444 set on
-    // a previous pull). For named-user sudo, chmod u+w may fail when the target
-    // file is owned by a different account (e.g. root:www-data 0664 — www-data
-    // can write via group bit but is not the owner and cannot chmod). In that
-    // case proceed without chmod; tee will fail here too if the write is
-    // actually forbidden. Only set preTeeMode when chmod succeeded so the
-    // finally block knows to restore the original mode only when it was changed.
-    if (!isNewFile) {
-      const capturedMode = getSudoFileMode(sudo, resolvedTarget);
-      try {
-        sudoRun(sudo, ['chmod', 'u+w', '--', resolvedTarget]);
-        preTeeMode = capturedMode; // only set when chmod succeeded
-      } catch {
-        // chmod u+w failed (not owner) — proceed; tee will fail if write is
-        // also forbidden. preTeeMode remains undefined (nothing to restore).
-      }
-    }
-
-    // No '--' before resolvedTarget: BSD tee(1) on macOS does not support '--',
-    // and the path is always absolute (path.resolve) so it cannot start with '-'.
-    const tee = spawnSync(
-      'sudo',
-      [...sudoUserArgs(sudo), 'tee', resolvedTarget],
-      { input: t.content, stdio: ['pipe', 'ignore', 'inherit'] },
-    );
-    if (tee.status !== 0 || tee.error) {
-      const detail = tee.error
-        ? tee.error.message
-        : `exit code ${tee.status ?? 'unknown'}`;
-      throw new Error(`sudo write failed for ${t.targetPath}: ${detail}`);
-    }
-
-    // Apply mode AFTER tee. effectiveMode wins; fall back to the captured
-    // pre-tee mode when no explicit mode is configured (undoes the u+w chmod).
-    if (effectiveMode !== undefined) {
-      sudoRun(sudo, ['chmod', '--', effectiveMode, resolvedTarget]);
-      modeApplied = true;
-    } else if (preTeeMode !== undefined) {
-      sudoRun(sudo, ['chmod', '--', preTeeMode, resolvedTarget]);
-      modeApplied = true;
-    }
-  } finally {
-    // If tee threw before modeApplied was set, restore the pre-tee mode so
-    // the file does not stay more permissive after a failed pull.
-    if (preTeeMode !== undefined && !modeApplied) {
-      try {
-        sudoRun(sudo, ['chmod', '--', preTeeMode, resolvedTarget]);
-      } catch {
-        // best-effort mode restore
-      }
-    }
-    if (backupTmp) {
-      try {
-        sudoRun(sudo, ['rm', '-f', '--', backupTmp]);
-      } catch {
-        // best-effort cleanup
-      }
-    }
   }
 }
 

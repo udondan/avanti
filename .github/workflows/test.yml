@@ -67,6 +67,25 @@ jobs:
         if: runner.os != 'Windows'
         run: bun run format:check
 
+      # Ubuntu runners have passwordless sudo — set up a root-owned directory
+      # for the sudo integration tests and inject a counting wrapper that logs
+      # every sudo invocation before delegating to the real sudo.
+      - name: Set up sudo integration test environment
+        if: runner.os == 'Linux'
+        run: |
+          sudo mkdir -p /opt/avanti-sudo-test
+          sudo chmod 700 /opt/avanti-sudo-test
+          mkdir -p /tmp/sudo-bin
+          cat > /tmp/sudo-bin/sudo << 'WRAPPER'
+          #!/bin/sh
+          echo "sudo: $*" >> "$SUDO_CALL_LOG"
+          exec /usr/bin/sudo "$@"
+          WRAPPER
+          chmod +x /tmp/sudo-bin/sudo
+          echo "/tmp/sudo-bin" >> "$GITHUB_PATH"
+          echo "AVANTI_SUDO_TEST_DIR=/opt/avanti-sudo-test" >> "$GITHUB_ENV"
+          echo "SUDO_CALL_LOG=/tmp/sudo-call-log.txt" >> "$GITHUB_ENV"
+
       - name: Test
         run: bun run test
         env:

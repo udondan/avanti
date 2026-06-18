@@ -36,7 +36,6 @@ import {
   atomicWrite,
   getSudoFileMode,
   sudoAtomicWrite,
-  sudoAuth,
   sudoDelete,
   sudoFileExists,
   sudoIsDirectory,
@@ -943,33 +942,6 @@ export function pullCommand(): Command {
         process.exit(2);
       }
 
-      // Authenticate early for unreadable sudo files so we can read their actual
-      // content before deciding whether anything changed. Without this, every pull
-      // would show unreadable files as "changed" (we can't diff without reading),
-      // and "Nothing to do." could never be reported on a re-run.
-      const unreadableSudoValues = new Set<true | string>();
-      for (let i = 0; i < writeTargets.length; i++) {
-        if (allDiffs[i].isUnreadable && writeTargets[i].sudo) {
-          unreadableSudoValues.add(writeTargets[i].sudo!);
-        }
-      }
-      // Also auth for unreadable stale restore targets that need sudo.
-      for (let i = 0; i < staleToRestore.length; i++) {
-        const diffIdx = staleRestoreDiffIndices[i];
-        if (staleDiffs[diffIdx]?.isUnreadable && staleToRestore[i].sudo) {
-          unreadableSudoValues.add(staleToRestore[i].sudo!);
-        }
-      }
-      const authenticatedSudoIds = new Set<true | string>();
-      for (const sv of unreadableSudoValues) {
-        try {
-          sudoAuth(sv);
-        } catch (err: unknown) {
-          console.error(err instanceof Error ? err.message : String(err));
-          process.exit(2);
-        }
-        authenticatedSudoIds.add(sv);
-      }
       // For entries where lstatSync failed (parent directory not searchable),
       // use sudoFileExists to determine whether the file actually exists so
       // existedBeforeAvanti is recorded correctly. Also compute modeChange now
@@ -1337,20 +1309,6 @@ export function pullCommand(): Command {
           sudoValues.add(writeTargets[i].sudo!);
         }
       }
-      // Skip identities already authenticated in the early unreadable-file pass
-      // so a single pull session never re-prompts for the same identity.
-      for (const sv of sudoValues) {
-        if (!authenticatedSudoIds.has(sv)) {
-          try {
-            sudoAuth(sv);
-          } catch (err: unknown) {
-            console.error(err instanceof Error ? err.message : String(err));
-            process.exit(2);
-          }
-          authenticatedSudoIds.add(sv);
-        }
-      }
-
       // Stage history versions before atomicWrite so v0 is captured before overwrite
       const stagedFileRefs: PullLogFileRef[] = [];
       if (pullId) {
