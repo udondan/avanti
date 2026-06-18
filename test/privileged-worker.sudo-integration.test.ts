@@ -5,9 +5,9 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { sudoAtomicWrite, SudoWriteTarget } from '../src/writer';
 
 // This test only runs when AVANTI_SUDO_TEST_DIR is set to a root-owned directory.
-// In CI the directory is /opt/avanti-sudo-test (created by the workflow step).
-// Locally: sudo mkdir -p /opt/avanti-sudo-test && sudo chmod 700 /opt/avanti-sudo-test
-//           AVANTI_SUDO_TEST_DIR=/opt/avanti-sudo-test bun test test/privileged-worker.sudo-integration.test.ts
+// In CI the directory is /usr/local/avanti-sudo-test (created by the workflow step).
+// Locally: sudo mkdir -p /usr/local/avanti-sudo-test && sudo chmod 700 /usr/local/avanti-sudo-test
+//           AVANTI_SUDO_TEST_DIR=/usr/local/avanti-sudo-test bun test test/privileged-worker.sudo-integration.test.ts
 const sudoTestDir = process.env.AVANTI_SUDO_TEST_DIR;
 const sudoCallLog = process.env.SUDO_CALL_LOG;
 

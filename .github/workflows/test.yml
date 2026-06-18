@@ -73,8 +73,8 @@ jobs:
       - name: Set up sudo integration test environment
         if: runner.os == 'Linux'
         run: |
-          sudo mkdir -p /opt/avanti-sudo-test
-          sudo chmod 700 /opt/avanti-sudo-test
+          sudo mkdir -p /usr/local/avanti-sudo-test
+          sudo chmod 700 /usr/local/avanti-sudo-test
           mkdir -p /tmp/sudo-bin
           cat > /tmp/sudo-bin/sudo << 'WRAPPER'
           #!/bin/sh
@@ -83,7 +83,7 @@ jobs:
           WRAPPER
           chmod +x /tmp/sudo-bin/sudo
           echo "/tmp/sudo-bin" >> "$GITHUB_PATH"
-          echo "AVANTI_SUDO_TEST_DIR=/opt/avanti-sudo-test" >> "$GITHUB_ENV"
+          echo "AVANTI_SUDO_TEST_DIR=/usr/local/avanti-sudo-test" >> "$GITHUB_ENV"
           echo "SUDO_CALL_LOG=/tmp/sudo-call-log.txt" >> "$GITHUB_ENV"
 
       - name: Test
