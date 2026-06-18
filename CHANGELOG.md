@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.27.1](https://github.com/udondan/avanti/compare/v0.27.0...v0.27.1) (2026-06-18)
+
+
+### Bug Fixes
+
+* **paths:** allow absolute target paths within the working directory ([#286](https://github.com/udondan/avanti/issues/286)) ([26b6d8b](https://github.com/udondan/avanti/commit/26b6d8b422429b818512effb4fb5a20b981f470a))
+* **revert:** delete re-created files when undoing last pull ([#287](https://github.com/udondan/avanti/issues/287)) ([61da11b](https://github.com/udondan/avanti/commit/61da11be332e365a5fcd1c3e00480a6b00e0df2a))
+* **sudo:** eliminate repeated password prompts for system-path writes ([#284](https://github.com/udondan/avanti/issues/284)) ([84d2f28](https://github.com/udondan/avanti/commit/84d2f28d773daaf6012834be457b7a297df94645))
+
 ## [0.27.0](https://github.com/udondan/avanti/compare/v0.26.5...v0.27.0) (2026-06-17)
 
 
