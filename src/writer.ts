@@ -139,7 +139,7 @@ function sudoSymlinkWrite(t: SudoWriteTarget): void {
             'sudo',
             [...sudoUserArgs(sudo), 'test', '-d', resolvedBackup],
             {
-              stdio: 'ignore',
+              stdio: ['inherit', 'ignore', 'ignore'],
             },
           ).status === 0;
         if (backupIsDir) {
@@ -188,7 +188,7 @@ function sudoSymlinkWrite(t: SudoWriteTarget): void {
           'sudo',
           [...sudoUserArgs(sudo), 'test', '-d', resolvedTarget],
           {
-            stdio: 'ignore',
+            stdio: ['inherit', 'ignore', 'ignore'],
           },
         ).status === 0;
       if (destIsSymlinkToDir) {
@@ -247,7 +247,7 @@ export function sudoFileExists(
   const r = spawnSync(
     'sudo',
     [...sudoUserArgs(sudo), 'test', '-e', path.resolve(targetPath)],
-    { stdio: 'ignore' },
+    { stdio: ['inherit', 'ignore', 'ignore'] },
   );
   if (r.error) throw new Error(`sudo test -e failed: ${r.error.message}`);
   return r.status === 0;
@@ -260,7 +260,7 @@ export function sudoIsSymlink(
   const r = spawnSync(
     'sudo',
     [...sudoUserArgs(sudo), 'test', '-L', path.resolve(targetPath)],
-    { stdio: 'ignore' },
+    { stdio: ['inherit', 'ignore', 'ignore'] },
   );
   if (r.error) throw new Error(`sudo test -L failed: ${r.error.message}`);
   return r.status === 0;
@@ -273,7 +273,7 @@ export function sudoIsDirectory(
   const r = spawnSync(
     'sudo',
     [...sudoUserArgs(sudo), 'test', '-d', path.resolve(targetPath)],
-    { stdio: 'ignore' },
+    { stdio: ['inherit', 'ignore', 'ignore'] },
   );
   if (r.error) throw new Error(`sudo test -d failed: ${r.error.message}`);
   return r.status === 0;
@@ -283,7 +283,7 @@ export function sudoIsFile(sudo: true | string, targetPath: string): boolean {
   const r = spawnSync(
     'sudo',
     [...sudoUserArgs(sudo), 'test', '-f', path.resolve(targetPath)],
-    { stdio: 'ignore' },
+    { stdio: ['inherit', 'ignore', 'ignore'] },
   );
   if (r.error) throw new Error(`sudo test -f failed: ${r.error.message}`);
   return r.status === 0;
@@ -296,7 +296,7 @@ export function sudoReadlink(
   const r = spawnSync(
     'sudo',
     [...sudoUserArgs(sudo), 'readlink', path.resolve(targetPath)],
-    { stdio: ['ignore', 'pipe', 'ignore'] },
+    { stdio: ['inherit', 'pipe', 'ignore'] },
   );
   if (r.error) throw new Error(`sudo readlink failed: ${r.error.message}`);
   if (r.status !== 0) return null;
@@ -666,14 +666,14 @@ function sudoWriteMv(t: SudoWriteTarget): void {
       const isSymlink = spawnSync(
         'sudo',
         [...sudoUserArgs(sudo), 'test', '-L', resolvedTarget],
-        { stdio: 'ignore' },
+        { stdio: ['inherit', 'ignore', 'ignore'] },
       );
       const isFile =
         isSymlink.status !== 0 &&
         spawnSync(
           'sudo',
           [...sudoUserArgs(sudo), 'test', '-f', resolvedTarget],
-          { stdio: 'ignore' },
+          { stdio: ['inherit', 'ignore', 'ignore'] },
         ).status === 0;
       if (isFile) {
         const backupDir = path.dirname(t.backupPath);
@@ -715,7 +715,7 @@ function sudoWriteMv(t: SudoWriteTarget): void {
           spawnSync(
             'sudo',
             [...sudoUserArgs(sudo), 'test', '-d', resolvedBackup],
-            { stdio: 'ignore' },
+            { stdio: ['inherit', 'ignore', 'ignore'] },
           ).status === 0;
         if (backupIsDir) {
           throw new Error(`backup path is a directory: ${t.backupPath}`);
@@ -728,7 +728,7 @@ function sudoWriteMv(t: SudoWriteTarget): void {
     const resolvedTarget = path.resolve(t.targetPath);
     const destIsSymlink =
       spawnSync('sudo', [...sudoUserArgs(sudo), 'test', '-L', resolvedTarget], {
-        stdio: 'ignore',
+        stdio: ['inherit', 'ignore', 'ignore'],
       }).status === 0;
     if (destIsSymlink) {
       // Linux: sudoMv uses mv -T which atomically replaces any path including
@@ -741,7 +741,7 @@ function sudoWriteMv(t: SudoWriteTarget): void {
           spawnSync(
             'sudo',
             [...sudoUserArgs(sudo), 'test', '-d', resolvedTarget],
-            { stdio: 'ignore' },
+            { stdio: ['inherit', 'ignore', 'ignore'] },
           ).status === 0;
         if (destSymlinkIsDir) {
           sudoRun(sudo, ['rm', '-f', '--', resolvedTarget]);
@@ -753,7 +753,7 @@ function sudoWriteMv(t: SudoWriteTarget): void {
         spawnSync(
           'sudo',
           [...sudoUserArgs(sudo), 'test', '-d', resolvedTarget],
-          { stdio: 'ignore' },
+          { stdio: ['inherit', 'ignore', 'ignore'] },
         ).status === 0;
       if (destIsDir) {
         throw new Error(`target path is a directory: ${t.targetPath}`);
@@ -768,7 +768,7 @@ function sudoWriteMv(t: SudoWriteTarget): void {
       const landed = spawnSync(
         'sudo',
         [...sudoUserArgs(sudo), 'test', '-f', resolvedTarget],
-        { stdio: 'ignore' },
+        { stdio: ['inherit', 'ignore', 'ignore'] },
       );
       if (landed.status !== 0) {
         throw new Error(
@@ -877,14 +877,14 @@ function sudoWriteInPlace(t: SudoWriteTarget): void {
       const isSymlink = spawnSync(
         'sudo',
         [...sudoUserArgs(sudo), 'test', '-L', resolvedTarget],
-        { stdio: 'ignore' },
+        { stdio: ['inherit', 'ignore', 'ignore'] },
       );
       const isFile =
         isSymlink.status !== 0 &&
         spawnSync(
           'sudo',
           [...sudoUserArgs(sudo), 'test', '-f', resolvedTarget],
-          { stdio: 'ignore' },
+          { stdio: ['inherit', 'ignore', 'ignore'] },
         ).status === 0;
       if (isFile) {
         const backupDir = path.dirname(t.backupPath);
@@ -923,7 +923,7 @@ function sudoWriteInPlace(t: SudoWriteTarget): void {
           spawnSync(
             'sudo',
             [...sudoUserArgs(sudo), 'test', '-d', resolvedBackup],
-            { stdio: 'ignore' },
+            { stdio: ['inherit', 'ignore', 'ignore'] },
           ).status === 0;
         if (backupIsDir) {
           throw new Error(`backup path is a directory: ${t.backupPath}`);
@@ -939,7 +939,7 @@ function sudoWriteInPlace(t: SudoWriteTarget): void {
     const symlinkCheck = spawnSync(
       'sudo',
       [...sudoUserArgs(sudo), 'test', '-L', resolvedTarget],
-      { stdio: 'ignore' },
+      { stdio: ['inherit', 'ignore', 'ignore'] },
     );
     if (symlinkCheck.status === 0) {
       throw new Error(
@@ -949,13 +949,13 @@ function sudoWriteInPlace(t: SudoWriteTarget): void {
     const existsCheck = spawnSync(
       'sudo',
       [...sudoUserArgs(sudo), 'test', '-e', resolvedTarget],
-      { stdio: 'ignore' },
+      { stdio: ['inherit', 'ignore', 'ignore'] },
     );
     if (existsCheck.status === 0) {
       const regularCheck = spawnSync(
         'sudo',
         [...sudoUserArgs(sudo), 'test', '-f', resolvedTarget],
-        { stdio: 'ignore' },
+        { stdio: ['inherit', 'ignore', 'ignore'] },
       );
       if (regularCheck.status !== 0) {
         throw new Error(
