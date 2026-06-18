@@ -117,7 +117,7 @@ export function resetCommand(): Command {
         process.exit(0);
       }
 
-      const total = writeTargets.length + deletions.length;
+      const total = writeTargets.length + deletions.length + sudoDeletions.size;
       if (total > 0) {
         console.log(
           `This will restore ${total} tracked file(s) to their pre-avanti state:\n`,

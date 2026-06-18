@@ -459,7 +459,7 @@ function checkDirSafe(
       } catch (e2) {
         const code2 = (e2 as NodeJS.ErrnoException).code;
         if (code2 === 'ENOENT') return; // dangling symlink — target is gone
-        if (code2 !== 'EACCES') throw e2;
+        if (code2 !== 'EACCES' && code2 !== 'EPERM') throw e2;
         // Symlink target is unreadable; fall back to sudo for mode only.
         const modeStr = getSudoFileMode(sudo, absDir);
         if (modeStr) mode = parseInt(modeStr, 8);
@@ -471,7 +471,7 @@ function checkDirSafe(
   } catch (e) {
     const code = (e as NodeJS.ErrnoException).code;
     if (code === 'ENOENT') return; // directory does not exist yet; mkdir -p will create it
-    if (code !== 'EACCES') throw e;
+    if (code !== 'EACCES' && code !== 'EPERM') throw e;
     // Fall back to privileged stat only when the directory is unreadable.
     const modeStr = getSudoFileMode(sudo, absDir);
     if (modeStr) mode = parseInt(modeStr, 8);
