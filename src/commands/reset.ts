@@ -9,7 +9,14 @@ import {
   computeSymlinkDiff,
   printDiffs,
 } from '../diff';
-import { atomicWrite, WriteTarget } from '../writer';
+import {
+  atomicWrite,
+  sudoAtomicWrite,
+  sudoAuth,
+  sudoDelete,
+  SudoWriteTarget,
+  WriteTarget,
+} from '../writer';
 import { confirm } from '../prompt';
 import { FileDiff } from '../diff';
 
@@ -46,6 +53,7 @@ export function resetCommand(): Command {
 
       const writeTargets: WriteTarget[] = [];
       const deletions: string[] = [];
+      const sudoDeletions = new Map<string, true | string>();
       const diffs: FileDiff[] = [];
       let hasError = false;
 
@@ -74,6 +82,7 @@ export function resetCommand(): Command {
                 targetPath: meta.absolutePath,
                 content: original,
                 symlinkTarget,
+                sudo: meta.sudo,
               });
               diffs.push(d);
             }
@@ -83,6 +92,7 @@ export function resetCommand(): Command {
               writeTargets.push({
                 targetPath: meta.absolutePath,
                 content: original,
+                sudo: meta.sudo,
               });
               diffs.push(d);
             }
@@ -90,7 +100,11 @@ export function resetCommand(): Command {
         } else {
           const d = computeDeleteDiff(meta.absolutePath);
           if (d.hasChanges) {
-            deletions.push(meta.absolutePath);
+            if (meta.sudo) {
+              sudoDeletions.set(meta.absolutePath, meta.sudo);
+            } else {
+              deletions.push(meta.absolutePath);
+            }
             diffs.push(d);
           }
         }
@@ -103,7 +117,7 @@ export function resetCommand(): Command {
         process.exit(0);
       }
 
-      const total = writeTargets.length + deletions.length;
+      const total = writeTargets.length + deletions.length + sudoDeletions.size;
       if (total > 0) {
         console.log(
           `This will restore ${total} tracked file(s) to their pre-avanti state:\n`,
@@ -124,10 +138,34 @@ export function resetCommand(): Command {
         }
       }
 
+      const isSudoTarget = (t: WriteTarget): t is SudoWriteTarget => !!t.sudo;
+      const regularTargets = writeTargets.filter((t) => !t.sudo);
+      const sudoTargets = writeTargets.filter(isSudoTarget);
+
+      const sudoValues = new Set<true | string>([
+        ...sudoTargets.map((t) => t.sudo),
+        ...sudoDeletions.values(),
+      ]);
+      for (const sv of sudoValues) {
+        try {
+          sudoAuth(sv);
+        } catch (err: unknown) {
+          console.error(err instanceof Error ? err.message : String(err));
+          process.exit(2);
+        }
+      }
+
       try {
-        atomicWrite(writeTargets, deletions);
+        // Perform privileged operations first: if sudo fails, the
+        // unprivileged writes have not yet happened, keeping the project in a
+        // consistent (if incomplete) state.
+        if (sudoTargets.length > 0) sudoAtomicWrite(sudoTargets);
+        for (const [p, sv] of sudoDeletions) {
+          sudoDelete(p, sv);
+        }
+        atomicWrite(regularTargets, deletions);
         console.log(
-          `Restored ${writeTargets.length} file(s), deleted ${deletions.length} file(s).`,
+          `Restored ${writeTargets.length} file(s), deleted ${deletions.length + sudoDeletions.size} file(s).`,
         );
       } catch (err: unknown) {
         console.error(

@@ -139,7 +139,7 @@ function sudoSymlinkWrite(t: SudoWriteTarget): void {
             'sudo',
             [...sudoUserArgs(sudo), 'test', '-d', resolvedBackup],
             {
-              stdio: 'ignore',
+              stdio: ['inherit', 'ignore', 'ignore'],
             },
           ).status === 0;
         if (backupIsDir) {
@@ -188,7 +188,7 @@ function sudoSymlinkWrite(t: SudoWriteTarget): void {
           'sudo',
           [...sudoUserArgs(sudo), 'test', '-d', resolvedTarget],
           {
-            stdio: 'ignore',
+            stdio: ['inherit', 'ignore', 'ignore'],
           },
         ).status === 0;
       if (destIsSymlinkToDir) {
@@ -247,7 +247,7 @@ export function sudoFileExists(
   const r = spawnSync(
     'sudo',
     [...sudoUserArgs(sudo), 'test', '-e', path.resolve(targetPath)],
-    { stdio: 'ignore' },
+    { stdio: ['inherit', 'ignore', 'ignore'] },
   );
   if (r.error) throw new Error(`sudo test -e failed: ${r.error.message}`);
   return r.status === 0;
@@ -260,7 +260,7 @@ export function sudoIsSymlink(
   const r = spawnSync(
     'sudo',
     [...sudoUserArgs(sudo), 'test', '-L', path.resolve(targetPath)],
-    { stdio: 'ignore' },
+    { stdio: ['inherit', 'ignore', 'ignore'] },
   );
   if (r.error) throw new Error(`sudo test -L failed: ${r.error.message}`);
   return r.status === 0;
@@ -273,7 +273,7 @@ export function sudoIsDirectory(
   const r = spawnSync(
     'sudo',
     [...sudoUserArgs(sudo), 'test', '-d', path.resolve(targetPath)],
-    { stdio: 'ignore' },
+    { stdio: ['inherit', 'ignore', 'ignore'] },
   );
   if (r.error) throw new Error(`sudo test -d failed: ${r.error.message}`);
   return r.status === 0;
@@ -283,7 +283,7 @@ export function sudoIsFile(sudo: true | string, targetPath: string): boolean {
   const r = spawnSync(
     'sudo',
     [...sudoUserArgs(sudo), 'test', '-f', path.resolve(targetPath)],
-    { stdio: 'ignore' },
+    { stdio: ['inherit', 'ignore', 'ignore'] },
   );
   if (r.error) throw new Error(`sudo test -f failed: ${r.error.message}`);
   return r.status === 0;
@@ -340,22 +340,38 @@ function sudoMv(sudo: true | string, src: string, dst: string): void {
 function getSudoOwnerUid(
   sudo: true | string,
   targetPath: string,
+  followSymlink = false,
 ): number | undefined {
   const absPath = path.resolve(targetPath);
-  const gnu = spawnSync(
-    'sudo',
-    [...sudoUserArgs(sudo), 'stat', '-L', '-c', '%u', '--', absPath],
-    { stdio: ['ignore', 'pipe', 'ignore'] },
-  );
+  // By default do NOT use -L: the caller may need the symlink's own UID, not
+  // its target's UID (the symlink owner can rename the link regardless of the
+  // parent's sticky bit, so checking the target UID would create a security
+  // bypass). Pass followSymlink=true when the caller specifically needs the
+  // target directory's owner (e.g. when stat failed with EACCES and we need
+  // to verify the target dir owner via sudo).
+  const gnuArgs = followSymlink
+    ? [...sudoUserArgs(sudo), 'stat', '-L', '-c', '%u', '--', absPath]
+    : [...sudoUserArgs(sudo), 'stat', '-c', '%u', '--', absPath];
+  // stdin: 'inherit' passes the parent's fd 0 to the child. stat(1) never
+  // reads stdin, so this is safe. On macOS, sudo locates cached credentials by
+  // TTY name from fd 0; 'ignore' (non-TTY /dev/null) breaks that lookup and
+  // causes a re-prompt. 'inherit' preserves the TTY in interactive sessions and
+  // degrades gracefully (non-TTY) in CI/daemon contexts.
+  const gnu = spawnSync('sudo', gnuArgs, {
+    stdio: ['inherit', 'pipe', 'ignore'],
+  });
   if (gnu.status === 0) {
     const uid = parseInt(gnu.stdout.toString().trim(), 10);
     if (!isNaN(uid)) return uid;
   }
-  const bsd = spawnSync(
-    'sudo',
-    [...sudoUserArgs(sudo), 'stat', '-f', '%u', absPath],
-    { stdio: ['ignore', 'pipe', 'ignore'] },
-  );
+  // BSD stat follows symlinks by default (without any flag). Use -h to lstat
+  // the symlink itself when followSymlink is false; -L to explicitly follow.
+  const bsdArgs = followSymlink
+    ? [...sudoUserArgs(sudo), 'stat', '-L', '-f', '%u', absPath]
+    : [...sudoUserArgs(sudo), 'stat', '-h', '-f', '%u', absPath];
+  const bsd = spawnSync('sudo', bsdArgs, {
+    stdio: ['inherit', 'pipe', 'ignore'],
+  });
   if (bsd.status === 0) {
     const uid = parseInt(bsd.stdout.toString().trim(), 10);
     if (!isNaN(uid)) return uid;
@@ -394,45 +410,165 @@ function buildTrustedUids(sudo: true | string): Set<number> {
 }
 
 // Returns the existing file's permission bits as an octal string via sudo stat,
-// trying GNU stat (-c %a) then BSD/macOS stat (-f %Lp). Returns undefined when
-// the file does not exist or the mode cannot be determined.
+// trying GNU stat (-L -c %a) then BSD/macOS stat (-L -f %Lp). Both use -L to
+// follow symlinks — the caller wants the target directory's mode, not the
+// symlink's own permissions. Returns undefined when the file does not exist or
+// the mode cannot be determined.
 export function getSudoFileMode(
   sudo: true | string,
   targetPath: string,
 ): string | undefined {
   const absPath = path.resolve(targetPath); // ensure never starts with '-'
+  // stdin: 'inherit' — see getSudoOwnerUid for rationale; same applies here.
   const gnu = spawnSync(
     'sudo',
     [...sudoUserArgs(sudo), 'stat', '-L', '-c', '%a', '--', absPath],
-    { stdio: ['ignore', 'pipe', 'ignore'] },
+    { stdio: ['inherit', 'pipe', 'ignore'] },
   );
   if (gnu.status === 0) return gnu.stdout.toString().trim() || undefined;
-  // BSD stat (macOS) does not support '--'; path.resolve() ensures no leading '-'
+  // BSD stat (macOS) does not support '--'; path.resolve() ensures no leading '-'.
+  // Use -L so that symlink ancestors are followed — without -L, stat returns the
+  // symlink's own permissions (typically 0777) which would cause a false-positive
+  // world-writable rejection.
   const bsd = spawnSync(
     'sudo',
-    [...sudoUserArgs(sudo), 'stat', '-f', '%Lp', absPath],
-    { stdio: ['ignore', 'pipe', 'ignore'] },
+    [...sudoUserArgs(sudo), 'stat', '-L', '-f', '%Lp', absPath],
+    { stdio: ['inherit', 'pipe', 'ignore'] },
   );
   if (bsd.status === 0) return bsd.stdout.toString().trim() || undefined;
   return undefined;
 }
 
 // Verifies that a directory is safe to use as a mktemp staging location.
-// Rejects directories that are group- or world-writable (mode & 0o022) because
-// any member of the group or any local user could rename the just-created temp
-// path to a symlink before the subsequent tee/cp opens it, redirecting the
-// privileged write. When trustedUids is provided, also rejects directories
-// whose owner UID is not in that set — the owner can always rename entries.
+// Rejects directories that are group- or world-writable (mode & 0o022) WITHOUT
+// the sticky bit — any member of the group or any local user could rename the
+// just-created temp path to a symlink before the subsequent tee/cp opens it,
+// redirecting the privileged write. Directories with the sticky bit set (e.g.
+// /tmp on Linux) are safe: the sticky bit prevents users from renaming entries
+// they do not own, neutralising the rename-to-symlink attack.
+// When trustedUids is provided, also rejects directories whose owner UID is not
+// in that set — the owner can always rename entries regardless of the sticky bit.
 function checkDirSafe(
   sudo: true | string,
   absDir: string,
   trustedUids: Set<number> | undefined,
   label: string,
 ): void {
-  const modeStr = getSudoFileMode(sudo, absDir);
-  if (modeStr) {
-    const mode = parseInt(modeStr, 8);
-    if (!isNaN(mode) && mode & 0o022) {
+  let mode: number | undefined;
+  let ownerUid: number | undefined;
+
+  // Prefer unprivileged stat — ancestor directories like /usr/local/bin are
+  // world-readable and do not require sudo. Avoiding sudo here prevents
+  // repeated password prompts when sudo credential caching is unavailable
+  // (e.g. timestamp_timeout=0 or when all stdio fds are non-TTY so macOS
+  // sudo cannot locate the cached credential).
+  //
+  // Use lstatSync so that symlink ancestors are visible. When a path component
+  // is a symlink inside a sticky world-writable directory (e.g. /tmp/link/),
+  // the sticky bit only prevents *other* users from renaming the symlink — the
+  // symlink's own owner can still rename it, redirecting privileged writes.
+  // Checking the symlink's UID (not its target's UID) catches this case.
+  try {
+    const lst = fs.lstatSync(absDir);
+    if (lst.isSymbolicLink()) {
+      // For symlinks: the owner can rename the link regardless of the parent's
+      // sticky bit. Use the symlink's UID for the ownership check.
+      ownerUid = lst.uid;
+      // Also capture the target directory's owner: mktemp/tee/mv operate
+      // inside the resolved target, so its owner can rename root-created temp
+      // entries regardless of the symlink's owner.
+      let targetOwnerUid: number | undefined;
+      // Follow the link to get the target directory's mode for the writable check.
+      try {
+        const s = fs.statSync(absDir);
+        mode = s.mode & 0o7777;
+        targetOwnerUid = s.uid;
+      } catch (e2) {
+        const code2 = (e2 as NodeJS.ErrnoException).code;
+        if (code2 === 'ENOENT') {
+          // Dangling symlink — target is gone, but ownerUid is already captured.
+          // Do NOT return: fall through so the symlink owner is still validated
+          // below. Without this check, an attacker can race between mkdir -p
+          // (symlink pointing at a real dir) and mktemp/mv (dangling) to bypass
+          // the trusted-UID guard entirely.
+        } else if (code2 !== 'EACCES' && code2 !== 'EPERM') {
+          throw e2;
+        } else {
+          // Symlink target is unreadable; fall back to sudo for mode and owner.
+          // followSymlink=true so sudo stat follows the link to the target dir.
+          const modeStr = getSudoFileMode(sudo, absDir);
+          if (modeStr) mode = parseInt(modeStr, 8);
+          targetOwnerUid = getSudoOwnerUid(sudo, absDir, true);
+        }
+      }
+      // Validate the target directory's owner separately from the symlink owner.
+      // Fail closed: if the target UID is unknown (dangling symlink or stat
+      // failure), we cannot verify safety — reject rather than skip the check.
+      if (trustedUids !== undefined) {
+        if (targetOwnerUid === undefined) {
+          throw new Error(
+            `sudo write: ${label} directory ${absDir} symlink target owner UID could not be determined; ` +
+              `cannot safely create a temp file here (TOCTOU risk).`,
+          );
+        }
+        if (!trustedUids.has(targetOwnerUid)) {
+          throw new Error(
+            `sudo write: ${label} directory ${absDir} symlink target is owned by UID ${targetOwnerUid}, ` +
+              `not a trusted identity; cannot safely create a temp file here (TOCTOU risk).`,
+          );
+        }
+      }
+    } else {
+      mode = lst.mode & 0o7777;
+      ownerUid = lst.uid;
+    }
+  } catch (e) {
+    const code = (e as NodeJS.ErrnoException).code;
+    if (code === 'ENOENT') return; // directory does not exist yet; mkdir -p will create it
+    if (code !== 'EACCES' && code !== 'EPERM') throw e;
+    // Fall back to privileged stat only when the directory is unreadable.
+    // getSudoFileMode uses -L so it follows symlinks to get the target's mode.
+    const modeStr = getSudoFileMode(sudo, absDir);
+    if (modeStr) mode = parseInt(modeStr, 8);
+    // Check whether the unreadable path is itself a symlink. If so, we must
+    // validate both the symlink's owner (can rename it) and the target dir's
+    // owner (mktemp/mv operate inside it), mirroring the lst.isSymbolicLink()
+    // branch above.
+    if (sudoIsSymlink(sudo, absDir)) {
+      ownerUid = getSudoOwnerUid(sudo, absDir, false); // symlink's own UID
+      const targetOwnerUid = getSudoOwnerUid(sudo, absDir, true); // target dir UID
+      if (trustedUids !== undefined) {
+        if (targetOwnerUid === undefined) {
+          throw new Error(
+            `sudo write: ${label} directory ${absDir} symlink target owner UID could not be determined; ` +
+              `cannot safely create a temp file here (TOCTOU risk).`,
+            { cause: e },
+          );
+        }
+        if (!trustedUids.has(targetOwnerUid)) {
+          throw new Error(
+            `sudo write: ${label} directory ${absDir} symlink target is owned by UID ${targetOwnerUid}, ` +
+              `not a trusted identity; cannot safely create a temp file here (TOCTOU risk).`,
+            { cause: e },
+          );
+        }
+      }
+    } else {
+      ownerUid = getSudoOwnerUid(sudo, absDir);
+    }
+  }
+
+  // A directory is unsafe when it is group- or world-writable AND does NOT have
+  // the sticky bit set. With the sticky bit (e.g. /tmp on Linux, mode 01777),
+  // only the file owner can rename or remove entries, so the rename-to-symlink
+  // attack is neutralised.
+  // Skip on Windows: NTFS ACLs do not map to Unix mode bits — fs.statSync
+  // returns synthetic values that may falsely flag drives as world-writable.
+  // The rename-to-symlink TOCTOU attack requires Unix filesystem semantics.
+  if (process.platform !== 'win32') {
+    const isWritable = mode !== undefined && !isNaN(mode) && !!(mode & 0o022);
+    const hasSticky = mode !== undefined && !isNaN(mode) && !!(mode & 0o1000);
+    if (isWritable && !hasSticky) {
       throw new Error(
         `sudo write: ${label} directory ${absDir} is group- or world-writable; ` +
           `cannot safely create a temp file here (TOCTOU risk).`,
@@ -440,8 +576,15 @@ function checkDirSafe(
     }
   }
   if (trustedUids !== undefined) {
-    const ownerUid = getSudoOwnerUid(sudo, absDir);
-    if (ownerUid !== undefined && !trustedUids.has(ownerUid)) {
+    // Fail closed: if the owner UID is unknown (stat fallback also failed),
+    // we cannot verify safety — reject rather than skip the check.
+    if (ownerUid === undefined) {
+      throw new Error(
+        `sudo write: ${label} directory ${absDir} owner UID could not be determined; ` +
+          `cannot safely create a temp file here (TOCTOU risk).`,
+      );
+    }
+    if (!trustedUids.has(ownerUid)) {
       throw new Error(
         `sudo write: ${label} directory ${absDir} is owned by UID ${ownerUid}, ` +
           `not a trusted identity; cannot safely create a temp file here (TOCTOU risk).`,
@@ -544,14 +687,14 @@ function sudoWriteMv(t: SudoWriteTarget): void {
       const isSymlink = spawnSync(
         'sudo',
         [...sudoUserArgs(sudo), 'test', '-L', resolvedTarget],
-        { stdio: 'ignore' },
+        { stdio: ['inherit', 'ignore', 'ignore'] },
       );
       const isFile =
         isSymlink.status !== 0 &&
         spawnSync(
           'sudo',
           [...sudoUserArgs(sudo), 'test', '-f', resolvedTarget],
-          { stdio: 'ignore' },
+          { stdio: ['inherit', 'ignore', 'ignore'] },
         ).status === 0;
       if (isFile) {
         const backupDir = path.dirname(t.backupPath);
@@ -593,7 +736,7 @@ function sudoWriteMv(t: SudoWriteTarget): void {
           spawnSync(
             'sudo',
             [...sudoUserArgs(sudo), 'test', '-d', resolvedBackup],
-            { stdio: 'ignore' },
+            { stdio: ['inherit', 'ignore', 'ignore'] },
           ).status === 0;
         if (backupIsDir) {
           throw new Error(`backup path is a directory: ${t.backupPath}`);
@@ -606,7 +749,7 @@ function sudoWriteMv(t: SudoWriteTarget): void {
     const resolvedTarget = path.resolve(t.targetPath);
     const destIsSymlink =
       spawnSync('sudo', [...sudoUserArgs(sudo), 'test', '-L', resolvedTarget], {
-        stdio: 'ignore',
+        stdio: ['inherit', 'ignore', 'ignore'],
       }).status === 0;
     if (destIsSymlink) {
       // Linux: sudoMv uses mv -T which atomically replaces any path including
@@ -619,7 +762,7 @@ function sudoWriteMv(t: SudoWriteTarget): void {
           spawnSync(
             'sudo',
             [...sudoUserArgs(sudo), 'test', '-d', resolvedTarget],
-            { stdio: 'ignore' },
+            { stdio: ['inherit', 'ignore', 'ignore'] },
           ).status === 0;
         if (destSymlinkIsDir) {
           sudoRun(sudo, ['rm', '-f', '--', resolvedTarget]);
@@ -631,7 +774,7 @@ function sudoWriteMv(t: SudoWriteTarget): void {
         spawnSync(
           'sudo',
           [...sudoUserArgs(sudo), 'test', '-d', resolvedTarget],
-          { stdio: 'ignore' },
+          { stdio: ['inherit', 'ignore', 'ignore'] },
         ).status === 0;
       if (destIsDir) {
         throw new Error(`target path is a directory: ${t.targetPath}`);
@@ -646,7 +789,7 @@ function sudoWriteMv(t: SudoWriteTarget): void {
       const landed = spawnSync(
         'sudo',
         [...sudoUserArgs(sudo), 'test', '-f', resolvedTarget],
-        { stdio: 'ignore' },
+        { stdio: ['inherit', 'ignore', 'ignore'] },
       );
       if (landed.status !== 0) {
         throw new Error(
@@ -755,14 +898,14 @@ function sudoWriteInPlace(t: SudoWriteTarget): void {
       const isSymlink = spawnSync(
         'sudo',
         [...sudoUserArgs(sudo), 'test', '-L', resolvedTarget],
-        { stdio: 'ignore' },
+        { stdio: ['inherit', 'ignore', 'ignore'] },
       );
       const isFile =
         isSymlink.status !== 0 &&
         spawnSync(
           'sudo',
           [...sudoUserArgs(sudo), 'test', '-f', resolvedTarget],
-          { stdio: 'ignore' },
+          { stdio: ['inherit', 'ignore', 'ignore'] },
         ).status === 0;
       if (isFile) {
         const backupDir = path.dirname(t.backupPath);
@@ -801,7 +944,7 @@ function sudoWriteInPlace(t: SudoWriteTarget): void {
           spawnSync(
             'sudo',
             [...sudoUserArgs(sudo), 'test', '-d', resolvedBackup],
-            { stdio: 'ignore' },
+            { stdio: ['inherit', 'ignore', 'ignore'] },
           ).status === 0;
         if (backupIsDir) {
           throw new Error(`backup path is a directory: ${t.backupPath}`);
@@ -817,7 +960,7 @@ function sudoWriteInPlace(t: SudoWriteTarget): void {
     const symlinkCheck = spawnSync(
       'sudo',
       [...sudoUserArgs(sudo), 'test', '-L', resolvedTarget],
-      { stdio: 'ignore' },
+      { stdio: ['inherit', 'ignore', 'ignore'] },
     );
     if (symlinkCheck.status === 0) {
       throw new Error(
@@ -827,13 +970,13 @@ function sudoWriteInPlace(t: SudoWriteTarget): void {
     const existsCheck = spawnSync(
       'sudo',
       [...sudoUserArgs(sudo), 'test', '-e', resolvedTarget],
-      { stdio: 'ignore' },
+      { stdio: ['inherit', 'ignore', 'ignore'] },
     );
     if (existsCheck.status === 0) {
       const regularCheck = spawnSync(
         'sudo',
         [...sudoUserArgs(sudo), 'test', '-f', resolvedTarget],
-        { stdio: 'ignore' },
+        { stdio: ['inherit', 'ignore', 'ignore'] },
       );
       if (regularCheck.status !== 0) {
         throw new Error(
