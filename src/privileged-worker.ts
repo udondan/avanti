@@ -163,54 +163,20 @@ export function handleWriteMv(op: WriteMvOp, trustedUids?: Set<number>): void {
     fs.closeSync(tfd);
     tfd = undefined;
 
-    // On non-Linux, mv follows symlinks-to-directories; rename(2) (fs.renameSync)
-    // does not. Pre-remove only when the destination is a symlink pointing at a
-    // directory to avoid rename creating a file inside the dir.
-    if (process.platform !== 'linux') {
-      try {
-        const lst = fs.lstatSync(resolvedTarget);
-        if (lst.isSymbolicLink()) {
-          try {
-            if (fs.statSync(resolvedTarget).isDirectory()) {
-              fs.unlinkSync(resolvedTarget);
-            }
-          } catch {
-            // best-effort pre-remove
-          }
-        } else if (lst.isDirectory()) {
-          throw new Error(`target path is a directory: ${op.targetPath}`);
-        }
-      } catch (e) {
-        if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
+    // rename(2) is atomic and never follows symlinks on any POSIX platform.
+    // Refuse real directories (rename(2) would fail with EISDIR anyway, but
+    // this gives a cleaner error message). Symlinks-to-directories are fine —
+    // rename(2) replaces the symlink itself, not its target.
+    try {
+      const lst = fs.lstatSync(resolvedTarget);
+      if (!lst.isSymbolicLink() && lst.isDirectory()) {
+        throw new Error(`target path is a directory: ${op.targetPath}`);
       }
-    } else {
-      try {
-        const lst = fs.lstatSync(resolvedTarget);
-        if (!lst.isSymbolicLink() && lst.isDirectory()) {
-          throw new Error(`target path is a directory: ${op.targetPath}`);
-        }
-      } catch (e) {
-        if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
-      }
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
     }
 
     fs.renameSync(tmpPath, resolvedTarget);
-
-    // On non-Linux, verify the file landed (rename is not -T safe across renames).
-    if (process.platform !== 'linux') {
-      try {
-        const lst = fs.lstatSync(resolvedTarget);
-        if (!lst.isFile() || lst.isSymbolicLink()) {
-          throw new Error(
-            `file did not land at expected path ${op.targetPath} (destination may have been swapped)`,
-          );
-        }
-      } catch {
-        throw new Error(
-          `file did not land at expected path ${op.targetPath} (destination may have been swapped)`,
-        );
-      }
-    }
   } catch (err) {
     if (tfd !== undefined) {
       try {
@@ -447,26 +413,6 @@ export function handleWriteSymlink(
   try {
     fs.symlinkSync(op.symlinkTarget, tmpPath);
 
-    // On non-Linux, a symlink pointing at a directory would cause rename to
-    // place tmpPath inside the target dir rather than replacing the symlink.
-    // Pre-remove only that case.
-    if (process.platform !== 'linux') {
-      try {
-        const lst = fs.lstatSync(resolvedTarget);
-        if (lst.isSymbolicLink()) {
-          try {
-            if (fs.statSync(resolvedTarget).isDirectory()) {
-              fs.unlinkSync(resolvedTarget);
-            }
-          } catch {
-            // best-effort pre-remove
-          }
-        }
-      } catch (e) {
-        if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
-      }
-    }
-
     fs.renameSync(tmpPath, resolvedTarget);
   } catch (err) {
     try {
@@ -563,11 +509,15 @@ function checkAncestorsSafeAsRoot(
   trustedUids: Set<number>,
   label: string,
 ): void {
-  const resolved = path.resolve(targetPath);
-  const parts = resolved.split(path.sep).filter(Boolean);
-  for (let i = 1; i < parts.length; i++) {
-    const dir = path.sep + parts.slice(0, i).join(path.sep);
-    checkDirSafeAsRoot(dir, trustedUids, label);
+  const ancestors: string[] = [];
+  let anc = path.resolve(targetPath);
+  while (true) {
+    anc = path.dirname(anc);
+    ancestors.unshift(anc);
+    if (anc === path.dirname(anc)) break;
+  }
+  for (const ancestor of ancestors) {
+    checkDirSafeAsRoot(ancestor, trustedUids, label);
   }
 }
 
