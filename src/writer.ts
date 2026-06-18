@@ -39,16 +39,20 @@ function runPrivilegedWorker(sudo: true | string, ops: WriteOp[]): void {
     // path so sudo -u <user> can exec it. Always keep process.execPath as
     // the Node binary — substituting a system Node risks running the ES2022
     // worker on an incompatible older runtime.
-    const tmpWorker = path.join(
+    // Use a private subdirectory so the worker file cannot be swapped out by
+    // another unprivileged process between the copy and the sudo exec.
+    const tmpWorkerDir = path.join(
       os.tmpdir(),
-      `.avanti-worker-${crypto.randomBytes(5).toString('hex')}.js`,
+      `.avanti-worker-${crypto.randomBytes(5).toString('hex')}`,
     );
+    fs.mkdirSync(tmpWorkerDir, { recursive: true, mode: 0o755 });
+    const tmpWorker = path.join(tmpWorkerDir, 'privileged-worker.js');
     fs.copyFileSync(workerPath, tmpWorker);
     fs.chmodSync(tmpWorker, 0o644);
     resolvedWorkerPath = tmpWorker;
     cleanup = () => {
       try {
-        fs.unlinkSync(tmpWorker);
+        fs.rmSync(tmpWorkerDir, { recursive: true, force: true });
       } catch {
         // best-effort cleanup
       }
@@ -61,7 +65,10 @@ function runPrivilegedWorker(sudo: true | string, ops: WriteOp[]): void {
       'sudo',
       [...sudoUserArgs(sudo), nodeExec, resolvedWorkerPath],
       {
-        input: JSON.stringify({ ops }),
+        input: JSON.stringify({
+          ops,
+          trustedUids: [...buildTrustedUids(sudo)],
+        }),
         stdio: ['pipe', 'pipe', 'inherit'],
         encoding: 'utf8',
         maxBuffer: 10 * 1024 * 1024,
