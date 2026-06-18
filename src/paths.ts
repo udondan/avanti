@@ -40,7 +40,7 @@ export function resolveTargetPath(
       const resolved =
         target.endsWith('/') || target.endsWith(path.sep)
           ? path.resolve(target, relPath)
-          : target;
+          : path.resolve(target);
       assertWithinWorkingDir(resolved, workingDir);
       return resolved;
     }
