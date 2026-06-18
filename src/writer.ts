@@ -340,25 +340,31 @@ function sudoMv(sudo: true | string, src: string, dst: string): void {
 function getSudoOwnerUid(
   sudo: true | string,
   targetPath: string,
+  followSymlink = false,
 ): number | undefined {
   const absPath = path.resolve(targetPath);
-  // Do NOT use -L: we need the symlink's own UID, not its target's UID.
-  // The symlink owner can rename the link regardless of the parent's sticky bit,
-  // so checking the target's UID would create a security bypass.
-  const gnu = spawnSync(
-    'sudo',
-    [...sudoUserArgs(sudo), 'stat', '-c', '%u', '--', absPath],
-    { stdio: ['ignore', 'pipe', 'ignore'] },
-  );
+  // By default do NOT use -L: the caller may need the symlink's own UID, not
+  // its target's UID (the symlink owner can rename the link regardless of the
+  // parent's sticky bit, so checking the target UID would create a security
+  // bypass). Pass followSymlink=true when the caller specifically needs the
+  // target directory's owner (e.g. when stat failed with EACCES and we need
+  // to verify the target dir owner via sudo).
+  const gnuArgs = followSymlink
+    ? [...sudoUserArgs(sudo), 'stat', '-L', '-c', '%u', '--', absPath]
+    : [...sudoUserArgs(sudo), 'stat', '-c', '%u', '--', absPath];
+  const gnu = spawnSync('sudo', gnuArgs, {
+    stdio: ['ignore', 'pipe', 'ignore'],
+  });
   if (gnu.status === 0) {
     const uid = parseInt(gnu.stdout.toString().trim(), 10);
     if (!isNaN(uid)) return uid;
   }
-  const bsd = spawnSync(
-    'sudo',
-    [...sudoUserArgs(sudo), 'stat', '-f', '%u', absPath],
-    { stdio: ['ignore', 'pipe', 'ignore'] },
-  );
+  const bsdArgs = followSymlink
+    ? [...sudoUserArgs(sudo), 'stat', '-L', '-f', '%u', absPath]
+    : [...sudoUserArgs(sudo), 'stat', '-f', '%u', absPath];
+  const bsd = spawnSync('sudo', bsdArgs, {
+    stdio: ['ignore', 'pipe', 'ignore'],
+  });
   if (bsd.status === 0) {
     const uid = parseInt(bsd.stdout.toString().trim(), 10);
     if (!isNaN(uid)) return uid;
@@ -480,9 +486,11 @@ function checkDirSafe(
         } else if (code2 !== 'EACCES' && code2 !== 'EPERM') {
           throw e2;
         } else {
-          // Symlink target is unreadable; fall back to sudo for mode only.
+          // Symlink target is unreadable; fall back to sudo for mode and owner.
+          // followSymlink=true so sudo stat follows the link to the target dir.
           const modeStr = getSudoFileMode(sudo, absDir);
           if (modeStr) mode = parseInt(modeStr, 8);
+          targetOwnerUid = getSudoOwnerUid(sudo, absDir, true);
         }
       }
       // Validate the target directory's owner separately from the symlink owner.
