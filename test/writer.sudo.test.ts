@@ -278,7 +278,7 @@ describe('sudoAtomicWrite — mv path', () => {
     );
 
     const target: SudoWriteTarget = {
-      targetPath: '/tmp/test.txt',
+      targetPath: '/etc/test.txt',
       content: Buffer.from('hi'),
       sudo: 'nobody',
     };

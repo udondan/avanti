@@ -429,18 +429,33 @@ function checkDirSafe(
   trustedUids: Set<number> | undefined,
   label: string,
 ): void {
-  const modeStr = getSudoFileMode(sudo, absDir);
-  if (modeStr) {
-    const mode = parseInt(modeStr, 8);
-    if (!isNaN(mode) && mode & 0o022) {
-      throw new Error(
-        `sudo write: ${label} directory ${absDir} is group- or world-writable; ` +
-          `cannot safely create a temp file here (TOCTOU risk).`,
-      );
-    }
+  let mode: number | undefined;
+  let ownerUid: number | undefined;
+
+  // Prefer unprivileged stat — ancestor directories like /usr/local/bin are
+  // world-readable and do not require sudo. Avoiding sudo here prevents
+  // repeated password prompts when sudo credential caching is unavailable
+  // (e.g. timestamp_timeout=0 or when all stdio fds are non-TTY so macOS
+  // sudo cannot locate the cached credential).
+  try {
+    const s = fs.statSync(absDir);
+    mode = s.mode & 0o777;
+    ownerUid = s.uid;
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== 'EACCES') throw e;
+    // Fall back to privileged stat only when the directory is unreadable.
+    const modeStr = getSudoFileMode(sudo, absDir);
+    if (modeStr) mode = parseInt(modeStr, 8);
+    ownerUid = getSudoOwnerUid(sudo, absDir);
+  }
+
+  if (mode !== undefined && !isNaN(mode) && mode & 0o022) {
+    throw new Error(
+      `sudo write: ${label} directory ${absDir} is group- or world-writable; ` +
+        `cannot safely create a temp file here (TOCTOU risk).`,
+    );
   }
   if (trustedUids !== undefined) {
-    const ownerUid = getSudoOwnerUid(sudo, absDir);
     if (ownerUid !== undefined && !trustedUids.has(ownerUid)) {
       throw new Error(
         `sudo write: ${label} directory ${absDir} is owned by UID ${ownerUid}, ` +
