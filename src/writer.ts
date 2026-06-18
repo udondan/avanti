@@ -296,7 +296,7 @@ export function sudoReadlink(
   const r = spawnSync(
     'sudo',
     [...sudoUserArgs(sudo), 'readlink', path.resolve(targetPath)],
-    { stdio: ['inherit', 'pipe', 'ignore'] },
+    { stdio: ['ignore', 'pipe', 'ignore'] },
   );
   if (r.error) throw new Error(`sudo readlink failed: ${r.error.message}`);
   if (r.status !== 0) return null;
