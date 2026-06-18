@@ -57,56 +57,65 @@ describe('handleWriteMv', () => {
     expect(fs.readFileSync(targetPath, 'utf8')).toBe('hello world');
   });
 
-  it('preserves the existing file mode when no mode is specified', () => {
-    const targetPath = path.join(tmpDir, 'existing.txt');
-    fs.writeFileSync(targetPath, 'old content');
-    fs.chmodSync(targetPath, 0o755);
+  it.skipIf(isWindows)(
+    'preserves the existing file mode when no mode is specified',
+    () => {
+      const targetPath = path.join(tmpDir, 'existing.txt');
+      fs.writeFileSync(targetPath, 'old content');
+      fs.chmodSync(targetPath, 0o755);
 
-    const contentSrc = writeContentSrc('new content');
-    handleWriteMv({
-      type: 'write-mv',
-      targetPath,
-      contentSrc,
-      defaultMode: '0644',
-    });
+      const contentSrc = writeContentSrc('new content');
+      handleWriteMv({
+        type: 'write-mv',
+        targetPath,
+        contentSrc,
+        defaultMode: '0644',
+      });
 
-    const mode = fs.statSync(targetPath).mode & 0o7777;
-    expect(mode).toBe(0o755);
-  });
+      const mode = fs.statSync(targetPath).mode & 0o7777;
+      expect(mode).toBe(0o755);
+    },
+  );
 
-  it('uses defaultMode when target does not exist and no mode is given', () => {
-    const targetPath = path.join(tmpDir, 'brand-new.txt');
-    const contentSrc = writeContentSrc('content');
+  it.skipIf(isWindows)(
+    'uses defaultMode when target does not exist and no mode is given',
+    () => {
+      const targetPath = path.join(tmpDir, 'brand-new.txt');
+      const contentSrc = writeContentSrc('content');
 
-    handleWriteMv({
-      type: 'write-mv',
-      targetPath,
-      contentSrc,
-      defaultMode: '0640',
-    });
+      handleWriteMv({
+        type: 'write-mv',
+        targetPath,
+        contentSrc,
+        defaultMode: '0640',
+      });
 
-    const mode = fs.statSync(targetPath).mode & 0o7777;
-    expect(mode).toBe(0o640);
-  });
+      const mode = fs.statSync(targetPath).mode & 0o7777;
+      expect(mode).toBe(0o640);
+    },
+  );
 
-  it('uses the explicit mode from the op when provided', () => {
-    const targetPath = path.join(tmpDir, 'explicit-mode.txt');
-    // Create a pre-existing file with a different mode.
-    fs.writeFileSync(targetPath, 'old');
-    fs.chmodSync(targetPath, 0o755);
+  it.skipIf(isWindows)(
+    'uses the explicit mode from the op when provided',
+    () => {
+      const targetPath = path.join(tmpDir, 'explicit-mode.txt');
+      // Create a pre-existing file with a different mode.
+      fs.writeFileSync(targetPath, 'old');
+      fs.chmodSync(targetPath, 0o755);
 
-    const contentSrc = writeContentSrc('new');
-    handleWriteMv({
-      type: 'write-mv',
-      targetPath,
-      contentSrc,
-      mode: '0600',
-      defaultMode: '0644',
-    });
+      const contentSrc = writeContentSrc('new');
+      handleWriteMv({
+        type: 'write-mv',
+        targetPath,
+        contentSrc,
+        mode: '0600',
+        defaultMode: '0644',
+      });
 
-    const mode = fs.statSync(targetPath).mode & 0o7777;
-    expect(mode).toBe(0o600);
-  });
+      const mode = fs.statSync(targetPath).mode & 0o7777;
+      expect(mode).toBe(0o600);
+    },
+  );
 
   it('creates parent directories if they do not exist', () => {
     const targetPath = path.join(tmpDir, 'deeply', 'nested', 'dir', 'file.txt');
@@ -122,27 +131,30 @@ describe('handleWriteMv', () => {
     expect(fs.readFileSync(targetPath, 'utf8')).toBe('deep');
   });
 
-  it('creates a backup of an existing regular file at backupPath with same mode', () => {
-    const targetPath = path.join(tmpDir, 'target.txt');
-    fs.writeFileSync(targetPath, 'original content');
-    fs.chmodSync(targetPath, 0o750);
+  it.skipIf(isWindows)(
+    'creates a backup of an existing regular file at backupPath with same mode',
+    () => {
+      const targetPath = path.join(tmpDir, 'target.txt');
+      fs.writeFileSync(targetPath, 'original content');
+      fs.chmodSync(targetPath, 0o750);
 
-    const backupPath = path.join(tmpDir, 'backups', 'target.txt.bak');
-    const contentSrc = writeContentSrc('new content');
+      const backupPath = path.join(tmpDir, 'backups', 'target.txt.bak');
+      const contentSrc = writeContentSrc('new content');
 
-    handleWriteMv({
-      type: 'write-mv',
-      targetPath,
-      contentSrc,
-      defaultMode: '0644',
-      backupPath,
-    });
+      handleWriteMv({
+        type: 'write-mv',
+        targetPath,
+        contentSrc,
+        defaultMode: '0644',
+        backupPath,
+      });
 
-    expect(fs.existsSync(backupPath)).toBe(true);
-    expect(fs.readFileSync(backupPath, 'utf8')).toBe('original content');
-    const backupMode = fs.statSync(backupPath).mode & 0o7777;
-    expect(backupMode).toBe(0o750);
-  });
+      expect(fs.existsSync(backupPath)).toBe(true);
+      expect(fs.readFileSync(backupPath, 'utf8')).toBe('original content');
+      const backupMode = fs.statSync(backupPath).mode & 0o7777;
+      expect(backupMode).toBe(0o750);
+    },
+  );
 
   it('cleans up the temp file even when the write fails (target is a real directory)', () => {
     // Create a real directory at targetPath so rename will fail.

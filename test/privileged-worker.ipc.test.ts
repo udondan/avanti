@@ -9,7 +9,9 @@ import type { WorkerRequest, WorkerResponse } from '../src/privileged-worker';
 // These tests spawn dist/privileged-worker.js (not sudo) — they verify the
 // full stdin/stdout IPC protocol end-to-end against paths in os.tmpdir().
 // They require the project to have been built first (mise run build).
+// Skipped on Windows: the build step only runs on Linux in CI.
 const WORKER = path.resolve(__dirname, '../dist/privileged-worker.js');
+const workerExists = fs.existsSync(WORKER);
 
 function runWorker(request: WorkerRequest): WorkerResponse {
   const r = spawnSync('node', [WORKER], {
@@ -39,7 +41,7 @@ afterEach(() => {
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
 
-describe('IPC protocol — write-mv', () => {
+describe.skipIf(!workerExists)('IPC protocol — write-mv', () => {
   it('creates a new file and returns ok:true', () => {
     const contentSrc = path.join(tmpDir, 'content.dat');
     fs.writeFileSync(contentSrc, 'hello ipc');
@@ -117,7 +119,7 @@ describe('IPC protocol — write-mv', () => {
   });
 });
 
-describe.skipIf(process.platform === 'win32')(
+describe.skipIf(!workerExists || process.platform === 'win32')(
   'IPC protocol — write-symlink',
   () => {
     it('creates a new symlink and returns ok:true', () => {
@@ -135,7 +137,7 @@ describe.skipIf(process.platform === 'win32')(
   },
 );
 
-describe('IPC protocol — write-in-place', () => {
+describe.skipIf(!workerExists)('IPC protocol — write-in-place', () => {
   it('overwrites an existing file in-place', () => {
     const targetPath = path.join(tmpDir, 'existing.txt');
     fs.writeFileSync(targetPath, 'original');
@@ -163,7 +165,7 @@ describe('IPC protocol — write-in-place', () => {
   });
 });
 
-describe('IPC protocol — delete', () => {
+describe.skipIf(!workerExists)('IPC protocol — delete', () => {
   it('deletes an existing file', () => {
     const targetPath = path.join(tmpDir, 'to-delete.txt');
     fs.writeFileSync(targetPath, 'gone');
@@ -185,7 +187,7 @@ describe('IPC protocol — delete', () => {
   });
 });
 
-describe('IPC protocol — malformed input', () => {
+describe.skipIf(!workerExists)('IPC protocol — malformed input', () => {
   it('returns ok:false and exits non-zero on invalid JSON', () => {
     const r = spawnSync('node', [WORKER], {
       input: 'not json at all',
