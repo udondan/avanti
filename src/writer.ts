@@ -30,13 +30,15 @@ function runPrivilegedWorker(sudo: true | string, ops: WriteOp[]): void {
     : path.join(__dirname, 'privileged-worker.js');
 
   let resolvedWorkerPath = workerPath;
-  let nodeExec = process.execPath;
+  const nodeExec = process.execPath;
   let cleanup: (() => void) | undefined;
 
   if (typeof sudo === 'string' && fs.existsSync(workerPath)) {
     // Named-user sudo: the target user may not be able to read the worker
     // from a private project directory. Copy it to a world-readable temp
-    // path with O_EXCL creation so sudo -u <user> can exec it.
+    // path so sudo -u <user> can exec it. Always keep process.execPath as
+    // the Node binary — substituting a system Node risks running the ES2022
+    // worker on an incompatible older runtime.
     const tmpWorker = path.join(
       os.tmpdir(),
       `.avanti-worker-${crypto.randomBytes(5).toString('hex')}.js`,
@@ -51,22 +53,6 @@ function runPrivilegedWorker(sudo: true | string, ops: WriteOp[]): void {
         // best-effort cleanup
       }
     };
-
-    // Prefer a system-installed Node binary so the named user can exec it
-    // even when process.execPath points to a user-local install (e.g. nvm).
-    for (const candidate of [
-      '/usr/bin/node',
-      '/usr/local/bin/node',
-      '/usr/bin/nodejs',
-    ]) {
-      try {
-        fs.accessSync(candidate, fs.constants.X_OK);
-        nodeExec = candidate;
-        break;
-      } catch {
-        // candidate not available
-      }
-    }
   }
 
   let result;

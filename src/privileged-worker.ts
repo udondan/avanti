@@ -378,9 +378,7 @@ export function handleDelete(op: DeleteOp): void {
     fs.unlinkSync(path.resolve(op.targetPath));
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code !== 'ENOENT') {
-      console.warn(
-        `Warning: could not delete ${op.targetPath}: ${(e as Error).message}`,
-      );
+      throw e;
     }
   }
 }

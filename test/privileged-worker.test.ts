@@ -338,6 +338,17 @@ describe('handleDelete', () => {
 
     expect(() => handleDelete({ type: 'delete', targetPath })).not.toThrow();
   });
+
+  it.skipIf(isWindows)(
+    'throws when deletion fails for a reason other than ENOENT',
+    () => {
+      // Create a directory at the target path — unlinkSync rejects directories.
+      const targetPath = path.join(tmpDir, 'iam-a-dir');
+      fs.mkdirSync(targetPath);
+
+      expect(() => handleDelete({ type: 'delete', targetPath })).toThrow();
+    },
+  );
 });
 
 // ---------------------------------------------------------------------------

@@ -174,6 +174,18 @@ describe.skipIf(!workerExists)('IPC protocol — delete', () => {
 
     expect(resp.results[0].ok).toBe(true);
   });
+
+  it('returns ok:false when deletion fails (target is a directory)', () => {
+    const targetPath = path.join(tmpDir, 'a-dir');
+    fs.mkdirSync(targetPath);
+
+    const resp = runWorker({
+      ops: [{ type: 'delete', targetPath }],
+    });
+
+    expect(resp.results[0].ok).toBe(false);
+    expect(resp.results[0].error).toBeDefined();
+  });
 });
 
 describe.skipIf(!workerExists)('IPC protocol — malformed input', () => {
