@@ -303,6 +303,24 @@ describe('history integration', () => {
       expect(readOutput('out.txt')).toBe('v1');
     });
 
+    it('handles repeated pull → revert cycles without getting stuck', () => {
+      const src = writeSource('src.txt', 'content');
+      writeConfig(`files:\n  ./brand-new.txt:\n    src: ${src}\n`);
+
+      // Cycle 3 times: pull (creates file) → revert (deletes file)
+      for (let i = 0; i < 3; i++) {
+        run('pull --yes');
+        expect(existsSync(join(tmpDir, 'brand-new.txt'))).toBe(true);
+        run('revert --yes');
+        expect(existsSync(join(tmpDir, 'brand-new.txt'))).toBe(false);
+      }
+
+      // 4th pull must still detect a change and write the file
+      const { stdout } = run('pull --yes');
+      expect(stdout).not.toContain('No changes');
+      expect(existsSync(join(tmpDir, 'brand-new.txt'))).toBe(true);
+    });
+
     it('prints "nothing to revert" when already at target state', () => {
       writeSource('out.txt', 'original');
       const src = writeSource('src.txt', 'v1');
