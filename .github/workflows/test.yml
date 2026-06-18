@@ -74,7 +74,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo mkdir -p /usr/local/avanti-sudo-test
-          sudo chmod 700 /usr/local/avanti-sudo-test
+          sudo chmod 755 /usr/local/avanti-sudo-test
           mkdir -p /tmp/sudo-bin
           cat > /tmp/sudo-bin/sudo << 'WRAPPER'
           #!/bin/sh
