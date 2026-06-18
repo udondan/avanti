@@ -342,9 +342,12 @@ function getSudoOwnerUid(
   targetPath: string,
 ): number | undefined {
   const absPath = path.resolve(targetPath);
+  // Do NOT use -L: we need the symlink's own UID, not its target's UID.
+  // The symlink owner can rename the link regardless of the parent's sticky bit,
+  // so checking the target's UID would create a security bypass.
   const gnu = spawnSync(
     'sudo',
-    [...sudoUserArgs(sudo), 'stat', '-L', '-c', '%u', '--', absPath],
+    [...sudoUserArgs(sudo), 'stat', '-c', '%u', '--', absPath],
     { stdio: ['ignore', 'pipe', 'ignore'] },
   );
   if (gnu.status === 0) {
@@ -394,8 +397,10 @@ function buildTrustedUids(sudo: true | string): Set<number> {
 }
 
 // Returns the existing file's permission bits as an octal string via sudo stat,
-// trying GNU stat (-c %a) then BSD/macOS stat (-f %Lp). Returns undefined when
-// the file does not exist or the mode cannot be determined.
+// trying GNU stat (-L -c %a) then BSD/macOS stat (-L -f %Lp). Both use -L to
+// follow symlinks — the caller wants the target directory's mode, not the
+// symlink's own permissions. Returns undefined when the file does not exist or
+// the mode cannot be determined.
 export function getSudoFileMode(
   sudo: true | string,
   targetPath: string,
@@ -407,10 +412,13 @@ export function getSudoFileMode(
     { stdio: ['ignore', 'pipe', 'ignore'] },
   );
   if (gnu.status === 0) return gnu.stdout.toString().trim() || undefined;
-  // BSD stat (macOS) does not support '--'; path.resolve() ensures no leading '-'
+  // BSD stat (macOS) does not support '--'; path.resolve() ensures no leading '-'.
+  // Use -L so that symlink ancestors are followed — without -L, stat returns the
+  // symlink's own permissions (typically 0777) which would cause a false-positive
+  // world-writable rejection.
   const bsd = spawnSync(
     'sudo',
-    [...sudoUserArgs(sudo), 'stat', '-f', '%Lp', absPath],
+    [...sudoUserArgs(sudo), 'stat', '-L', '-f', '%Lp', absPath],
     { stdio: ['ignore', 'pipe', 'ignore'] },
   );
   if (bsd.status === 0) return bsd.stdout.toString().trim() || undefined;
