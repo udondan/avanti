@@ -161,9 +161,7 @@ export function resetCommand(): Command {
         // consistent (if incomplete) state.
         if (sudoTargets.length > 0) sudoAtomicWrite(sudoTargets);
         for (const [p, sv] of sudoDeletions) {
-          if (!sudoDelete(p, sv)) {
-            throw new Error(`sudo delete failed for ${p}`);
-          }
+          sudoDelete(p, sv);
         }
         atomicWrite(regularTargets, deletions);
         console.log(
