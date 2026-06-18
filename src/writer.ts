@@ -458,13 +458,18 @@ function checkDirSafe(
   // the sticky bit set. With the sticky bit (e.g. /tmp on Linux, mode 01777),
   // only the file owner can rename or remove entries, so the rename-to-symlink
   // attack is neutralised.
-  const isWritable = mode !== undefined && !isNaN(mode) && !!(mode & 0o022);
-  const hasSticky = mode !== undefined && !isNaN(mode) && !!(mode & 0o1000);
-  if (isWritable && !hasSticky) {
-    throw new Error(
-      `sudo write: ${label} directory ${absDir} is group- or world-writable; ` +
-        `cannot safely create a temp file here (TOCTOU risk).`,
-    );
+  // Skip on Windows: NTFS ACLs do not map to Unix mode bits — fs.statSync
+  // returns synthetic values that may falsely flag drives as world-writable.
+  // The rename-to-symlink TOCTOU attack requires Unix filesystem semantics.
+  if (process.platform !== 'win32') {
+    const isWritable = mode !== undefined && !isNaN(mode) && !!(mode & 0o022);
+    const hasSticky = mode !== undefined && !isNaN(mode) && !!(mode & 0o1000);
+    if (isWritable && !hasSticky) {
+      throw new Error(
+        `sudo write: ${label} directory ${absDir} is group- or world-writable; ` +
+          `cannot safely create a temp file here (TOCTOU risk).`,
+      );
+    }
   }
   if (trustedUids !== undefined) {
     if (ownerUid !== undefined && !trustedUids.has(ownerUid)) {
