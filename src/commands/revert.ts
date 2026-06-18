@@ -93,6 +93,15 @@ export function revertCommand(): Command {
                     isSymlink?: boolean;
                   }
                 >(); // no prior pull → everything goes to pre-avanti state
+
+          // A file with wasNew=true in the last pull was created from scratch (it
+          // did not exist on disk before that pull ran). Even if an earlier pull
+          // also created it, the correct "before last pull" state is: not present.
+          for (const ref of pulls[0].files) {
+            if (ref.wasNew) {
+              snapshot.delete(ref.absolutePath);
+            }
+          }
         } else {
           snapshot = history.getFilesAtPull(targetPullId);
         }
