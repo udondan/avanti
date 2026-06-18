@@ -53,6 +53,13 @@ describe('resolveTargetPath', () => {
     expect(resolveTargetPath({ target: absTarget }, '', wdir)).toBe(absTarget);
   });
 
+  it('allows absolute directory target within workingDir', () => {
+    const absDir = path.join(wdir, 'scripts') + path.sep;
+    expect(resolveTargetPath({ target: absDir }, 'foo/bar.sh', wdir)).toBe(
+      path.join(wdir, 'scripts', 'foo', 'bar.sh'),
+    );
+  });
+
   it('allows absolute target when workingDir is root', () => {
     const absTarget = path.join(root, 'etc', 'hosts');
     expect(resolveTargetPath({ target: absTarget }, '', root)).toBe(absTarget);
