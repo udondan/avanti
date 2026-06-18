@@ -41,10 +41,29 @@ describe('resolveTargetPath', () => {
     ).toThrow('escapes working directory');
   });
 
-  it('throws on absolute target when workingDir is not root', () => {
+  it('throws on absolute target that escapes workingDir', () => {
     const absTarget = path.join(root, 'etc', 'passwd');
     expect(() => resolveTargetPath({ target: absTarget }, '', wdir)).toThrow(
-      'Absolute target path',
+      'escapes working directory',
+    );
+  });
+
+  it('allows absolute target within workingDir', () => {
+    const absTarget = path.join(wdir, 'foo.txt');
+    expect(resolveTargetPath({ target: absTarget }, '', wdir)).toBe(absTarget);
+  });
+
+  it('allows absolute directory target within workingDir', () => {
+    const absDir = path.join(wdir, 'scripts') + path.sep;
+    expect(resolveTargetPath({ target: absDir }, 'foo/bar.sh', wdir)).toBe(
+      path.join(wdir, 'scripts', 'foo', 'bar.sh'),
+    );
+  });
+
+  it('throws on absolute target with .. segments that escape workingDir', () => {
+    const absTarget = wdir + path.sep + '..' + path.sep + 'escaped.txt';
+    expect(() => resolveTargetPath({ target: absTarget }, '', wdir)).toThrow(
+      'escapes working directory',
     );
   });
 
