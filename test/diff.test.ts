@@ -60,6 +60,13 @@ describe('resolveTargetPath', () => {
     );
   });
 
+  it('throws on absolute target with .. segments that escape workingDir', () => {
+    const absTarget = wdir + path.sep + '..' + path.sep + 'escaped.txt';
+    expect(() => resolveTargetPath({ target: absTarget }, '', wdir)).toThrow(
+      'escapes working directory',
+    );
+  });
+
   it('allows absolute target when workingDir is root', () => {
     const absTarget = path.join(root, 'etc', 'hosts');
     expect(resolveTargetPath({ target: absTarget }, '', root)).toBe(absTarget);
