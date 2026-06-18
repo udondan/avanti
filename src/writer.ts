@@ -352,8 +352,13 @@ function getSudoOwnerUid(
   const gnuArgs = followSymlink
     ? [...sudoUserArgs(sudo), 'stat', '-L', '-c', '%u', '--', absPath]
     : [...sudoUserArgs(sudo), 'stat', '-c', '%u', '--', absPath];
+  // stdin: 'inherit' passes the parent's fd 0 to the child. stat(1) never
+  // reads stdin, so this is safe. On macOS, sudo locates cached credentials by
+  // TTY name from fd 0; 'ignore' (non-TTY /dev/null) breaks that lookup and
+  // causes a re-prompt. 'inherit' preserves the TTY in interactive sessions and
+  // degrades gracefully (non-TTY) in CI/daemon contexts.
   const gnu = spawnSync('sudo', gnuArgs, {
-    stdio: ['ignore', 'pipe', 'ignore'],
+    stdio: ['inherit', 'pipe', 'ignore'],
   });
   if (gnu.status === 0) {
     const uid = parseInt(gnu.stdout.toString().trim(), 10);
@@ -363,7 +368,7 @@ function getSudoOwnerUid(
     ? [...sudoUserArgs(sudo), 'stat', '-L', '-f', '%u', absPath]
     : [...sudoUserArgs(sudo), 'stat', '-f', '%u', absPath];
   const bsd = spawnSync('sudo', bsdArgs, {
-    stdio: ['ignore', 'pipe', 'ignore'],
+    stdio: ['inherit', 'pipe', 'ignore'],
   });
   if (bsd.status === 0) {
     const uid = parseInt(bsd.stdout.toString().trim(), 10);
@@ -412,10 +417,11 @@ export function getSudoFileMode(
   targetPath: string,
 ): string | undefined {
   const absPath = path.resolve(targetPath); // ensure never starts with '-'
+  // stdin: 'inherit' — see getSudoOwnerUid for rationale; same applies here.
   const gnu = spawnSync(
     'sudo',
     [...sudoUserArgs(sudo), 'stat', '-L', '-c', '%a', '--', absPath],
-    { stdio: ['ignore', 'pipe', 'ignore'] },
+    { stdio: ['inherit', 'pipe', 'ignore'] },
   );
   if (gnu.status === 0) return gnu.stdout.toString().trim() || undefined;
   // BSD stat (macOS) does not support '--'; path.resolve() ensures no leading '-'.
@@ -425,7 +431,7 @@ export function getSudoFileMode(
   const bsd = spawnSync(
     'sudo',
     [...sudoUserArgs(sudo), 'stat', '-L', '-f', '%Lp', absPath],
-    { stdio: ['ignore', 'pipe', 'ignore'] },
+    { stdio: ['inherit', 'pipe', 'ignore'] },
   );
   if (bsd.status === 0) return bsd.stdout.toString().trim() || undefined;
   return undefined;
@@ -513,9 +519,30 @@ function checkDirSafe(
     if (code === 'ENOENT') return; // directory does not exist yet; mkdir -p will create it
     if (code !== 'EACCES' && code !== 'EPERM') throw e;
     // Fall back to privileged stat only when the directory is unreadable.
+    // getSudoFileMode uses -L so it follows symlinks to get the target's mode.
     const modeStr = getSudoFileMode(sudo, absDir);
     if (modeStr) mode = parseInt(modeStr, 8);
-    ownerUid = getSudoOwnerUid(sudo, absDir);
+    // Check whether the unreadable path is itself a symlink. If so, we must
+    // validate both the symlink's owner (can rename it) and the target dir's
+    // owner (mktemp/mv operate inside it), mirroring the lst.isSymbolicLink()
+    // branch above.
+    if (sudoIsSymlink(sudo, absDir)) {
+      ownerUid = getSudoOwnerUid(sudo, absDir, false); // symlink's own UID
+      const targetOwnerUid = getSudoOwnerUid(sudo, absDir, true); // target dir UID
+      if (
+        trustedUids !== undefined &&
+        targetOwnerUid !== undefined &&
+        !trustedUids.has(targetOwnerUid)
+      ) {
+        throw new Error(
+          `sudo write: ${label} directory ${absDir} symlink target is owned by UID ${targetOwnerUid}, ` +
+            `not a trusted identity; cannot safely create a temp file here (TOCTOU risk).`,
+          { cause: e },
+        );
+      }
+    } else {
+      ownerUid = getSudoOwnerUid(sudo, absDir);
+    }
   }
 
   // A directory is unsafe when it is group- or world-writable AND does NOT have
