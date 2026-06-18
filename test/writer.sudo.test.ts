@@ -429,7 +429,7 @@ describe('sudoAtomicDelete', () => {
     expect(sudoCalls).toHaveLength(2);
   });
 
-  it('throws when the worker reports a failed op', () => {
+  it('warns (does not throw) when the worker reports a failed op', () => {
     const body = JSON.stringify({
       results: [{ ok: false, error: 'permission denied' }],
     });
@@ -439,9 +439,17 @@ describe('sudoAtomicDelete', () => {
       output: [null, Buffer.from(body), null],
     });
 
-    expect(() => sudoAtomicDelete([['/etc/locked.conf', true]])).toThrow(
-      'permission denied',
-    );
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      expect(() =>
+        sudoAtomicDelete([['/etc/locked.conf', true]]),
+      ).not.toThrow();
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('permission denied'),
+      );
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 });
 

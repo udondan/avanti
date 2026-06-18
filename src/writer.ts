@@ -21,7 +21,11 @@ export function sudoUserArgs(sudo: true | string): string[] {
   return typeof sudo === 'string' ? ['-u', sudo] : [];
 }
 
-function runPrivilegedWorker(sudo: true | string, ops: WriteOp[]): void {
+function runPrivilegedWorker(
+  sudo: true | string,
+  ops: WriteOp[],
+  continueOnError = false,
+): void {
   // When running via tsx (TypeScript source, __filename ends in .ts), the
   // compiled worker is one level up in dist/. In production (dist/writer.js),
   // the worker is a sibling.
@@ -68,6 +72,7 @@ function runPrivilegedWorker(sudo: true | string, ops: WriteOp[]): void {
         input: JSON.stringify({
           ops,
           trustedUids: [...buildTrustedUids(sudo)],
+          continueOnError: continueOnError || undefined,
         }),
         stdio: ['pipe', 'pipe', 'inherit'],
         encoding: 'utf8',
@@ -96,7 +101,15 @@ function runPrivilegedWorker(sudo: true | string, ops: WriteOp[]): void {
     results: Array<{ ok: boolean; error?: string }>;
   };
   for (const r of results) {
-    if (!r.ok) throw new Error(r.error ?? 'privileged worker op failed');
+    if (!r.ok) {
+      if (continueOnError) {
+        console.warn(
+          `Warning: privileged operation failed: ${r.error ?? 'unknown error'}`,
+        );
+      } else {
+        throw new Error(r.error ?? 'privileged worker op failed');
+      }
+    }
   }
 }
 
@@ -195,7 +208,9 @@ export function sudoAtomicDelete(
     }
   }
   for (const [sudo, ops] of groups) {
-    runPrivilegedWorker(sudo, ops);
+    // Deletion failures are non-fatal: warn and continue, matching the old
+    // per-file sudo rm -f behaviour.
+    runPrivilegedWorker(sudo, ops, true);
   }
 }
 

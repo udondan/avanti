@@ -43,6 +43,7 @@ export type WriteOp = WriteMvOp | WriteInPlaceOp | WriteSymlinkOp | DeleteOp;
 export interface WorkerRequest {
   ops: WriteOp[];
   trustedUids?: number[];
+  continueOnError?: boolean;
 }
 
 export interface WorkerResult {
@@ -66,7 +67,11 @@ function getExistingMode(filePath: string): string | undefined {
   }
 }
 
-function backupRegularFile(targetPath: string, backupPath: string): void {
+function backupRegularFile(
+  targetPath: string,
+  backupPath: string,
+  trustedUids?: Set<number>,
+): void {
   // Only back up regular files (not symlinks, not absent).
   try {
     if (!fs.lstatSync(targetPath).isFile()) return;
@@ -88,6 +93,11 @@ function backupRegularFile(targetPath: string, backupPath: string): void {
   }
 
   fs.mkdirSync(backupDir, { recursive: true, mode: 0o755 });
+  // Re-validate after mkdirSync: dirs just created (or that appeared during
+  // the race window between the pre-dispatch check and mkdirSync) are now
+  // visible and can be properly verified.
+  if (trustedUids)
+    checkAncestorsSafeAsRoot(resolvedBackup, trustedUids, 'backup');
 
   const backupTmp = path.join(
     path.resolve(backupDir),
@@ -123,16 +133,21 @@ function backupRegularFile(targetPath: string, backupPath: string): void {
   }
 }
 
-export function handleWriteMv(op: WriteMvOp): void {
+export function handleWriteMv(op: WriteMvOp, trustedUids?: Set<number>): void {
   const resolvedTarget = path.resolve(op.targetPath);
   const dir = path.dirname(resolvedTarget);
 
   fs.mkdirSync(dir, { recursive: true, mode: 0o755 });
+  // Re-validate after mkdirSync: dirs that appeared or were created during the
+  // race window between the pre-dispatch ancestor check and mkdirSync are now
+  // visible and can be properly verified.
+  if (trustedUids)
+    checkAncestorsSafeAsRoot(resolvedTarget, trustedUids, 'destination');
 
   const existingMode = op.mode ? undefined : getExistingMode(resolvedTarget);
 
   if (op.backupPath) {
-    backupRegularFile(resolvedTarget, op.backupPath);
+    backupRegularFile(resolvedTarget, op.backupPath, trustedUids);
   }
 
   // O_EXCL temp in destination directory. Keep the fd open and write through
@@ -213,14 +228,19 @@ export function handleWriteMv(op: WriteMvOp): void {
   }
 }
 
-export function handleWriteInPlace(op: WriteInPlaceOp): void {
+export function handleWriteInPlace(
+  op: WriteInPlaceOp,
+  trustedUids?: Set<number>,
+): void {
   const resolvedTarget = path.resolve(op.targetPath);
   const dir = path.dirname(resolvedTarget);
 
   fs.mkdirSync(dir, { recursive: true, mode: 0o755 });
+  if (trustedUids)
+    checkAncestorsSafeAsRoot(resolvedTarget, trustedUids, 'destination');
 
   if (op.backupPath) {
-    backupRegularFile(resolvedTarget, op.backupPath);
+    backupRegularFile(resolvedTarget, op.backupPath, trustedUids);
   }
 
   // Refuse symlinks (would follow to unintended target).
@@ -329,11 +349,16 @@ export function handleWriteInPlace(op: WriteInPlaceOp): void {
   }
 }
 
-export function handleWriteSymlink(op: WriteSymlinkOp): void {
+export function handleWriteSymlink(
+  op: WriteSymlinkOp,
+  trustedUids?: Set<number>,
+): void {
   const resolvedTarget = path.resolve(op.targetPath);
   const dir = path.dirname(resolvedTarget);
 
   fs.mkdirSync(dir, { recursive: true, mode: 0o755 });
+  if (trustedUids)
+    checkAncestorsSafeAsRoot(resolvedTarget, trustedUids, 'destination');
 
   // Refuse to overwrite a real directory with a symlink.
   try {
@@ -363,6 +388,8 @@ export function handleWriteSymlink(op: WriteSymlinkOp): void {
         }
 
         fs.mkdirSync(backupDir, { recursive: true, mode: 0o755 });
+        if (trustedUids)
+          checkAncestorsSafeAsRoot(resolvedBackup, trustedUids, 'backup');
         const backupTmp = path.join(
           path.resolve(backupDir),
           `.avanti-backup-${randomHex()}`,
@@ -544,16 +571,16 @@ function checkAncestorsSafeAsRoot(
   }
 }
 
-export function dispatch(op: WriteOp): void {
+export function dispatch(op: WriteOp, trustedUids?: Set<number>): void {
   switch (op.type) {
     case 'write-mv':
-      handleWriteMv(op);
+      handleWriteMv(op, trustedUids);
       break;
     case 'write-in-place':
-      handleWriteInPlace(op);
+      handleWriteInPlace(op, trustedUids);
       break;
     case 'write-symlink':
-      handleWriteSymlink(op);
+      handleWriteSymlink(op, trustedUids);
       break;
     case 'delete':
       handleDelete(op);
@@ -593,6 +620,7 @@ if (require.main === module) {
     const trustedUids = request.trustedUids
       ? new Set(request.trustedUids)
       : undefined;
+    const continueOnError = request.continueOnError ?? false;
 
     const results: WorkerResult[] = [];
     for (const op of request.ops) {
@@ -603,11 +631,11 @@ if (require.main === module) {
             checkAncestorsSafeAsRoot(op.backupPath, trustedUids, 'backup');
           }
         }
-        dispatch(op);
+        dispatch(op, trustedUids);
         results.push({ ok: true });
       } catch (e) {
         results.push({ ok: false, error: (e as Error).message });
-        break; // fail-fast: stop at first error
+        if (!continueOnError) break; // fail-fast for writes; continue for deletes
       }
     }
     process.stdout.write(JSON.stringify({ results }) + '\n');
