@@ -37,16 +37,12 @@ export function resolveTargetPath(
       return homeResolved;
     }
     if (path.isAbsolute(target)) {
-      const fsRoot = path.parse(workingDir).root;
-      if (workingDir !== fsRoot) {
-        throw new Error(
-          `Absolute target path "${target}" is not allowed unless the working directory is the filesystem root. Use a relative path or run with -w ${fsRoot}.`,
-        );
-      }
-      if (target.endsWith('/') || target.endsWith(path.sep)) {
-        return path.resolve(target, relPath);
-      }
-      return target;
+      const resolved =
+        target.endsWith('/') || target.endsWith(path.sep)
+          ? path.resolve(target, relPath)
+          : target;
+      assertWithinWorkingDir(resolved, workingDir);
+      return resolved;
     }
     if (target.endsWith('/') || target.endsWith(path.sep)) {
       resolved = path.resolve(workingDir, target, relPath);
