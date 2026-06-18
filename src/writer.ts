@@ -502,15 +502,21 @@ function checkDirSafe(
         }
       }
       // Validate the target directory's owner separately from the symlink owner.
-      if (
-        trustedUids !== undefined &&
-        targetOwnerUid !== undefined &&
-        !trustedUids.has(targetOwnerUid)
-      ) {
-        throw new Error(
-          `sudo write: ${label} directory ${absDir} symlink target is owned by UID ${targetOwnerUid}, ` +
-            `not a trusted identity; cannot safely create a temp file here (TOCTOU risk).`,
-        );
+      // Fail closed: if the target UID is unknown (dangling symlink or stat
+      // failure), we cannot verify safety — reject rather than skip the check.
+      if (trustedUids !== undefined) {
+        if (targetOwnerUid === undefined) {
+          throw new Error(
+            `sudo write: ${label} directory ${absDir} symlink target owner UID could not be determined; ` +
+              `cannot safely create a temp file here (TOCTOU risk).`,
+          );
+        }
+        if (!trustedUids.has(targetOwnerUid)) {
+          throw new Error(
+            `sudo write: ${label} directory ${absDir} symlink target is owned by UID ${targetOwnerUid}, ` +
+              `not a trusted identity; cannot safely create a temp file here (TOCTOU risk).`,
+          );
+        }
       }
     } else {
       mode = lst.mode & 0o7777;
@@ -531,16 +537,21 @@ function checkDirSafe(
     if (sudoIsSymlink(sudo, absDir)) {
       ownerUid = getSudoOwnerUid(sudo, absDir, false); // symlink's own UID
       const targetOwnerUid = getSudoOwnerUid(sudo, absDir, true); // target dir UID
-      if (
-        trustedUids !== undefined &&
-        targetOwnerUid !== undefined &&
-        !trustedUids.has(targetOwnerUid)
-      ) {
-        throw new Error(
-          `sudo write: ${label} directory ${absDir} symlink target is owned by UID ${targetOwnerUid}, ` +
-            `not a trusted identity; cannot safely create a temp file here (TOCTOU risk).`,
-          { cause: e },
-        );
+      if (trustedUids !== undefined) {
+        if (targetOwnerUid === undefined) {
+          throw new Error(
+            `sudo write: ${label} directory ${absDir} symlink target owner UID could not be determined; ` +
+              `cannot safely create a temp file here (TOCTOU risk).`,
+            { cause: e },
+          );
+        }
+        if (!trustedUids.has(targetOwnerUid)) {
+          throw new Error(
+            `sudo write: ${label} directory ${absDir} symlink target is owned by UID ${targetOwnerUid}, ` +
+              `not a trusted identity; cannot safely create a temp file here (TOCTOU risk).`,
+            { cause: e },
+          );
+        }
       }
     } else {
       ownerUid = getSudoOwnerUid(sudo, absDir);
@@ -565,7 +576,15 @@ function checkDirSafe(
     }
   }
   if (trustedUids !== undefined) {
-    if (ownerUid !== undefined && !trustedUids.has(ownerUid)) {
+    // Fail closed: if the owner UID is unknown (stat fallback also failed),
+    // we cannot verify safety — reject rather than skip the check.
+    if (ownerUid === undefined) {
+      throw new Error(
+        `sudo write: ${label} directory ${absDir} owner UID could not be determined; ` +
+          `cannot safely create a temp file here (TOCTOU risk).`,
+      );
+    }
+    if (!trustedUids.has(ownerUid)) {
       throw new Error(
         `sudo write: ${label} directory ${absDir} is owned by UID ${ownerUid}, ` +
           `not a trusted identity; cannot safely create a temp file here (TOCTOU risk).`,
