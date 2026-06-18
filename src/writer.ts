@@ -442,7 +442,9 @@ function checkDirSafe(
     mode = s.mode & 0o777;
     ownerUid = s.uid;
   } catch (e) {
-    if ((e as NodeJS.ErrnoException).code !== 'EACCES') throw e;
+    const code = (e as NodeJS.ErrnoException).code;
+    if (code === 'ENOENT') return; // directory does not exist yet; mkdir -p will create it
+    if (code !== 'EACCES') throw e;
     // Fall back to privileged stat only when the directory is unreadable.
     const modeStr = getSudoFileMode(sudo, absDir);
     if (modeStr) mode = parseInt(modeStr, 8);
