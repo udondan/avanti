@@ -213,7 +213,7 @@ describe('sudoAtomicWrite', () => {
     expect(sudoCalls).toHaveLength(1);
     expect(sudoCalls[0][1]).toEqual(
       expect.arrayContaining([
-        'node',
+        process.execPath,
         expect.stringContaining('privileged-worker.js'),
       ]),
     );
@@ -273,7 +273,7 @@ describe('sudoAtomicWrite', () => {
     ) as { ops: Array<{ type: string; symlinkTarget?: string }> };
     expect(ops[0].type).toBe('write-symlink');
     expect(ops[0].symlinkTarget).toBe('/etc/hosts');
-    expect((ops[0] as Record<string, unknown>).contentSrc).toBeUndefined();
+    expect((ops[0] as Record<string, unknown>).contentB64).toBeUndefined();
   });
 
   it('makes separate worker calls for different sudo identities', () => {

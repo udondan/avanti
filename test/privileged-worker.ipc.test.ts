@@ -13,6 +13,10 @@ import type { WorkerRequest, WorkerResponse } from '../src/privileged-worker';
 const WORKER = path.resolve(__dirname, '../dist/privileged-worker.js');
 const workerExists = fs.existsSync(WORKER);
 
+function b64(content: string): string {
+  return Buffer.from(content).toString('base64');
+}
+
 function runWorker(request: WorkerRequest): WorkerResponse {
   const r = spawnSync('node', [WORKER], {
     input: JSON.stringify(request),
@@ -43,8 +47,6 @@ afterEach(() => {
 
 describe.skipIf(!workerExists)('IPC protocol — write-mv', () => {
   it('creates a new file and returns ok:true', () => {
-    const contentSrc = path.join(tmpDir, 'content.dat');
-    fs.writeFileSync(contentSrc, 'hello ipc');
     const targetPath = path.join(tmpDir, 'output.txt');
 
     const resp = runWorker({
@@ -52,7 +54,7 @@ describe.skipIf(!workerExists)('IPC protocol — write-mv', () => {
         {
           type: 'write-mv',
           targetPath,
-          contentSrc,
+          contentB64: b64('hello ipc'),
           defaultMode: '0644',
         },
       ],
@@ -64,16 +66,12 @@ describe.skipIf(!workerExists)('IPC protocol — write-mv', () => {
   });
 
   it('writes multiple files and returns one result per op', () => {
-    const ops = Array.from({ length: 3 }, (_, i) => {
-      const contentSrc = path.join(tmpDir, `c${i}.dat`);
-      fs.writeFileSync(contentSrc, `content-${i}`);
-      return {
-        type: 'write-mv' as const,
-        targetPath: path.join(tmpDir, `out${i}.txt`),
-        contentSrc,
-        defaultMode: '0644',
-      };
-    });
+    const ops = Array.from({ length: 3 }, (_, i) => ({
+      type: 'write-mv' as const,
+      targetPath: path.join(tmpDir, `out${i}.txt`),
+      contentB64: b64(`content-${i}`),
+      defaultMode: '0644',
+    }));
 
     const resp = runWorker({ ops });
 
@@ -88,24 +86,18 @@ describe.skipIf(!workerExists)('IPC protocol — write-mv', () => {
     const badTarget = path.join(tmpDir, 'subdir');
     fs.mkdirSync(badTarget); // target is a real directory — write-mv should reject it
 
-    const contentSrc = path.join(tmpDir, 'content.dat');
-    fs.writeFileSync(contentSrc, 'data');
-
-    const afterSrc = path.join(tmpDir, 'after.dat');
-    fs.writeFileSync(afterSrc, 'after');
-
     const resp = runWorker({
       ops: [
         {
           type: 'write-mv',
           targetPath: badTarget,
-          contentSrc,
+          contentB64: b64('data'),
           defaultMode: '0644',
         },
         {
           type: 'write-mv',
           targetPath: path.join(tmpDir, 'after.txt'),
-          contentSrc: afterSrc,
+          contentB64: b64('after'),
           defaultMode: '0644',
         },
       ],
@@ -143,15 +135,12 @@ describe.skipIf(!workerExists)('IPC protocol — write-in-place', () => {
     fs.writeFileSync(targetPath, 'original');
     const inoBefore = fs.statSync(targetPath).ino;
 
-    const contentSrc = path.join(tmpDir, 'content.dat');
-    fs.writeFileSync(contentSrc, 'updated');
-
     const resp = runWorker({
       ops: [
         {
           type: 'write-in-place',
           targetPath,
-          contentSrc,
+          contentB64: b64('updated'),
           defaultMode: '0644',
         },
       ],

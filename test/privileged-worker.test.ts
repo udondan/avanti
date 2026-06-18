@@ -28,14 +28,8 @@ afterEach(() => {
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
 
-/** Write a temp content file and return its path. */
-function writeContentSrc(content: string): string {
-  const p = path.join(
-    tmpDir,
-    `.content-${crypto.randomBytes(4).toString('hex')}`,
-  );
-  fs.writeFileSync(p, content, 'utf8');
-  return p;
+function b64(content: string): string {
+  return Buffer.from(content).toString('base64');
 }
 
 // ---------------------------------------------------------------------------
@@ -45,12 +39,11 @@ function writeContentSrc(content: string): string {
 describe('handleWriteMv', () => {
   it('creates a new file with the given content at targetPath', () => {
     const targetPath = path.join(tmpDir, 'new-file.txt');
-    const contentSrc = writeContentSrc('hello world');
 
     handleWriteMv({
       type: 'write-mv',
       targetPath,
-      contentSrc,
+      contentB64: b64('hello world'),
       defaultMode: '0644',
     });
 
@@ -64,11 +57,10 @@ describe('handleWriteMv', () => {
       fs.writeFileSync(targetPath, 'old content');
       fs.chmodSync(targetPath, 0o755);
 
-      const contentSrc = writeContentSrc('new content');
       handleWriteMv({
         type: 'write-mv',
         targetPath,
-        contentSrc,
+        contentB64: b64('new content'),
         defaultMode: '0644',
       });
 
@@ -81,12 +73,11 @@ describe('handleWriteMv', () => {
     'uses defaultMode when target does not exist and no mode is given',
     () => {
       const targetPath = path.join(tmpDir, 'brand-new.txt');
-      const contentSrc = writeContentSrc('content');
 
       handleWriteMv({
         type: 'write-mv',
         targetPath,
-        contentSrc,
+        contentB64: b64('content'),
         defaultMode: '0640',
       });
 
@@ -103,11 +94,10 @@ describe('handleWriteMv', () => {
       fs.writeFileSync(targetPath, 'old');
       fs.chmodSync(targetPath, 0o755);
 
-      const contentSrc = writeContentSrc('new');
       handleWriteMv({
         type: 'write-mv',
         targetPath,
-        contentSrc,
+        contentB64: b64('new'),
         mode: '0600',
         defaultMode: '0644',
       });
@@ -119,12 +109,11 @@ describe('handleWriteMv', () => {
 
   it('creates parent directories if they do not exist', () => {
     const targetPath = path.join(tmpDir, 'deeply', 'nested', 'dir', 'file.txt');
-    const contentSrc = writeContentSrc('deep');
 
     handleWriteMv({
       type: 'write-mv',
       targetPath,
-      contentSrc,
+      contentB64: b64('deep'),
       defaultMode: '0644',
     });
 
@@ -139,12 +128,11 @@ describe('handleWriteMv', () => {
       fs.chmodSync(targetPath, 0o750);
 
       const backupPath = path.join(tmpDir, 'backups', 'target.txt.bak');
-      const contentSrc = writeContentSrc('new content');
 
       handleWriteMv({
         type: 'write-mv',
         targetPath,
-        contentSrc,
+        contentB64: b64('new content'),
         defaultMode: '0644',
         backupPath,
       });
@@ -161,13 +149,11 @@ describe('handleWriteMv', () => {
     const targetPath = path.join(tmpDir, 'iam-a-dir');
     fs.mkdirSync(targetPath);
 
-    const contentSrc = writeContentSrc('content');
-
     expect(() =>
       handleWriteMv({
         type: 'write-mv',
         targetPath,
-        contentSrc,
+        contentB64: b64('content'),
         defaultMode: '0644',
       }),
     ).toThrow();
@@ -187,12 +173,11 @@ describe('handleWriteMv', () => {
 describe('handleWriteInPlace', () => {
   it('creates a new file with the given content', () => {
     const targetPath = path.join(tmpDir, 'inplace-new.txt');
-    const contentSrc = writeContentSrc('inplace content');
 
     handleWriteInPlace({
       type: 'write-in-place',
       targetPath,
-      contentSrc,
+      contentB64: b64('inplace content'),
       defaultMode: '0644',
     });
 
@@ -206,11 +191,10 @@ describe('handleWriteInPlace', () => {
       fs.writeFileSync(targetPath, 'old content');
       const beforeIno = fs.statSync(targetPath).ino;
 
-      const contentSrc = writeContentSrc('new content');
       handleWriteInPlace({
         type: 'write-in-place',
         targetPath,
-        contentSrc,
+        contentB64: b64('new content'),
         defaultMode: '0644',
       });
 
@@ -226,13 +210,11 @@ describe('handleWriteInPlace', () => {
     const symlink = path.join(tmpDir, 'link.txt');
     fs.symlinkSync(realFile, symlink);
 
-    const contentSrc = writeContentSrc('attempt');
-
     expect(() =>
       handleWriteInPlace({
         type: 'write-in-place',
         targetPath: symlink,
-        contentSrc,
+        contentB64: b64('attempt'),
         defaultMode: '0644',
       }),
     ).toThrow(/refusing to follow/);
@@ -365,12 +347,11 @@ describe('handleDelete', () => {
 describe('dispatch', () => {
   it('routes write-mv op to handleWriteMv', () => {
     const targetPath = path.join(tmpDir, 'dispatch-mv.txt');
-    const contentSrc = writeContentSrc('dispatched mv');
 
     dispatch({
       type: 'write-mv',
       targetPath,
-      contentSrc,
+      contentB64: b64('dispatched mv'),
       defaultMode: '0644',
     });
 
@@ -379,12 +360,11 @@ describe('dispatch', () => {
 
   it('routes write-in-place op to handleWriteInPlace', () => {
     const targetPath = path.join(tmpDir, 'dispatch-inplace.txt');
-    const contentSrc = writeContentSrc('dispatched inplace');
 
     dispatch({
       type: 'write-in-place',
       targetPath,
-      contentSrc,
+      contentB64: b64('dispatched inplace'),
       defaultMode: '0644',
     });
 

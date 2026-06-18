@@ -5,7 +5,7 @@ import * as path from 'path';
 export interface WriteMvOp {
   type: 'write-mv';
   targetPath: string;
-  contentSrc: string;
+  contentB64: string;
   mode?: string;
   defaultMode: string;
   backupPath?: string;
@@ -14,7 +14,7 @@ export interface WriteMvOp {
 export interface WriteInPlaceOp {
   type: 'write-in-place';
   targetPath: string;
-  contentSrc: string;
+  contentB64: string;
   mode?: string;
   defaultMode: string;
   backupPath?: string;
@@ -80,7 +80,7 @@ function backupRegularFile(targetPath: string, backupPath: string): void {
     if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
   }
 
-  fs.mkdirSync(backupDir, { recursive: true });
+  fs.mkdirSync(backupDir, { recursive: true, mode: 0o755 });
 
   const backupTmp = path.join(
     path.resolve(backupDir),
@@ -109,7 +109,7 @@ export function handleWriteMv(op: WriteMvOp): void {
   const resolvedTarget = path.resolve(op.targetPath);
   const dir = path.dirname(resolvedTarget);
 
-  fs.mkdirSync(dir, { recursive: true });
+  fs.mkdirSync(dir, { recursive: true, mode: 0o755 });
 
   const existingMode = op.mode ? undefined : getExistingMode(resolvedTarget);
 
@@ -123,7 +123,7 @@ export function handleWriteMv(op: WriteMvOp): void {
   fs.closeSync(fd);
 
   try {
-    fs.copyFileSync(op.contentSrc, tmpPath);
+    fs.writeFileSync(tmpPath, Buffer.from(op.contentB64, 'base64'));
 
     const effectiveMode = op.mode ?? existingMode ?? op.defaultMode;
     fs.chmodSync(tmpPath, parseInt(effectiveMode, 8));
@@ -190,7 +190,7 @@ export function handleWriteInPlace(op: WriteInPlaceOp): void {
   const resolvedTarget = path.resolve(op.targetPath);
   const dir = path.dirname(resolvedTarget);
 
-  fs.mkdirSync(dir, { recursive: true });
+  fs.mkdirSync(dir, { recursive: true, mode: 0o755 });
 
   if (op.backupPath) {
     backupRegularFile(resolvedTarget, op.backupPath);
@@ -219,13 +219,11 @@ export function handleWriteInPlace(op: WriteInPlaceOp): void {
     }
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-deprecated
-  const mask = process.umask();
-  const defaultMode = (0o666 & ~mask).toString(8).padStart(4, '0');
-  const effectiveMode = op.mode ?? (isNewFile ? defaultMode : undefined);
+  const effectiveMode = op.mode ?? (isNewFile ? op.defaultMode : undefined);
 
   // Capture pre-write mode so we can restore if something fails.
   const preTeeMode = isNewFile ? undefined : getExistingMode(resolvedTarget);
+  let chmodSucceeded = false;
 
   if (isNewFile) {
     // Pre-create with owner-write so content write always succeeds regardless
@@ -236,6 +234,7 @@ export function handleWriteInPlace(op: WriteInPlaceOp): void {
     // Temporarily ensure owner-write so the write succeeds on read-only files.
     try {
       fs.chmodSync(resolvedTarget, parseInt(preTeeMode, 8) | 0o200);
+      chmodSucceeded = true;
     } catch {
       // chmod failed (e.g. not owner) — proceed; writeFileSync will fail if
       // the write is actually forbidden.
@@ -244,10 +243,11 @@ export function handleWriteInPlace(op: WriteInPlaceOp): void {
 
   let modeApplied = false;
   try {
-    const content = fs.readFileSync(op.contentSrc);
+    const content = Buffer.from(op.contentB64, 'base64');
     fs.writeFileSync(resolvedTarget, content);
 
-    const modeToApply = effectiveMode ?? preTeeMode;
+    const modeToApply =
+      effectiveMode ?? (chmodSucceeded ? preTeeMode : undefined);
     if (modeToApply !== undefined) {
       fs.chmodSync(resolvedTarget, parseInt(modeToApply, 8));
       modeApplied = true;
@@ -255,7 +255,7 @@ export function handleWriteInPlace(op: WriteInPlaceOp): void {
   } finally {
     // On failure, restore the pre-write mode so the file doesn't stay
     // more permissive after a failed pull.
-    if (preTeeMode !== undefined && !modeApplied) {
+    if (preTeeMode !== undefined && chmodSucceeded && !modeApplied) {
       try {
         fs.chmodSync(resolvedTarget, parseInt(preTeeMode, 8));
       } catch {
@@ -269,7 +269,7 @@ export function handleWriteSymlink(op: WriteSymlinkOp): void {
   const resolvedTarget = path.resolve(op.targetPath);
   const dir = path.dirname(resolvedTarget);
 
-  fs.mkdirSync(dir, { recursive: true });
+  fs.mkdirSync(dir, { recursive: true, mode: 0o755 });
 
   // Refuse to overwrite a real directory with a symlink.
   try {
@@ -298,7 +298,7 @@ export function handleWriteSymlink(op: WriteSymlinkOp): void {
           if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
         }
 
-        fs.mkdirSync(backupDir, { recursive: true });
+        fs.mkdirSync(backupDir, { recursive: true, mode: 0o755 });
         const backupTmp = path.join(
           path.resolve(backupDir),
           `.avanti-backup-${randomHex()}`,

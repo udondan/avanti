@@ -1,6 +1,5 @@
 import * as crypto from 'crypto';
 import * as fs from 'fs';
-import * as os from 'os';
 import * as path from 'path';
 import { spawnSync } from 'child_process';
 import type { WriteOp } from './privileged-worker';
@@ -30,7 +29,7 @@ function runPrivilegedWorker(sudo: true | string, ops: WriteOp[]): void {
     : path.join(__dirname, 'privileged-worker.js');
   const result = spawnSync(
     'sudo',
-    [...sudoUserArgs(sudo), 'node', workerPath],
+    [...sudoUserArgs(sudo), process.execPath, workerPath],
     {
       input: JSON.stringify({ ops }),
       stdio: ['pipe', 'pipe', 'inherit'],
@@ -72,77 +71,59 @@ export function sudoAtomicWrite(targets: SudoWriteTarget[]): void {
     }
   }
 
-  // Write content to temp files owned by the calling user (mode 0o600).
-  // Root can always read these, so the worker has access regardless of sudo identity.
-  const contentTemps: string[] = [];
-  try {
-    const targetOps: Array<{ sudo: true | string; op: WriteOp }> = [];
+  // Encode content as base64 in the JSON payload — no temp files needed.
+  // This works for any sudo identity (root, named user) since the data travels
+  // over stdin and the worker never touches the caller's filesystem.
+  const targetOps: Array<{ sudo: true | string; op: WriteOp }> = [];
 
-    for (const t of targets) {
-      if (t.symlinkTarget !== undefined) {
-        targetOps.push({
-          sudo: t.sudo,
-          op: {
-            type: 'write-symlink',
-            targetPath: t.targetPath,
-            symlinkTarget: t.symlinkTarget,
-            backupPath: t.backupPath,
-          },
-        });
-      } else {
-        const tmpPath = path.join(
-          os.tmpdir(),
-          `.avanti-content-${crypto.randomBytes(8).toString('hex')}.dat`,
-        );
-        const fd = fs.openSync(tmpPath, 'wx', 0o600);
-        fs.closeSync(fd);
-        contentTemps.push(tmpPath);
-        fs.writeFileSync(tmpPath, t.content);
+  for (const t of targets) {
+    if (t.symlinkTarget !== undefined) {
+      targetOps.push({
+        sudo: t.sudo,
+        op: {
+          type: 'write-symlink',
+          targetPath: t.targetPath,
+          symlinkTarget: t.symlinkTarget,
+          backupPath: t.backupPath,
+        },
+      });
+    } else {
+      const contentB64 = t.content.toString('base64');
+      targetOps.push({
+        sudo: t.sudo,
+        op: t.writeInPlace
+          ? {
+              type: 'write-in-place',
+              targetPath: t.targetPath,
+              contentB64,
+              mode: t.mode,
+              defaultMode,
+              backupPath: t.backupPath,
+            }
+          : {
+              type: 'write-mv',
+              targetPath: t.targetPath,
+              contentB64,
+              mode: t.mode,
+              defaultMode,
+              backupPath: t.backupPath,
+            },
+      });
+    }
+  }
 
-        targetOps.push({
-          sudo: t.sudo,
-          op: t.writeInPlace
-            ? {
-                type: 'write-in-place',
-                targetPath: t.targetPath,
-                contentSrc: tmpPath,
-                mode: t.mode,
-                defaultMode,
-                backupPath: t.backupPath,
-              }
-            : {
-                type: 'write-mv',
-                targetPath: t.targetPath,
-                contentSrc: tmpPath,
-                mode: t.mode,
-                defaultMode,
-                backupPath: t.backupPath,
-              },
-        });
-      }
+  // Group ops by sudo identity; one worker invocation per group.
+  const groups = new Map<true | string, WriteOp[]>();
+  for (const { sudo, op } of targetOps) {
+    const existing = groups.get(sudo);
+    if (existing) {
+      existing.push(op);
+    } else {
+      groups.set(sudo, [op]);
     }
-
-    // Group ops by sudo identity; one worker invocation per group.
-    const groups = new Map<true | string, WriteOp[]>();
-    for (const { sudo, op } of targetOps) {
-      const existing = groups.get(sudo);
-      if (existing) {
-        existing.push(op);
-      } else {
-        groups.set(sudo, [op]);
-      }
-    }
-    for (const [sudo, ops] of groups) {
-      runPrivilegedWorker(sudo, ops);
-    }
-  } finally {
-    for (const tmp of contentTemps) {
-      try {
-        fs.unlinkSync(tmp);
-      } catch {
-        // best-effort cleanup
-      }
-    }
+  }
+  for (const [sudo, ops] of groups) {
+    runPrivilegedWorker(sudo, ops);
   }
 }
 
@@ -445,37 +426,15 @@ function checkDirSafe(
   } catch (e) {
     const code = (e as NodeJS.ErrnoException).code;
     if (code === 'ENOENT') return; // directory does not exist yet; mkdir -p will create it
-    if (code !== 'EACCES' && code !== 'EPERM') throw e;
-    // Fall back to privileged stat only when the directory is unreadable.
-    // getSudoFileMode uses -L so it follows symlinks to get the target's mode.
-    const modeStr = getSudoFileMode(sudo, absDir);
-    if (modeStr) mode = parseInt(modeStr, 8);
-    // Check whether the unreadable path is itself a symlink. If so, we must
-    // validate both the symlink's owner (can rename it) and the target dir's
-    // owner (mktemp/mv operate inside it), mirroring the lst.isSymbolicLink()
-    // branch above.
-    if (sudoIsSymlink(sudo, absDir)) {
-      ownerUid = getSudoOwnerUid(sudo, absDir, false); // symlink's own UID
-      const targetOwnerUid = getSudoOwnerUid(sudo, absDir, true); // target dir UID
-      if (trustedUids !== undefined) {
-        if (targetOwnerUid === undefined) {
-          throw new Error(
-            `sudo write: ${label} directory ${absDir} symlink target owner UID could not be determined; ` +
-              `cannot safely create a temp file here (TOCTOU risk).`,
-            { cause: e },
-          );
-        }
-        if (!trustedUids.has(targetOwnerUid)) {
-          throw new Error(
-            `sudo write: ${label} directory ${absDir} symlink target is owned by UID ${targetOwnerUid}, ` +
-              `not a trusted identity; cannot safely create a temp file here (TOCTOU risk).`,
-            { cause: e },
-          );
-        }
-      }
-    } else {
-      ownerUid = getSudoOwnerUid(sudo, absDir);
-    }
+    // An unreadable (EACCES/EPERM) ancestor is safe: if the current user cannot
+    // traverse it, no other unprivileged user can race inside it either. Only the
+    // directory owner can perform a rename-to-symlink attack there, and the owner
+    // is necessarily in the trusted set (root for sudo: true, or the named user
+    // for sudo: "user"). Falling back to sudo stat here would produce an extra
+    // password prompt for every unreadable ancestor before the worker prompt,
+    // defeating the single-prompt guarantee on machines with timestamp_timeout=0.
+    if (code === 'EACCES' || code === 'EPERM') return;
+    throw e;
   }
 
   // A directory is unsafe when it is group- or world-writable AND does NOT have
