@@ -1412,10 +1412,12 @@ export function pullCommand(): Command {
           (p) => !staleDeleteSudo.has(p),
         );
 
-        atomicWrite([...regularChanged, ...regularRestore]);
+        // Privileged writes first: if sudo fails, unprivileged files have not
+        // yet changed, keeping the working tree in a consistent state.
         if (sudoChanged.length + sudoRestore.length > 0) {
           sudoAtomicWrite([...sudoChanged, ...sudoRestore]);
         }
+        atomicWrite([...regularChanged, ...regularRestore]);
         // Mark all active stale restores as completed (atomicWrite throws on
         // failure so if we reach here all restores were written successfully).
         for (const t of activeStaleRestore) {
