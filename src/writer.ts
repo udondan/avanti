@@ -460,17 +460,41 @@ function checkDirSafe(
       // For symlinks: the owner can rename the link regardless of the parent's
       // sticky bit. Use the symlink's UID for the ownership check.
       ownerUid = lst.uid;
+      // Also capture the target directory's owner: mktemp/tee/mv operate
+      // inside the resolved target, so its owner can rename root-created temp
+      // entries regardless of the symlink's owner.
+      let targetOwnerUid: number | undefined;
       // Follow the link to get the target directory's mode for the writable check.
       try {
         const s = fs.statSync(absDir);
         mode = s.mode & 0o7777;
+        targetOwnerUid = s.uid;
       } catch (e2) {
         const code2 = (e2 as NodeJS.ErrnoException).code;
-        if (code2 === 'ENOENT') return; // dangling symlink — target is gone
-        if (code2 !== 'EACCES' && code2 !== 'EPERM') throw e2;
-        // Symlink target is unreadable; fall back to sudo for mode only.
-        const modeStr = getSudoFileMode(sudo, absDir);
-        if (modeStr) mode = parseInt(modeStr, 8);
+        if (code2 === 'ENOENT') {
+          // Dangling symlink — target is gone, but ownerUid is already captured.
+          // Do NOT return: fall through so the symlink owner is still validated
+          // below. Without this check, an attacker can race between mkdir -p
+          // (symlink pointing at a real dir) and mktemp/mv (dangling) to bypass
+          // the trusted-UID guard entirely.
+        } else if (code2 !== 'EACCES' && code2 !== 'EPERM') {
+          throw e2;
+        } else {
+          // Symlink target is unreadable; fall back to sudo for mode only.
+          const modeStr = getSudoFileMode(sudo, absDir);
+          if (modeStr) mode = parseInt(modeStr, 8);
+        }
+      }
+      // Validate the target directory's owner separately from the symlink owner.
+      if (
+        trustedUids !== undefined &&
+        targetOwnerUid !== undefined &&
+        !trustedUids.has(targetOwnerUid)
+      ) {
+        throw new Error(
+          `sudo write: ${label} directory ${absDir} symlink target is owned by UID ${targetOwnerUid}, ` +
+            `not a trusted identity; cannot safely create a temp file here (TOCTOU risk).`,
+        );
       }
     } else {
       mode = lst.mode & 0o7777;
