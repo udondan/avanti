@@ -1,6 +1,7 @@
 import * as path from 'path';
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import {
+  sudoAtomicDelete,
   sudoAtomicWrite,
   sudoDelete,
   sudoRead,
@@ -366,6 +367,81 @@ describe('sudoAtomicWrite', () => {
       (sudoCalls[0][2] as { input: string }).input,
     ) as { ops: Array<{ backupPath?: string }> };
     expect(ops[0].backupPath).toBe('/etc/test.conf.bak');
+  });
+});
+
+describe('sudoAtomicDelete', () => {
+  it('returns immediately and makes no spawnSync calls for empty list', () => {
+    sudoAtomicDelete([]);
+    expect(mockSpawnSync).not.toHaveBeenCalled();
+  });
+
+  it('sends a delete op to the worker for a single path', () => {
+    mockSpawnSync.mockReturnValue(workerOkResult(1));
+
+    sudoAtomicDelete([['/etc/stale.conf', true]]);
+
+    const sudoCalls = mockSpawnSync.mock.calls.filter(
+      ([cmd]) => cmd === 'sudo',
+    );
+    expect(sudoCalls).toHaveLength(1);
+    const { ops } = JSON.parse(
+      (sudoCalls[0][2] as { input: string }).input,
+    ) as { ops: Array<{ type: string; targetPath: string }> };
+    expect(ops).toHaveLength(1);
+    expect(ops[0]).toMatchObject({
+      type: 'delete',
+      targetPath: '/etc/stale.conf',
+    });
+  });
+
+  it('batches multiple deletions with the same identity into one worker call', () => {
+    mockSpawnSync.mockReturnValue(workerOkResult(3));
+
+    sudoAtomicDelete([
+      ['/etc/a.conf', true],
+      ['/etc/b.conf', true],
+      ['/etc/c.conf', true],
+    ]);
+
+    const sudoCalls = mockSpawnSync.mock.calls.filter(
+      ([cmd]) => cmd === 'sudo',
+    );
+    expect(sudoCalls).toHaveLength(1);
+    const { ops } = JSON.parse(
+      (sudoCalls[0][2] as { input: string }).input,
+    ) as { ops: Array<{ type: string }> };
+    expect(ops).toHaveLength(3);
+    for (const op of ops) expect(op.type).toBe('delete');
+  });
+
+  it('makes separate worker calls for different sudo identities', () => {
+    mockSpawnSync.mockReturnValue(workerOkResult(1));
+
+    sudoAtomicDelete([
+      ['/etc/a.conf', true],
+      ['/etc/b.conf', 'www-data'],
+    ]);
+
+    const sudoCalls = mockSpawnSync.mock.calls.filter(
+      ([cmd]) => cmd === 'sudo',
+    );
+    expect(sudoCalls).toHaveLength(2);
+  });
+
+  it('throws when the worker reports a failed op', () => {
+    const body = JSON.stringify({
+      results: [{ ok: false, error: 'permission denied' }],
+    });
+    mockSpawnSync.mockReturnValue({
+      ...workerOkResult(0),
+      stdout: Buffer.from(body),
+      output: [null, Buffer.from(body), null],
+    });
+
+    expect(() => sudoAtomicDelete([['/etc/locked.conf', true]])).toThrow(
+      'permission denied',
+    );
   });
 });
 

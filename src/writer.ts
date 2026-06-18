@@ -1,5 +1,6 @@
 import * as crypto from 'crypto';
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 import { spawnSync } from 'child_process';
 import type { WriteOp } from './privileged-worker';
@@ -27,17 +28,74 @@ function runPrivilegedWorker(sudo: true | string, ops: WriteOp[]): void {
   const workerPath = __filename.endsWith('.ts')
     ? path.resolve(__dirname, '..', 'dist', 'privileged-worker.js')
     : path.join(__dirname, 'privileged-worker.js');
-  const result = spawnSync(
-    'sudo',
-    [...sudoUserArgs(sudo), process.execPath, workerPath],
-    {
-      input: JSON.stringify({ ops }),
-      stdio: ['pipe', 'pipe', 'inherit'],
-      encoding: 'utf8',
-      maxBuffer: 10 * 1024 * 1024,
-    },
-  );
-  if (result.error) throw result.error;
+
+  let resolvedWorkerPath = workerPath;
+  let nodeExec = process.execPath;
+  let cleanup: (() => void) | undefined;
+
+  if (typeof sudo === 'string' && fs.existsSync(workerPath)) {
+    // Named-user sudo: the target user may not be able to read the worker
+    // from a private project directory. Copy it to a world-readable temp
+    // path with O_EXCL creation so sudo -u <user> can exec it.
+    const tmpWorker = path.join(
+      os.tmpdir(),
+      `.avanti-worker-${crypto.randomBytes(5).toString('hex')}.js`,
+    );
+    fs.copyFileSync(workerPath, tmpWorker);
+    fs.chmodSync(tmpWorker, 0o644);
+    resolvedWorkerPath = tmpWorker;
+    cleanup = () => {
+      try {
+        fs.unlinkSync(tmpWorker);
+      } catch {
+        // best-effort cleanup
+      }
+    };
+
+    // Prefer a system-installed Node binary so the named user can exec it
+    // even when process.execPath points to a user-local install (e.g. nvm).
+    for (const candidate of [
+      '/usr/bin/node',
+      '/usr/local/bin/node',
+      '/usr/bin/nodejs',
+    ]) {
+      try {
+        fs.accessSync(candidate, fs.constants.X_OK);
+        nodeExec = candidate;
+        break;
+      } catch {
+        // candidate not available
+      }
+    }
+  }
+
+  let result;
+  try {
+    result = spawnSync(
+      'sudo',
+      [...sudoUserArgs(sudo), nodeExec, resolvedWorkerPath],
+      {
+        input: JSON.stringify({ ops }),
+        stdio: ['pipe', 'pipe', 'inherit'],
+        encoding: 'utf8',
+        maxBuffer: 10 * 1024 * 1024,
+      },
+    );
+  } finally {
+    cleanup?.();
+  }
+
+  if (result.error) {
+    if (
+      __filename.endsWith('.ts') &&
+      (result.error as NodeJS.ErrnoException).code === 'ENOENT'
+    ) {
+      throw new Error(
+        `privileged worker not found at ${workerPath} — run \`mise run build\` to compile it`,
+      );
+    }
+    throw result.error;
+  }
   if (result.status !== 0) {
     throw new Error(`privileged worker failed (exit ${result.status})`);
   }
@@ -115,6 +173,27 @@ export function sudoAtomicWrite(targets: SudoWriteTarget[]): void {
   // Group ops by sudo identity; one worker invocation per group.
   const groups = new Map<true | string, WriteOp[]>();
   for (const { sudo, op } of targetOps) {
+    const existing = groups.get(sudo);
+    if (existing) {
+      existing.push(op);
+    } else {
+      groups.set(sudo, [op]);
+    }
+  }
+  for (const [sudo, ops] of groups) {
+    runPrivilegedWorker(sudo, ops);
+  }
+}
+
+// Batches privileged deletions into one worker invocation per sudo identity,
+// so all stale-file removals share the single password prompt from writes.
+export function sudoAtomicDelete(
+  deletions: Array<[string, true | string]>,
+): void {
+  if (deletions.length === 0) return;
+  const groups = new Map<true | string, WriteOp[]>();
+  for (const [p, sudo] of deletions) {
+    const op: WriteOp = { type: 'delete', targetPath: p };
     const existing = groups.get(sudo);
     if (existing) {
       existing.push(op);

@@ -35,8 +35,8 @@ import {
 import {
   atomicWrite,
   getSudoFileMode,
+  sudoAtomicDelete,
   sudoAtomicWrite,
-  sudoDelete,
   sudoFileExists,
   sudoIsDirectory,
   sudoIsSymlink,
@@ -1453,13 +1453,20 @@ export function pullCommand(): Command {
             );
           }
         }
+        const sudoDeletionBatch: Array<[string, true | string]> = [];
         for (const [p, sv] of staleDeleteSudo) {
           const idx = staleDeleteDiffIndex.get(p);
           if (idx === undefined) continue;
           if (!staleDiffs[idx].hasChanges) {
             // File is already gone — no-op, but still clean up its history ref.
             effectivelyCleaned.add(p);
-          } else if (sudoDelete(p, sv)) {
+          } else {
+            sudoDeletionBatch.push([p, sv]);
+          }
+        }
+        if (sudoDeletionBatch.length > 0) {
+          sudoAtomicDelete(sudoDeletionBatch);
+          for (const [p] of sudoDeletionBatch) {
             effectivelyDeleted.add(p);
             effectivelyCleaned.add(p);
           }

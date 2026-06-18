@@ -552,10 +552,10 @@ describe('history integration', () => {
         writeConfig('files: {}');
         run('pull --yes', sudoEnv);
 
-        // Stale cleanup must have called sudo rm to remove the tracked file.
+        // Stale cleanup must have called sudo (via worker) to remove the tracked file.
         expect(existsSync(fakeSudoLog)).toBe(true);
         const cleanupCalls = readFileSync(fakeSudoLog, 'utf8');
-        expect(cleanupCalls).toContain('rm');
+        expect(cleanupCalls).toContain('privileged-worker.js');
         expect(existsSync(targetFile)).toBe(false);
       },
     );

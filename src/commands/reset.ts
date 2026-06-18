@@ -11,8 +11,8 @@ import {
 } from '../diff';
 import {
   atomicWrite,
+  sudoAtomicDelete,
   sudoAtomicWrite,
-  sudoDelete,
   SudoWriteTarget,
   WriteTarget,
 } from '../writer';
@@ -146,9 +146,7 @@ export function resetCommand(): Command {
         // unprivileged writes have not yet happened, keeping the project in a
         // consistent (if incomplete) state.
         if (sudoTargets.length > 0) sudoAtomicWrite(sudoTargets);
-        for (const [p, sv] of sudoDeletions) {
-          sudoDelete(p, sv);
-        }
+        sudoAtomicDelete([...sudoDeletions]);
         atomicWrite(regularTargets, deletions);
         console.log(
           `Restored ${writeTargets.length} file(s), deleted ${deletions.length + sudoDeletions.size} file(s).`,
