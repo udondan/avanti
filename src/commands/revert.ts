@@ -9,7 +9,14 @@ import {
   computeSymlinkDiff,
   printDiffs,
 } from '../diff';
-import { atomicWrite, WriteTarget } from '../writer';
+import {
+  atomicWrite,
+  sudoAtomicWrite,
+  sudoAuth,
+  sudoDelete,
+  SudoWriteTarget,
+  WriteTarget,
+} from '../writer';
 import { confirm } from '../prompt';
 import { FileDiff } from '../diff';
 
@@ -93,6 +100,7 @@ export function revertCommand(): Command {
         // Build restore plan
         const writeTargets: WriteTarget[] = [];
         const deletions: string[] = [];
+        const sudoDeletions = new Map<string, true | string>();
         const diffs: FileDiff[] = [];
         let hasError = false;
 
@@ -128,13 +136,18 @@ export function revertCommand(): Command {
                   targetPath: meta.absolutePath,
                   content,
                   symlinkTarget,
+                  sudo: meta.sudo,
                 });
                 diffs.push(d);
               }
             } else {
               const d = computeDiff(meta.absolutePath, content);
               if (d.hasChanges) {
-                writeTargets.push({ targetPath: meta.absolutePath, content });
+                writeTargets.push({
+                  targetPath: meta.absolutePath,
+                  content,
+                  sudo: meta.sudo,
+                });
                 diffs.push(d);
               }
             }
@@ -167,6 +180,7 @@ export function revertCommand(): Command {
                       targetPath: meta.absolutePath,
                       content: original,
                       symlinkTarget,
+                      sudo: meta.sudo,
                     });
                     diffs.push(d);
                   }
@@ -176,6 +190,7 @@ export function revertCommand(): Command {
                     writeTargets.push({
                       targetPath: meta.absolutePath,
                       content: original,
+                      sudo: meta.sudo,
                     });
                     diffs.push(d);
                   }
@@ -184,7 +199,11 @@ export function revertCommand(): Command {
             } else {
               const d = computeDeleteDiff(meta.absolutePath);
               if (d.hasChanges) {
-                deletions.push(meta.absolutePath);
+                if (meta.sudo) {
+                  sudoDeletions.set(meta.absolutePath, meta.sudo);
+                } else {
+                  deletions.push(meta.absolutePath);
+                }
                 diffs.push(d);
               }
             }
@@ -219,11 +238,32 @@ export function revertCommand(): Command {
           }
         }
 
+        const isSudoTarget = (t: WriteTarget): t is SudoWriteTarget => !!t.sudo;
+        const regularTargets = writeTargets.filter((t) => !t.sudo);
+        const sudoTargets = writeTargets.filter(isSudoTarget);
+
+        const sudoValues = new Set<true | string>([
+          ...sudoTargets.map((t) => t.sudo),
+          ...sudoDeletions.values(),
+        ]);
+        for (const sv of sudoValues) {
+          try {
+            sudoAuth(sv);
+          } catch (err: unknown) {
+            console.error(err instanceof Error ? err.message : String(err));
+            process.exit(2);
+          }
+        }
+
         try {
-          atomicWrite(writeTargets, deletions);
-          console.log(
-            `Reverted ${writeTargets.length + deletions.length} file(s).`,
-          );
+          atomicWrite(regularTargets, deletions);
+          if (sudoTargets.length > 0) sudoAtomicWrite(sudoTargets);
+          for (const [p, sv] of sudoDeletions) {
+            sudoDelete(p, sv);
+          }
+          const total =
+            writeTargets.length + deletions.length + sudoDeletions.size;
+          console.log(`Reverted ${total} file(s).`);
         } catch (err: unknown) {
           console.error(
             `Revert failed: ${err instanceof Error ? err.message : String(err)}`,
