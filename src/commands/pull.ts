@@ -1,6 +1,7 @@
 import { Command } from 'commander';
 import * as fs from 'fs';
 import * as path from 'path';
+import type { WriteOp } from '../privileged-worker';
 import {
   deriveConfigBase,
   isRemoteConfigSpec,
@@ -1042,13 +1043,31 @@ export function pullCommand(): Command {
       // per identity regardless of how many files are involved.
       const sudoSessions = new Map<true | string, SudoWorkerSession>();
       if (process.platform !== 'win32') {
-        const sudoIds = new Set<true | string>([
-          ...writeTargets.filter((t) => t.sudo).map((t) => t.sudo!),
-          ...staleToRestore.filter((t) => t.sudo).map((t) => t.sudo!),
-        ]);
-        for (const id of sudoIds) {
-          sudoSessions.set(id, new SudoWorkerSession(id));
+        const sudoIds = new Set<true | string>();
+        for (let i = 0; i < writeTargets.length; i++) {
+          const t = writeTargets[i];
+          if (t.sudo && (allDiffs[i].hasChanges || allDiffs[i].isUnreadable)) {
+            sudoIds.add(t.sudo);
+          }
         }
+        for (let i = 0; i < staleToRestore.length; i++) {
+          const t = staleToRestore[i];
+          if (t.sudo) {
+            const diffIdx = staleRestoreDiffIndices[i];
+            if (
+              staleDiffs[diffIdx]?.hasChanges ||
+              staleDiffs[diffIdx]?.isUnreadable
+            ) {
+              sudoIds.add(t.sudo);
+            }
+          }
+        }
+        // Include delete-only sudo identities so deletions share the same session.
+        for (const sv of staleDeleteSudo.values()) {
+          sudoIds.add(sv);
+        }
+        for (const id of sudoIds)
+          sudoSessions.set(id, new SudoWorkerSession(id));
       }
 
       // Batch all pre-write reads for unreadable sudo targets into one
@@ -1536,11 +1555,46 @@ export function pullCommand(): Command {
           }
         }
         if (sudoDeletionBatch.length > 0) {
-          const deleted = sudoAtomicDelete(sudoDeletionBatch, true);
-          for (const [p] of sudoDeletionBatch) {
-            if (deleted.has(p)) {
-              effectivelyDeleted.add(p);
-              effectivelyCleaned.add(p);
+          // Group by sudo identity; use the pre-created session if available
+          const byDeleteId = new Map<true | string, string[]>();
+          for (const [p, sv] of sudoDeletionBatch) {
+            if (!byDeleteId.has(sv)) byDeleteId.set(sv, []);
+            byDeleteId.get(sv)!.push(p);
+          }
+          for (const [sv, paths] of byDeleteId) {
+            const session = sudoSessions.get(sv);
+            if (session) {
+              const deleteOps: WriteOp[] = paths.map((p) => ({
+                type: 'delete' as const,
+                targetPath: p,
+              }));
+              const results = await session.exec(deleteOps, true);
+              for (let di = 0; di < paths.length; di++) {
+                if (results[di]?.ok && !results[di]?.skipped) {
+                  effectivelyDeleted.add(paths[di]);
+                  effectivelyCleaned.add(paths[di]);
+                } else if (
+                  results[di] &&
+                  !results[di].ok &&
+                  results[di].error
+                ) {
+                  console.warn(
+                    `Warning: could not delete ${paths[di]}: ${results[di].error}`,
+                  );
+                }
+              }
+            } else {
+              const batch: Array<[string, true | string]> = paths.map((p) => [
+                p,
+                sv,
+              ]);
+              const deleted = sudoAtomicDelete(batch, true);
+              for (const p of paths) {
+                if (deleted.has(p)) {
+                  effectivelyDeleted.add(p);
+                  effectivelyCleaned.add(p);
+                }
+              }
             }
           }
         }

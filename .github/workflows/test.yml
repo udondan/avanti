@@ -73,6 +73,7 @@ jobs:
       - name: Set up sudo integration test environment
         if: runner.os == 'Linux'
         run: |
+          sudo rm -rf /usr/local/avanti-sudo-test
           sudo mkdir -p /usr/local/avanti-sudo-test
           sudo chmod 755 /usr/local/avanti-sudo-test
           mkdir -p /tmp/sudo-bin
@@ -97,6 +98,9 @@ jobs:
           echo "AVANTI_SUDO_NAMED_USER_DIR=/tmp/avanti-named-test" >> "$GITHUB_ENV"
 
       - name: Test
+        # No `if: runner.os == 'Linux'` guard: sudo integration tests only run
+        # on Linux (env vars are unset on Windows), and other tests run on all
+        # platforms. A single step covers both cases.
         run: bun run test
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

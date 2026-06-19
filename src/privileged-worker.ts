@@ -460,8 +460,11 @@ export function handleWriteInPlace(
             } else {
               fs.chmodSync(resolvedTarget, mode);
             }
-          } catch {
-            // best-effort restore
+          } catch (restoreErr) {
+            throw new Error(
+              `writeInPlace: failed to restore mode on ${op.targetPath} after temporary write-bit grant: ${(restoreErr as Error).message}`,
+              { cause: restoreErr },
+            );
           }
         } else {
           throw firstOpenErr;
@@ -732,13 +735,8 @@ export function dispatch(op: WriteOp, trustedUids?: Set<number>): void {
     case 'chmod': {
       const resolvedPath = path.resolve(op.targetPath);
       let fd: number | undefined;
+      let chmodApplied = false;
       try {
-        // O_NOFOLLOW rejects symlinks (ELOOP); O_NONBLOCK prevents blocking on
-        // FIFOs. Using fchmodSync on the fd eliminates the lstat→chmod TOCTOU
-        // window that would otherwise allow a root-privilege symlink swap.
-        // For write-only files (mode 0o200) under a named-user sudo identity,
-        // O_RDONLY fails with EACCES — fall back to O_WRONLY (no O_TRUNC so
-        // content is not affected) to still obtain a valid fd for fchmodSync.
         try {
           fd = fs.openSync(
             resolvedPath,
@@ -746,29 +744,39 @@ export function dispatch(op: WriteOp, trustedUids?: Set<number>): void {
           );
         } catch (e) {
           if ((e as NodeJS.ErrnoException).code === 'EACCES') {
-            fd = fs.openSync(
-              resolvedPath,
-              fs.constants.O_WRONLY | O_NOFOLLOW | O_NONBLOCK,
-            );
+            try {
+              fd = fs.openSync(
+                resolvedPath,
+                fs.constants.O_WRONLY | O_NOFOLLOW | O_NONBLOCK,
+              );
+            } catch (e2) {
+              if ((e2 as NodeJS.ErrnoException).code === 'EACCES') {
+                // mode-0000 (or execute-only) file owned by this user: both opens
+                // failed. The file is a regular file (O_NOFOLLOW gave EACCES not ELOOP)
+                // and the process owns it (sudo -u), so path-based chmod is safe.
+                fs.chmodSync(resolvedPath, parseMode(op.mode));
+                chmodApplied = true;
+              } else {
+                throw e2;
+              }
+            }
           } else {
             throw e;
           }
         }
-        safeFchmodSync(fd, parseMode(op.mode));
-        fs.closeSync(fd);
+        if (!chmodApplied) {
+          safeFchmodSync(fd!, parseMode(op.mode));
+        }
+        if (fd !== undefined) fs.closeSync(fd);
       } catch (e) {
         if (fd !== undefined) {
           try {
             fs.closeSync(fd);
           } catch {
-            // best-effort close
+            /* best-effort close */
           }
         }
         const code = (e as NodeJS.ErrnoException).code;
-        // ENOENT: file gone since diff — skip silently.
-        // ELOOP: O_NOFOLLOW rejected a symlink — skip silently.
-        // Throw OopSkipped so the caller can record { ok: true, skipped: true }
-        // instead of { ok: true } — needed to avoid inflating mode-only counts.
         if (code === 'ENOENT' || code === 'ELOOP') throw new OopSkipped();
         throw e;
       }
@@ -776,10 +784,39 @@ export function dispatch(op: WriteOp, trustedUids?: Set<number>): void {
     }
     case 'read': {
       const resolvedPath = path.resolve(op.targetPath);
-      const buf = fs.readFileSync(resolvedPath);
-      // Content is returned via the caller's results array — the dispatch
-      // function returns void, so we throw a sentinel carrying the data.
-      throw new OopRead(buf.toString('base64'), false);
+      let rfd: number | undefined;
+      try {
+        rfd = fs.openSync(
+          resolvedPath,
+          fs.constants.O_RDONLY | O_NOFOLLOW | O_NONBLOCK,
+        );
+        const rst = fs.fstatSync(rfd);
+        if (!rst.isFile()) {
+          throw new Error(`read: ${op.targetPath} is not a regular file`);
+        }
+        const MAX_READ = 100 * 1024 * 1024;
+        if (rst.size > MAX_READ) {
+          throw new Error(
+            `read: ${op.targetPath} exceeds the 100 MiB read limit`,
+          );
+        }
+        const buf = Buffer.alloc(rst.size);
+        let offset = 0;
+        while (offset < rst.size) {
+          const n = fs.readSync(rfd, buf, offset, rst.size - offset, offset);
+          if (n === 0) break;
+          offset += n;
+        }
+        throw new OopRead(buf.toString('base64'), false);
+      } finally {
+        if (rfd !== undefined) {
+          try {
+            fs.closeSync(rfd);
+          } catch {
+            /* best-effort close */
+          }
+        }
+      }
     }
     case 'readlink': {
       const resolvedPath = path.resolve(op.targetPath);
@@ -793,8 +830,45 @@ export function dispatch(op: WriteOp, trustedUids?: Set<number>): void {
         const target = fs.readlinkSync(resolvedPath);
         throw new OopRead(Buffer.from(target).toString('base64'), true);
       }
-      const buf = fs.readFileSync(resolvedPath);
-      throw new OopRead(buf.toString('base64'), false);
+      let srfd: number | undefined;
+      try {
+        srfd = fs.openSync(
+          resolvedPath,
+          fs.constants.O_RDONLY | O_NOFOLLOW | O_NONBLOCK,
+        );
+        const srst = fs.fstatSync(srfd);
+        if (!srst.isFile()) {
+          throw new Error(`stat-read: ${op.targetPath} is not a regular file`);
+        }
+        const MAX_READ_SR = 100 * 1024 * 1024;
+        if (srst.size > MAX_READ_SR) {
+          throw new Error(
+            `stat-read: ${op.targetPath} exceeds the 100 MiB read limit`,
+          );
+        }
+        const srbuf = Buffer.alloc(srst.size);
+        let sroffset = 0;
+        while (sroffset < srst.size) {
+          const n = fs.readSync(
+            srfd,
+            srbuf,
+            sroffset,
+            srst.size - sroffset,
+            sroffset,
+          );
+          if (n === 0) break;
+          sroffset += n;
+        }
+        throw new OopRead(srbuf.toString('base64'), false);
+      } finally {
+        if (srfd !== undefined) {
+          try {
+            fs.closeSync(srfd);
+          } catch {
+            /* best-effort close */
+          }
+        }
+      }
     }
     default: {
       const _exhaustive: never = op;
@@ -805,6 +879,18 @@ export function dispatch(op: WriteOp, trustedUids?: Set<number>): void {
 
 // Entry point: only run when this file is the main module, not when imported.
 if (require.main === module) {
+  process.on('uncaughtException', (err) => {
+    process.stderr.write(
+      `avanti privileged-worker: uncaught exception: ${err.stack ?? String(err)}\n`,
+    );
+    process.exitCode = 1;
+  });
+  process.on('unhandledRejection', (reason) => {
+    process.stderr.write(
+      `avanti privileged-worker: unhandled rejection: ${String(reason)}\n`,
+    );
+    process.exitCode = 1;
+  });
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const rl = (require('readline') as typeof import('readline')).createInterface(
     {
@@ -875,6 +961,11 @@ if (require.main === module) {
         if (typeof raw['targetPath'] !== 'string') {
           throw new Error(
             `invalid op ${type}: missing required field "targetPath"`,
+          );
+        }
+        if (!path.isAbsolute(raw['targetPath'])) {
+          throw new Error(
+            `invalid op ${type}: targetPath must be absolute, got ${raw['targetPath']}`,
           );
         }
         if (

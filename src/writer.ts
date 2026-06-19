@@ -640,6 +640,7 @@ function buildTrustedUids(sudo: true | string): Set<number> {
 
 export class SudoWorkerSession {
   private proc: ReturnType<typeof spawn>;
+  private tmpDir?: string;
   private lineBuffer = '';
   private pending: {
     resolve: (results: WorkerResult[]) => void;
@@ -673,6 +674,7 @@ export class SudoWorkerSession {
     let resolvedWorkerPath = workerPath;
     if (typeof sudo === 'string' && fs.existsSync(workerPath)) {
       const tmpDir = fs.mkdtempSync(path.join('/tmp', 'avanti-worker-'));
+      this.tmpDir = tmpDir;
       fs.chmodSync(tmpDir, 0o755);
       const tmpWorker = path.join(tmpDir, 'privileged-worker.js');
       fs.copyFileSync(workerPath, tmpWorker);
@@ -749,6 +751,16 @@ export class SudoWorkerSession {
 
   close(): void {
     this.proc.stdin!.end();
+    const t = setTimeout(() => this.proc.kill('SIGTERM'), 5_000);
+    t.unref();
+    this.proc.once('close', () => clearTimeout(t));
+    if (this.tmpDir) {
+      try {
+        fs.rmSync(this.tmpDir, { recursive: true, force: true });
+      } catch {
+        /* best-effort */
+      }
+    }
   }
 }
 

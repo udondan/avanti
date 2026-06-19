@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { spawnSync } from 'child_process';
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, afterEach } from 'vitest';
 import type { WorkerRequest, WorkerResponse } from '../src/privileged-worker';
 
 // These tests spawn dist/privileged-worker.js (not sudo) — they verify the
@@ -12,6 +12,15 @@ import type { WorkerRequest, WorkerResponse } from '../src/privileged-worker';
 // Skipped on Windows: the build step only runs on Linux in CI.
 const WORKER = path.resolve(__dirname, '../dist/privileged-worker.js');
 const workerExists = fs.existsSync(WORKER);
+const isWindows = process.platform === 'win32';
+
+beforeAll(() => {
+  if (!isWindows && !workerExists) {
+    throw new Error(
+      `privileged worker binary not found at ${WORKER}. Run \`mise run build\` first.`,
+    );
+  }
+});
 
 function b64(content: string): string {
   return Buffer.from(content).toString('base64');
@@ -45,7 +54,7 @@ afterEach(() => {
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
 
-describe.skipIf(!workerExists)('IPC protocol — write-mv', () => {
+describe.skipIf(isWindows || !workerExists)('IPC protocol — write-mv', () => {
   it('creates a new file and returns ok:true', () => {
     const targetPath = path.join(tmpDir, 'output.txt');
 
@@ -143,7 +152,7 @@ describe.skipIf(!workerExists)('IPC protocol — write-mv', () => {
   });
 });
 
-describe.skipIf(!workerExists || process.platform === 'win32')(
+describe.skipIf(isWindows || !workerExists)(
   'IPC protocol — write-symlink',
   () => {
     it('creates a new symlink and returns ok:true', () => {
@@ -161,32 +170,35 @@ describe.skipIf(!workerExists || process.platform === 'win32')(
   },
 );
 
-describe.skipIf(!workerExists)('IPC protocol — write-in-place', () => {
-  it('overwrites an existing file in-place', () => {
-    const targetPath = path.join(tmpDir, 'existing.txt');
-    fs.writeFileSync(targetPath, 'original');
-    const inoBefore = fs.statSync(targetPath).ino;
+describe.skipIf(isWindows || !workerExists)(
+  'IPC protocol — write-in-place',
+  () => {
+    it('overwrites an existing file in-place', () => {
+      const targetPath = path.join(tmpDir, 'existing.txt');
+      fs.writeFileSync(targetPath, 'original');
+      const inoBefore = fs.statSync(targetPath).ino;
 
-    const resp = runWorker({
-      ops: [
-        {
-          type: 'write-in-place',
-          targetPath,
-          contentB64: b64('updated'),
-          defaultMode: '0644',
-        },
-      ],
+      const resp = runWorker({
+        ops: [
+          {
+            type: 'write-in-place',
+            targetPath,
+            contentB64: b64('updated'),
+            defaultMode: '0644',
+          },
+        ],
+      });
+
+      expect(resp.results[0].ok).toBe(true);
+      expect(fs.readFileSync(targetPath, 'utf8')).toBe('updated');
+      if (process.platform !== 'win32') {
+        expect(fs.statSync(targetPath).ino).toBe(inoBefore);
+      }
     });
+  },
+);
 
-    expect(resp.results[0].ok).toBe(true);
-    expect(fs.readFileSync(targetPath, 'utf8')).toBe('updated');
-    if (process.platform !== 'win32') {
-      expect(fs.statSync(targetPath).ino).toBe(inoBefore);
-    }
-  });
-});
-
-describe.skipIf(!workerExists)('IPC protocol — delete', () => {
+describe.skipIf(isWindows || !workerExists)('IPC protocol — delete', () => {
   it('deletes an existing file', () => {
     const targetPath = path.join(tmpDir, 'to-delete.txt');
     fs.writeFileSync(targetPath, 'gone');
@@ -220,17 +232,20 @@ describe.skipIf(!workerExists)('IPC protocol — delete', () => {
   });
 });
 
-describe.skipIf(!workerExists)('IPC protocol — malformed input', () => {
-  it('returns ok:false and exits non-zero on invalid JSON', () => {
-    const r = spawnSync('node', [WORKER], {
-      input: 'not json at all',
-      stdio: ['pipe', 'pipe', 'inherit'],
-      encoding: 'utf8',
+describe.skipIf(isWindows || !workerExists)(
+  'IPC protocol — malformed input',
+  () => {
+    it('returns ok:false and exits non-zero on invalid JSON', () => {
+      const r = spawnSync('node', [WORKER], {
+        input: 'not json at all',
+        stdio: ['pipe', 'pipe', 'inherit'],
+        encoding: 'utf8',
+      });
+      // Worker writes a JSON error response and exits 1.
+      expect(r.status).toBe(1);
+      const resp = JSON.parse(r.stdout) as WorkerResponse;
+      expect(resp.results[0].ok).toBe(false);
+      expect(resp.results[0].error).toMatch(/parse/i);
     });
-    // Worker writes a JSON error response and exits 1.
-    expect(r.status).toBe(1);
-    const resp = JSON.parse(r.stdout) as WorkerResponse;
-    expect(resp.results[0].ok).toBe(false);
-    expect(resp.results[0].error).toMatch(/parse/i);
-  });
-});
+  },
+);
