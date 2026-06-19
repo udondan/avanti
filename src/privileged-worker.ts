@@ -109,8 +109,8 @@ function backupRegularFile(
     throw e;
   }
 
-  const backupDir = path.dirname(backupPath);
   const resolvedBackup = path.resolve(backupPath);
+  const backupDir = path.dirname(resolvedBackup);
 
   // Refuse if backup destination is a directory.
   try {
@@ -493,8 +493,8 @@ export function handleWriteSymlink(
     try {
       const lst = fs.lstatSync(resolvedTarget);
       if (lst.isSymbolicLink()) {
-        const backupDir = path.dirname(op.backupPath);
         const resolvedBackup = path.resolve(op.backupPath);
+        const backupDir = path.dirname(resolvedBackup);
 
         try {
           if (fs.lstatSync(resolvedBackup).isDirectory()) {
