@@ -674,10 +674,24 @@ export function dispatch(op: WriteOp, trustedUids?: Set<number>): void {
         // O_NOFOLLOW rejects symlinks (ELOOP); O_NONBLOCK prevents blocking on
         // FIFOs. Using fchmodSync on the fd eliminates the lstat→chmod TOCTOU
         // window that would otherwise allow a root-privilege symlink swap.
-        fd = fs.openSync(
-          resolvedPath,
-          fs.constants.O_RDONLY | O_NOFOLLOW | O_NONBLOCK,
-        );
+        // For write-only files (mode 0o200) under a named-user sudo identity,
+        // O_RDONLY fails with EACCES — fall back to O_WRONLY (no O_TRUNC so
+        // content is not affected) to still obtain a valid fd for fchmodSync.
+        try {
+          fd = fs.openSync(
+            resolvedPath,
+            fs.constants.O_RDONLY | O_NOFOLLOW | O_NONBLOCK,
+          );
+        } catch (e) {
+          if ((e as NodeJS.ErrnoException).code === 'EACCES') {
+            fd = fs.openSync(
+              resolvedPath,
+              fs.constants.O_WRONLY | O_NOFOLLOW | O_NONBLOCK,
+            );
+          } else {
+            throw e;
+          }
+        }
         safeFchmodSync(fd, parseMode(op.mode));
         fs.closeSync(fd);
       } catch (e) {
