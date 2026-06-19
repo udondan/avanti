@@ -1,7 +1,7 @@
 import { Command } from 'commander';
 import * as fs from 'fs';
 import * as path from 'path';
-import type { WriteOp } from '../privileged-worker';
+import type { WriteOp, WorkerResult } from '../privileged-worker';
 import {
   deriveConfigBase,
   isRemoteConfigSpec,
@@ -1038,35 +1038,32 @@ export function pullCommand(): Command {
         process.exit(2);
       }
       // Create one persistent sudo worker session per distinct sudo identity.
-      // All pre-write reads (idempotency + v0 capture) and the writes themselves
-      // flow through these sessions so the user sees exactly one password prompt
-      // per identity regardless of how many files are involved.
+      // Sessions are split into two phases so the password prompt does not
+      // appear before the user has seen or accepted the diff:
+      //
+      //  Phase 1 (early, before pre-reads): only identities with unreadable
+      //    targets that need a stat-read for idempotency / v0 capture.
+      //  Phase 2 (deferred, after confirmation): identities that only have
+      //    readable changed targets or delete-only targets.
       const sudoSessions = new Map<true | string, SudoWorkerSession>();
       if (process.platform !== 'win32') {
-        const sudoIds = new Set<true | string>();
+        const earlyIds = new Set<true | string>();
         for (let i = 0; i < writeTargets.length; i++) {
           const t = writeTargets[i];
-          if (t.sudo && (allDiffs[i].hasChanges || allDiffs[i].isUnreadable)) {
-            sudoIds.add(t.sudo);
+          if (t.sudo && allDiffs[i].isUnreadable) {
+            earlyIds.add(t.sudo);
           }
         }
         for (let i = 0; i < staleToRestore.length; i++) {
           const t = staleToRestore[i];
           if (t.sudo) {
             const diffIdx = staleRestoreDiffIndices[i];
-            if (
-              staleDiffs[diffIdx]?.hasChanges ||
-              staleDiffs[diffIdx]?.isUnreadable
-            ) {
-              sudoIds.add(t.sudo);
+            if (staleDiffs[diffIdx]?.isUnreadable) {
+              earlyIds.add(t.sudo);
             }
           }
         }
-        // Include delete-only sudo identities so deletions share the same session.
-        for (const sv of staleDeleteSudo.values()) {
-          sudoIds.add(sv);
-        }
-        for (const id of sudoIds)
+        for (const id of earlyIds)
           sudoSessions.set(id, new SudoWorkerSession(id));
       }
 
@@ -1098,13 +1095,26 @@ export function pullCommand(): Command {
           });
         }
       }
-      const preReads =
-        preReadRequests.length > 0
-          ? await sudoAtomicRead(preReadRequests, sudoSessions)
-          : new Map<
-              string,
-              { contentB64: string; isSymlink?: boolean } | null
-            >();
+      let preReads: Map<
+        string,
+        { contentB64: string; isSymlink?: boolean } | null
+      >;
+      if (preReadRequests.length > 0) {
+        try {
+          preReads = await sudoAtomicRead(preReadRequests, sudoSessions);
+        } catch (err) {
+          for (const session of sudoSessions.values()) session.close();
+          console.error(
+            `Read failed: ${err instanceof Error ? err.message : String(err)}`,
+          );
+          process.exit(2);
+        }
+      } else {
+        preReads = new Map<
+          string,
+          { contentB64: string; isSymlink?: boolean } | null
+        >();
+      }
 
       // Post-auth idempotency: compare current file content via sudo against the
       // desired content. If they match, suppress the write for this entry.
@@ -1250,6 +1260,44 @@ export function pullCommand(): Command {
           console.log('Aborted.');
           process.exit(0);
         }
+      }
+
+      // Phase 2: deferred sudo sessions — identities with readable changed
+      // targets and stale-delete-only identities. These don't need pre-reads,
+      // so they are opened here (after the user confirmed) rather than before
+      // the diff is shown, avoiding an early password prompt.
+      if (process.platform !== 'win32') {
+        const deferredIds = new Set<true | string>();
+        for (let i = 0; i < writeTargets.length; i++) {
+          const t = writeTargets[i];
+          if (t.sudo && allDiffs[i].hasChanges && !sudoSessions.has(t.sudo)) {
+            deferredIds.add(t.sudo);
+          }
+        }
+        for (let i = 0; i < staleToRestore.length; i++) {
+          const t = staleToRestore[i];
+          if (t.sudo) {
+            const diffIdx = staleRestoreDiffIndices[i];
+            if (staleDiffs[diffIdx]?.hasChanges && !sudoSessions.has(t.sudo)) {
+              deferredIds.add(t.sudo);
+            }
+          }
+        }
+        // Thread 1: only add delete-only identities when the stale file still
+        // exists (hasChanges). Identities for already-absent files are skipped
+        // to avoid spurious password prompts on no-op runs.
+        for (const [p, sv] of staleDeleteSudo) {
+          const idx = staleDeleteDiffIndex.get(p);
+          if (
+            idx !== undefined &&
+            staleDiffs[idx]?.hasChanges &&
+            !sudoSessions.has(sv)
+          ) {
+            deferredIds.add(sv);
+          }
+        }
+        for (const id of deferredIds)
+          sudoSessions.set(id, new SudoWorkerSession(id));
       }
 
       // Warn when --accept-changes is used with a remote config: SHA values
@@ -1568,18 +1616,29 @@ export function pullCommand(): Command {
                 type: 'delete' as const,
                 targetPath: p,
               }));
-              const results = await session.exec(deleteOps, true);
+              // Stale cleanup is best-effort: a session-level failure (worker
+              // crash, auth error) is treated as a warning, not a fatal error.
+              let deleteResults: WorkerResult[] = [];
+              try {
+                deleteResults = await session.exec(deleteOps, true);
+              } catch (sessionErr) {
+                for (const p of paths)
+                  console.warn(
+                    `Warning: could not delete ${p}: ${sessionErr instanceof Error ? sessionErr.message : String(sessionErr)}`,
+                  );
+                continue;
+              }
               for (let di = 0; di < paths.length; di++) {
-                if (results[di]?.ok && !results[di]?.skipped) {
+                if (deleteResults[di]?.ok && !deleteResults[di]?.skipped) {
                   effectivelyDeleted.add(paths[di]);
                   effectivelyCleaned.add(paths[di]);
                 } else if (
-                  results[di] &&
-                  !results[di].ok &&
-                  results[di].error
+                  deleteResults[di] &&
+                  !deleteResults[di].ok &&
+                  deleteResults[di].error
                 ) {
                   console.warn(
-                    `Warning: could not delete ${paths[di]}: ${results[di].error}`,
+                    `Warning: could not delete ${paths[di]}: ${deleteResults[di].error}`,
                   );
                 }
               }

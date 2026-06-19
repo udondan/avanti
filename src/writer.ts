@@ -529,6 +529,7 @@ export async function sudoAtomicRead(
       ok: boolean;
       contentB64?: string;
       isSymlink?: boolean;
+      error?: string;
     }>;
     try {
       const session = sessions?.get(sudo);
@@ -549,6 +550,18 @@ export async function sudoAtomicRead(
           contentB64: r.contentB64,
           isSymlink: r.isSymlink,
         });
+      } else if (
+        r &&
+        !r.ok &&
+        r.error &&
+        !/ENOENT|no such file/i.test(r.error)
+      ) {
+        // Non-absence errors (e.g. file too large, not a regular file) must not
+        // be silently treated as missing — the write would proceed without
+        // capturing v0 content, risking data loss.
+        throw new Error(
+          `privileged read of ${item.filePath} failed: ${r.error}`,
+        );
       } else {
         resultMap.set(item.filePath, null);
       }

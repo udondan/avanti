@@ -113,8 +113,13 @@ function randomHex(): string {
 
 function getExistingMode(filePath: string): string | undefined {
   try {
-    const stat = fs.lstatSync(filePath);
-    if (stat.isSymbolicLink()) return undefined;
+    const lst = fs.lstatSync(filePath);
+    // For symlinks, follow to the target to preserve the target file's mode
+    // (matching the old `stat -L` behavior). If the target is not a regular
+    // file or the link is dangling, return undefined so the caller falls back
+    // to defaultMode.
+    const stat = lst.isSymbolicLink() ? fs.statSync(filePath) : lst;
+    if (!stat.isFile()) return undefined;
     return (stat.mode & 0o7777).toString(8).padStart(4, '0');
   } catch {
     return undefined;
