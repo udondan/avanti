@@ -666,7 +666,7 @@ if (require.main === module) {
           ],
         }) + '\n',
       );
-      process.exit(1);
+      process.exitCode = 1;
       return;
     }
 
