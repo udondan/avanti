@@ -69,6 +69,12 @@ function getExistingMode(filePath: string): string | undefined {
   }
 }
 
+// parseInt('0o644', 8) stops at 'o' and returns 0, silently setting permissions
+// to 0000. Strip the prefix so both '0644' and '0o644' parse correctly.
+function parseMode(modeStr: string): number {
+  return parseInt(modeStr.replace(/^0[oO]/, ''), 8);
+}
+
 function backupRegularFile(
   targetPath: string,
   backupPath: string,
@@ -178,7 +184,7 @@ export function handleWriteMv(op: WriteMvOp, trustedUids?: Set<number>): void {
     fs.writeFileSync(tfd, Buffer.from(op.contentB64, 'base64'));
 
     const effectiveMode = op.mode ?? existingMode ?? op.defaultMode;
-    fs.fchmodSync(tfd, parseInt(effectiveMode, 8));
+    fs.fchmodSync(tfd, parseMode(effectiveMode));
     fs.closeSync(tfd);
     tfd = undefined;
 
@@ -269,7 +275,7 @@ export function handleWriteInPlace(
       fd = fs.openSync(resolvedTarget, 'wx', 0o600);
       fs.writeFileSync(fd, content);
       if (effectiveMode !== undefined) {
-        fs.fchmodSync(fd, parseInt(effectiveMode, 8));
+        fs.fchmodSync(fd, parseMode(effectiveMode));
       }
       fs.closeSync(fd);
       fd = undefined;
@@ -361,7 +367,7 @@ export function handleWriteInPlace(
       // and applies the explicitly requested mode when configured.
       fs.fchmodSync(
         fd,
-        effectiveMode !== undefined ? parseInt(effectiveMode, 8) : savedMode,
+        effectiveMode !== undefined ? parseMode(effectiveMode) : savedMode,
       );
       fs.closeSync(fd);
       fd = undefined;
