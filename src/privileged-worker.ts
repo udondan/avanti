@@ -609,6 +609,11 @@ export function dispatch(op: WriteOp, trustedUids?: Set<number>): void {
 // Entry point: only run when this file is the main module, not when imported.
 if (require.main === module) {
   const chunks: Buffer[] = [];
+  process.stdin.on('error', (err) => {
+    process.stderr.write(`stdin error: ${err.message}\n`);
+    process.exitCode = 1;
+    process.stdin.destroy();
+  });
   process.stdin.on('data', (chunk: Buffer) => chunks.push(chunk));
   process.stdin.on('end', () => {
     let request: WorkerRequest;
