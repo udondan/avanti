@@ -165,9 +165,12 @@ export function sudoAtomicWrite(targets: SudoWriteTarget[]): void {
   // Validate ancestor safety for all targets before any privileged work.
   // checkAncestorsSafe prefers lstatSync (0 sudo calls) for world-readable
   // paths like /usr/local/bin; sudo stat is only used for unreadable ancestors.
-  const checkedDirs = new Set<string>();
+  const checkedDirsBySudo = new Map<true | string, Set<string>>();
   for (const t of targets) {
     const trustedUids = buildTrustedUids(t.sudo);
+    if (!checkedDirsBySudo.has(t.sudo))
+      checkedDirsBySudo.set(t.sudo, new Set());
+    const checkedDirs = checkedDirsBySudo.get(t.sudo)!;
     checkAncestorsSafe(
       t.sudo,
       t.targetPath,
