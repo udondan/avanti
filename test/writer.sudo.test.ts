@@ -192,7 +192,7 @@ function workerOkResult(opCount = 1): SpawnSyncReturns<Buffer> {
   };
 }
 
-describe('sudoAtomicWrite', () => {
+describe.skipIf(isWindows)('sudoAtomicWrite', () => {
   it('returns immediately and makes no spawnSync calls for empty targets', () => {
     sudoAtomicWrite([]);
     expect(mockSpawnSync).not.toHaveBeenCalled();
@@ -370,7 +370,7 @@ describe('sudoAtomicWrite', () => {
   });
 });
 
-describe('sudoAtomicDelete', () => {
+describe.skipIf(isWindows)('sudoAtomicDelete', () => {
   it('returns immediately and makes no spawnSync calls for empty list', () => {
     sudoAtomicDelete([]);
     expect(mockSpawnSync).not.toHaveBeenCalled();
