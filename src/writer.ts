@@ -47,7 +47,7 @@ function runPrivilegedWorker(
       : process.execPath;
   let cleanup: (() => void) | undefined;
 
-  if (typeof sudo === 'string') {
+  if (typeof sudo === 'string' && fs.existsSync(workerPath)) {
     // Named-user sudo: the target user may not be able to read the worker
     // from a private project directory. Copy it to a world-readable temp
     // path so sudo -u <user> can exec it.
