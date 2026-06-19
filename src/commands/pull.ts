@@ -35,6 +35,7 @@ import {
 import {
   atomicWrite,
   getSudoFileMode,
+  sudoAtomicChmod,
   sudoAtomicDelete,
   sudoAtomicWrite,
   sudoFileExists,
@@ -42,7 +43,7 @@ import {
   sudoIsSymlink,
   sudoRead,
   sudoReadlink,
-  sudoRun,
+  SudoChmodTarget,
   SudoWriteTarget,
   WriteTarget,
 } from '../writer';
@@ -1417,27 +1418,25 @@ export function pullCommand(): Command {
         if (sudoChanged.length + sudoRestore.length > 0) {
           sudoAtomicWrite([...sudoChanged, ...sudoRestore]);
         }
+        let modeOnlyCount = 0;
         if (process.platform !== 'win32') {
-          // Authenticate any mode-only sudo identities not already covered by
-          // the worker call above. This ensures auth failures are caught before
-          // any regular writes, even when a mode-only identity differs from the
-          // content-change identity (which the worker already authenticated).
-          const contentSudoIds = new Set(
-            [...sudoChanged, ...sudoRestore].map((t) => t.sudo),
-          );
-          const modeOnlySudoIds = new Set<true | string>();
+          const modeOnlySudoTargets: SudoChmodTarget[] = [];
           for (let i = 0; i < writeTargets.length; i++) {
             if (
               allDiffs[i].modeChange &&
               !allDiffs[i].contentChanged &&
-              writeTargets[i].sudo &&
-              !contentSudoIds.has(writeTargets[i].sudo!)
+              writeTargets[i].sudo
             ) {
-              modeOnlySudoIds.add(writeTargets[i].sudo!);
+              modeOnlySudoTargets.push({
+                targetPath: writeTargets[i].targetPath,
+                mode: allDiffs[i].modeChange!.to.toString(8).padStart(4, '0'),
+                sudo: writeTargets[i].sudo!,
+              });
             }
           }
-          for (const sudoId of modeOnlySudoIds) {
-            sudoRun(sudoId, ['true']);
+          if (modeOnlySudoTargets.length > 0) {
+            sudoAtomicChmod(modeOnlySudoTargets);
+            modeOnlyCount += modeOnlySudoTargets.length;
           }
         }
         atomicWrite([...regularChanged, ...regularRestore]);
@@ -1499,44 +1498,19 @@ export function pullCommand(): Command {
           }
         }
 
-        // Mode-only changes: apply chmod directly (POSIX only — mode bits are
-        // not meaningful on Windows so modeChange is never set there).
-        let modeOnlyCount = 0;
+        // Non-sudo mode-only changes (POSIX only). Sudo mode-only changes are
+        // already handled above via sudoAtomicChmod (one worker invocation per
+        // sudo identity, before regular writes).
         if (process.platform !== 'win32') {
           for (let i = 0; i < writeTargets.length; i++) {
             const d = allDiffs[i];
-            if (d.modeChange && !d.contentChanged) {
-              if (writeTargets[i].sudo) {
-                // Use sudo for the symlink/existence checks: fs.lstatSync
-                // throws EACCES on paths inside root-owned directories.
-                // Skip chmod if the file has been deleted since diff
-                // computation (mirrors non-sudo throwIfNoEntry: false path).
-                if (
-                  sudoFileExists(
-                    writeTargets[i].sudo!,
-                    writeTargets[i].targetPath,
-                  ) &&
-                  !sudoIsSymlink(
-                    writeTargets[i].sudo!,
-                    writeTargets[i].targetPath,
-                  )
-                ) {
-                  sudoRun(writeTargets[i].sudo!, [
-                    'chmod',
-                    '--',
-                    d.modeChange.to.toString(8).padStart(4, '0'),
-                    writeTargets[i].targetPath,
-                  ]);
-                  modeOnlyCount++;
-                }
-              } else {
-                const lst = fs.lstatSync(writeTargets[i].targetPath, {
-                  throwIfNoEntry: false,
-                });
-                if (lst && !lst.isSymbolicLink()) {
-                  fs.chmodSync(writeTargets[i].targetPath, d.modeChange.to);
-                  modeOnlyCount++;
-                }
+            if (d.modeChange && !d.contentChanged && !writeTargets[i].sudo) {
+              const lst = fs.lstatSync(writeTargets[i].targetPath, {
+                throwIfNoEntry: false,
+              });
+              if (lst && !lst.isSymbolicLink()) {
+                fs.chmodSync(writeTargets[i].targetPath, d.modeChange.to);
+                modeOnlyCount++;
               }
             }
           }

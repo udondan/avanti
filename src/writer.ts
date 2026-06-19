@@ -5,6 +5,12 @@ import * as path from 'path';
 import { spawnSync } from 'child_process';
 import type { WriteOp } from './privileged-worker';
 
+export interface SudoChmodTarget {
+  targetPath: string;
+  mode: string;
+  sudo: true | string;
+}
+
 export interface WriteTarget {
   targetPath: string;
   content: Buffer;
@@ -238,6 +244,28 @@ export function sudoAtomicWrite(targets: SudoWriteTarget[]): void {
       existing.push(op);
     } else {
       groups.set(sudo, [op]);
+    }
+  }
+  for (const [sudo, ops] of groups) {
+    runPrivilegedWorker(sudo, ops);
+  }
+}
+
+// Batches privileged mode-only changes into one worker invocation per sudo identity.
+export function sudoAtomicChmod(targets: SudoChmodTarget[]): void {
+  if (targets.length === 0) return;
+  const groups = new Map<true | string, WriteOp[]>();
+  for (const t of targets) {
+    const op: WriteOp = {
+      type: 'chmod',
+      targetPath: t.targetPath,
+      mode: t.mode,
+    };
+    const existing = groups.get(t.sudo);
+    if (existing) {
+      existing.push(op);
+    } else {
+      groups.set(t.sudo, [op]);
     }
   }
   for (const [sudo, ops] of groups) {

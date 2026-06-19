@@ -40,7 +40,18 @@ export interface DeleteOp {
   targetPath: string;
 }
 
-export type WriteOp = WriteMvOp | WriteInPlaceOp | WriteSymlinkOp | DeleteOp;
+export interface ChmodOp {
+  type: 'chmod';
+  targetPath: string;
+  mode: string;
+}
+
+export type WriteOp =
+  | WriteMvOp
+  | WriteInPlaceOp
+  | WriteSymlinkOp
+  | DeleteOp
+  | ChmodOp;
 
 export interface WorkerRequest {
   ops: WriteOp[];
@@ -656,6 +667,19 @@ export function dispatch(op: WriteOp, trustedUids?: Set<number>): void {
     case 'delete':
       handleDelete(op);
       break;
+    case 'chmod': {
+      const resolvedPath = path.resolve(op.targetPath);
+      try {
+        const stat = fs.lstatSync(resolvedPath);
+        if (!stat.isSymbolicLink()) {
+          fs.chmodSync(resolvedPath, parseMode(op.mode));
+        }
+      } catch (e) {
+        if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
+        // File gone since diff — skip silently (mirrors non-sudo behaviour).
+      }
+      break;
+    }
     default: {
       const _exhaustive: never = op;
       throw new Error(`unknown op type: ${(_exhaustive as WriteOp).type}`);
@@ -723,7 +747,7 @@ if (require.main === module) {
             'destination',
             checkedDirs,
           );
-          if (op.type !== 'delete' && op.backupPath) {
+          if (op.type !== 'delete' && op.type !== 'chmod' && op.backupPath) {
             checkAncestorsSafeAsRoot(
               op.backupPath,
               trustedUids,
