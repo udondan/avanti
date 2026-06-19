@@ -13,6 +13,7 @@ import {
   atomicWrite,
   sudoAtomicDelete,
   sudoAtomicWrite,
+  SudoWorkerSession,
   SudoWriteTarget,
   WriteTarget,
 } from '../writer';
@@ -250,12 +251,26 @@ export function revertCommand(): Command {
         const regularTargets = writeTargets.filter((t) => !t.sudo);
         const sudoTargets = writeTargets.filter(isSudoTarget);
 
+        // Create one shared session per sudo identity so that sudoAtomicWrite
+        // and sudoAtomicDelete share a single worker process (one password
+        // prompt total, regardless of timestamp_timeout).
+        const sudoSessions = new Map<true | string, SudoWorkerSession>();
+        if (process.platform !== 'win32') {
+          const sudoIds = new Set<true | string>([
+            ...sudoTargets.map((t) => t.sudo),
+            ...[...sudoDeletions.values()],
+          ]);
+          for (const id of sudoIds)
+            sudoSessions.set(id, new SudoWorkerSession(id));
+        }
+
         try {
           // Perform privileged operations first: if sudo fails, the
           // unprivileged writes have not yet happened, keeping the project in a
           // consistent (if incomplete) state.
-          if (sudoTargets.length > 0) await sudoAtomicWrite(sudoTargets);
-          sudoAtomicDelete([...sudoDeletions]);
+          if (sudoTargets.length > 0)
+            await sudoAtomicWrite(sudoTargets, [], sudoSessions);
+          await sudoAtomicDelete([...sudoDeletions], false, sudoSessions);
           atomicWrite(regularTargets, deletions);
           const total =
             writeTargets.length + deletions.length + sudoDeletions.size;
@@ -265,6 +280,8 @@ export function revertCommand(): Command {
             `Revert failed: ${err instanceof Error ? err.message : String(err)}`,
           );
           process.exit(2);
+        } finally {
+          for (const session of sudoSessions.values()) session.close();
         }
       },
     );

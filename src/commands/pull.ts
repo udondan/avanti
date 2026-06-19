@@ -1245,6 +1245,7 @@ export function pullCommand(): Command {
             survivingRefs,
           );
         }
+        for (const session of sudoSessions.values()) session.close();
         console.log('Nothing to do.');
         process.exit(0);
       }
@@ -1257,6 +1258,7 @@ export function pullCommand(): Command {
             : 'Apply changes? [y/N] ';
         const ok = await confirm(promptMsg);
         if (!ok) {
+          for (const session of sudoSessions.values()) session.close();
           console.log('Aborted.');
           process.exit(0);
         }
@@ -1647,7 +1649,7 @@ export function pullCommand(): Command {
                 p,
                 sv,
               ]);
-              const deleted = sudoAtomicDelete(batch, true);
+              const deleted = await sudoAtomicDelete(batch, true);
               for (const p of paths) {
                 if (deleted.has(p)) {
                   effectivelyDeleted.add(p);

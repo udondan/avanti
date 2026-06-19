@@ -355,15 +355,15 @@ describe.skipIf(isWindows)('sudoAtomicWrite', () => {
 });
 
 describe.skipIf(isWindows)('sudoAtomicDelete', () => {
-  it('returns immediately and makes no spawnSync calls for empty list', () => {
-    sudoAtomicDelete([]);
+  it('returns immediately and makes no spawnSync calls for empty list', async () => {
+    await sudoAtomicDelete([]);
     expect(mockSpawnSync).not.toHaveBeenCalled();
   });
 
-  it('sends a delete op to the worker for a single path', () => {
+  it('sends a delete op to the worker for a single path', async () => {
     mockSpawnSync.mockReturnValue(workerOkResult(1));
 
-    sudoAtomicDelete([['/etc/stale.conf', true]]);
+    await sudoAtomicDelete([['/etc/stale.conf', true]]);
 
     const sudoCalls = mockSpawnSync.mock.calls.filter(
       ([cmd]) => cmd === 'sudo',
@@ -379,10 +379,10 @@ describe.skipIf(isWindows)('sudoAtomicDelete', () => {
     });
   });
 
-  it('batches multiple deletions with the same identity into one worker call', () => {
+  it('batches multiple deletions with the same identity into one worker call', async () => {
     mockSpawnSync.mockReturnValue(workerOkResult(3));
 
-    sudoAtomicDelete([
+    await sudoAtomicDelete([
       ['/etc/a.conf', true],
       ['/etc/b.conf', true],
       ['/etc/c.conf', true],
@@ -399,10 +399,10 @@ describe.skipIf(isWindows)('sudoAtomicDelete', () => {
     for (const op of ops) expect(op.type).toBe('delete');
   });
 
-  it('makes separate worker calls for different sudo identities', () => {
+  it('makes separate worker calls for different sudo identities', async () => {
     mockSpawnSync.mockReturnValue(workerOkResult(1));
 
-    sudoAtomicDelete([
+    await sudoAtomicDelete([
       ['/etc/a.conf', true],
       ['/etc/b.conf', 'www-data'],
     ]);
@@ -413,7 +413,7 @@ describe.skipIf(isWindows)('sudoAtomicDelete', () => {
     expect(sudoCalls).toHaveLength(2);
   });
 
-  it('throws when the worker reports a failed op (default strict mode)', () => {
+  it('throws when the worker reports a failed op (default strict mode)', async () => {
     const body = JSON.stringify({
       results: [{ ok: false, error: 'permission denied' }],
     });
@@ -423,12 +423,12 @@ describe.skipIf(isWindows)('sudoAtomicDelete', () => {
       output: [null, Buffer.from(body), null],
     });
 
-    expect(() => sudoAtomicDelete([['/etc/locked.conf', true]])).toThrow(
-      'permission denied',
-    );
+    await expect(
+      sudoAtomicDelete([['/etc/locked.conf', true]]),
+    ).rejects.toThrow('permission denied');
   });
 
-  it('warns (does not throw) when the worker reports a failed op in bestEffort mode', () => {
+  it('warns (does not throw) when the worker reports a failed op in bestEffort mode', async () => {
     const body = JSON.stringify({
       results: [{ ok: false, error: 'permission denied' }],
     });
@@ -440,9 +440,9 @@ describe.skipIf(isWindows)('sudoAtomicDelete', () => {
 
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     try {
-      expect(() =>
+      await expect(
         sudoAtomicDelete([['/etc/locked.conf', true]], true),
-      ).not.toThrow();
+      ).resolves.not.toThrow();
       expect(warnSpy).toHaveBeenCalledWith(
         expect.stringContaining('permission denied'),
       );

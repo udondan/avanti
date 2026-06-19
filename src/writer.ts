@@ -358,10 +358,11 @@ export function sudoAtomicChmod(targets: SudoChmodTarget[]): void {
 // When bestEffort is false (default), worker-level failures throw; individual
 // per-path failures also throw. When bestEffort is true, both are warned and
 // the partial success set is returned — used by pull's stale-file cleanup.
-export function sudoAtomicDelete(
+export async function sudoAtomicDelete(
   deletions: Array<[string, true | string]>,
   bestEffort = false,
-): Set<string> {
+  sessions?: Map<true | string, SudoWorkerSession>,
+): Promise<Set<string>> {
   const succeeded = new Set<string>();
   if (deletions.length === 0) return succeeded;
   // Track per-sudo ordered path lists to correlate results with paths.
@@ -380,7 +381,10 @@ export function sudoAtomicDelete(
       targetPath: p,
     }));
     try {
-      const results = runPrivilegedWorker(sudo, ops, true);
+      const session = sessions?.get(sudo);
+      const results: WorkerResult[] = session
+        ? await session.exec(ops, true)
+        : runPrivilegedWorker(sudo, ops, true);
       const failed: string[] = [];
       results.forEach((r, i) => {
         if (r.ok) {
@@ -525,24 +529,19 @@ export async function sudoAtomicRead(
       type: item.type,
       targetPath: path.resolve(item.filePath),
     }));
-    let results: Array<{
+    // Worker-level failure (e.g. build missing, JSON parse error, OOM) must
+    // propagate: silently falling back to null would skip v0 history capture
+    // for every file in the batch, permanently breaking revert/reset without
+    // any user-visible error.
+    const session = sessions?.get(sudo);
+    const results: Array<{
       ok: boolean;
       contentB64?: string;
       isSymlink?: boolean;
       error?: string;
-    }>;
-    try {
-      const session = sessions?.get(sudo);
-      if (session) {
-        results = await session.exec(ops, true);
-      } else {
-        results = runPrivilegedWorker(sudo, ops, true);
-      }
-    } catch {
-      // If the worker itself fails (e.g. build missing), fall back to all-null.
-      for (const item of items) resultMap.set(item.filePath, null);
-      continue;
-    }
+    }> = session
+      ? await session.exec(ops, true)
+      : runPrivilegedWorker(sudo, ops, true);
     items.forEach((item, i) => {
       const r = results[i];
       if (r?.ok && r.contentB64 != null) {
