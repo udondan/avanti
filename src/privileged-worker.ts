@@ -63,7 +63,9 @@ function randomHex(): string {
 
 function getExistingMode(filePath: string): string | undefined {
   try {
-    return (fs.statSync(filePath).mode & 0o7777).toString(8).padStart(4, '0');
+    const stat = fs.lstatSync(filePath);
+    if (stat.isSymbolicLink()) return undefined;
+    return (stat.mode & 0o7777).toString(8).padStart(4, '0');
   } catch {
     return undefined;
   }
@@ -331,7 +333,9 @@ export function handleWriteInPlace(
         // Write-only file (e.g. mode 0200): O_RDONLY fails with EACCES.
         // Fall back to a path-based stat to capture the mode; the write open
         // below will succeed directly so no rfd-based EACCES recovery is needed.
-        const rst = fs.statSync(resolvedTarget);
+        // Use lstatSync (not statSync) to avoid following symlinks — the caller
+        // already verified the path is a regular file via lstatSync above.
+        const rst = fs.lstatSync(resolvedTarget);
         if (!rst.isFile()) {
           throw new Error(
             `writeInPlace: ${op.targetPath} is not a regular file; refusing to write`,
