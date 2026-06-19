@@ -116,8 +116,9 @@ function runPrivilegedWorker(
         const parsed = JSON.parse(result.stdout) as {
           results: Array<{ ok: boolean; error?: string }>;
         };
-        if (parsed.results?.[0]?.error) {
-          workerError = parsed.results[0].error;
+        const failedResult = parsed.results?.find((r) => !r.ok);
+        if (failedResult?.error) {
+          workerError = failedResult.error;
         }
       }
     } catch {
