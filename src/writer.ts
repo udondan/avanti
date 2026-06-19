@@ -135,6 +135,11 @@ function runPrivilegedWorker(
     const parsed = JSON.parse(result.stdout) as {
       results: Array<{ ok: boolean; error?: string }>;
     };
+    if (!parsed || !Array.isArray(parsed.results)) {
+      throw new Error(
+        `privileged worker returned malformed response (missing results array): ${result.stdout}`,
+      );
+    }
     results = parsed.results;
   } catch (e) {
     throw new Error(
