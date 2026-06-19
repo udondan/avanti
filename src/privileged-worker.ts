@@ -314,17 +314,33 @@ export function handleWriteInPlace(
     // outside the catch block, avoiding the preserve-caught-error lint constraint.
     let firstOpenErr: NodeJS.ErrnoException | undefined;
     try {
-      rfd = fs.openSync(
-        resolvedTarget,
-        fs.constants.O_RDONLY | O_NOFOLLOW | O_NONBLOCK,
-      );
-      const rst = fs.fstatSync(rfd);
-      if (!rst.isFile()) {
-        throw new Error(
-          `writeInPlace: ${op.targetPath} is not a regular file; refusing to write`,
+      try {
+        rfd = fs.openSync(
+          resolvedTarget,
+          fs.constants.O_RDONLY | O_NOFOLLOW | O_NONBLOCK,
         );
+        const rst = fs.fstatSync(rfd);
+        if (!rst.isFile()) {
+          throw new Error(
+            `writeInPlace: ${op.targetPath} is not a regular file; refusing to write`,
+          );
+        }
+        savedMode = rst.mode & 0o7777;
+      } catch (e) {
+        if ((e as NodeJS.ErrnoException).code !== 'EACCES') throw e;
+        // Write-only file (e.g. mode 0200): O_RDONLY fails with EACCES.
+        // Fall back to a path-based stat to capture the mode; the write open
+        // below will succeed directly so no rfd-based EACCES recovery is needed.
+        const rst = fs.statSync(resolvedTarget);
+        if (!rst.isFile()) {
+          throw new Error(
+            `writeInPlace: ${op.targetPath} is not a regular file; refusing to write`,
+            { cause: e },
+          );
+        }
+        savedMode = rst.mode & 0o7777;
+        // rfd stays undefined — no EACCES recovery fchmod needed.
       }
-      savedMode = rst.mode & 0o7777;
 
       try {
         fd = fs.openSync(resolvedTarget, openFlags);
@@ -335,13 +351,15 @@ export function handleWriteInPlace(
         if (
           firstOpenErr.code === 'EACCES' &&
           typeof process.getuid === 'function' &&
-          process.getuid() !== 0
+          process.getuid() !== 0 &&
+          rfd !== undefined
         ) {
           // Named-user sudo: add write bit via fd-based fchmod, then retry.
           // If fchmod fails (EPERM — named user doesn't own the file), surface
           // the original EACCES rather than the secondary EPERM.
+          const mode = savedMode ?? 0;
           try {
-            safeFchmodSync(rfd, savedMode | 0o200);
+            safeFchmodSync(rfd, mode | 0o200);
           } catch {
             throw firstOpenErr;
           }
@@ -349,7 +367,7 @@ export function handleWriteInPlace(
             fd = fs.openSync(resolvedTarget, openFlags);
           } catch (retryErr) {
             try {
-              safeFchmodSync(rfd, savedMode);
+              safeFchmodSync(rfd, mode);
             } catch {
               // best-effort restore
             }
@@ -371,16 +389,27 @@ export function handleWriteInPlace(
         );
       }
       fs.writeFileSync(fd, content);
-      // Always fchmod: restores setuid/setgid bits cleared by O_TRUNC on Linux,
-      // and applies the explicitly requested mode when configured.
-      safeFchmodSync(
-        fd,
-        effectiveMode !== undefined ? parseMode(effectiveMode) : savedMode,
-      );
+      // fchmod only when needed: apply explicit mode, or restore setuid/setgid
+      // bits that Linux strips on O_TRUNC. Skip when neither applies — a named
+      // user writing via group permission may not own the file and fchmod would
+      // fail with EPERM even though the write succeeded.
+      if (
+        effectiveMode !== undefined ||
+        (savedMode !== undefined && (savedMode & 0o7000) !== 0)
+      ) {
+        safeFchmodSync(
+          fd,
+          effectiveMode !== undefined
+            ? parseMode(effectiveMode)
+            : (savedMode ?? 0),
+        );
+      }
       fs.closeSync(fd);
       fd = undefined;
-      fs.closeSync(rfd);
-      rfd = undefined;
+      if (rfd !== undefined) {
+        fs.closeSync(rfd);
+        rfd = undefined;
+      }
     } catch (err) {
       // If we temporarily boosted the mode via rfd, restore it before closing.
       if (rfd !== undefined && savedMode !== undefined) {
