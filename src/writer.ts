@@ -66,6 +66,13 @@ function runPrivilegedWorker(
       `.avanti-worker-${crypto.randomBytes(5).toString('hex')}`,
     );
     fs.mkdirSync(tmpWorkerDir, { mode: 0o755 });
+    cleanup = () => {
+      try {
+        fs.rmSync(tmpWorkerDir, { recursive: true, force: true });
+      } catch {
+        // best-effort cleanup
+      }
+    };
     // mkdirSync mode is masked by the caller's umask (e.g. 077 → 0700), which
     // would prevent the named sudo user from traversing this directory. Chmod
     // explicitly to ensure the directory is always world-executable.
@@ -74,13 +81,6 @@ function runPrivilegedWorker(
     fs.copyFileSync(workerPath, tmpWorker);
     fs.chmodSync(tmpWorker, 0o644);
     resolvedWorkerPath = tmpWorker;
-    cleanup = () => {
-      try {
-        fs.rmSync(tmpWorkerDir, { recursive: true, force: true });
-      } catch {
-        // best-effort cleanup
-      }
-    };
   }
 
   let result;
