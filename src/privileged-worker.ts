@@ -671,6 +671,19 @@ if (require.main === module) {
       return;
     }
 
+    if (!request || !Array.isArray(request.ops)) {
+      process.stdout.write(
+        JSON.stringify({
+          results: [
+            { ok: false, error: 'invalid request: ops must be an array' },
+          ],
+        }) + '\n',
+      );
+      process.exitCode = 1;
+      process.stdin.destroy();
+      return;
+    }
+
     const trustedUids = request.trustedUids
       ? new Set(request.trustedUids)
       : undefined;

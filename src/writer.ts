@@ -104,7 +104,10 @@ function runPrivilegedWorker(
     throw result.error;
   }
   if (result.status !== 0) {
-    let workerError = `privileged worker failed (exit ${result.status})`;
+    let workerError =
+      result.status === null
+        ? `privileged worker terminated by signal ${result.signal}`
+        : `privileged worker failed (exit ${result.status})`;
     try {
       if (result.stdout) {
         const parsed = JSON.parse(result.stdout) as {
