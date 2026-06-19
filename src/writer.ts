@@ -242,17 +242,24 @@ export function sudoAtomicDelete(
       targetPath: p,
     }));
     // Deletion failures are non-fatal: warn and continue, matching the old
-    // per-file sudo rm -f behaviour.
-    const results = runPrivilegedWorker(sudo, ops, true);
-    results.forEach((r, i) => {
-      if (r.ok) {
-        succeeded.add(paths[i]);
-      } else {
-        console.warn(
-          `Warning: privileged operation failed: ${r.error ?? 'unknown error'}`,
-        );
-      }
-    });
+    // per-file sudo rm -f behaviour. This includes worker-level failures (sudo
+    // auth failure, worker crash) so that a failed deletion never aborts a pull.
+    try {
+      const results = runPrivilegedWorker(sudo, ops, true);
+      results.forEach((r, i) => {
+        if (r.ok) {
+          succeeded.add(paths[i]);
+        } else {
+          console.warn(
+            `Warning: privileged operation failed: ${r.error ?? 'unknown error'}`,
+          );
+        }
+      });
+    } catch (err) {
+      console.warn(
+        `Warning: privileged deletion worker failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
   }
   return succeeded;
 }

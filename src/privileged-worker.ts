@@ -667,6 +667,7 @@ if (require.main === module) {
         }) + '\n',
       );
       process.exitCode = 1;
+      process.stdin.destroy();
       return;
     }
 
