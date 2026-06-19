@@ -170,10 +170,6 @@ export function handleWriteMv(op: WriteMvOp, trustedUids?: Set<number>): void {
 
   const existingMode = op.mode ? undefined : getExistingMode(resolvedTarget);
 
-  if (op.backupPath) {
-    backupRegularFile(resolvedTarget, op.backupPath, trustedUids);
-  }
-
   // O_EXCL temp in destination directory. Keep the fd open and write through
   // it so no path-based TOCTOU window opens between open and write.
   const tmpPath = path.join(dir, `.avanti-${randomHex()}`);
@@ -198,6 +194,12 @@ export function handleWriteMv(op: WriteMvOp, trustedUids?: Set<number>): void {
       }
     } catch (e) {
       if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
+    }
+
+    // Backup AFTER staging succeeds: a staging failure no longer leaves a
+    // backup behind without the new file being committed.
+    if (op.backupPath) {
+      backupRegularFile(resolvedTarget, op.backupPath, trustedUids);
     }
 
     fs.renameSync(tmpPath, resolvedTarget);
@@ -287,15 +289,59 @@ export function handleWriteInPlace(
     // on a FIFO (O_NONBLOCK makes opening a write-end FIFO without a reader
     // fail immediately instead of blocking). fstat after open verifies the
     // file is still a regular file — O_NOFOLLOW rejects symlinks but not FIFOs.
-    // The pre-open path-based chmodSync is intentionally absent: it followed
-    // symlinks, creating a TOCTOU window. The worker runs as root in production
-    // and can always open files for writing regardless of mode.
+    // Named-user sudo: if the target file is not writable by the target user
+    // (EACCES), open it read-only first to get an fd, fstat to verify it is a
+    // regular file, then fchmod via the fd to add a write bit. This avoids the
+    // path-based chmod→open TOCTOU window. The mode is always restored to
+    // either the explicitly requested value or the original after the write.
+    const openFlags =
+      fs.constants.O_WRONLY | fs.constants.O_TRUNC | O_NOFOLLOW | O_NONBLOCK;
     let fd: number | undefined;
+    let rfd: number | undefined;
+    let savedMode: number | undefined;
+    // Capture the initial open error so we can do EACCES recovery outside the
+    // catch block, avoiding the preserve-caught-error lint constraint.
+    let firstOpenErr: NodeJS.ErrnoException | undefined;
     try {
-      fd = fs.openSync(
-        resolvedTarget,
-        fs.constants.O_WRONLY | fs.constants.O_TRUNC | O_NOFOLLOW | O_NONBLOCK,
-      );
+      try {
+        fd = fs.openSync(resolvedTarget, openFlags);
+      } catch (e) {
+        firstOpenErr = e as NodeJS.ErrnoException;
+      }
+      if (firstOpenErr !== undefined) {
+        if (
+          firstOpenErr.code === 'EACCES' &&
+          typeof process.getuid === 'function' &&
+          process.getuid() !== 0
+        ) {
+          // Named-user sudo: add write bit via fd-based fchmod, then retry.
+          rfd = fs.openSync(
+            resolvedTarget,
+            fs.constants.O_RDONLY | O_NOFOLLOW | O_NONBLOCK,
+          );
+          const rst = fs.fstatSync(rfd);
+          if (!rst.isFile()) {
+            throw new Error(
+              `writeInPlace: ${op.targetPath} is not a regular file; refusing to write`,
+            );
+          }
+          savedMode = rst.mode & 0o7777;
+          fs.fchmodSync(rfd, savedMode | 0o200);
+          try {
+            fd = fs.openSync(resolvedTarget, openFlags);
+          } catch (retryErr) {
+            fs.fchmodSync(rfd, savedMode);
+            throw retryErr;
+          }
+        } else {
+          throw firstOpenErr;
+        }
+      }
+      // After the recovery block: either fd was set by the initial open
+      // (firstOpenErr undefined) or by the retry (recovery path). All other
+      // branches throw, so fd is always a number here.
+      if (fd === undefined)
+        throw new Error('writeInPlace: internal error: fd not set');
       const fst = fs.fstatSync(fd);
       if (!fst.isFile()) {
         throw new Error(
@@ -303,15 +349,35 @@ export function handleWriteInPlace(
         );
       }
       fs.writeFileSync(fd, content);
-      if (effectiveMode !== undefined) {
-        fs.fchmodSync(fd, parseInt(effectiveMode, 8));
+      // When we used the write-bit-boost path, always fchmod to restore the
+      // mode (either the explicitly requested mode or the original). Otherwise
+      // preserve the original behaviour: only fchmod when effectiveMode is set.
+      const finalMode =
+        effectiveMode !== undefined
+          ? parseInt(effectiveMode, 8)
+          : savedMode !== undefined
+            ? savedMode
+            : undefined;
+      if (finalMode !== undefined) {
+        fs.fchmodSync(fd, finalMode);
       }
       fs.closeSync(fd);
       fd = undefined;
+      if (rfd !== undefined) {
+        fs.closeSync(rfd);
+        rfd = undefined;
+      }
     } catch (err) {
       if (fd !== undefined) {
         try {
           fs.closeSync(fd);
+        } catch {
+          // best-effort close
+        }
+      }
+      if (rfd !== undefined) {
+        try {
+          fs.closeSync(rfd);
         } catch {
           // best-effort close
         }
@@ -377,18 +443,41 @@ export function handleWriteSymlink(
               : path.resolve(path.dirname(resolvedTarget), rawTarget);
             fs.symlinkSync(absTarget, backupTmp);
           } else {
-            // Keep fd open and write through it — no path-based TOCTOU between
-            // open and write.
+            // Open source with O_NOFOLLOW|O_NONBLOCK to reject symlinks and
+            // FIFOs; fstat to verify it is still a regular file before reading.
+            // Keep the backup fd open and write through it — no path-based
+            // TOCTOU between open and write.
             let sfd: number | undefined;
+            let bfd: number | undefined;
             try {
-              sfd = fs.openSync(backupTmp, 'wx', 0o600);
-              const srcMode = getExistingMode(resolvedTarget);
-              fs.writeFileSync(sfd, fs.readFileSync(resolvedTarget));
-              if (srcMode !== undefined)
-                fs.fchmodSync(sfd, parseInt(srcMode, 8));
+              sfd = fs.openSync(
+                resolvedTarget,
+                fs.constants.O_RDONLY | O_NOFOLLOW | O_NONBLOCK,
+              );
+              const srcStat = fs.fstatSync(sfd);
+              if (!srcStat.isFile()) {
+                throw new Error(
+                  `backup source ${op.targetPath} is not a regular file; refusing to back up`,
+                );
+              }
+              const srcMode = (srcStat.mode & 0o7777)
+                .toString(8)
+                .padStart(4, '0');
+              bfd = fs.openSync(backupTmp, 'wx', 0o600);
+              fs.writeFileSync(bfd, fs.readFileSync(sfd));
+              fs.fchmodSync(bfd, parseInt(srcMode, 8));
+              fs.closeSync(bfd);
+              bfd = undefined;
               fs.closeSync(sfd);
               sfd = undefined;
             } catch (err) {
+              if (bfd !== undefined) {
+                try {
+                  fs.closeSync(bfd);
+                } catch {
+                  // best-effort close
+                }
+              }
               if (sfd !== undefined) {
                 try {
                   fs.closeSync(sfd);

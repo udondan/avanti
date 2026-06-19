@@ -45,8 +45,13 @@ function runPrivilegedWorker(
     // worker on an incompatible older runtime.
     // Use a private subdirectory so the worker file cannot be swapped out by
     // another unprivileged process between the copy and the sudo exec.
+    // os.tmpdir() may return a per-user private path on macOS (e.g.
+    // /var/folders/…) whose ancestor directories are not world-traversable,
+    // so the named sudo user cannot reach the worker. /tmp is always
+    // world-executable on Unix (sticky 01777); fall back to os.tmpdir() only
+    // on Windows where /tmp is not a standard path.
     const tmpWorkerDir = path.join(
-      os.tmpdir(),
+      process.platform === 'win32' ? os.tmpdir() : '/tmp',
       `.avanti-worker-${crypto.randomBytes(5).toString('hex')}`,
     );
     fs.mkdirSync(tmpWorkerDir, { recursive: true, mode: 0o755 });
