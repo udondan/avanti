@@ -33,12 +33,6 @@ function runPrivilegedWorker(
     ? path.resolve(__dirname, '..', 'dist', 'privileged-worker.js')
     : path.join(__dirname, 'privileged-worker.js');
 
-  if (!fs.existsSync(workerPath)) {
-    throw new Error(
-      `privileged worker not found at ${workerPath}${__filename.endsWith('.ts') ? ' — run `mise run build` to compile it' : ''}`,
-    );
-  }
-
   let resolvedWorkerPath = workerPath;
   const nodeExec = process.execPath;
   let cleanup: (() => void) | undefined;
@@ -99,6 +93,14 @@ function runPrivilegedWorker(
   }
 
   if (result.error) {
+    if (
+      __filename.endsWith('.ts') &&
+      (result.error as NodeJS.ErrnoException).code === 'ENOENT'
+    ) {
+      throw new Error(
+        `privileged worker not found at ${workerPath} — run \`mise run build\` to compile it`,
+      );
+    }
     throw result.error;
   }
   if (result.status !== 0) {
