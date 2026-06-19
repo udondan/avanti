@@ -75,6 +75,14 @@ function parseMode(modeStr: string): number {
   return parseInt(modeStr.replace(/^0[oO]/, ''), 8);
 }
 
+// fs.fchmodSync is not implemented on Windows — no-op there since the worker
+// only ever runs under sudo on Unix.
+function safeFchmodSync(fd: number, mode: number): void {
+  if (process.platform !== 'win32') {
+    fs.fchmodSync(fd, mode);
+  }
+}
+
 function backupRegularFile(
   targetPath: string,
   backupPath: string,
@@ -132,7 +140,7 @@ function backupRegularFile(
     }
     bfd = fs.openSync(backupTmp, 'wx', 0o600);
     fs.writeFileSync(bfd, fs.readFileSync(sfd));
-    fs.fchmodSync(bfd, srcStat.mode & 0o7777);
+    safeFchmodSync(bfd, srcStat.mode & 0o7777);
     fs.closeSync(bfd);
     bfd = undefined;
     fs.closeSync(sfd);
@@ -184,7 +192,7 @@ export function handleWriteMv(op: WriteMvOp, trustedUids?: Set<number>): void {
     fs.writeFileSync(tfd, Buffer.from(op.contentB64, 'base64'));
 
     const effectiveMode = op.mode ?? existingMode ?? op.defaultMode;
-    fs.fchmodSync(tfd, parseMode(effectiveMode));
+    safeFchmodSync(tfd, parseMode(effectiveMode));
     fs.closeSync(tfd);
     tfd = undefined;
 
@@ -275,7 +283,7 @@ export function handleWriteInPlace(
       fd = fs.openSync(resolvedTarget, 'wx', 0o600);
       fs.writeFileSync(fd, content);
       if (effectiveMode !== undefined) {
-        fs.fchmodSync(fd, parseMode(effectiveMode));
+        safeFchmodSync(fd, parseMode(effectiveMode));
       }
       fs.closeSync(fd);
       fd = undefined;
@@ -333,7 +341,7 @@ export function handleWriteInPlace(
           // If fchmod fails (EPERM — named user doesn't own the file), surface
           // the original EACCES rather than the secondary EPERM.
           try {
-            fs.fchmodSync(rfd, savedMode | 0o200);
+            safeFchmodSync(rfd, savedMode | 0o200);
           } catch {
             throw firstOpenErr;
           }
@@ -341,7 +349,7 @@ export function handleWriteInPlace(
             fd = fs.openSync(resolvedTarget, openFlags);
           } catch (retryErr) {
             try {
-              fs.fchmodSync(rfd, savedMode);
+              safeFchmodSync(rfd, savedMode);
             } catch {
               // best-effort restore
             }
@@ -365,7 +373,7 @@ export function handleWriteInPlace(
       fs.writeFileSync(fd, content);
       // Always fchmod: restores setuid/setgid bits cleared by O_TRUNC on Linux,
       // and applies the explicitly requested mode when configured.
-      fs.fchmodSync(
+      safeFchmodSync(
         fd,
         effectiveMode !== undefined ? parseMode(effectiveMode) : savedMode,
       );
@@ -377,7 +385,7 @@ export function handleWriteInPlace(
       // If we temporarily boosted the mode via rfd, restore it before closing.
       if (rfd !== undefined && savedMode !== undefined) {
         try {
-          fs.fchmodSync(rfd, savedMode);
+          safeFchmodSync(rfd, savedMode);
         } catch {
           // best-effort restore
         }

@@ -26,6 +26,9 @@ function runPrivilegedWorker(
   ops: WriteOp[],
   continueOnError = false,
 ): Array<{ ok: boolean; error?: string }> {
+  if (process.platform === 'win32') {
+    throw new Error('sudo is not supported on Windows');
+  }
   // When running via tsx (TypeScript source, __filename ends in .ts), the
   // compiled worker is one level up in dist/. In production (dist/writer.js),
   // the worker is a sibling.
@@ -59,7 +62,7 @@ function runPrivilegedWorker(
     // world-executable on Unix (sticky 01777); fall back to os.tmpdir() only
     // on Windows where /tmp is not a standard path.
     const tmpWorkerDir = path.join(
-      process.platform === 'win32' ? os.tmpdir() : '/tmp',
+      '/tmp',
       `.avanti-worker-${crypto.randomBytes(5).toString('hex')}`,
     );
     fs.mkdirSync(tmpWorkerDir, { mode: 0o755 });
