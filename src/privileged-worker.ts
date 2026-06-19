@@ -669,14 +669,29 @@ export function dispatch(op: WriteOp, trustedUids?: Set<number>): void {
       break;
     case 'chmod': {
       const resolvedPath = path.resolve(op.targetPath);
+      let fd: number | undefined;
       try {
-        const stat = fs.lstatSync(resolvedPath);
-        if (!stat.isSymbolicLink()) {
-          fs.chmodSync(resolvedPath, parseMode(op.mode));
-        }
+        // O_NOFOLLOW rejects symlinks (ELOOP); O_NONBLOCK prevents blocking on
+        // FIFOs. Using fchmodSync on the fd eliminates the lstat→chmod TOCTOU
+        // window that would otherwise allow a root-privilege symlink swap.
+        fd = fs.openSync(
+          resolvedPath,
+          fs.constants.O_RDONLY | O_NOFOLLOW | O_NONBLOCK,
+        );
+        safeFchmodSync(fd, parseMode(op.mode));
+        fs.closeSync(fd);
       } catch (e) {
-        if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
-        // File gone since diff — skip silently (mirrors non-sudo behaviour).
+        if (fd !== undefined) {
+          try {
+            fs.closeSync(fd);
+          } catch {
+            // best-effort close
+          }
+        }
+        const code = (e as NodeJS.ErrnoException).code;
+        // ENOENT: file gone since diff — skip silently.
+        // ELOOP: O_NOFOLLOW rejected a symlink — skip silently.
+        if (code !== 'ENOENT' && code !== 'ELOOP') throw e;
       }
       break;
     }
