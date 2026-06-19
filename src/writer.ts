@@ -34,15 +34,23 @@ function runPrivilegedWorker(
     : path.join(__dirname, 'privileged-worker.js');
 
   let resolvedWorkerPath = workerPath;
-  const nodeExec = process.execPath;
+  // Named-user sudo: if process.execPath lives inside the calling user's home
+  // directory (e.g. nvm/asdf/mise installs), the target sudo user cannot
+  // traverse that directory (mode 0700/0750) and will get EACCES when exec-ing
+  // the Node binary. Fall back to the system 'node' on PATH in that case, which
+  // is guaranteed to be world-executable. Root sudo always has access, so
+  // process.execPath is always preferred there to avoid runtime version mismatches.
+  const nodeExec =
+    typeof sudo === 'string' &&
+    process.execPath.startsWith(os.homedir() + path.sep)
+      ? 'node'
+      : process.execPath;
   let cleanup: (() => void) | undefined;
 
   if (typeof sudo === 'string') {
     // Named-user sudo: the target user may not be able to read the worker
     // from a private project directory. Copy it to a world-readable temp
-    // path so sudo -u <user> can exec it. Always keep process.execPath as
-    // the Node binary — substituting a system Node risks running the ES2022
-    // worker on an incompatible older runtime.
+    // path so sudo -u <user> can exec it.
     // Use a private subdirectory so the worker file cannot be swapped out by
     // another unprivileged process between the copy and the sudo exec.
     // os.tmpdir() may return a per-user private path on macOS (e.g.
@@ -220,12 +228,14 @@ export function sudoAtomicWrite(targets: SudoWriteTarget[]): void {
   }
 }
 
-// Batches privileged deletions into one worker invocation per sudo identity,
-// so all stale-file removals share the single password prompt from writes.
-// Returns the set of paths that were successfully deleted; failed deletions are
-// warned about but not included so callers can avoid marking them as cleaned.
+// Batches privileged deletions into one worker invocation per sudo identity.
+// Returns the set of paths that were successfully deleted.
+// When bestEffort is false (default), worker-level failures throw; individual
+// per-path failures also throw. When bestEffort is true, both are warned and
+// the partial success set is returned — used by pull's stale-file cleanup.
 export function sudoAtomicDelete(
   deletions: Array<[string, true | string]>,
+  bestEffort = false,
 ): Set<string> {
   const succeeded = new Set<string>();
   if (deletions.length === 0) return succeeded;
@@ -244,24 +254,31 @@ export function sudoAtomicDelete(
       type: 'delete',
       targetPath: p,
     }));
-    // Deletion failures are non-fatal: warn and continue, matching the old
-    // per-file sudo rm -f behaviour. This includes worker-level failures (sudo
-    // auth failure, worker crash) so that a failed deletion never aborts a pull.
     try {
       const results = runPrivilegedWorker(sudo, ops, true);
+      const failed: string[] = [];
       results.forEach((r, i) => {
         if (r.ok) {
           succeeded.add(paths[i]);
-        } else {
+        } else if (bestEffort) {
           console.warn(
             `Warning: privileged operation failed: ${r.error ?? 'unknown error'}`,
           );
+        } else {
+          failed.push(`${paths[i]}: ${r.error ?? 'unknown error'}`);
         }
       });
+      if (failed.length > 0) {
+        throw new Error(`privileged deletion failed:\n${failed.join('\n')}`);
+      }
     } catch (err) {
-      console.warn(
-        `Warning: privileged deletion worker failed: ${err instanceof Error ? err.message : String(err)}`,
-      );
+      if (bestEffort) {
+        console.warn(
+          `Warning: privileged deletion worker failed: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      } else {
+        throw err;
+      }
     }
   }
   return succeeded;

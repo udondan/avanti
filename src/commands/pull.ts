@@ -1416,6 +1416,25 @@ export function pullCommand(): Command {
         // yet changed, keeping the working tree in a consistent state.
         if (sudoChanged.length + sudoRestore.length > 0) {
           sudoAtomicWrite([...sudoChanged, ...sudoRestore]);
+        } else if (process.platform !== 'win32') {
+          // No content-change sudo targets means the worker was not called and
+          // no sudo authentication has happened yet. If there are mode-only sudo
+          // targets, authenticate now (before regular writes) so that an auth
+          // failure is caught before any files change rather than silently
+          // skipping the chmod after regular writes have already succeeded.
+          const modeOnlySudoIds = new Set<true | string>();
+          for (let i = 0; i < writeTargets.length; i++) {
+            if (
+              allDiffs[i].modeChange &&
+              !allDiffs[i].contentChanged &&
+              writeTargets[i].sudo
+            ) {
+              modeOnlySudoIds.add(writeTargets[i].sudo!);
+            }
+          }
+          for (const sudoId of modeOnlySudoIds) {
+            sudoRun(sudoId, ['true']);
+          }
         }
         atomicWrite([...regularChanged, ...regularRestore]);
         // Mark all active stale restores as completed (atomicWrite throws on
@@ -1467,7 +1486,7 @@ export function pullCommand(): Command {
           }
         }
         if (sudoDeletionBatch.length > 0) {
-          const deleted = sudoAtomicDelete(sudoDeletionBatch);
+          const deleted = sudoAtomicDelete(sudoDeletionBatch, true);
           for (const [p] of sudoDeletionBatch) {
             if (deleted.has(p)) {
               effectivelyDeleted.add(p);

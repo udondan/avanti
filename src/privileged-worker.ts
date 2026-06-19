@@ -284,24 +284,34 @@ export function handleWriteInPlace(
       throw err;
     }
   } else {
-    // Open with O_NOFOLLOW to reject symlinks and O_NONBLOCK to avoid hanging
-    // on a FIFO (O_NONBLOCK makes opening a write-end FIFO without a reader
-    // fail immediately instead of blocking). fstat after open verifies the
-    // file is still a regular file — O_NOFOLLOW rejects symlinks but not FIFOs.
-    // Named-user sudo: if the target file is not writable by the target user
-    // (EACCES), open it read-only first to get an fd, fstat to verify it is a
-    // regular file, then fchmod via the fd to add a write bit. This avoids the
-    // path-based chmod→open TOCTOU window. The mode is always restored to
-    // either the explicitly requested value or the original after the write.
+    // Open read-only first (O_NOFOLLOW|O_NONBLOCK) to:
+    //   1. Verify the file is still a regular file (not a symlink/FIFO).
+    //   2. Capture the current mode including setuid/setgid bits BEFORE the
+    //      O_TRUNC write-open clears them on Linux.
+    // Then open for writing. If the write-open fails with EACCES (named-user
+    // sudo running as a non-root uid), fchmod via the read fd to temporarily
+    // add a write bit, retry, then always restore the original mode.
     const openFlags =
       fs.constants.O_WRONLY | fs.constants.O_TRUNC | O_NOFOLLOW | O_NONBLOCK;
     let fd: number | undefined;
     let rfd: number | undefined;
     let savedMode: number | undefined;
-    // Capture the initial open error so we can do EACCES recovery outside the
-    // catch block, avoiding the preserve-caught-error lint constraint.
+    // Capture the initial write-open error so we can do EACCES recovery
+    // outside the catch block, avoiding the preserve-caught-error lint constraint.
     let firstOpenErr: NodeJS.ErrnoException | undefined;
     try {
+      rfd = fs.openSync(
+        resolvedTarget,
+        fs.constants.O_RDONLY | O_NOFOLLOW | O_NONBLOCK,
+      );
+      const rst = fs.fstatSync(rfd);
+      if (!rst.isFile()) {
+        throw new Error(
+          `writeInPlace: ${op.targetPath} is not a regular file; refusing to write`,
+        );
+      }
+      savedMode = rst.mode & 0o7777;
+
       try {
         fd = fs.openSync(resolvedTarget, openFlags);
       } catch (e) {
@@ -314,17 +324,6 @@ export function handleWriteInPlace(
           process.getuid() !== 0
         ) {
           // Named-user sudo: add write bit via fd-based fchmod, then retry.
-          rfd = fs.openSync(
-            resolvedTarget,
-            fs.constants.O_RDONLY | O_NOFOLLOW | O_NONBLOCK,
-          );
-          const rst = fs.fstatSync(rfd);
-          if (!rst.isFile()) {
-            throw new Error(
-              `writeInPlace: ${op.targetPath} is not a regular file; refusing to write`,
-            );
-          }
-          savedMode = rst.mode & 0o7777;
           fs.fchmodSync(rfd, savedMode | 0o200);
           try {
             fd = fs.openSync(resolvedTarget, openFlags);
@@ -336,11 +335,11 @@ export function handleWriteInPlace(
           throw firstOpenErr;
         }
       }
-      // After the recovery block: either fd was set by the initial open
-      // (firstOpenErr undefined) or by the retry (recovery path). All other
-      // branches throw, so fd is always a number here.
       if (fd === undefined)
         throw new Error('writeInPlace: internal error: fd not set');
+      // fstat after the write-open as a belt-and-suspenders check: a FIFO
+      // or other non-regular file could have been substituted in the window
+      // between the rfd open and fd open.
       const fst = fs.fstatSync(fd);
       if (!fst.isFile()) {
         throw new Error(
@@ -348,24 +347,16 @@ export function handleWriteInPlace(
         );
       }
       fs.writeFileSync(fd, content);
-      // When we used the write-bit-boost path, always fchmod to restore the
-      // mode (either the explicitly requested mode or the original). Otherwise
-      // preserve the original behaviour: only fchmod when effectiveMode is set.
-      const finalMode =
-        effectiveMode !== undefined
-          ? parseInt(effectiveMode, 8)
-          : savedMode !== undefined
-            ? savedMode
-            : undefined;
-      if (finalMode !== undefined) {
-        fs.fchmodSync(fd, finalMode);
-      }
+      // Always fchmod: restores setuid/setgid bits cleared by O_TRUNC on Linux,
+      // and applies the explicitly requested mode when configured.
+      fs.fchmodSync(
+        fd,
+        effectiveMode !== undefined ? parseInt(effectiveMode, 8) : savedMode,
+      );
       fs.closeSync(fd);
       fd = undefined;
-      if (rfd !== undefined) {
-        fs.closeSync(rfd);
-        rfd = undefined;
-      }
+      fs.closeSync(rfd);
+      rfd = undefined;
     } catch (err) {
       // If we temporarily boosted the mode via rfd, restore it before closing.
       if (rfd !== undefined && savedMode !== undefined) {
