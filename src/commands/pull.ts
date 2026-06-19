@@ -35,15 +35,14 @@ import {
 import {
   atomicWrite,
   getSudoFileMode,
-  sudoAtomicChmod,
   sudoAtomicDelete,
+  sudoAtomicRead,
   sudoAtomicWrite,
   sudoFileExists,
   sudoIsDirectory,
   sudoIsSymlink,
-  sudoRead,
-  sudoReadlink,
   SudoChmodTarget,
+  SudoWorkerSession,
   SudoWriteTarget,
   WriteTarget,
 } from '../writer';
@@ -1037,19 +1036,72 @@ export function pullCommand(): Command {
       if (allDiffs.some((d) => d.isDirectory && d.isSymlink)) {
         process.exit(2);
       }
+      // Create one persistent sudo worker session per distinct sudo identity.
+      // All pre-write reads (idempotency + v0 capture) and the writes themselves
+      // flow through these sessions so the user sees exactly one password prompt
+      // per identity regardless of how many files are involved.
+      const sudoSessions = new Map<true | string, SudoWorkerSession>();
+      if (process.platform !== 'win32') {
+        const sudoIds = new Set<true | string>([
+          ...writeTargets.filter((t) => t.sudo).map((t) => t.sudo!),
+          ...staleToRestore.filter((t) => t.sudo).map((t) => t.sudo!),
+        ]);
+        for (const id of sudoIds) {
+          sudoSessions.set(id, new SudoWorkerSession(id));
+        }
+      }
+
+      // Batch all pre-write reads for unreadable sudo targets into one
+      // worker exec per identity using stat-read ops. A stat-read returns
+      // the file content (regular files) or the link target (symlinks) and
+      // signals isSymlink so callers can branch without a separate sudo call.
+      const preReadRequests: Array<{
+        filePath: string;
+        sudo: true | string;
+        type: 'stat-read';
+      }> = [];
+      for (let i = 0; i < writeTargets.length; i++) {
+        if (allDiffs[i].isUnreadable && writeTargets[i].sudo) {
+          preReadRequests.push({
+            filePath: writeTargets[i].targetPath,
+            sudo: writeTargets[i].sudo!,
+            type: 'stat-read',
+          });
+        }
+      }
+      for (let i = 0; i < staleToRestore.length; i++) {
+        const diffIdx = staleRestoreDiffIndices[i];
+        if (staleDiffs[diffIdx]?.isUnreadable && staleToRestore[i].sudo) {
+          preReadRequests.push({
+            filePath: staleToRestore[i].targetPath,
+            sudo: staleToRestore[i].sudo!,
+            type: 'stat-read',
+          });
+        }
+      }
+      const preReads =
+        preReadRequests.length > 0
+          ? await sudoAtomicRead(preReadRequests, sudoSessions)
+          : new Map<
+              string,
+              { contentB64: string; isSymlink?: boolean } | null
+            >();
+
       // Post-auth idempotency: compare current file content via sudo against the
       // desired content. If they match, suppress the write for this entry.
       for (let i = 0; i < writeTargets.length; i++) {
         if (allDiffs[i].isUnreadable && writeTargets[i].sudo) {
+          const preRead = preReads.get(writeTargets[i].targetPath);
+          if (preRead === null || preRead === undefined) continue;
+
           if (writeTargets[i].symlinkTarget !== undefined) {
-            // Symlink entry: use sudo readlink to check whether the on-disk
-            // symlink already points to the desired target. If it does, the
-            // write is a no-op and the diff should be suppressed.
-            const current = sudoReadlink(
-              writeTargets[i].sudo!,
-              writeTargets[i].targetPath,
-            );
-            if (current !== null && current === writeTargets[i].symlinkTarget) {
+            // Symlink entry: stat-read returns the link target when existing
+            // path is a symlink. If it matches the desired target, no-op.
+            if (
+              preRead.isSymlink &&
+              Buffer.from(preRead.contentB64, 'base64').toString() ===
+                writeTargets[i].symlinkTarget
+            ) {
               const updatedHasChanges = allDiffs[i].modeChange !== undefined;
               allDiffs[i] = {
                 ...allDiffs[i],
@@ -1067,20 +1119,13 @@ export function pullCommand(): Command {
             }
             continue;
           }
-          // For regular file entries: skip idempotency read when the existing
-          // path is a symlink — sudoRead follows symlinks and could compare
-          // against the wrong content (the symlink target's bytes, not the
-          // symlink itself).
-          if (
-            sudoIsSymlink(writeTargets[i].sudo!, writeTargets[i].targetPath)
-          ) {
-            continue;
-          }
-          const current = sudoRead(
-            writeTargets[i].sudo!,
-            writeTargets[i].targetPath,
-          );
-          if (current !== null && current.equals(writeTargets[i].content)) {
+          // For regular file entries: stat-read signals isSymlink=true when the
+          // existing path is a symlink — skip comparison to avoid reading through
+          // the symlink rather than the symlink itself.
+          if (preRead.isSymlink) continue;
+
+          const current = Buffer.from(preRead.contentB64, 'base64');
+          if (current.equals(writeTargets[i].content)) {
             const updatedHasChanges = allDiffs[i].modeChange !== undefined;
             allDiffs[i] = {
               ...allDiffs[i],
@@ -1101,23 +1146,16 @@ export function pullCommand(): Command {
           }
         }
       }
-      // Same idempotency check for stale restore targets: if the current file
-      // content already matches the v0 original, suppress the redundant write.
+      // Same idempotency check for stale restore targets.
       for (let i = 0; i < staleToRestore.length; i++) {
         const diffIdx = staleRestoreDiffIndices[i];
         if (staleDiffs[diffIdx]?.isUnreadable && staleToRestore[i].sudo) {
-          // Skip idempotency read for symlinks: sudoRead follows symlinks and
-          // could read an unintended privileged file before write-path checks run.
-          if (
-            sudoIsSymlink(staleToRestore[i].sudo!, staleToRestore[i].targetPath)
-          ) {
-            continue;
-          }
-          const current = sudoRead(
-            staleToRestore[i].sudo!,
-            staleToRestore[i].targetPath,
-          );
-          if (current !== null && current.equals(staleToRestore[i].content)) {
+          const preRead = preReads.get(staleToRestore[i].targetPath);
+          if (preRead === null || preRead === undefined) continue;
+          // Skip comparison when existing path is a symlink.
+          if (preRead.isSymlink) continue;
+          const current = Buffer.from(preRead.contentB64, 'base64');
+          if (current.equals(staleToRestore[i].content)) {
             staleDiffs[diffIdx] = {
               ...staleDiffs[diffIdx],
               contentChanged: false,
@@ -1338,9 +1376,10 @@ export function pullCommand(): Command {
                       acceptedShaLabels.has(r.sourceLabel),
                   }))
                 : undefined;
-            // For a first-seen unreadable sudo file, capture v0 via sudo so
+            // For a first-seen unreadable sudo file, capture v0 so
             // revert-to-original works even when the invoking user cannot read
-            // the file directly.
+            // the file directly. The stat-read result from the pre-read batch
+            // is used here — no additional sudo calls needed.
             let v0Override: Buffer | undefined;
             let v0IsSymlinkOverride = false;
             if (
@@ -1349,26 +1388,21 @@ export function pullCommand(): Command {
               writeTargets[i].sudo &&
               !history.getFileMeta(targetPath)
             ) {
-              if (sudoIsSymlink(writeTargets[i].sudo!, targetPath)) {
-                if (writeTargets[i].symlinkTarget !== undefined) {
-                  // Destination is a symlink and so is the write target — read
-                  // the existing link target via sudoReadlink so v0 records the
-                  // original symlink destination for faithful revert/reset.
-                  const existingTarget = sudoReadlink(
-                    writeTargets[i].sudo!,
-                    targetPath,
-                  );
-                  if (existingTarget !== null) {
-                    v0Override = Buffer.from(existingTarget);
+              const preRead = preReads.get(targetPath);
+              if (preRead != null) {
+                if (preRead.isSymlink) {
+                  if (writeTargets[i].symlinkTarget !== undefined) {
+                    // Destination is a symlink and so is the write target — record
+                    // the existing link target as v0 for faithful revert/reset.
+                    v0Override = Buffer.from(preRead.contentB64, 'base64');
                     v0IsSymlinkOverride = true;
                   }
+                  // If the write target is a regular file but the destination is a
+                  // symlink, skip v0: reading through the symlink could capture
+                  // an unintended privileged file before write-path checks run.
+                } else {
+                  v0Override = Buffer.from(preRead.contentB64, 'base64');
                 }
-                // If the write target is a regular file but the destination is a
-                // symlink, skip v0: sudoRead would follow the symlink and could
-                // read an unintended privileged file before write-path checks run.
-              } else {
-                v0Override =
-                  sudoRead(writeTargets[i].sudo!, targetPath) ?? undefined;
               }
             }
             const { fileRef } = history.stageFileVersion(
@@ -1415,8 +1449,14 @@ export function pullCommand(): Command {
 
         // Privileged writes first: if sudo fails, unprivileged files have not
         // yet changed, keeping the working tree in a consistent state.
+        // Sessions are passed so reads and writes share the same worker process
+        // (one sudo prompt total per identity).
         if (sudoChanged.length + sudoRestore.length > 0) {
-          await sudoAtomicWrite([...sudoChanged, ...sudoRestore]);
+          await sudoAtomicWrite(
+            [...sudoChanged, ...sudoRestore],
+            [],
+            sudoSessions,
+          );
         }
         let modeOnlyCount = 0;
         if (process.platform !== 'win32') {
@@ -1435,8 +1475,12 @@ export function pullCommand(): Command {
             }
           }
           if (modeOnlySudoTargets.length > 0) {
-            sudoAtomicChmod(modeOnlySudoTargets);
-            modeOnlyCount += modeOnlySudoTargets.length;
+            const chmodApplied = await sudoAtomicWrite(
+              [],
+              modeOnlySudoTargets,
+              sudoSessions,
+            );
+            modeOnlyCount += chmodApplied;
           }
         }
         atomicWrite([...regularChanged, ...regularRestore]);
@@ -1542,11 +1586,14 @@ export function pullCommand(): Command {
             runNamedPostHook('update', ctx.hooks.update);
         }
       } catch (err: unknown) {
+        for (const session of sudoSessions.values()) session.close();
         console.error(
           `Write failed: ${err instanceof Error ? err.message : String(err)}`,
         );
         process.exit(2);
       }
+      // Close worker sessions — stdin close signals the worker to exit cleanly.
+      for (const session of sudoSessions.values()) session.close();
 
       // meta.sudo is updated by stageFileVersion for every file that was
       // actually written. No extra sync needed here: updating meta.sudo for
