@@ -124,10 +124,9 @@ function backupRegularFile(
         `backup source ${targetPath} is not a regular file; refusing to back up`,
       );
     }
-    const srcMode = (srcStat.mode & 0o7777).toString(8).padStart(4, '0');
     bfd = fs.openSync(backupTmp, 'wx', 0o600);
     fs.writeFileSync(bfd, fs.readFileSync(sfd));
-    fs.fchmodSync(bfd, parseInt(srcMode, 8));
+    fs.fchmodSync(bfd, srcStat.mode & 0o7777);
     fs.closeSync(bfd);
     bfd = undefined;
     fs.closeSync(sfd);

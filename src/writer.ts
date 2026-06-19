@@ -33,9 +33,9 @@ function runPrivilegedWorker(
     ? path.resolve(__dirname, '..', 'dist', 'privileged-worker.js')
     : path.join(__dirname, 'privileged-worker.js');
 
-  if (__filename.endsWith('.ts') && !fs.existsSync(workerPath)) {
+  if (!fs.existsSync(workerPath)) {
     throw new Error(
-      `privileged worker not found at ${workerPath} — run \`mise run build\` to compile it`,
+      `privileged worker not found at ${workerPath}${__filename.endsWith('.ts') ? ' — run `mise run build` to compile it' : ''}`,
     );
   }
 
@@ -43,7 +43,7 @@ function runPrivilegedWorker(
   const nodeExec = process.execPath;
   let cleanup: (() => void) | undefined;
 
-  if (typeof sudo === 'string' && fs.existsSync(workerPath)) {
+  if (typeof sudo === 'string') {
     // Named-user sudo: the target user may not be able to read the worker
     // from a private project directory. Copy it to a world-readable temp
     // path so sudo -u <user> can exec it. Always keep process.execPath as
@@ -60,7 +60,7 @@ function runPrivilegedWorker(
       process.platform === 'win32' ? os.tmpdir() : '/tmp',
       `.avanti-worker-${crypto.randomBytes(5).toString('hex')}`,
     );
-    fs.mkdirSync(tmpWorkerDir, { recursive: true, mode: 0o755 });
+    fs.mkdirSync(tmpWorkerDir, { mode: 0o755 });
     // mkdirSync mode is masked by the caller's umask (e.g. 077 → 0700), which
     // would prevent the named sudo user from traversing this directory. Chmod
     // explicitly to ensure the directory is always world-executable.
@@ -99,14 +99,6 @@ function runPrivilegedWorker(
   }
 
   if (result.error) {
-    if (
-      __filename.endsWith('.ts') &&
-      (result.error as NodeJS.ErrnoException).code === 'ENOENT'
-    ) {
-      throw new Error(
-        `privileged worker not found at ${workerPath} — run \`mise run build\` to compile it`,
-      );
-    }
     throw result.error;
   }
   if (result.status !== 0) {
