@@ -324,11 +324,21 @@ export function handleWriteInPlace(
           process.getuid() !== 0
         ) {
           // Named-user sudo: add write bit via fd-based fchmod, then retry.
-          fs.fchmodSync(rfd, savedMode | 0o200);
+          // If fchmod fails (EPERM — named user doesn't own the file), surface
+          // the original EACCES rather than the secondary EPERM.
+          try {
+            fs.fchmodSync(rfd, savedMode | 0o200);
+          } catch {
+            throw firstOpenErr;
+          }
           try {
             fd = fs.openSync(resolvedTarget, openFlags);
           } catch (retryErr) {
-            fs.fchmodSync(rfd, savedMode);
+            try {
+              fs.fchmodSync(rfd, savedMode);
+            } catch {
+              // best-effort restore
+            }
             throw retryErr;
           }
         } else {

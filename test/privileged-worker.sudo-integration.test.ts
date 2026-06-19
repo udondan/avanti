@@ -2,7 +2,7 @@ import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 import { describe, it, expect, beforeEach } from 'vitest';
-import { sudoAtomicWrite, SudoWriteTarget } from '../src/writer';
+import { sudoAtomicWrite, sudoRead, SudoWriteTarget } from '../src/writer';
 
 // This test only runs when AVANTI_SUDO_TEST_DIR is set to a root-owned directory.
 // In CI the directory is /usr/local/avanti-sudo-test (created by the workflow step).
@@ -44,29 +44,29 @@ describe.skipIf(!sudoTestDir || process.platform === 'win32')(
 
       // Verify all files landed with correct content.
       for (const t of targets) {
-        // Worker runs as root so it can read the file; we use sudo cat via sudoRead
-        // for verification, but since the test env has NOPASSWD we can just
-        // read the file directly — the runner's own user should be able to sudo.
-        const body = fs
-          .readdirSync(sudoTestDir!)
-          .includes(path.basename(t.targetPath))
-          ? fs.readFileSync(t.targetPath, 'utf8')
-          : null;
-        // If the file is root-owned and not world-readable, fall back: just check it exists.
+        let body: string | null = null;
+        try {
+          body = fs.readFileSync(t.targetPath, 'utf8');
+        } catch {
+          // If the file is root-owned and not world-readable, or the directory
+          // is unreadable (e.g. mode 700), try reading it via sudoRead.
+          const buf = sudoRead(true, t.targetPath);
+          if (buf !== null) {
+            body = buf.toString('utf8');
+          }
+        }
         if (body !== null) {
           expect(body).toBe(t.content.toString('utf8'));
         } else {
           expect(
-            fs.existsSync(t.targetPath) ||
-              // root-owned dir may block readdir; verify via stat
-              (() => {
-                try {
-                  fs.statSync(t.targetPath);
-                  return true;
-                } catch {
-                  return false;
-                }
-              })(),
+            (() => {
+              try {
+                fs.statSync(t.targetPath);
+                return true;
+              } catch {
+                return false;
+              }
+            })(),
           ).toBe(true);
         }
       }
