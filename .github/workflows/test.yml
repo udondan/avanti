@@ -86,6 +86,16 @@ jobs:
           echo "AVANTI_SUDO_TEST_DIR=/usr/local/avanti-sudo-test" >> "$GITHUB_ENV"
           echo "SUDO_CALL_LOG=/tmp/sudo-call-log.txt" >> "$GITHUB_ENV"
 
+          # Named-user sudo: create a dedicated user and a world-readable temp
+          # directory owned by that user so the named-user integration test can
+          # write there via sudo -u.
+          sudo useradd -m testwriter 2>/dev/null || true
+          sudo mkdir -p /tmp/avanti-named-test
+          sudo chown testwriter:testwriter /tmp/avanti-named-test
+          sudo chmod 755 /tmp/avanti-named-test
+          echo "AVANTI_SUDO_NAMED_USER=testwriter" >> "$GITHUB_ENV"
+          echo "AVANTI_SUDO_NAMED_USER_DIR=/tmp/avanti-named-test" >> "$GITHUB_ENV"
+
       - name: Test
         run: bun run test
         env:

@@ -11,6 +11,15 @@ import { sudoAtomicWrite, sudoRead, SudoWriteTarget } from '../src/writer';
 const sudoTestDir = process.env.AVANTI_SUDO_TEST_DIR;
 const sudoCallLog = process.env.SUDO_CALL_LOG;
 
+// Named-user sudo integration: AVANTI_SUDO_NAMED_USER is a non-root Unix user
+// that NOPASSWD sudo is granted for in CI (e.g. "www-data" on Ubuntu runners).
+// AVANTI_SUDO_NAMED_USER_DIR must be a directory writable by that user and
+// readable by the test runner (so assertions can read the output files).
+// In CI: sudo useradd -m testwriter && sudo -u testwriter mkdir /tmp/avanti-named-test
+//         AVANTI_SUDO_NAMED_USER=testwriter AVANTI_SUDO_NAMED_USER_DIR=/tmp/avanti-named-test
+const sudoNamedUser = process.env.AVANTI_SUDO_NAMED_USER;
+const sudoNamedUserDir = process.env.AVANTI_SUDO_NAMED_USER_DIR;
+
 describe.skipIf(!sudoTestDir || process.platform === 'win32')(
   'privileged worker — real sudo',
   () => {
@@ -80,3 +89,52 @@ describe.skipIf(!sudoTestDir || process.platform === 'win32')(
     });
   },
 );
+
+describe.skipIf(
+  !sudoNamedUser || !sudoNamedUserDir || process.platform === 'win32',
+)('privileged worker — named-user sudo', () => {
+  beforeEach(() => {
+    if (sudoCallLog) {
+      fs.writeFileSync(sudoCallLog, '');
+    }
+  });
+
+  it('writes a file via sudo -u <user>, exercising the worker binary copy path', () => {
+    // This test exercises the code path in runPrivilegedWorker that is unique
+    // to named-user sudo: the worker binary is copied into a world-readable
+    // /tmp subdirectory before exec, and the node executable may be resolved
+    // from PATH instead of process.execPath. Neither of these paths is covered
+    // by the root-sudo test above.
+    const runId = crypto.randomBytes(4).toString('hex');
+    const targetPath = path.join(sudoNamedUserDir!, `named-${runId}.txt`);
+    const content = `named-user-content-${runId}`;
+
+    const targets: SudoWriteTarget[] = [
+      {
+        targetPath,
+        content: Buffer.from(content),
+        sudo: sudoNamedUser!,
+      },
+    ];
+
+    sudoAtomicWrite(targets);
+
+    // The file must exist and contain the expected content.
+    // Read via the named user's sudo if the test runner can't read it directly.
+    let body: string | null = null;
+    try {
+      body = fs.readFileSync(targetPath, 'utf8');
+    } catch {
+      const buf = sudoRead(sudoNamedUser!, targetPath);
+      if (buf !== null) body = buf.toString('utf8');
+    }
+    expect(body).toBe(content);
+
+    // Exactly one sudo invocation for one target.
+    if (sudoCallLog) {
+      const log = fs.readFileSync(sudoCallLog, 'utf8');
+      const calls = log.split('\n').filter(Boolean);
+      expect(calls).toHaveLength(1);
+    }
+  });
+});

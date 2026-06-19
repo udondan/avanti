@@ -109,6 +109,38 @@ describe.skipIf(!workerExists)('IPC protocol — write-mv', () => {
     // Second op was never executed.
     expect(fs.existsSync(path.join(tmpDir, 'after.txt'))).toBe(false);
   });
+
+  it('continues past a failing op when continueOnError is true', () => {
+    const badTarget = path.join(tmpDir, 'subdir');
+    fs.mkdirSync(badTarget); // directory — write-mv will reject it
+
+    const goodTarget = path.join(tmpDir, 'after.txt');
+
+    const resp = runWorker({
+      continueOnError: true,
+      ops: [
+        {
+          type: 'write-mv',
+          targetPath: badTarget,
+          contentB64: b64('data'),
+          defaultMode: '0644',
+        },
+        {
+          type: 'write-mv',
+          targetPath: goodTarget,
+          contentB64: b64('after'),
+          defaultMode: '0644',
+        },
+      ],
+    });
+
+    expect(resp.results).toHaveLength(2);
+    expect(resp.results[0].ok).toBe(false);
+    expect(resp.results[0].error).toBeDefined();
+    expect(resp.results[1].ok).toBe(true);
+    // Second op was executed despite the first failing.
+    expect(fs.readFileSync(goodTarget, 'utf8')).toBe('after');
+  });
 });
 
 describe.skipIf(!workerExists || process.platform === 'win32')(

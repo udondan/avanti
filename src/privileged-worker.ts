@@ -85,7 +85,10 @@ function getExistingMode(filePath: string): string | undefined {
 // parseInt('0o644', 8) stops at 'o' and returns 0, silently setting permissions
 // to 0000. Strip the prefix so both '0644' and '0o644' parse correctly.
 function parseMode(modeStr: string): number {
-  return parseInt(modeStr.replace(/^0[oO]/, ''), 8);
+  const stripped = modeStr.replace(/^0[oO]/, '');
+  const result = parseInt(stripped, 8);
+  if (isNaN(result)) throw new Error(`invalid mode: ${modeStr}`);
+  return result;
 }
 
 // fs.fchmodSync is not implemented on Windows — no-op there since the worker
@@ -769,6 +772,47 @@ if (require.main === module) {
     const checkedDirs = new Set<string>();
     for (const op of request.ops) {
       try {
+        // Validate required fields before dispatching so errors are actionable.
+        if (typeof op !== 'object' || op === null) {
+          throw new Error(`invalid op: expected object, got ${typeof op}`);
+        }
+        const raw = op as unknown as Record<string, unknown>;
+        const type = raw['type'];
+        if (typeof type !== 'string') {
+          throw new Error(`invalid op: missing required field "type"`);
+        }
+        if (typeof raw['targetPath'] !== 'string') {
+          throw new Error(
+            `invalid op ${type}: missing required field "targetPath"`,
+          );
+        }
+        if (
+          (type === 'write-mv' || type === 'write-in-place') &&
+          typeof raw['contentB64'] !== 'string'
+        ) {
+          throw new Error(
+            `invalid op ${type}: missing required field "contentB64"`,
+          );
+        }
+        if (
+          (type === 'write-mv' || type === 'write-in-place') &&
+          typeof raw['defaultMode'] !== 'string'
+        ) {
+          throw new Error(
+            `invalid op ${type}: missing required field "defaultMode"`,
+          );
+        }
+        if (
+          type === 'write-symlink' &&
+          typeof raw['symlinkTarget'] !== 'string'
+        ) {
+          throw new Error(
+            `invalid op write-symlink: missing required field "symlinkTarget"`,
+          );
+        }
+        if (type === 'chmod' && typeof raw['mode'] !== 'string') {
+          throw new Error(`invalid op chmod: missing required field "mode"`);
+        }
         if (trustedUids) {
           checkAncestorsSafeAsRoot(
             op.targetPath,

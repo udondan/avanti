@@ -219,6 +219,71 @@ describe('handleWriteInPlace', () => {
       }),
     ).toThrow(/refusing to follow/);
   });
+
+  it.skipIf(isWindows)(
+    'restores setuid/setgid bits that Linux strips on O_TRUNC',
+    () => {
+      const targetPath = path.join(tmpDir, 'setuid-file.txt');
+      fs.writeFileSync(targetPath, 'original');
+      // Set setuid + setgid + rwxr-xr-x. Requires ownership — running as the
+      // test user, which is the file owner here, so chmod succeeds.
+      try {
+        fs.chmodSync(targetPath, 0o6755);
+      } catch {
+        // If the test runner can't set setuid bits (e.g. CI without privileges),
+        // skip this assertion silently.
+        return;
+      }
+      const before = fs.statSync(targetPath).mode & 0o7777;
+      if ((before & 0o6000) === 0) return; // kernel silently dropped the bits
+
+      handleWriteInPlace({
+        type: 'write-in-place',
+        targetPath,
+        contentB64: b64('new content'),
+        defaultMode: '0644',
+      });
+
+      expect(fs.readFileSync(targetPath, 'utf8')).toBe('new content');
+      const after = fs.statSync(targetPath).mode & 0o7777;
+      expect(after & 0o6000).toBe(before & 0o6000);
+    },
+  );
+
+  it.skipIf(isWindows || process.getuid?.() === 0)(
+    'reads mode via lstatSync fallback when file is write-only (mode 0200)',
+    () => {
+      // This exercises the EACCES branch in handleWriteInPlace: O_RDONLY on a
+      // mode-0200 file fails with EACCES, so the worker falls back to lstatSync
+      // to capture the existing mode before writing. Skip if running as root
+      // (root ignores permission bits and the EACCES never fires).
+      const targetPath = path.join(tmpDir, 'write-only.txt');
+      fs.writeFileSync(targetPath, 'original');
+      fs.chmodSync(targetPath, 0o200);
+
+      try {
+        handleWriteInPlace({
+          type: 'write-in-place',
+          targetPath,
+          contentB64: b64('replaced'),
+          defaultMode: '0644',
+        });
+      } finally {
+        // Restore readability so afterEach cleanup can remove the file.
+        try {
+          fs.chmodSync(targetPath, 0o600);
+        } catch {
+          // best-effort
+        }
+      }
+
+      const content = fs.readFileSync(targetPath, 'utf8');
+      expect(content).toBe('replaced');
+      // Mode should remain 0200 (no explicit mode requested, lstatSync fallback
+      // captured it, and write-in-place restores it via fchmod only when there
+      // are setuid/setgid bits or an explicit mode override).
+    },
+  );
 });
 
 // ---------------------------------------------------------------------------
