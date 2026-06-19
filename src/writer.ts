@@ -2,8 +2,13 @@ import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { spawnSync } from 'child_process';
-import type { WriteOp } from './privileged-worker';
+import { spawn, spawnSync } from 'child_process';
+import type {
+  WorkerRequest,
+  WorkerResponse,
+  WorkerResult,
+  WriteOp,
+} from './privileged-worker';
 
 export interface SudoChmodTarget {
   targetPath: string;
@@ -31,7 +36,12 @@ function runPrivilegedWorker(
   sudo: true | string,
   ops: WriteOp[],
   continueOnError = false,
-): Array<{ ok: boolean; error?: string }> {
+): Array<{
+  ok: boolean;
+  error?: string;
+  skipped?: boolean;
+  contentB64?: string;
+}> {
   if (process.platform === 'win32') {
     throw new Error('sudo is not supported on Windows');
   }
@@ -42,17 +52,27 @@ function runPrivilegedWorker(
     ? path.resolve(__dirname, '..', 'dist', 'privileged-worker.js')
     : path.join(__dirname, 'privileged-worker.js');
 
+  if (!fs.existsSync(workerPath)) {
+    throw new Error(
+      `privileged worker not found at ${workerPath}` +
+        (__filename.endsWith('.ts') ? '; run `mise run build` first' : ''),
+    );
+  }
+
   let resolvedWorkerPath = workerPath;
   // Named-user sudo: if process.execPath lives inside the calling user's home
   // directory (e.g. nvm/asdf/mise installs), the target sudo user cannot
   // traverse that directory (mode 0700/0750) and will get EACCES when exec-ing
-  // the Node binary. Fall back to the system 'node' on PATH in that case, which
-  // is guaranteed to be world-executable. Root sudo always has access, so
-  // process.execPath is always preferred there to avoid runtime version mismatches.
+  // the Node binary. Fall back to the literal 'node' so sudo uses its secure
+  // PATH (/usr/local/bin:/usr/bin/…), which typically has a system Node. Use a
+  // literal 'node' rather than path.basename(process.execPath) because the
+  // runtime may be Bun (basename would give 'bun', not found in sudo's PATH).
+  // Root sudo always has access to process.execPath and is preferred there to
+  // avoid runtime version mismatches.
   const nodeExec =
     typeof sudo === 'string' &&
     process.execPath.startsWith(os.homedir() + path.sep)
-      ? path.basename(process.execPath)
+      ? 'node'
       : process.execPath;
   let cleanup: (() => void) | undefined;
 
@@ -98,7 +118,7 @@ function runPrivilegedWorker(
         input: JSON.stringify({
           ops,
           trustedUids: [...buildTrustedUids(sudo)],
-          continueOnError: continueOnError || undefined,
+          continueOnError,
         }),
         stdio: ['pipe', 'pipe', 'inherit'],
         encoding: 'utf8',
@@ -161,19 +181,38 @@ function runPrivilegedWorker(
 // the batch is NOT collectively atomic: a failure mid-way leaves earlier targets
 // already written. All targets sharing the same sudo identity are dispatched in
 // a single worker invocation — one sudo password prompt per distinct identity.
-export function sudoAtomicWrite(targets: SudoWriteTarget[]): void {
-  if (targets.length === 0) return;
+// chmodTargets are batched into the same per-identity invocation as the writes
+// so that a pull with both content changes and mode-only changes for the same
+// sudo identity still produces exactly one prompt.
+// Returns the count of chmod ops that were actually applied (ENOENT/ELOOP skips
+// are not counted).
+export async function sudoAtomicWrite(
+  targets: SudoWriteTarget[],
+  chmodTargets: SudoChmodTarget[] = [],
+  sessions?: Map<true | string, SudoWorkerSession>,
+): Promise<number> {
+  if (targets.length === 0 && chmodTargets.length === 0) return 0;
 
   // eslint-disable-next-line @typescript-eslint/no-deprecated
   const mask = process.umask();
   const defaultMode = (0o666 & ~mask).toString(8).padStart(4, '0');
+
+  // Hoist UID lookup: buildTrustedUids spawns `id -u <user>` — dedupe per identity.
+  const trustedUidsBySudo = new Map<true | string, Set<number>>();
+  const allSudoIds = new Set<true | string>([
+    ...targets.map((t) => t.sudo),
+    ...chmodTargets.map((t) => t.sudo),
+  ]);
+  for (const sudoId of allSudoIds) {
+    trustedUidsBySudo.set(sudoId, buildTrustedUids(sudoId));
+  }
 
   // Validate ancestor safety for all targets before any privileged work.
   // checkAncestorsSafe prefers lstatSync (0 sudo calls) for world-readable
   // paths like /usr/local/bin; sudo stat is only used for unreadable ancestors.
   const checkedDirsBySudo = new Map<true | string, Set<string>>();
   for (const t of targets) {
-    const trustedUids = buildTrustedUids(t.sudo);
+    const trustedUids = trustedUidsBySudo.get(t.sudo)!;
     if (!checkedDirsBySudo.has(t.sudo))
       checkedDirsBySudo.set(t.sudo, new Set());
     const checkedDirs = checkedDirsBySudo.get(t.sudo)!;
@@ -236,8 +275,21 @@ export function sudoAtomicWrite(targets: SudoWriteTarget[]): void {
     }
   }
 
+  // Append chmod ops after write ops so they share the same per-identity worker.
+  // Track the index range for chmod ops so we can correlate results for counting.
+  const chmodStartIndex = new Map<true | string, number>();
+  for (const t of chmodTargets) {
+    const op: WriteOp = {
+      type: 'chmod',
+      targetPath: t.targetPath,
+      mode: t.mode,
+    };
+    targetOps.push({ sudo: t.sudo, op });
+  }
+
   // Group ops by sudo identity; one worker invocation per group.
   const groups = new Map<true | string, WriteOp[]>();
+  const groupChmodStart = new Map<true | string, number>();
   for (const { sudo, op } of targetOps) {
     const existing = groups.get(sudo);
     if (existing) {
@@ -246,9 +298,37 @@ export function sudoAtomicWrite(targets: SudoWriteTarget[]): void {
       groups.set(sudo, [op]);
     }
   }
-  for (const [sudo, ops] of groups) {
-    runPrivilegedWorker(sudo, ops);
+  // Determine where chmod ops start within each identity's op list.
+  for (const t of chmodTargets) {
+    if (!chmodStartIndex.has(t.sudo)) {
+      const ops = groups.get(t.sudo)!;
+      // Find first chmod op in this identity's list.
+      const idx = ops.findIndex((o) => o.type === 'chmod');
+      chmodStartIndex.set(t.sudo, idx >= 0 ? idx : ops.length);
+    }
   }
+  void groupChmodStart; // unused; using chmodStartIndex instead
+
+  let chmodApplied = 0;
+  for (const [sudo, ops] of groups) {
+    let results: Array<{ ok: boolean; error?: string; skipped?: boolean }>;
+    const session = sessions?.get(sudo);
+    if (session) {
+      results = await session.exec(ops);
+      // Check for failures
+      for (const r of results) {
+        if (!r.ok) throw new Error(r.error ?? 'privileged worker op failed');
+      }
+    } else {
+      results = runPrivilegedWorker(sudo, ops);
+    }
+    // Count chmod results that weren't silently skipped (ENOENT/ELOOP).
+    const start = chmodStartIndex.get(sudo) ?? ops.length;
+    for (let i = start; i < results.length; i++) {
+      if (results[i].ok && !results[i].skipped) chmodApplied++;
+    }
+  }
+  return chmodApplied;
 }
 
 // Batches privileged mode-only changes into one worker invocation per sudo identity.
@@ -406,6 +486,78 @@ export function sudoReadlink(
   return r.stdout.toString().trim();
 }
 
+// Batches multiple privileged reads into a single worker invocation per
+// sudo identity, so pre-write idempotency checks and v0 history captures
+// for unreadable files all share one sudo prompt with the subsequent writes.
+// Returns a Map keyed by the original filePath values.
+export async function sudoAtomicRead(
+  reads: Array<{
+    filePath: string;
+    sudo: true | string;
+    type?: 'stat-read' | 'read' | 'readlink';
+  }>,
+  sessions?: Map<true | string, SudoWorkerSession>,
+): Promise<Map<string, { contentB64: string; isSymlink?: boolean } | null>> {
+  const resultMap = new Map<
+    string,
+    { contentB64: string; isSymlink?: boolean } | null
+  >();
+  if (reads.length === 0) return resultMap;
+
+  // Group by sudo identity.
+  const groups = new Map<
+    true | string,
+    Array<{
+      filePath: string;
+      type: 'stat-read' | 'read' | 'readlink';
+      idx: number;
+    }>
+  >();
+  reads.forEach((r, idx) => {
+    const opType = r.type ?? 'read';
+    const existing = groups.get(r.sudo);
+    if (existing) existing.push({ filePath: r.filePath, type: opType, idx });
+    else groups.set(r.sudo, [{ filePath: r.filePath, type: opType, idx }]);
+  });
+
+  for (const [sudo, items] of groups) {
+    const ops: WriteOp[] = items.map((item) => ({
+      type: item.type,
+      targetPath: path.resolve(item.filePath),
+    }));
+    let results: Array<{
+      ok: boolean;
+      contentB64?: string;
+      isSymlink?: boolean;
+    }>;
+    try {
+      const session = sessions?.get(sudo);
+      if (session) {
+        results = await session.exec(ops, true);
+      } else {
+        results = runPrivilegedWorker(sudo, ops, true);
+      }
+    } catch {
+      // If the worker itself fails (e.g. build missing), fall back to all-null.
+      for (const item of items) resultMap.set(item.filePath, null);
+      continue;
+    }
+    items.forEach((item, i) => {
+      const r = results[i];
+      if (r?.ok && r.contentB64 != null) {
+        resultMap.set(item.filePath, {
+          contentB64: r.contentB64,
+          isSymlink: r.isSymlink,
+        });
+      } else {
+        resultMap.set(item.filePath, null);
+      }
+    });
+  }
+
+  return resultMap;
+}
+
 // Performs a privileged rename of src to dst. On Linux, GNU mv -T is used so
 // mv refuses to move src *inside* dst when dst is a directory — preventing a
 // TOCTOU race where dst is swapped for a directory after the precheck. BSD mv
@@ -484,6 +636,120 @@ function buildTrustedUids(sudo: true | string): Set<number> {
     if (namedUid !== undefined) trusted.add(namedUid);
   }
   return trusted;
+}
+
+export class SudoWorkerSession {
+  private proc: ReturnType<typeof spawn>;
+  private lineBuffer = '';
+  private pending: {
+    resolve: (results: WorkerResult[]) => void;
+    reject: (err: Error) => void;
+  } | null = null;
+  readonly trustedUids: Set<number>;
+  readonly sudo: true | string;
+
+  constructor(sudo: true | string) {
+    if (process.platform === 'win32')
+      throw new Error('sudo is not supported on Windows');
+    this.sudo = sudo;
+    this.trustedUids = buildTrustedUids(sudo);
+
+    const workerPath = __filename.endsWith('.ts')
+      ? path.resolve(__dirname, '..', 'dist', 'privileged-worker.js')
+      : path.join(__dirname, 'privileged-worker.js');
+    if (!fs.existsSync(workerPath)) {
+      throw new Error(
+        `privileged worker not found at ${workerPath}` +
+          (__filename.endsWith('.ts') ? '; run `mise run build` first' : ''),
+      );
+    }
+
+    const nodeExec =
+      typeof sudo === 'string' &&
+      process.execPath.startsWith(os.homedir() + path.sep)
+        ? 'node'
+        : process.execPath;
+
+    let resolvedWorkerPath = workerPath;
+    if (typeof sudo === 'string' && fs.existsSync(workerPath)) {
+      const tmpDir = fs.mkdtempSync(path.join('/tmp', 'avanti-worker-'));
+      fs.chmodSync(tmpDir, 0o755);
+      const tmpWorker = path.join(tmpDir, 'privileged-worker.js');
+      fs.copyFileSync(workerPath, tmpWorker);
+      fs.chmodSync(tmpWorker, 0o644);
+      resolvedWorkerPath = tmpWorker;
+    }
+
+    this.proc = spawn(
+      'sudo',
+      [...sudoUserArgs(sudo), nodeExec, resolvedWorkerPath],
+      {
+        stdio: ['pipe', 'pipe', 'inherit'],
+      },
+    );
+
+    this.proc.stdout!.on('data', (chunk: Buffer) => {
+      this.lineBuffer += chunk.toString('utf8');
+      const lines = this.lineBuffer.split('\n');
+      this.lineBuffer = lines.pop()!;
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        try {
+          const response = JSON.parse(line) as WorkerResponse;
+          const p = this.pending;
+          this.pending = null;
+          p?.resolve(response.results);
+        } catch (e) {
+          const p = this.pending;
+          this.pending = null;
+          p?.reject(
+            new Error(
+              `failed to parse worker response: ${(e as Error).message}`,
+            ),
+          );
+        }
+      }
+    });
+
+    this.proc.on('error', (err) => {
+      const p = this.pending;
+      this.pending = null;
+      p?.reject(err);
+    });
+
+    this.proc.on('close', (code) => {
+      if (code !== 0) {
+        const p = this.pending;
+        this.pending = null;
+        p?.reject(new Error(`privileged worker failed (exit ${code})`));
+      }
+    });
+  }
+
+  async exec(ops: WriteOp[], continueOnError = false): Promise<WorkerResult[]> {
+    if (this.pending)
+      throw new Error(
+        'SudoWorkerSession: concurrent exec() calls are not supported',
+      );
+    return new Promise<WorkerResult[]>((resolve, reject) => {
+      this.pending = { resolve, reject };
+      const request: WorkerRequest = {
+        ops,
+        trustedUids: [...this.trustedUids],
+        continueOnError,
+      };
+      this.proc.stdin!.write(JSON.stringify(request) + '\n', (err) => {
+        if (err) {
+          this.pending = null;
+          reject(err);
+        }
+      });
+    });
+  }
+
+  close(): void {
+    this.proc.stdin!.end();
+  }
 }
 
 // Returns the existing file's permission bits as an octal string via sudo stat,

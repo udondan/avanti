@@ -29,7 +29,7 @@ describe.skipIf(!sudoTestDir || process.platform === 'win32')(
       }
     });
 
-    it('writes 3 files with exactly 1 sudo invocation', () => {
+    it('writes 3 files with exactly 1 sudo invocation', async () => {
       const runId = crypto.randomBytes(4).toString('hex');
       const targets: SudoWriteTarget[] = [
         {
@@ -49,7 +49,7 @@ describe.skipIf(!sudoTestDir || process.platform === 'win32')(
         },
       ];
 
-      sudoAtomicWrite(targets);
+      await sudoAtomicWrite(targets);
 
       // Verify all files landed with correct content.
       for (const t of targets) {
@@ -99,7 +99,7 @@ describe.skipIf(
     }
   });
 
-  it('writes a file via sudo -u <user>, exercising the worker binary copy path', () => {
+  it('writes a file via sudo -u <user>, exercising the worker binary copy path', async () => {
     // This test exercises the code path in runPrivilegedWorker that is unique
     // to named-user sudo: the worker binary is copied into a world-readable
     // /tmp subdirectory before exec, and the node executable may be resolved
@@ -117,7 +117,7 @@ describe.skipIf(
       },
     ];
 
-    sudoAtomicWrite(targets);
+    await sudoAtomicWrite(targets);
 
     // The file must exist and contain the expected content.
     // Read via the named user's sudo if the test runner can't read it directly.

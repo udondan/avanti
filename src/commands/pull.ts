@@ -1416,7 +1416,7 @@ export function pullCommand(): Command {
         // Privileged writes first: if sudo fails, unprivileged files have not
         // yet changed, keeping the working tree in a consistent state.
         if (sudoChanged.length + sudoRestore.length > 0) {
-          sudoAtomicWrite([...sudoChanged, ...sudoRestore]);
+          await sudoAtomicWrite([...sudoChanged, ...sudoRestore]);
         }
         let modeOnlyCount = 0;
         if (process.platform !== 'win32') {

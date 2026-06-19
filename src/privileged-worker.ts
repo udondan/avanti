@@ -46,12 +46,30 @@ export interface ChmodOp {
   mode: string;
 }
 
+export interface ReadOp {
+  type: 'read';
+  targetPath: string;
+}
+
+export interface ReadlinkOp {
+  type: 'readlink';
+  targetPath: string;
+}
+
+export interface StatReadOp {
+  type: 'stat-read';
+  targetPath: string;
+}
+
 export type WriteOp =
   | WriteMvOp
   | WriteInPlaceOp
   | WriteSymlinkOp
   | DeleteOp
-  | ChmodOp;
+  | ChmodOp
+  | ReadOp
+  | ReadlinkOp
+  | StatReadOp;
 
 export interface WorkerRequest {
   ops: WriteOp[];
@@ -62,10 +80,31 @@ export interface WorkerRequest {
 export interface WorkerResult {
   ok: boolean;
   error?: string;
+  /** true when a chmod op was silently skipped (ENOENT/ELOOP) — not an error */
+  skipped?: boolean;
+  /** base64-encoded file content, set for read/readlink/stat-read ops */
+  contentB64?: string;
+  /** true when stat-read resolved a symlink (contentB64 is the link target) */
+  isSymlink?: boolean;
 }
 
 export interface WorkerResponse {
   results: WorkerResult[];
+}
+
+// Thrown by dispatch() when a chmod op is silently skipped (ENOENT/ELOOP).
+// Not an error — caught in the main dispatch loop to emit { ok: true, skipped: true }.
+class OopSkipped extends Error {}
+
+// Thrown by dispatch() to return base64 content from a read/readlink/stat-read op.
+// dispatch() returns void, so out-of-band data travels via a typed throw.
+class OopRead extends Error {
+  constructor(
+    public readonly contentB64: string,
+    public readonly isSymlink: boolean,
+  ) {
+    super();
+  }
 }
 
 function randomHex(): string {
@@ -373,23 +412,39 @@ export function handleWriteInPlace(
         if (
           firstOpenErr.code === 'EACCES' &&
           typeof process.getuid === 'function' &&
-          process.getuid() !== 0 &&
-          rfd !== undefined
+          process.getuid() !== 0
         ) {
-          // Named-user sudo: add write bit via fd-based fchmod, then retry.
-          // If fchmod fails (EPERM — named user doesn't own the file), surface
-          // the original EACCES rather than the secondary EPERM.
+          // Named-user sudo: temporarily add the write bit so we can open the
+          // file for writing. Prefer fd-based fchmod (via rfd) when available
+          // to avoid a path-based TOCTOU window. Fall back to path-based
+          // chmodSync when rfd is undefined (e.g. mode-0000 files where the
+          // read-open also failed with EACCES — lstatSync captured the mode).
           const mode = savedMode ?? 0;
-          try {
-            safeFchmodSync(rfd, mode | 0o200);
-          } catch {
-            throw firstOpenErr;
+          if (rfd !== undefined) {
+            // fd-based path: no TOCTOU window between stat and chmod.
+            try {
+              safeFchmodSync(rfd, mode | 0o200);
+            } catch {
+              throw firstOpenErr;
+            }
+          } else {
+            // Path-based fallback: only works if the named user owns the file.
+            try {
+              fs.chmodSync(resolvedTarget, mode | 0o200);
+            } catch {
+              throw firstOpenErr;
+            }
           }
           try {
             fd = fs.openSync(resolvedTarget, openFlags);
           } catch (retryErr) {
+            // Restore original mode before surfacing the error.
             try {
-              safeFchmodSync(rfd, mode);
+              if (rfd !== undefined) {
+                safeFchmodSync(rfd, mode);
+              } else {
+                fs.chmodSync(resolvedTarget, mode);
+              }
             } catch {
               // best-effort restore
             }
@@ -397,10 +452,14 @@ export function handleWriteInPlace(
           }
           // Restore original mode immediately after the write-open succeeds —
           // the write bit was temporary. The conditional fchmod below handles
-          // explicit mode and setuid/setgid bits via fd; this rfd restore
+          // explicit mode and setuid/setgid bits via fd; this restore
           // covers the case where neither applies (e.g. a plain 0o400 file).
           try {
-            safeFchmodSync(rfd, mode);
+            if (rfd !== undefined) {
+              safeFchmodSync(rfd, mode);
+            } else {
+              fs.chmodSync(resolvedTarget, mode);
+            }
           } catch {
             // best-effort restore
           }
@@ -708,9 +767,34 @@ export function dispatch(op: WriteOp, trustedUids?: Set<number>): void {
         const code = (e as NodeJS.ErrnoException).code;
         // ENOENT: file gone since diff — skip silently.
         // ELOOP: O_NOFOLLOW rejected a symlink — skip silently.
-        if (code !== 'ENOENT' && code !== 'ELOOP') throw e;
+        // Throw OopSkipped so the caller can record { ok: true, skipped: true }
+        // instead of { ok: true } — needed to avoid inflating mode-only counts.
+        if (code === 'ENOENT' || code === 'ELOOP') throw new OopSkipped();
+        throw e;
       }
       break;
+    }
+    case 'read': {
+      const resolvedPath = path.resolve(op.targetPath);
+      const buf = fs.readFileSync(resolvedPath);
+      // Content is returned via the caller's results array — the dispatch
+      // function returns void, so we throw a sentinel carrying the data.
+      throw new OopRead(buf.toString('base64'), false);
+    }
+    case 'readlink': {
+      const resolvedPath = path.resolve(op.targetPath);
+      const target = fs.readlinkSync(resolvedPath);
+      throw new OopRead(Buffer.from(target).toString('base64'), false);
+    }
+    case 'stat-read': {
+      const resolvedPath = path.resolve(op.targetPath);
+      const lst = fs.lstatSync(resolvedPath);
+      if (lst.isSymbolicLink()) {
+        const target = fs.readlinkSync(resolvedPath);
+        throw new OopRead(Buffer.from(target).toString('base64'), true);
+      }
+      const buf = fs.readFileSync(resolvedPath);
+      throw new OopRead(buf.toString('base64'), false);
     }
     default: {
       const _exhaustive: never = op;
@@ -721,19 +805,29 @@ export function dispatch(op: WriteOp, trustedUids?: Set<number>): void {
 
 // Entry point: only run when this file is the main module, not when imported.
 if (require.main === module) {
-  const chunks: Buffer[] = [];
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const rl = (require('readline') as typeof import('readline')).createInterface(
+    {
+      input: process.stdin,
+      crlfDelay: Infinity,
+    },
+  );
+
   process.stdin.on('error', (err) => {
     process.stderr.write(`stdin error: ${err.message}\n`);
     process.exitCode = 1;
-    process.stdin.destroy();
+    rl.close();
   });
-  process.stdin.on('data', (chunk: Buffer) => chunks.push(chunk));
-  process.stdin.on('end', () => {
+
+  const checkedDirs = new Set<string>();
+
+  rl.on('line', (line: string) => {
+    const trimmed = line.trim();
+    if (!trimmed) return;
+
     let request: WorkerRequest;
     try {
-      request = JSON.parse(
-        Buffer.concat(chunks).toString('utf8'),
-      ) as WorkerRequest;
+      request = JSON.parse(trimmed) as WorkerRequest;
     } catch (e) {
       process.stdout.write(
         JSON.stringify({
@@ -746,7 +840,6 @@ if (require.main === module) {
         }) + '\n',
       );
       process.exitCode = 1;
-      process.stdin.destroy();
       return;
     }
 
@@ -759,7 +852,6 @@ if (require.main === module) {
         }) + '\n',
       );
       process.exitCode = 1;
-      process.stdin.destroy();
       return;
     }
 
@@ -769,7 +861,6 @@ if (require.main === module) {
     const continueOnError = request.continueOnError ?? false;
 
     const results: WorkerResult[] = [];
-    const checkedDirs = new Set<string>();
     for (const op of request.ops) {
       try {
         // Validate required fields before dispatching so errors are actionable.
@@ -820,7 +911,14 @@ if (require.main === module) {
             'destination',
             checkedDirs,
           );
-          if (op.type !== 'delete' && op.type !== 'chmod' && op.backupPath) {
+          if (
+            op.type !== 'delete' &&
+            op.type !== 'chmod' &&
+            op.type !== 'read' &&
+            op.type !== 'readlink' &&
+            op.type !== 'stat-read' &&
+            op.backupPath
+          ) {
             checkAncestorsSafeAsRoot(
               op.backupPath,
               trustedUids,
@@ -832,10 +930,24 @@ if (require.main === module) {
         dispatch(op, trustedUids);
         results.push({ ok: true });
       } catch (e) {
-        results.push({ ok: false, error: (e as Error).message });
-        if (!continueOnError) break; // fail-fast for writes; continue for deletes
+        if (e instanceof OopSkipped) {
+          results.push({ ok: true, skipped: true });
+        } else if (e instanceof OopRead) {
+          results.push({
+            ok: true,
+            contentB64: e.contentB64,
+            isSymlink: e.isSymlink,
+          });
+        } else {
+          results.push({ ok: false, error: (e as Error).message });
+          if (!continueOnError) break; // fail-fast for writes; continue for deletes
+        }
       }
     }
     process.stdout.write(JSON.stringify({ results }) + '\n');
+  });
+
+  rl.on('close', () => {
+    // stdin closed — session ended naturally
   });
 }

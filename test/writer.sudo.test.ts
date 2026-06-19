@@ -162,12 +162,12 @@ function workerOkResult(opCount = 1): SpawnSyncReturns<Buffer> {
 }
 
 describe.skipIf(isWindows)('sudoAtomicWrite', () => {
-  it('returns immediately and makes no spawnSync calls for empty targets', () => {
-    sudoAtomicWrite([]);
+  it('returns immediately and makes no spawnSync calls for empty targets', async () => {
+    await sudoAtomicWrite([]);
     expect(mockSpawnSync).not.toHaveBeenCalled();
   });
 
-  it('makes exactly one sudo call for multiple write-mv files with the same identity', () => {
+  it('makes exactly one sudo call for multiple write-mv files with the same identity', async () => {
     mockSpawnSync.mockReturnValue(workerOkResult(3));
 
     const targets: SudoWriteTarget[] = [
@@ -175,7 +175,7 @@ describe.skipIf(isWindows)('sudoAtomicWrite', () => {
       { targetPath: '/etc/b.conf', content: Buffer.from('b'), sudo: true },
       { targetPath: '/etc/c.conf', content: Buffer.from('c'), sudo: true },
     ];
-    sudoAtomicWrite(targets);
+    await sudoAtomicWrite(targets);
 
     const sudoCalls = mockSpawnSync.mock.calls.filter(
       ([cmd]) => cmd === 'sudo',
@@ -192,7 +192,7 @@ describe.skipIf(isWindows)('sudoAtomicWrite', () => {
     });
   });
 
-  it('encodes all ops in a single JSON input for the worker', () => {
+  it('encodes all ops in a single JSON input for the worker', async () => {
     mockSpawnSync.mockReturnValue(workerOkResult(2));
 
     const targets: SudoWriteTarget[] = [
@@ -204,7 +204,7 @@ describe.skipIf(isWindows)('sudoAtomicWrite', () => {
         writeInPlace: true,
       },
     ];
-    sudoAtomicWrite(targets);
+    await sudoAtomicWrite(targets);
 
     const sudoCalls = mockSpawnSync.mock.calls.filter(
       ([cmd]) => cmd === 'sudo',
@@ -224,7 +224,7 @@ describe.skipIf(isWindows)('sudoAtomicWrite', () => {
     });
   });
 
-  it('encodes write-symlink ops without a contentSrc temp file', () => {
+  it('encodes write-symlink ops without a contentSrc temp file', async () => {
     mockSpawnSync.mockReturnValue(workerOkResult(1));
 
     const target: SudoWriteTarget = {
@@ -233,7 +233,7 @@ describe.skipIf(isWindows)('sudoAtomicWrite', () => {
       symlinkTarget: '/etc/hosts',
       sudo: true,
     };
-    sudoAtomicWrite([target]);
+    await sudoAtomicWrite([target]);
 
     const sudoCalls = mockSpawnSync.mock.calls.filter(
       ([cmd]) => cmd === 'sudo',
@@ -246,7 +246,7 @@ describe.skipIf(isWindows)('sudoAtomicWrite', () => {
     expect((ops[0] as Record<string, unknown>).contentB64).toBeUndefined();
   });
 
-  it('makes separate worker calls for different sudo identities', () => {
+  it('makes separate worker calls for different sudo identities', async () => {
     mockSpawnSync.mockImplementation((cmd: unknown) => {
       if (cmd === 'id') return okResult('999');
       return workerOkResult(1);
@@ -260,7 +260,7 @@ describe.skipIf(isWindows)('sudoAtomicWrite', () => {
         sudo: 'www-data',
       },
     ];
-    sudoAtomicWrite(targets);
+    await sudoAtomicWrite(targets);
 
     const sudoCalls = mockSpawnSync.mock.calls.filter(
       ([cmd]) => cmd === 'sudo',
@@ -268,7 +268,7 @@ describe.skipIf(isWindows)('sudoAtomicWrite', () => {
     expect(sudoCalls).toHaveLength(2);
   });
 
-  it('passes -u <name> args for named-user targets', () => {
+  it('passes -u <name> args for named-user targets', async () => {
     mockSpawnSync.mockImplementation((cmd: unknown) => {
       if (cmd === 'id') return okResult('999');
       return workerOkResult(1);
@@ -279,7 +279,7 @@ describe.skipIf(isWindows)('sudoAtomicWrite', () => {
       content: Buffer.from('hi'),
       sudo: 'nobody',
     };
-    sudoAtomicWrite([target]);
+    await sudoAtomicWrite([target]);
 
     const sudoCalls = mockSpawnSync.mock.calls.filter(
       ([cmd]) => cmd === 'sudo',
@@ -289,7 +289,7 @@ describe.skipIf(isWindows)('sudoAtomicWrite', () => {
     expect(sudoCalls[0][1]).toContain('nobody');
   });
 
-  it('throws when worker reports a failed op', () => {
+  it('throws when worker reports a failed op', async () => {
     const body = JSON.stringify({
       results: [{ ok: false, error: 'permission denied on /etc/test.conf' }],
     });
@@ -304,10 +304,12 @@ describe.skipIf(isWindows)('sudoAtomicWrite', () => {
       content: Buffer.from('data'),
       sudo: true,
     };
-    expect(() => sudoAtomicWrite([target])).toThrow('permission denied');
+    await expect(sudoAtomicWrite([target])).rejects.toThrow(
+      'permission denied',
+    );
   });
 
-  it('throws when worker exits with a non-zero status', () => {
+  it('throws when worker exits with a non-zero status', async () => {
     mockSpawnSync.mockReturnValue(failResult(1));
 
     const target: SudoWriteTarget = {
@@ -315,10 +317,12 @@ describe.skipIf(isWindows)('sudoAtomicWrite', () => {
       content: Buffer.from('data'),
       sudo: true,
     };
-    expect(() => sudoAtomicWrite([target])).toThrow('privileged worker failed');
+    await expect(sudoAtomicWrite([target])).rejects.toThrow(
+      'privileged worker failed',
+    );
   });
 
-  it('passes a backupPath through to the op when specified', () => {
+  it('passes a backupPath through to the op when specified', async () => {
     mockSpawnSync.mockReturnValue(workerOkResult(1));
 
     const target: SudoWriteTarget = {
@@ -327,7 +331,7 @@ describe.skipIf(isWindows)('sudoAtomicWrite', () => {
       sudo: true,
       backupPath: '/etc/test.conf.bak',
     };
-    sudoAtomicWrite([target]);
+    await sudoAtomicWrite([target]);
 
     const sudoCalls = mockSpawnSync.mock.calls.filter(
       ([cmd]) => cmd === 'sudo',
