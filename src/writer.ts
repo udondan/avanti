@@ -658,6 +658,7 @@ export class SudoWorkerSession {
     resolve: (results: WorkerResult[]) => void;
     reject: (err: Error) => void;
   } | null = null;
+  private closed = false;
   readonly trustedUids: Set<number>;
   readonly sudo: true | string;
 
@@ -677,11 +678,30 @@ export class SudoWorkerSession {
       );
     }
 
-    const nodeExec =
-      typeof sudo === 'string' &&
-      process.execPath.startsWith(os.homedir() + path.sep)
-        ? 'node'
-        : process.execPath;
+    // For named-user sudo, use the current node binary only if it's not under
+    // the invoking user's home directory — user-local node managers (nvm, fnm,
+    // mise) install there, and `sudo -u` drops PATH entries that include $HOME,
+    // so the target user won't be able to exec it. Instead, search PATH for the
+    // first node binary outside the home directory. If none is found, fall back
+    // to bare 'node' and let sudo's secure_path resolve it (requires system
+    // node to be installed, e.g. via apt/brew).
+    const nodeExec = (() => {
+      if (
+        typeof sudo !== 'string' ||
+        !process.execPath.startsWith(os.homedir() + path.sep)
+      ) {
+        return process.execPath;
+      }
+      const home = os.homedir() + path.sep;
+      for (const dir of (process.env.PATH ?? '').split(path.delimiter)) {
+        if (dir.startsWith(home)) continue;
+        const candidate = path.join(dir, 'node');
+        if (fs.existsSync(candidate)) return candidate;
+      }
+      // No system node found in PATH; 'node' will be resolved by sudo's secure_path.
+      // Requires Node.js to be installed system-wide (e.g. apt install nodejs).
+      return 'node';
+    })();
 
     let resolvedWorkerPath = workerPath;
     if (typeof sudo === 'string' && fs.existsSync(workerPath)) {
@@ -740,13 +760,32 @@ export class SudoWorkerSession {
     });
   }
 
-  async exec(ops: WriteOp[], continueOnError = false): Promise<WorkerResult[]> {
+  async exec(
+    ops: WriteOp[],
+    continueOnError = false,
+    timeoutMs = 30_000,
+  ): Promise<WorkerResult[]> {
     if (this.pending)
       throw new Error(
         'SudoWorkerSession: concurrent exec() calls are not supported',
       );
     return new Promise<WorkerResult[]>((resolve, reject) => {
-      this.pending = { resolve, reject };
+      const timer = setTimeout(() => {
+        if (!this.pending) return;
+        this.pending = null;
+        this.proc.kill('SIGTERM');
+        reject(new Error('SudoWorkerSession: exec() timed out'));
+      }, timeoutMs);
+      this.pending = {
+        resolve: (r) => {
+          clearTimeout(timer);
+          resolve(r);
+        },
+        reject: (e) => {
+          clearTimeout(timer);
+          reject(e);
+        },
+      };
       const request: WorkerRequest = {
         ops,
         trustedUids: [...this.trustedUids],
@@ -762,6 +801,8 @@ export class SudoWorkerSession {
   }
 
   close(): void {
+    if (this.closed) return;
+    this.closed = true;
     this.proc.stdin!.end();
     const t = setTimeout(() => this.proc.kill('SIGTERM'), 5_000);
     t.unref();

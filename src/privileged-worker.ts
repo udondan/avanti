@@ -92,20 +92,10 @@ export interface WorkerResponse {
   results: WorkerResult[];
 }
 
-// Thrown by dispatch() when a chmod op is silently skipped (ENOENT/ELOOP).
-// Not an error — caught in the main dispatch loop to emit { ok: true, skipped: true }.
-class OopSkipped extends Error {}
-
-// Thrown by dispatch() to return base64 content from a read/readlink/stat-read op.
-// dispatch() returns void, so out-of-band data travels via a typed throw.
-class OopRead extends Error {
-  constructor(
-    public readonly contentB64: string,
-    public readonly isSymlink: boolean,
-  ) {
-    super();
-  }
-}
+type DispatchResult =
+  | { kind: 'ok' }
+  | { kind: 'skipped' }
+  | { kind: 'read'; contentB64: string; isSymlink: boolean };
 
 function randomHex(): string {
   return crypto.randomBytes(5).toString('hex');
@@ -723,20 +713,25 @@ function checkAncestorsSafeAsRoot(
   }
 }
 
-export function dispatch(op: WriteOp, trustedUids?: Set<number>): void {
+const MAX_READ = 100 * 1024 * 1024;
+
+export function dispatch(
+  op: WriteOp,
+  trustedUids?: Set<number>,
+): DispatchResult {
   switch (op.type) {
     case 'write-mv':
       handleWriteMv(op, trustedUids);
-      break;
+      return { kind: 'ok' };
     case 'write-in-place':
       handleWriteInPlace(op, trustedUids);
-      break;
+      return { kind: 'ok' };
     case 'write-symlink':
       handleWriteSymlink(op, trustedUids);
-      break;
+      return { kind: 'ok' };
     case 'delete':
       handleDelete(op);
-      break;
+      return { kind: 'ok' };
     case 'chmod': {
       const resolvedPath = path.resolve(op.targetPath);
       let fd: number | undefined;
@@ -782,10 +777,10 @@ export function dispatch(op: WriteOp, trustedUids?: Set<number>): void {
           }
         }
         const code = (e as NodeJS.ErrnoException).code;
-        if (code === 'ENOENT' || code === 'ELOOP') throw new OopSkipped();
+        if (code === 'ENOENT' || code === 'ELOOP') return { kind: 'skipped' };
         throw e;
       }
-      break;
+      return { kind: 'ok' };
     }
     case 'read': {
       const resolvedPath = path.resolve(op.targetPath);
@@ -799,7 +794,6 @@ export function dispatch(op: WriteOp, trustedUids?: Set<number>): void {
         if (!rst.isFile()) {
           throw new Error(`read: ${op.targetPath} is not a regular file`);
         }
-        const MAX_READ = 100 * 1024 * 1024;
         if (rst.size > MAX_READ) {
           throw new Error(
             `read: ${op.targetPath} exceeds the 100 MiB read limit`,
@@ -812,7 +806,11 @@ export function dispatch(op: WriteOp, trustedUids?: Set<number>): void {
           if (n === 0) break;
           offset += n;
         }
-        throw new OopRead(buf.toString('base64'), false);
+        return {
+          kind: 'read',
+          contentB64: buf.toString('base64'),
+          isSymlink: false,
+        };
       } finally {
         if (rfd !== undefined) {
           try {
@@ -826,14 +824,22 @@ export function dispatch(op: WriteOp, trustedUids?: Set<number>): void {
     case 'readlink': {
       const resolvedPath = path.resolve(op.targetPath);
       const target = fs.readlinkSync(resolvedPath);
-      throw new OopRead(Buffer.from(target).toString('base64'), false);
+      return {
+        kind: 'read',
+        contentB64: Buffer.from(target).toString('base64'),
+        isSymlink: false,
+      };
     }
     case 'stat-read': {
       const resolvedPath = path.resolve(op.targetPath);
       const lst = fs.lstatSync(resolvedPath);
       if (lst.isSymbolicLink()) {
         const target = fs.readlinkSync(resolvedPath);
-        throw new OopRead(Buffer.from(target).toString('base64'), true);
+        return {
+          kind: 'read',
+          contentB64: Buffer.from(target).toString('base64'),
+          isSymlink: true,
+        };
       }
       let srfd: number | undefined;
       try {
@@ -845,8 +851,7 @@ export function dispatch(op: WriteOp, trustedUids?: Set<number>): void {
         if (!srst.isFile()) {
           throw new Error(`stat-read: ${op.targetPath} is not a regular file`);
         }
-        const MAX_READ_SR = 100 * 1024 * 1024;
-        if (srst.size > MAX_READ_SR) {
+        if (srst.size > MAX_READ) {
           throw new Error(
             `stat-read: ${op.targetPath} exceeds the 100 MiB read limit`,
           );
@@ -864,7 +869,11 @@ export function dispatch(op: WriteOp, trustedUids?: Set<number>): void {
           if (n === 0) break;
           sroffset += n;
         }
-        throw new OopRead(srbuf.toString('base64'), false);
+        return {
+          kind: 'read',
+          contentB64: srbuf.toString('base64'),
+          isSymlink: false,
+        };
       } finally {
         if (srfd !== undefined) {
           try {
@@ -1023,21 +1032,21 @@ if (require.main === module) {
             );
           }
         }
-        dispatch(op, trustedUids);
-        results.push({ ok: true });
-      } catch (e) {
-        if (e instanceof OopSkipped) {
+        const dr = dispatch(op, trustedUids);
+        if (dr.kind === 'skipped') {
           results.push({ ok: true, skipped: true });
-        } else if (e instanceof OopRead) {
+        } else if (dr.kind === 'read') {
           results.push({
             ok: true,
-            contentB64: e.contentB64,
-            isSymlink: e.isSymlink,
+            contentB64: dr.contentB64,
+            isSymlink: dr.isSymlink,
           });
         } else {
-          results.push({ ok: false, error: (e as Error).message });
-          if (!continueOnError) break; // fail-fast for writes; continue for deletes
+          results.push({ ok: true });
         }
+      } catch (e) {
+        results.push({ ok: false, error: (e as Error).message });
+        if (!continueOnError) break; // fail-fast for writes; continue for deletes
       }
     }
     process.stdout.write(JSON.stringify({ results }) + '\n');
