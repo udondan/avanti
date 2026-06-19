@@ -104,14 +104,6 @@ function runPrivilegedWorker(
   }
 
   if (result.error) {
-    if (
-      __filename.endsWith('.ts') &&
-      (result.error as NodeJS.ErrnoException).code === 'ENOENT'
-    ) {
-      throw new Error(
-        `privileged worker not found at ${workerPath} — run \`mise run build\` to compile it`,
-      );
-    }
     throw result.error;
   }
   if (result.status !== 0) {
