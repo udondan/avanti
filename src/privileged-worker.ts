@@ -2,11 +2,13 @@ import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 
-// O_NOFOLLOW is POSIX-only; falls back to 0 (no-op) on platforms where it is
-// not defined (Windows). The worker is only invoked via sudo on Unix, so 0
-// is never reached in production.
+// O_NOFOLLOW and O_NONBLOCK are POSIX-only; fall back to 0 (no-op) on platforms
+// where they are not defined (Windows). The worker is only invoked via sudo on
+// Unix, so 0 is never reached in production.
 const O_NOFOLLOW: number =
   (fs.constants as Record<string, number>).O_NOFOLLOW ?? 0;
+const O_NONBLOCK: number =
+  (fs.constants as Record<string, number>).O_NONBLOCK ?? 0;
 
 export interface WriteMvOp {
   type: 'write-mv';
@@ -108,18 +110,40 @@ function backupRegularFile(
   // the fd open and write through it so no path-based TOCTOU window opens
   // between open and write.
   let bfd: number | undefined;
+  let sfd: number | undefined;
   try {
+    // Open source with O_NOFOLLOW|O_NONBLOCK to reject symlinks and FIFOs; fstat
+    // to verify it is still a regular file before reading.
+    sfd = fs.openSync(
+      targetPath,
+      fs.constants.O_RDONLY | O_NOFOLLOW | O_NONBLOCK,
+    );
+    const srcStat = fs.fstatSync(sfd);
+    if (!srcStat.isFile()) {
+      throw new Error(
+        `backup source ${targetPath} is not a regular file; refusing to back up`,
+      );
+    }
+    const srcMode = (srcStat.mode & 0o7777).toString(8).padStart(4, '0');
     bfd = fs.openSync(backupTmp, 'wx', 0o600);
-    const srcMode = getExistingMode(targetPath);
-    fs.writeFileSync(bfd, fs.readFileSync(targetPath));
-    if (srcMode !== undefined) fs.fchmodSync(bfd, parseInt(srcMode, 8));
+    fs.writeFileSync(bfd, fs.readFileSync(sfd));
+    fs.fchmodSync(bfd, parseInt(srcMode, 8));
     fs.closeSync(bfd);
     bfd = undefined;
+    fs.closeSync(sfd);
+    sfd = undefined;
     fs.renameSync(backupTmp, resolvedBackup);
   } catch (err) {
     if (bfd !== undefined) {
       try {
         fs.closeSync(bfd);
+      } catch {
+        // best-effort close
+      }
+    }
+    if (sfd !== undefined) {
+      try {
+        fs.closeSync(sfd);
       } catch {
         // best-effort close
       }
@@ -259,36 +283,28 @@ export function handleWriteInPlace(
       throw err;
     }
   } else {
-    // Existing file: temporarily ensure owner-write so the write succeeds on
-    // read-only files when the worker runs as the file owner (e.g. in tests).
-    const preTeeMode = getExistingMode(resolvedTarget);
-    let chmodSucceeded = false;
-    if (preTeeMode !== undefined) {
-      try {
-        fs.chmodSync(resolvedTarget, parseInt(preTeeMode, 8) | 0o200);
-        chmodSucceeded = true;
-      } catch {
-        // chmod failed (e.g. not owner) — proceed; open will fail if truly
-        // unwritable.
-      }
-    }
-
-    // O_NOFOLLOW: the kernel rejects the open if the path resolves to a
-    // symlink, closing the TOCTOU window between the lstatSync check above
-    // and the write.
+    // Open with O_NOFOLLOW to reject symlinks and O_NONBLOCK to avoid hanging
+    // on a FIFO (O_NONBLOCK makes opening a write-end FIFO without a reader
+    // fail immediately instead of blocking). fstat after open verifies the
+    // file is still a regular file — O_NOFOLLOW rejects symlinks but not FIFOs.
+    // The pre-open path-based chmodSync is intentionally absent: it followed
+    // symlinks, creating a TOCTOU window. The worker runs as root in production
+    // and can always open files for writing regardless of mode.
     let fd: number | undefined;
-    let modeApplied = false;
     try {
       fd = fs.openSync(
         resolvedTarget,
-        fs.constants.O_WRONLY | fs.constants.O_TRUNC | O_NOFOLLOW,
+        fs.constants.O_WRONLY | fs.constants.O_TRUNC | O_NOFOLLOW | O_NONBLOCK,
       );
+      const fst = fs.fstatSync(fd);
+      if (!fst.isFile()) {
+        throw new Error(
+          `writeInPlace: ${op.targetPath} is not a regular file after open; refusing to write`,
+        );
+      }
       fs.writeFileSync(fd, content);
-      const modeToApply =
-        effectiveMode ?? (chmodSucceeded ? preTeeMode : undefined);
-      if (modeToApply !== undefined) {
-        fs.fchmodSync(fd, parseInt(modeToApply, 8));
-        modeApplied = true;
+      if (effectiveMode !== undefined) {
+        fs.fchmodSync(fd, parseInt(effectiveMode, 8));
       }
       fs.closeSync(fd);
       fd = undefined;
@@ -301,16 +317,6 @@ export function handleWriteInPlace(
         }
       }
       throw err;
-    } finally {
-      // On failure, restore the pre-write mode so the file doesn't stay
-      // more permissive after a failed pull.
-      if (preTeeMode !== undefined && chmodSucceeded && !modeApplied) {
-        try {
-          fs.chmodSync(resolvedTarget, parseInt(preTeeMode, 8));
-        } catch {
-          // best-effort mode restore
-        }
-      }
     }
   }
 }

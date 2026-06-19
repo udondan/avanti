@@ -25,7 +25,7 @@ function runPrivilegedWorker(
   sudo: true | string,
   ops: WriteOp[],
   continueOnError = false,
-): void {
+): Array<{ ok: boolean; error?: string }> {
   // When running via tsx (TypeScript source, __filename ends in .ts), the
   // compiled worker is one level up in dist/. In production (dist/writer.js),
   // the worker is a sibling.
@@ -50,6 +50,10 @@ function runPrivilegedWorker(
       `.avanti-worker-${crypto.randomBytes(5).toString('hex')}`,
     );
     fs.mkdirSync(tmpWorkerDir, { recursive: true, mode: 0o755 });
+    // mkdirSync mode is masked by the caller's umask (e.g. 077 → 0700), which
+    // would prevent the named sudo user from traversing this directory. Chmod
+    // explicitly to ensure the directory is always world-executable.
+    fs.chmodSync(tmpWorkerDir, 0o755);
     const tmpWorker = path.join(tmpWorkerDir, 'privileged-worker.js');
     fs.copyFileSync(workerPath, tmpWorker);
     fs.chmodSync(tmpWorker, 0o644);
@@ -113,17 +117,12 @@ function runPrivilegedWorker(
   const { results } = JSON.parse(result.stdout) as {
     results: Array<{ ok: boolean; error?: string }>;
   };
-  for (const r of results) {
-    if (!r.ok) {
-      if (continueOnError) {
-        console.warn(
-          `Warning: privileged operation failed: ${r.error ?? 'unknown error'}`,
-        );
-      } else {
-        throw new Error(r.error ?? 'privileged worker op failed');
-      }
+  if (!continueOnError) {
+    for (const r of results) {
+      if (!r.ok) throw new Error(r.error ?? 'privileged worker op failed');
     }
   }
+  return results;
 }
 
 // Each target is written atomically inside the privileged worker process, but
@@ -206,25 +205,42 @@ export function sudoAtomicWrite(targets: SudoWriteTarget[]): void {
 
 // Batches privileged deletions into one worker invocation per sudo identity,
 // so all stale-file removals share the single password prompt from writes.
+// Returns the set of paths that were successfully deleted; failed deletions are
+// warned about but not included so callers can avoid marking them as cleaned.
 export function sudoAtomicDelete(
   deletions: Array<[string, true | string]>,
-): void {
-  if (deletions.length === 0) return;
-  const groups = new Map<true | string, WriteOp[]>();
+): Set<string> {
+  const succeeded = new Set<string>();
+  if (deletions.length === 0) return succeeded;
+  // Track per-sudo ordered path lists to correlate results with paths.
+  const groups = new Map<true | string, string[]>();
   for (const [p, sudo] of deletions) {
-    const op: WriteOp = { type: 'delete', targetPath: p };
     const existing = groups.get(sudo);
     if (existing) {
-      existing.push(op);
+      existing.push(p);
     } else {
-      groups.set(sudo, [op]);
+      groups.set(sudo, [p]);
     }
   }
-  for (const [sudo, ops] of groups) {
+  for (const [sudo, paths] of groups) {
+    const ops: WriteOp[] = paths.map((p) => ({
+      type: 'delete',
+      targetPath: p,
+    }));
     // Deletion failures are non-fatal: warn and continue, matching the old
     // per-file sudo rm -f behaviour.
-    runPrivilegedWorker(sudo, ops, true);
+    const results = runPrivilegedWorker(sudo, ops, true);
+    results.forEach((r, i) => {
+      if (r.ok) {
+        succeeded.add(paths[i]);
+      } else {
+        console.warn(
+          `Warning: privileged operation failed: ${r.error ?? 'unknown error'}`,
+        );
+      }
+    });
   }
+  return succeeded;
 }
 
 export function sudoRead(sudo: true | string, filePath: string): Buffer | null {

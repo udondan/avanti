@@ -1467,10 +1467,12 @@ export function pullCommand(): Command {
           }
         }
         if (sudoDeletionBatch.length > 0) {
-          sudoAtomicDelete(sudoDeletionBatch);
+          const deleted = sudoAtomicDelete(sudoDeletionBatch);
           for (const [p] of sudoDeletionBatch) {
-            effectivelyDeleted.add(p);
-            effectivelyCleaned.add(p);
+            if (deleted.has(p)) {
+              effectivelyDeleted.add(p);
+              effectivelyCleaned.add(p);
+            }
           }
         }
 
