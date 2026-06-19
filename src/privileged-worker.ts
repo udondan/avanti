@@ -622,6 +622,7 @@ function checkAncestorsSafeAsRoot(
   targetPath: string,
   trustedUids: Set<number>,
   label: string,
+  checkedDirs?: Set<string>,
 ): void {
   const ancestors: string[] = [];
   let anc = path.resolve(targetPath);
@@ -631,7 +632,9 @@ function checkAncestorsSafeAsRoot(
     if (anc === path.dirname(anc)) break;
   }
   for (const ancestor of ancestors) {
+    if (checkedDirs?.has(ancestor)) continue;
     checkDirSafeAsRoot(ancestor, trustedUids, label);
+    checkedDirs?.add(ancestor);
   }
 }
 
@@ -706,12 +709,23 @@ if (require.main === module) {
     const continueOnError = request.continueOnError ?? false;
 
     const results: WorkerResult[] = [];
+    const checkedDirs = new Set<string>();
     for (const op of request.ops) {
       try {
         if (trustedUids) {
-          checkAncestorsSafeAsRoot(op.targetPath, trustedUids, 'destination');
+          checkAncestorsSafeAsRoot(
+            op.targetPath,
+            trustedUids,
+            'destination',
+            checkedDirs,
+          );
           if (op.type !== 'delete' && op.backupPath) {
-            checkAncestorsSafeAsRoot(op.backupPath, trustedUids, 'backup');
+            checkAncestorsSafeAsRoot(
+              op.backupPath,
+              trustedUids,
+              'backup',
+              checkedDirs,
+            );
           }
         }
         dispatch(op, trustedUids);

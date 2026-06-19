@@ -165,11 +165,24 @@ export function sudoAtomicWrite(targets: SudoWriteTarget[]): void {
   // Validate ancestor safety for all targets before any privileged work.
   // checkAncestorsSafe prefers lstatSync (0 sudo calls) for world-readable
   // paths like /usr/local/bin; sudo stat is only used for unreadable ancestors.
+  const checkedDirs = new Set<string>();
   for (const t of targets) {
     const trustedUids = buildTrustedUids(t.sudo);
-    checkAncestorsSafe(t.sudo, t.targetPath, trustedUids, 'destination');
+    checkAncestorsSafe(
+      t.sudo,
+      t.targetPath,
+      trustedUids,
+      'destination',
+      checkedDirs,
+    );
     if (t.backupPath) {
-      checkAncestorsSafe(t.sudo, t.backupPath, trustedUids, 'backup');
+      checkAncestorsSafe(
+        t.sudo,
+        t.backupPath,
+        trustedUids,
+        'backup',
+        checkedDirs,
+      );
     }
   }
 
@@ -640,6 +653,7 @@ function checkAncestorsSafe(
   targetPath: string,
   trustedUids: Set<number>,
   label: string,
+  checkedDirs?: Set<string>,
 ): void {
   const ancestors: string[] = [];
   let anc = path.resolve(targetPath);
@@ -649,7 +663,9 @@ function checkAncestorsSafe(
     if (anc === path.dirname(anc)) break; // reached filesystem root
   }
   for (const ancestor of ancestors) {
+    if (checkedDirs?.has(ancestor)) continue;
     checkDirSafe(sudo, ancestor, trustedUids, `${label} ancestor`);
+    checkedDirs?.add(ancestor);
   }
 }
 
