@@ -377,6 +377,15 @@ export function handleWriteInPlace(
             }
             throw retryErr;
           }
+          // Restore original mode immediately after the write-open succeeds —
+          // the write bit was temporary. The conditional fchmod below handles
+          // explicit mode and setuid/setgid bits via fd; this rfd restore
+          // covers the case where neither applies (e.g. a plain 0o400 file).
+          try {
+            safeFchmodSync(rfd, mode);
+          } catch {
+            // best-effort restore
+          }
         } else {
           throw firstOpenErr;
         }
