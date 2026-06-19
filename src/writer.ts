@@ -46,7 +46,7 @@ function runPrivilegedWorker(
   const nodeExec =
     typeof sudo === 'string' &&
     process.execPath.startsWith(os.homedir() + path.sep)
-      ? 'node'
+      ? path.basename(process.execPath)
       : process.execPath;
   let cleanup: (() => void) | undefined;
 
