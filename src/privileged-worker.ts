@@ -140,7 +140,7 @@ function backupRegularFile(
     }
     bfd = fs.openSync(backupTmp, 'wx', 0o600);
     fs.writeFileSync(bfd, fs.readFileSync(sfd));
-    safeFchmodSync(bfd, srcStat.mode & 0o7777);
+    safeFchmodSync(bfd, srcStat.mode & 0o0777);
     fs.closeSync(bfd);
     bfd = undefined;
     fs.closeSync(sfd);

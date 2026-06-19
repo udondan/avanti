@@ -1416,18 +1416,22 @@ export function pullCommand(): Command {
         // yet changed, keeping the working tree in a consistent state.
         if (sudoChanged.length + sudoRestore.length > 0) {
           sudoAtomicWrite([...sudoChanged, ...sudoRestore]);
-        } else if (process.platform !== 'win32') {
-          // No content-change sudo targets means the worker was not called and
-          // no sudo authentication has happened yet. If there are mode-only sudo
-          // targets, authenticate now (before regular writes) so that an auth
-          // failure is caught before any files change rather than silently
-          // skipping the chmod after regular writes have already succeeded.
+        }
+        if (process.platform !== 'win32') {
+          // Authenticate any mode-only sudo identities not already covered by
+          // the worker call above. This ensures auth failures are caught before
+          // any regular writes, even when a mode-only identity differs from the
+          // content-change identity (which the worker already authenticated).
+          const contentSudoIds = new Set(
+            [...sudoChanged, ...sudoRestore].map((t) => t.sudo),
+          );
           const modeOnlySudoIds = new Set<true | string>();
           for (let i = 0; i < writeTargets.length; i++) {
             if (
               allDiffs[i].modeChange &&
               !allDiffs[i].contentChanged &&
-              writeTargets[i].sudo
+              writeTargets[i].sudo &&
+              !contentSudoIds.has(writeTargets[i].sudo!)
             ) {
               modeOnlySudoIds.add(writeTargets[i].sudo!);
             }
