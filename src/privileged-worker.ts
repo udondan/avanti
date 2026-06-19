@@ -141,7 +141,11 @@ function backupRegularFile(
       );
     }
     bfd = fs.openSync(backupTmp, 'wx', 0o600);
-    fs.writeFileSync(bfd, fs.readFileSync(sfd));
+    const buf = Buffer.alloc(65536);
+    let bytesRead;
+    while ((bytesRead = fs.readSync(sfd, buf, 0, buf.length, null)) > 0) {
+      fs.writeSync(bfd, buf, 0, bytesRead);
+    }
     safeFchmodSync(bfd, srcStat.mode & 0o0777);
     fs.closeSync(bfd);
     bfd = undefined;
