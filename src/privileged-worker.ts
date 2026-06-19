@@ -368,6 +368,14 @@ export function handleWriteInPlace(
         rfd = undefined;
       }
     } catch (err) {
+      // If we temporarily boosted the mode via rfd, restore it before closing.
+      if (rfd !== undefined && savedMode !== undefined) {
+        try {
+          fs.fchmodSync(rfd, savedMode);
+        } catch {
+          // best-effort restore
+        }
+      }
       if (fd !== undefined) {
         try {
           fs.closeSync(fd);

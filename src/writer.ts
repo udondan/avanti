@@ -119,9 +119,18 @@ function runPrivilegedWorker(
     }
     throw new Error(workerError);
   }
-  const { results } = JSON.parse(result.stdout) as {
-    results: Array<{ ok: boolean; error?: string }>;
-  };
+  let results: Array<{ ok: boolean; error?: string }>;
+  try {
+    const parsed = JSON.parse(result.stdout) as {
+      results: Array<{ ok: boolean; error?: string }>;
+    };
+    results = parsed.results;
+  } catch (e) {
+    throw new Error(
+      `privileged worker returned non-JSON output: ${result.stdout}`,
+      { cause: e },
+    );
+  }
   if (!continueOnError) {
     for (const r of results) {
       if (!r.ok) throw new Error(r.error ?? 'privileged worker op failed');
