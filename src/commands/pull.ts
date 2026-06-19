@@ -1447,41 +1447,44 @@ export function pullCommand(): Command {
           (p) => !staleDeleteSudo.has(p),
         );
 
+        // Collect sudo mode-only targets before the write batch so they can be
+        // included in the same per-identity worker exec as the content writes.
+        // This keeps all sudo ops (writes + chmods) in a single batch per
+        // identity, so if any chmod fails the regular writes have not yet run
+        // and the working tree remains in a consistent state.
+        const modeOnlySudoTargets: SudoChmodTarget[] =
+          process.platform !== 'win32'
+            ? writeTargets.flatMap((t, i) =>
+                allDiffs[i].modeChange && !allDiffs[i].contentChanged && t.sudo
+                  ? [
+                      {
+                        targetPath: t.targetPath,
+                        mode: allDiffs[i].modeChange.to
+                          .toString(8)
+                          .padStart(4, '0'),
+                        sudo: t.sudo,
+                      },
+                    ]
+                  : [],
+              )
+            : [];
+
         // Privileged writes first: if sudo fails, unprivileged files have not
         // yet changed, keeping the working tree in a consistent state.
         // Sessions are passed so reads and writes share the same worker process
-        // (one sudo prompt total per identity).
-        if (sudoChanged.length + sudoRestore.length > 0) {
-          await sudoAtomicWrite(
+        // (one sudo prompt total per identity). Chmod-only targets are batched
+        // into the same per-identity exec as content writes so the ordering
+        // guarantee extends to mode changes too.
+        let modeOnlyCount = 0;
+        if (
+          sudoChanged.length + sudoRestore.length > 0 ||
+          modeOnlySudoTargets.length > 0
+        ) {
+          modeOnlyCount = await sudoAtomicWrite(
             [...sudoChanged, ...sudoRestore],
-            [],
+            modeOnlySudoTargets,
             sudoSessions,
           );
-        }
-        let modeOnlyCount = 0;
-        if (process.platform !== 'win32') {
-          const modeOnlySudoTargets: SudoChmodTarget[] = [];
-          for (let i = 0; i < writeTargets.length; i++) {
-            if (
-              allDiffs[i].modeChange &&
-              !allDiffs[i].contentChanged &&
-              writeTargets[i].sudo
-            ) {
-              modeOnlySudoTargets.push({
-                targetPath: writeTargets[i].targetPath,
-                mode: allDiffs[i].modeChange!.to.toString(8).padStart(4, '0'),
-                sudo: writeTargets[i].sudo!,
-              });
-            }
-          }
-          if (modeOnlySudoTargets.length > 0) {
-            const chmodApplied = await sudoAtomicWrite(
-              [],
-              modeOnlySudoTargets,
-              sudoSessions,
-            );
-            modeOnlyCount += chmodApplied;
-          }
         }
         atomicWrite([...regularChanged, ...regularRestore]);
         // Mark all active stale restores as completed (atomicWrite throws on
