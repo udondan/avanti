@@ -421,7 +421,7 @@ export function handleWriteSymlink(
   if (op.backupPath) {
     try {
       const lst = fs.lstatSync(resolvedTarget);
-      if (lst.isSymbolicLink() || lst.isFile()) {
+      if (lst.isSymbolicLink()) {
         const backupDir = path.dirname(op.backupPath);
         const resolvedBackup = path.resolve(op.backupPath);
 
@@ -442,60 +442,13 @@ export function handleWriteSymlink(
         );
 
         try {
-          if (lst.isSymbolicLink()) {
-            // Store the symlink as absolute target so backup resolves correctly
-            // from backupDir regardless of whether the original was relative.
-            const rawTarget = fs.readlinkSync(resolvedTarget);
-            const absTarget = path.isAbsolute(rawTarget)
-              ? rawTarget
-              : path.resolve(path.dirname(resolvedTarget), rawTarget);
-            fs.symlinkSync(absTarget, backupTmp);
-          } else {
-            // Open source with O_NOFOLLOW|O_NONBLOCK to reject symlinks and
-            // FIFOs; fstat to verify it is still a regular file before reading.
-            // Keep the backup fd open and write through it — no path-based
-            // TOCTOU between open and write.
-            let sfd: number | undefined;
-            let bfd: number | undefined;
-            try {
-              sfd = fs.openSync(
-                resolvedTarget,
-                fs.constants.O_RDONLY | O_NOFOLLOW | O_NONBLOCK,
-              );
-              const srcStat = fs.fstatSync(sfd);
-              if (!srcStat.isFile()) {
-                throw new Error(
-                  `backup source ${op.targetPath} is not a regular file; refusing to back up`,
-                );
-              }
-              const srcMode = (srcStat.mode & 0o7777)
-                .toString(8)
-                .padStart(4, '0');
-              bfd = fs.openSync(backupTmp, 'wx', 0o600);
-              fs.writeFileSync(bfd, fs.readFileSync(sfd));
-              fs.fchmodSync(bfd, parseInt(srcMode, 8));
-              fs.closeSync(bfd);
-              bfd = undefined;
-              fs.closeSync(sfd);
-              sfd = undefined;
-            } catch (err) {
-              if (bfd !== undefined) {
-                try {
-                  fs.closeSync(bfd);
-                } catch {
-                  // best-effort close
-                }
-              }
-              if (sfd !== undefined) {
-                try {
-                  fs.closeSync(sfd);
-                } catch {
-                  // best-effort close
-                }
-              }
-              throw err;
-            }
-          }
+          // Store the symlink as absolute target so backup resolves correctly
+          // from backupDir regardless of whether the original was relative.
+          const rawTarget = fs.readlinkSync(resolvedTarget);
+          const absTarget = path.isAbsolute(rawTarget)
+            ? rawTarget
+            : path.resolve(path.dirname(resolvedTarget), rawTarget);
+          fs.symlinkSync(absTarget, backupTmp);
           fs.renameSync(backupTmp, resolvedBackup);
         } catch (err) {
           try {
@@ -505,6 +458,8 @@ export function handleWriteSymlink(
           }
           throw err;
         }
+      } else if (lst.isFile()) {
+        backupRegularFile(resolvedTarget, op.backupPath, trustedUids);
       }
     } catch (e) {
       if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
