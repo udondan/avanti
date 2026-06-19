@@ -80,6 +80,8 @@ export interface WorkerRequest {
 export interface WorkerResult {
   ok: boolean;
   error?: string;
+  /** errno code from NodeJS.ErrnoException, e.g. 'ENOENT'; set when ok is false */
+  code?: string;
   /** true when a chmod op was silently skipped (ENOENT/ELOOP) — not an error */
   skipped?: boolean;
   /** base64-encoded file content, set for read/readlink/stat-read ops */
@@ -99,6 +101,45 @@ type DispatchResult =
 
 function randomHex(): string {
   return crypto.randomBytes(5).toString('hex');
+}
+
+// Opens resolvedPath with O_RDONLY|O_NOFOLLOW|O_NONBLOCK, verifies it is a
+// regular file within the MAX_READ limit, reads it fully, and returns the
+// base64-encoded contents. The label ('read' or 'stat-read') is used in error
+// messages. The fd is always closed, even on error.
+function readFileToBase64(resolvedPath: string, label: string): string {
+  let fd: number | undefined;
+  try {
+    fd = fs.openSync(
+      resolvedPath,
+      fs.constants.O_RDONLY | O_NOFOLLOW | O_NONBLOCK,
+    );
+    const st = fs.fstatSync(fd);
+    if (!st.isFile()) {
+      throw new Error(`${label}: ${resolvedPath} is not a regular file`);
+    }
+    if (st.size > MAX_READ) {
+      throw new Error(
+        `${label}: ${resolvedPath} exceeds the 100 MiB read limit`,
+      );
+    }
+    const buf = Buffer.alloc(st.size);
+    let offset = 0;
+    while (offset < st.size) {
+      const n = fs.readSync(fd, buf, offset, st.size - offset, offset);
+      if (n === 0) break;
+      offset += n;
+    }
+    return buf.toString('base64');
+  } finally {
+    if (fd !== undefined) {
+      try {
+        fs.closeSync(fd);
+      } catch {
+        /* best-effort close */
+      }
+    }
+  }
 }
 
 function getExistingMode(filePath: string): string | undefined {
@@ -784,42 +825,11 @@ export function dispatch(
     }
     case 'read': {
       const resolvedPath = path.resolve(op.targetPath);
-      let rfd: number | undefined;
-      try {
-        rfd = fs.openSync(
-          resolvedPath,
-          fs.constants.O_RDONLY | O_NOFOLLOW | O_NONBLOCK,
-        );
-        const rst = fs.fstatSync(rfd);
-        if (!rst.isFile()) {
-          throw new Error(`read: ${op.targetPath} is not a regular file`);
-        }
-        if (rst.size > MAX_READ) {
-          throw new Error(
-            `read: ${op.targetPath} exceeds the 100 MiB read limit`,
-          );
-        }
-        const buf = Buffer.alloc(rst.size);
-        let offset = 0;
-        while (offset < rst.size) {
-          const n = fs.readSync(rfd, buf, offset, rst.size - offset, offset);
-          if (n === 0) break;
-          offset += n;
-        }
-        return {
-          kind: 'read',
-          contentB64: buf.toString('base64'),
-          isSymlink: false,
-        };
-      } finally {
-        if (rfd !== undefined) {
-          try {
-            fs.closeSync(rfd);
-          } catch {
-            /* best-effort close */
-          }
-        }
-      }
+      return {
+        kind: 'read',
+        contentB64: readFileToBase64(resolvedPath, 'read'),
+        isSymlink: false,
+      };
     }
     case 'readlink': {
       const resolvedPath = path.resolve(op.targetPath);
@@ -841,48 +851,11 @@ export function dispatch(
           isSymlink: true,
         };
       }
-      let srfd: number | undefined;
-      try {
-        srfd = fs.openSync(
-          resolvedPath,
-          fs.constants.O_RDONLY | O_NOFOLLOW | O_NONBLOCK,
-        );
-        const srst = fs.fstatSync(srfd);
-        if (!srst.isFile()) {
-          throw new Error(`stat-read: ${op.targetPath} is not a regular file`);
-        }
-        if (srst.size > MAX_READ) {
-          throw new Error(
-            `stat-read: ${op.targetPath} exceeds the 100 MiB read limit`,
-          );
-        }
-        const srbuf = Buffer.alloc(srst.size);
-        let sroffset = 0;
-        while (sroffset < srst.size) {
-          const n = fs.readSync(
-            srfd,
-            srbuf,
-            sroffset,
-            srst.size - sroffset,
-            sroffset,
-          );
-          if (n === 0) break;
-          sroffset += n;
-        }
-        return {
-          kind: 'read',
-          contentB64: srbuf.toString('base64'),
-          isSymlink: false,
-        };
-      } finally {
-        if (srfd !== undefined) {
-          try {
-            fs.closeSync(srfd);
-          } catch {
-            /* best-effort close */
-          }
-        }
-      }
+      return {
+        kind: 'read',
+        contentB64: readFileToBase64(resolvedPath, 'stat-read'),
+        isSymlink: false,
+      };
     }
     default: {
       const _exhaustive: never = op;
@@ -1045,7 +1018,11 @@ if (require.main === module) {
           results.push({ ok: true });
         }
       } catch (e) {
-        results.push({ ok: false, error: (e as Error).message });
+        results.push({
+          ok: false,
+          error: (e as Error).message,
+          code: (e as NodeJS.ErrnoException).code,
+        });
         if (!continueOnError) break; // fail-fast for writes; continue for deletes
       }
     }

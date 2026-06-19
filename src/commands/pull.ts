@@ -1661,8 +1661,7 @@ export function pullCommand(): Command {
         }
 
         // Non-sudo mode-only changes (POSIX only). Sudo mode-only changes are
-        // already handled above via sudoAtomicChmod (one worker invocation per
-        // sudo identity, before regular writes).
+        // handled above via sudoAtomicWrite (chmodTargets argument).
         if (process.platform !== 'win32') {
           for (let i = 0; i < writeTargets.length; i++) {
             const d = allDiffs[i];

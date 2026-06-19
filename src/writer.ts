@@ -32,6 +32,30 @@ export function sudoUserArgs(sudo: true | string): string[] {
   return typeof sudo === 'string' ? ['-u', sudo] : [];
 }
 
+// Resolves the Node.js binary to pass to sudo. For root sudo, process.execPath
+// is always accessible. For named-user sudo, if process.execPath is under the
+// calling user's home directory (nvm/fnm/mise installs), the target user cannot
+// traverse $HOME and would get EACCES. In that case, search PATH for the first
+// node binary outside $HOME; fall back to bare 'node' (resolved by sudo's
+// secure_path) only when no system node is found.
+function resolveNodeExec(sudo: true | string): string {
+  if (
+    typeof sudo !== 'string' ||
+    !process.execPath.startsWith(os.homedir() + path.sep)
+  ) {
+    return process.execPath;
+  }
+  const home = os.homedir() + path.sep;
+  for (const dir of (process.env.PATH ?? '').split(path.delimiter)) {
+    if (dir.startsWith(home)) continue;
+    const candidate = path.join(dir, 'node');
+    if (fs.existsSync(candidate)) return candidate;
+  }
+  // No system node found in PATH; 'node' will be resolved by sudo's secure_path.
+  // Requires Node.js to be installed system-wide (e.g. apt install nodejs).
+  return 'node';
+}
+
 function runPrivilegedWorker(
   sudo: true | string,
   ops: WriteOp[],
@@ -60,20 +84,7 @@ function runPrivilegedWorker(
   }
 
   let resolvedWorkerPath = workerPath;
-  // Named-user sudo: if process.execPath lives inside the calling user's home
-  // directory (e.g. nvm/asdf/mise installs), the target sudo user cannot
-  // traverse that directory (mode 0700/0750) and will get EACCES when exec-ing
-  // the Node binary. Fall back to the literal 'node' so sudo uses its secure
-  // PATH (/usr/local/bin:/usr/bin/…), which typically has a system Node. Use a
-  // literal 'node' rather than path.basename(process.execPath) because the
-  // runtime may be Bun (basename would give 'bun', not found in sudo's PATH).
-  // Root sudo always has access to process.execPath and is preferred there to
-  // avoid runtime version mismatches.
-  const nodeExec =
-    typeof sudo === 'string' &&
-    process.execPath.startsWith(os.homedir() + path.sep)
-      ? 'node'
-      : process.execPath;
+  const nodeExec = resolveNodeExec(sudo);
   let cleanup: (() => void) | undefined;
 
   if (typeof sudo === 'string' && fs.existsSync(workerPath)) {
@@ -289,7 +300,6 @@ export async function sudoAtomicWrite(
 
   // Group ops by sudo identity; one worker invocation per group.
   const groups = new Map<true | string, WriteOp[]>();
-  const groupChmodStart = new Map<true | string, number>();
   for (const { sudo, op } of targetOps) {
     const existing = groups.get(sudo);
     if (existing) {
@@ -307,7 +317,6 @@ export async function sudoAtomicWrite(
       chmodStartIndex.set(t.sudo, idx >= 0 ? idx : ops.length);
     }
   }
-  void groupChmodStart; // unused; using chmodStartIndex instead
 
   let chmodApplied = 0;
   for (const [sudo, ops] of groups) {
@@ -329,28 +338,6 @@ export async function sudoAtomicWrite(
     }
   }
   return chmodApplied;
-}
-
-// Batches privileged mode-only changes into one worker invocation per sudo identity.
-export function sudoAtomicChmod(targets: SudoChmodTarget[]): void {
-  if (targets.length === 0) return;
-  const groups = new Map<true | string, WriteOp[]>();
-  for (const t of targets) {
-    const op: WriteOp = {
-      type: 'chmod',
-      targetPath: t.targetPath,
-      mode: t.mode,
-    };
-    const existing = groups.get(t.sudo);
-    if (existing) {
-      existing.push(op);
-    } else {
-      groups.set(t.sudo, [op]);
-    }
-  }
-  for (const [sudo, ops] of groups) {
-    runPrivilegedWorker(sudo, ops);
-  }
 }
 
 // Batches privileged deletions into one worker invocation per sudo identity.
@@ -539,6 +526,7 @@ export async function sudoAtomicRead(
       contentB64?: string;
       isSymlink?: boolean;
       error?: string;
+      code?: string;
     }> = session
       ? await session.exec(ops, true)
       : runPrivilegedWorker(sudo, ops, true);
@@ -549,12 +537,7 @@ export async function sudoAtomicRead(
           contentB64: r.contentB64,
           isSymlink: r.isSymlink,
         });
-      } else if (
-        r &&
-        !r.ok &&
-        r.error &&
-        !/ENOENT|no such file/i.test(r.error)
-      ) {
+      } else if (r && !r.ok && r.code !== 'ENOENT') {
         // Non-absence errors (e.g. file too large, not a regular file) must not
         // be silently treated as missing — the write would proceed without
         // capturing v0 content, risking data loss.
@@ -678,30 +661,7 @@ export class SudoWorkerSession {
       );
     }
 
-    // For named-user sudo, use the current node binary only if it's not under
-    // the invoking user's home directory — user-local node managers (nvm, fnm,
-    // mise) install there, and `sudo -u` drops PATH entries that include $HOME,
-    // so the target user won't be able to exec it. Instead, search PATH for the
-    // first node binary outside the home directory. If none is found, fall back
-    // to bare 'node' and let sudo's secure_path resolve it (requires system
-    // node to be installed, e.g. via apt/brew).
-    const nodeExec = (() => {
-      if (
-        typeof sudo !== 'string' ||
-        !process.execPath.startsWith(os.homedir() + path.sep)
-      ) {
-        return process.execPath;
-      }
-      const home = os.homedir() + path.sep;
-      for (const dir of (process.env.PATH ?? '').split(path.delimiter)) {
-        if (dir.startsWith(home)) continue;
-        const candidate = path.join(dir, 'node');
-        if (fs.existsSync(candidate)) return candidate;
-      }
-      // No system node found in PATH; 'node' will be resolved by sudo's secure_path.
-      // Requires Node.js to be installed system-wide (e.g. apt install nodejs).
-      return 'node';
-    })();
+    const nodeExec = resolveNodeExec(sudo);
 
     let resolvedWorkerPath = workerPath;
     if (typeof sudo === 'string' && fs.existsSync(workerPath)) {
@@ -793,6 +753,7 @@ export class SudoWorkerSession {
       };
       this.proc.stdin!.write(JSON.stringify(request) + '\n', (err) => {
         if (err) {
+          clearTimeout(timer);
           this.pending = null;
           reject(err);
         }
