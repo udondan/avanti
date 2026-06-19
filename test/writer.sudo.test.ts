@@ -3,12 +3,10 @@ import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import {
   sudoAtomicDelete,
   sudoAtomicWrite,
-  sudoDelete,
   sudoRead,
   sudoReadlink,
   sudoFileExists,
   sudoUserArgs,
-  sudoRun,
   SudoWriteTarget,
 } from '../src/writer';
 
@@ -133,35 +131,6 @@ describe('sudoReadlink', () => {
     expect(() => sudoReadlink(true, '/etc/link')).toThrow(
       'sudo readlink failed',
     );
-  });
-});
-
-describe('sudoDelete', () => {
-  it('calls sudo rm -f for root', () => {
-    mockSpawnSync.mockReturnValue(okResult());
-    sudoDelete('/tmp/file', true);
-    expect(mockSpawnSync).toHaveBeenCalledWith(
-      'sudo',
-      ['rm', '-f', '--', '/tmp/file'],
-      expect.any(Object),
-    );
-  });
-
-  it('calls sudo -u <name> rm -f for named user', () => {
-    mockSpawnSync.mockReturnValue(okResult());
-    sudoDelete('/tmp/file', 'www-data');
-    expect(mockSpawnSync).toHaveBeenCalledWith(
-      'sudo',
-      ['-u', 'www-data', 'rm', '-f', '--', '/tmp/file'],
-      expect.any(Object),
-    );
-  });
-
-  it('warns on failure instead of throwing', () => {
-    mockSpawnSync.mockReturnValue(failResult());
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    expect(() => sudoDelete('/tmp/file', true)).not.toThrow();
-    expect(warnSpy).toHaveBeenCalled();
   });
 });
 
@@ -465,40 +434,5 @@ describe.skipIf(isWindows)('sudoAtomicDelete', () => {
     } finally {
       warnSpy.mockRestore();
     }
-  });
-});
-
-describe('sudoRun — mode-only chmod path', () => {
-  it.skipIf(isWindows)(
-    'calls sudo chmod with padded octal mode for root',
-    () => {
-      mockSpawnSync.mockReturnValue(okResult());
-      sudoRun(true, ['chmod', '--', '0644', '/etc/test.conf']);
-      expect(mockSpawnSync).toHaveBeenCalledWith(
-        'sudo',
-        ['chmod', '--', '0644', '/etc/test.conf'],
-        expect.any(Object),
-      );
-    },
-  );
-
-  it.skipIf(isWindows)(
-    'calls sudo -u <user> chmod for named-user mode-only change',
-    () => {
-      mockSpawnSync.mockReturnValue(okResult());
-      sudoRun('nobody', ['chmod', '--', '0644', '/etc/test.conf']);
-      expect(mockSpawnSync).toHaveBeenCalledWith(
-        'sudo',
-        ['-u', 'nobody', 'chmod', '--', '0644', '/etc/test.conf'],
-        expect.any(Object),
-      );
-    },
-  );
-
-  it('throws when sudo chmod fails', () => {
-    mockSpawnSync.mockReturnValue(failResult());
-    expect(() =>
-      sudoRun(true, ['chmod', '--', '0644', '/etc/test.conf']),
-    ).toThrow();
   });
 });

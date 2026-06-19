@@ -353,20 +353,6 @@ export function sudoRead(sudo: true | string, filePath: string): Buffer | null {
   return result.stdout;
 }
 
-export function sudoDelete(p: string, sudo: true | string): boolean {
-  const r = spawnSync('sudo', [...sudoUserArgs(sudo), 'rm', '-f', '--', p], {
-    stdio: 'inherit',
-  });
-  if (r.status !== 0 || r.error) {
-    const detail = r.error
-      ? r.error.message
-      : `exit code ${r.status ?? 'unknown'}`;
-    console.warn(`Warning: could not delete ${p}: ${detail}`);
-    return false;
-  }
-  return true;
-}
-
 export function sudoFileExists(
   sudo: true | string,
   targetPath: string,
@@ -418,18 +404,6 @@ export function sudoReadlink(
   if (r.error) throw new Error(`sudo readlink failed: ${r.error.message}`);
   if (r.status !== 0) return null;
   return r.stdout.toString().trim();
-}
-
-export function sudoRun(sudo: true | string, args: string[]): void {
-  const r = spawnSync('sudo', [...sudoUserArgs(sudo), ...args], {
-    stdio: 'inherit',
-  });
-  if (r.status !== 0 || r.error) {
-    const detail = r.error
-      ? r.error.message
-      : `exit code ${r.status ?? 'unknown'}`;
-    throw new Error(`sudo ${args.join(' ')} failed: ${detail}`);
-  }
 }
 
 // Performs a privileged rename of src to dst. On Linux, GNU mv -T is used so
