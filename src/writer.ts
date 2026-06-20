@@ -785,6 +785,7 @@ export class SudoWorkerSession {
         if (err) {
           clearTimeout(timer);
           this.pending = null;
+          this.closed = true;
           reject(err);
         }
       });
