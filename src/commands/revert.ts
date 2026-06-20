@@ -12,6 +12,7 @@ import {
 import {
   atomicWrite,
   closeAllSessions,
+  openPrivilegedSessions,
   sudoAtomicDelete,
   sudoAtomicWrite,
   SudoWorkerSession,
@@ -255,20 +256,16 @@ export function revertCommand(): Command {
         // Create one shared session per sudo identity so that sudoAtomicWrite
         // and sudoAtomicDelete share a single worker process (one password
         // prompt total, regardless of timestamp_timeout).
-        const sudoSessions = new Map<true | string, SudoWorkerSession>();
-        if (process.platform !== 'win32') {
-          const sudoIds = new Set<true | string>([
-            ...sudoTargets.map((t) => t.sudo),
-            ...[...sudoDeletions.values()],
-          ]);
-          try {
-            for (const id of sudoIds)
-              sudoSessions.set(id, new SudoWorkerSession(id));
-          } catch (err) {
-            closeAllSessions(sudoSessions);
-            console.error(err instanceof Error ? err.message : String(err));
-            process.exit(2);
-          }
+        const sudoIds = new Set<true | string>([
+          ...sudoTargets.map((t) => t.sudo),
+          ...[...sudoDeletions.values()],
+        ]);
+        let sudoSessions: Map<true | string, SudoWorkerSession>;
+        try {
+          sudoSessions = openPrivilegedSessions(sudoIds);
+        } catch (err) {
+          console.error(err instanceof Error ? err.message : String(err));
+          process.exit(2);
         }
 
         try {

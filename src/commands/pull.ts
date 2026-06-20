@@ -944,16 +944,16 @@ export function pullCommand(): Command {
       // Fail fast if any symlink write target is a real directory: ln -sf would
       // place the symlink inside it rather than replacing it, so abort before
       // prompting the user rather than failing mid-write-batch.
+      let hasDirConflict = false;
       for (const d of allDiffs) {
         if (d.isDirectory && d.isSymlink) {
           console.error(
             `symlink: ${d.targetPath} is a directory; cannot replace with a symlink`,
           );
+          hasDirConflict = true;
         }
       }
-      if (allDiffs.some((d) => d.isDirectory && d.isSymlink)) {
-        process.exit(2);
-      }
+      if (hasDirConflict) process.exit(2);
       // Create one persistent sudo worker session per distinct sudo identity.
       // Sessions are split into two phases so the password prompt does not
       // appear before the user has seen or accepted the diff:

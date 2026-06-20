@@ -305,6 +305,7 @@ export function handleWriteMv(op: WriteMvOp, trustedUids?: Set<number>): void {
   // it so no path-based TOCTOU window opens between open and write.
   const tmpPath = path.join(dir, `.avanti-${randomHex()}`);
   let tfd: number | undefined;
+  let backupCommitted = false;
   try {
     tfd = fs.openSync(tmpPath, 'wx', 0o600);
     validateBase64(op.contentB64, 'contentB64');
@@ -332,6 +333,7 @@ export function handleWriteMv(op: WriteMvOp, trustedUids?: Set<number>): void {
     // backup behind without the new file being committed.
     if (op.backupPath) {
       backupRegularFile(resolvedTarget, op.backupPath, trustedUids);
+      backupCommitted = true;
     }
 
     fs.renameSync(tmpPath, resolvedTarget);
@@ -347,6 +349,15 @@ export function handleWriteMv(op: WriteMvOp, trustedUids?: Set<number>): void {
       fs.unlinkSync(tmpPath);
     } catch {
       // best-effort cleanup
+    }
+    // If the backup was committed but the write rename failed, remove the
+    // orphaned backup — the original is still intact at resolvedTarget.
+    if (backupCommitted && op.backupPath) {
+      try {
+        fs.unlinkSync(path.resolve(op.backupPath));
+      } catch {
+        // best-effort
+      }
     }
     throw err;
   }
@@ -904,12 +915,23 @@ export function dispatch(
         // process running as the same user could replace the symlink between the
         // ELOOP above and this call. In practice avanti runs on single-user
         // machines and this window is not exploitable by a different UID.
-        const target = fs.readlinkSync(resolvedPath);
-        return {
-          kind: 'read',
-          contentB64: Buffer.from(target).toString('base64'),
-          isSymlink: true,
-        };
+        // If the path was replaced with a regular file in that window, readlinkSync
+        // throws EINVAL — retry readFileToBase64 so the caller sees a regular file.
+        try {
+          const target = fs.readlinkSync(resolvedPath);
+          return {
+            kind: 'read',
+            contentB64: Buffer.from(target).toString('base64'),
+            isSymlink: true,
+          };
+        } catch (e2) {
+          if ((e2 as NodeJS.ErrnoException).code !== 'EINVAL') throw e2;
+          return {
+            kind: 'read',
+            contentB64: readFileToBase64(resolvedPath, 'stat-read'),
+            isSymlink: false,
+          };
+        }
       }
     }
     default: {
@@ -921,18 +943,6 @@ export function dispatch(
 
 // Entry point: only run when this file is the main module, not when imported.
 if (require.main === module) {
-  process.on('uncaughtException', (err) => {
-    process.stderr.write(
-      `avanti privileged-worker: uncaught exception: ${err.stack ?? String(err)}\n`,
-    );
-    process.exitCode = 1;
-  });
-  process.on('unhandledRejection', (reason) => {
-    process.stderr.write(
-      `avanti privileged-worker: unhandled rejection: ${String(reason)}\n`,
-    );
-    process.exitCode = 1;
-  });
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const rl = (require('readline') as typeof import('readline')).createInterface(
     {
@@ -940,6 +950,23 @@ if (require.main === module) {
       crlfDelay: Infinity,
     },
   );
+
+  // Shut down immediately on any unexpected error so subsequent ops are not
+  // dispatched while the worker is in an unknown state.
+  process.on('uncaughtException', (err) => {
+    process.stderr.write(
+      `avanti privileged-worker: uncaught exception: ${err.stack ?? String(err)}\n`,
+    );
+    process.exitCode = 1;
+    rl.close();
+  });
+  process.on('unhandledRejection', (reason) => {
+    process.stderr.write(
+      `avanti privileged-worker: unhandled rejection: ${String(reason)}\n`,
+    );
+    process.exitCode = 1;
+    rl.close();
+  });
 
   process.stdin.on('error', (err) => {
     process.stderr.write(`stdin error: ${err.message}\n`);
@@ -1015,6 +1042,14 @@ if (require.main === module) {
         if (!path.isAbsolute(raw['targetPath'])) {
           throw new Error(
             `invalid op ${type}: targetPath must be absolute, got ${raw['targetPath']}`,
+          );
+        }
+        if (
+          typeof raw['backupPath'] === 'string' &&
+          !path.isAbsolute(raw['backupPath'])
+        ) {
+          throw new Error(
+            `invalid op ${type}: backupPath must be absolute, got ${raw['backupPath']}`,
           );
         }
         if (

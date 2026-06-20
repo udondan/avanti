@@ -406,6 +406,18 @@ export async function sudoAtomicWrite(
   return chmodApplied;
 }
 
+// Appends value to the slice at groups[key], creating it if absent.
+// Deduplicates the group-by-sudo-identity pattern used across batch functions.
+function addToGroup<V>(
+  groups: Map<true | string, V[]>,
+  key: true | string,
+  value: V,
+): void {
+  const existing = groups.get(key);
+  if (existing) existing.push(value);
+  else groups.set(key, [value]);
+}
+
 // Batches privileged deletions into one worker invocation per sudo identity.
 // Returns the set of paths that were successfully deleted.
 // When bestEffort is false (default), worker-level failures throw; individual
@@ -421,12 +433,7 @@ export async function sudoAtomicDelete(
   // Track per-sudo ordered path lists to correlate results with paths.
   const groups = new Map<true | string, string[]>();
   for (const [p, sudo] of deletions) {
-    const existing = groups.get(sudo);
-    if (existing) {
-      existing.push(p);
-    } else {
-      groups.set(sudo, [p]);
-    }
+    addToGroup(groups, sudo, p);
   }
   for (const [sudo, paths] of groups) {
     const ops: WriteOp[] = paths.map((p) => ({
@@ -533,10 +540,11 @@ export async function sudoAtomicRead(
     }>
   >();
   reads.forEach((r, idx) => {
-    const opType = r.type ?? 'read';
-    const existing = groups.get(r.sudo);
-    if (existing) existing.push({ filePath: r.filePath, type: opType, idx });
-    else groups.set(r.sudo, [{ filePath: r.filePath, type: opType, idx }]);
+    addToGroup(groups, r.sudo, {
+      filePath: r.filePath,
+      type: r.type ?? 'read',
+      idx,
+    });
   });
 
   for (const [sudo, items] of groups) {
@@ -608,15 +616,9 @@ export async function sudoStatBatch(
   if (targets.length === 0) return result;
 
   // Group by sudo identity.
-  const groups = new Map<
-    true | string,
-    Array<{ filePath: string; gIdx: number }>
-  >();
+  const groups = new Map<true | string, Array<{ filePath: string }>>();
   targets.forEach((t) => {
-    const existing = groups.get(t.sudo);
-    if (existing)
-      existing.push({ filePath: t.filePath, gIdx: existing.length });
-    else groups.set(t.sudo, [{ filePath: t.filePath, gIdx: 0 }]);
+    addToGroup(groups, t.sudo, { filePath: t.filePath });
   });
 
   for (const [sudo, items] of groups) {
@@ -890,6 +892,24 @@ export function closeAllSessions(
   sessions: Map<true | string, SudoWorkerSession>,
 ): void {
   for (const session of sessions.values()) session.close();
+}
+
+// Opens one SudoWorkerSession per distinct sudo identity and returns the map.
+// On failure, closes any sessions already opened and rethrows so the caller
+// can handle the error (typically process.exit(2) with a console.error).
+// On Windows, returns an empty map (sudo is not supported).
+export function openPrivilegedSessions(
+  sudoIds: Iterable<true | string>,
+): Map<true | string, SudoWorkerSession> {
+  const sessions = new Map<true | string, SudoWorkerSession>();
+  if (process.platform === 'win32') return sessions;
+  try {
+    for (const id of sudoIds) sessions.set(id, new SudoWorkerSession(id));
+  } catch (err) {
+    closeAllSessions(sessions);
+    throw err;
+  }
+  return sessions;
 }
 
 // Returns the existing file's permission bits as an octal string via sudo stat,
