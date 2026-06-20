@@ -13,7 +13,7 @@ import {
 // Locally: sudo mkdir -p /usr/local/avanti-sudo-test && sudo chmod 700 /usr/local/avanti-sudo-test
 //           AVANTI_SUDO_TEST_DIR=/usr/local/avanti-sudo-test bun test test/privileged-worker.sudo-integration.test.ts
 const sudoTestDir = process.env.AVANTI_SUDO_TEST_DIR;
-const sudoCallLog = process.env.SUDO_CALL_LOG;
+const sudoCallLog = process.env.AVANTI_SUDO_CALL_LOG;
 
 // Named-user sudo integration: AVANTI_SUDO_NAMED_USER is a non-root Unix user
 // that NOPASSWD sudo is granted for in CI (e.g. "www-data" on Ubuntu runners).

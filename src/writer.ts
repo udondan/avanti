@@ -102,14 +102,18 @@ function cleanupWorkerDir(dir: string): void {
 // on normal exit and on explicit process.exit() calls. SIGTERM and SIGINT do
 // NOT trigger 'exit' unless a signal handler calls process.exit() first;
 // SIGKILL is uninterceptable and cannot be cleaned up.
+// Guard against duplicate registration: Vitest can re-evaluate modules between
+// test files, which would accumulate listeners and trigger MaxListenersExceededWarning.
 const stagedWorkerDirs = new Set<string>();
-process.on('exit', () => {
-  for (const d of [...stagedWorkerDirs]) {
-    cleanupWorkerDir(d);
-  }
-});
-process.on('SIGTERM', () => process.exit(1));
-process.on('SIGINT', () => process.exit(1));
+if (!process.listenerCount('exit')) {
+  process.on('exit', () => {
+    for (const d of [...stagedWorkerDirs]) {
+      cleanupWorkerDir(d);
+    }
+  });
+  process.once('SIGTERM', () => process.exit(1));
+  process.once('SIGINT', () => process.exit(1));
+}
 
 // Copies the privileged-worker script to a world-readable temp directory so
 // that `sudo -u <user>` can reach and exec it regardless of the calling user's
@@ -160,35 +164,56 @@ function runPrivilegedWorker(
   ops: WriteOp[],
   continueOnError = false,
   trustedUids?: Set<number>,
-): Array<{
-  ok: boolean;
-  error?: string;
-  skipped?: boolean;
-  contentB64?: string;
-}> {
+): WorkerResult[] {
   if (process.platform === 'win32') {
     throw new Error('sudo is not supported on Windows');
   }
   const { nodeExec, resolvedWorkerPath, tmpDir } = prepareWorkerExec(sudo);
   const cleanup = tmpDir ? () => cleanupWorkerDir(tmpDir) : undefined;
 
+  // Write the JSON request to a temp file and pass its path as --req-file so
+  // stdin can be left as 'inherit'. When stdin is a pipe, macOS sudo calls
+  // ttyname(STDIN_FILENO) which returns NULL and skips the credential cache,
+  // forcing a password prompt even when the user just authenticated.
+  const reqDir = tmpDir ?? os.tmpdir();
+  const reqPath = path.join(
+    reqDir,
+    `avanti-req-${crypto.randomBytes(8).toString('hex')}.json`,
+  );
+  fs.writeFileSync(
+    reqPath,
+    JSON.stringify({
+      ops,
+      trustedUids: [...(trustedUids ?? buildTrustedUids(sudo))],
+      continueOnError,
+    }),
+    // Named-user tmpDir is world-executable (0755); write mode 0644 so the
+    // named user can read it. For root sudo, 0600 is sufficient.
+    { mode: typeof sudo === 'string' ? 0o644 : 0o600 },
+  );
+
   let result;
   try {
     result = spawnSync(
       'sudo',
-      [...sudoUserArgs(sudo), nodeExec, resolvedWorkerPath],
+      [
+        ...sudoUserArgs(sudo),
+        nodeExec,
+        resolvedWorkerPath,
+        `--req-file=${reqPath}`,
+      ],
       {
-        input: JSON.stringify({
-          ops,
-          trustedUids: [...(trustedUids ?? buildTrustedUids(sudo))],
-          continueOnError,
-        }),
-        stdio: ['pipe', 'pipe', 'inherit'],
+        stdio: ['inherit', 'pipe', 'inherit'],
         encoding: 'utf8',
-        maxBuffer: 100 * 1024 * 1024,
+        maxBuffer: 150 * 1024 * 1024,
       },
     );
   } finally {
+    try {
+      fs.unlinkSync(reqPath);
+    } catch {
+      // best-effort; tmpDir cleanup covers named-user case
+    }
     cleanup?.();
   }
 
@@ -198,7 +223,7 @@ function runPrivilegedWorker(
       'ERR_CHILD_PROCESS_STDIO_MAXBUFFER'
     ) {
       throw new Error(
-        'privileged worker stdout exceeded the 100 MiB maxBuffer — batch is too large; use SudoWorkerSession for large read ops',
+        'privileged worker stdout exceeded the 150 MiB maxBuffer — batch is too large; use SudoWorkerSession for large read ops',
         { cause: result.error },
       );
     }
@@ -605,14 +630,18 @@ export async function sudoAtomicRead(
         !r.ok &&
         r.code !== 'ENOENT' &&
         r.code !== 'EACCES' &&
-        r.code !== 'EPERM'
+        r.code !== 'EPERM' &&
+        r.code !== 'EISDIR' &&
+        r.code !== 'ENOTREGFILE'
       ) {
-        // Non-absence, non-permission errors (e.g. file too large, not a
-        // regular file) must not be silently treated as missing — the write
-        // would proceed without capturing v0 content, risking data loss.
-        // EACCES/EPERM mean the worker cannot read the file (e.g. named-user
-        // cannot traverse a parent directory); treat as null so the pull
-        // proceeds without idempotency pre-read rather than aborting.
+        // Non-absence, non-permission, non-type errors (e.g. file too large)
+        // must not be silently treated as missing — the write would proceed
+        // without capturing v0 content, risking data loss.
+        // EACCES/EPERM: worker cannot read the file (e.g. named-user cannot
+        // traverse a parent directory) — treat as null so the pull proceeds.
+        // EISDIR/ENOTREGFILE: path exists but is not a regular file or symlink
+        // (e.g. a directory or special file) — no v0 content to capture, so
+        // treat as null rather than aborting the pull.
         throw new Error(
           `privileged read of ${item.filePath} failed: ${r.error}`,
         );
@@ -762,6 +791,7 @@ function buildTrustedUids(sudo: true | string): Set<number> {
 
 export class SudoWorkerSession {
   private proc: ReturnType<typeof spawn>;
+  private dataIn: NodeJS.WritableStream;
   private tmpDir?: string;
   private rl: readline.Interface;
   private pending: {
@@ -781,13 +811,35 @@ export class SudoWorkerSession {
     const { nodeExec, resolvedWorkerPath, tmpDir } = prepareWorkerExec(sudo);
     if (tmpDir) this.tmpDir = tmpDir;
 
+    // Open /dev/tty so that sudo can look up cached credentials via
+    // ttyname(STDIN_FILENO). When stdin is a pipe (stdio: ['pipe',…]), macOS
+    // sudo's ttyname() returns NULL and ignores the credential cache, forcing
+    // a password re-prompt every time. Fall back to 'inherit' (the caller's
+    // own stdin) when no controlling TTY is available (CI, containers, etc.).
+    let ttyFd: number | undefined;
+    try {
+      ttyFd = fs.openSync('/dev/tty', 'r+');
+    } catch {
+      /* no controlling TTY */
+    }
+
     this.proc = spawn(
       'sudo',
-      [...sudoUserArgs(sudo), nodeExec, resolvedWorkerPath],
+      [...sudoUserArgs(sudo), nodeExec, resolvedWorkerPath, '--data-fd=3'],
       {
-        stdio: ['pipe', 'pipe', 'inherit'],
+        // stdio[0]: /dev/tty (or inherited stdin) so sudo's ttyname() succeeds
+        // stdio[1]: pipe for JSON response lines from the worker
+        // stdio[2]: inherited stderr for sudo prompts and error messages
+        // stdio[3]: pipe for JSON request lines to the worker (the data channel)
+        stdio: [ttyFd ?? 'inherit', 'pipe', 'inherit', 'pipe'],
       },
     );
+    if (ttyFd !== undefined) fs.closeSync(ttyFd);
+
+    // fd 3 is the write end of the data pipe (stdio[3]).
+    this.dataIn = (
+      this.proc as unknown as { stdio: Array<NodeJS.WritableStream | null> }
+    ).stdio[3]!;
 
     // readline handles line buffering internally, avoiding the O(n²) cost of
     // Buffer.concat on every data event for large responses.
@@ -820,14 +872,14 @@ export class SudoWorkerSession {
       p?.reject(err);
     });
 
-    // EPIPE is emitted on stdin when the child exits while we are writing to
-    // it. Without a listener Node.js would throw an unhandled exception and
-    // crash the CLI process. Reject the in-flight request instead.
-    this.proc.stdin!.on('error', (err) => {
+    // EPIPE is emitted on the data channel when the child exits while we are
+    // writing to it. Without a listener Node.js would throw an unhandled
+    // exception and crash the CLI process. Reject the in-flight request instead.
+    this.dataIn.on('error', (err) => {
       const p = this.pending;
       this.pending = null;
       this.closed = true;
-      p?.reject(err);
+      p?.reject(err as Error);
     });
 
     this.proc.on('close', (code, signal) => {
@@ -894,7 +946,7 @@ export class SudoWorkerSession {
         trustedUids: [...this.trustedUids],
         continueOnError,
       };
-      this.proc.stdin!.write(JSON.stringify(request) + '\n', (err) => {
+      this.dataIn.write(JSON.stringify(request) + '\n', (err) => {
         if (err) {
           clearTimeout(timer);
           this.pending = null;
@@ -912,7 +964,7 @@ export class SudoWorkerSession {
     this.closed = true;
     p?.reject(new Error('SudoWorkerSession: session closed'));
     this.rl.close();
-    this.proc.stdin!.end();
+    this.dataIn.end();
     const t = setTimeout(() => this.proc.kill('SIGKILL'), 5_000);
     t.unref();
     this.proc.once('close', () => clearTimeout(t));

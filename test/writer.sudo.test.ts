@@ -391,7 +391,10 @@ describe.skipIf(isWindows)('SudoWorkerSession via sudoAtomicWrite', () => {
     // that responds to JSON line requests with a single ok:true result.
     const { EventEmitter } = await import('events');
 
-    const fakeStdin = {
+    // SudoWorkerSession now sends JSON requests over fd 3 (not stdin) so that
+    // stdin can be /dev/tty for macOS credential-cache lookup. The mock must
+    // expose stdio[3] as the data channel the session writes to.
+    const fakeDataIn = {
       write: vi.fn((_data: string, cb?: (err?: Error) => void) => {
         if (cb) cb();
         return true;
@@ -404,8 +407,9 @@ describe.skipIf(isWindows)('SudoWorkerSession via sudoAtomicWrite', () => {
       pause: () => {},
     });
     const fakeProc = Object.assign(new EventEmitter(), {
-      stdin: fakeStdin,
+      stdin: null, // stdin is now /dev/tty (or inherited), not a pipe
       stdout: fakeStdout,
+      stdio: [null, fakeStdout, null, fakeDataIn], // index 3 is the data channel
       kill: vi.fn(),
     }) as unknown as ReturnType<typeof spawn>;
 
@@ -419,8 +423,8 @@ describe.skipIf(isWindows)('SudoWorkerSession via sudoAtomicWrite', () => {
     // For this unit test, we just verify that session.exec is invoked instead
     // of spawnSync by checking mockSpawnSync is not called.
 
-    // Trigger the stdout data event after exec writes to stdin
-    fakeStdin.write = vi.fn((data: string, cb?: (err?: Error) => void) => {
+    // Trigger the stdout data event when exec writes to the data channel (fd 3)
+    fakeDataIn.write = vi.fn((data: string, cb?: (err?: Error) => void) => {
       // Simulate the worker responding with ok:true for every op
       const req = JSON.parse(data.trimEnd()) as { ops: unknown[] };
       const results = req.ops.map(() => ({ ok: true }));
@@ -433,9 +437,6 @@ describe.skipIf(isWindows)('SudoWorkerSession via sudoAtomicWrite', () => {
       if (cb) cb();
       return true;
     });
-
-    // Re-create the fakeStdin.write mock since we reassigned it
-    fakeProc.stdin = fakeStdin as unknown as typeof fakeProc.stdin;
 
     // We need fs.existsSync to return true for the worker path.
     // Since we cannot easily control the worker path in tests, skip if the

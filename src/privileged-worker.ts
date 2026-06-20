@@ -1,5 +1,6 @@
 import * as crypto from 'crypto';
 import * as fs from 'fs';
+import * as net from 'net';
 import * as path from 'path';
 
 // O_NOFOLLOW and O_NONBLOCK are POSIX-only; fall back to 0 (no-op) on platforms
@@ -102,7 +103,7 @@ type DispatchResult =
   | { kind: 'read'; contentB64: string; isSymlink: boolean; mode?: string };
 
 function randomHex(): string {
-  return crypto.randomBytes(5).toString('hex');
+  return crypto.randomBytes(8).toString('hex');
 }
 
 // Opens resolvedPath with O_RDONLY|O_NOFOLLOW|O_NONBLOCK, verifies it is a
@@ -123,17 +124,18 @@ function readFileToBase64(
     );
     const st = fs.fstatSync(fd);
     if (!st.isFile()) {
-      // Attach a recognisable errno code for directories so callers (e.g.
-      // sudoStatBatch) can distinguish EISDIR from a generic "not a file".
+      // Attach a recognisable code so callers can distinguish directory
+      // (EISDIR) from other special files like FIFOs or sockets (ENOTREGFILE).
+      // Without a code, callers would mis-report the path as non-existent.
       const err = Object.assign(
         new Error(`${label}: ${resolvedPath} is not a regular file`),
-        { code: st.isDirectory() ? 'EISDIR' : undefined },
+        { code: st.isDirectory() ? 'EISDIR' : 'ENOTREGFILE' },
       );
       throw err;
     }
     if (st.size > MAX_READ) {
       throw new Error(
-        `${label}: ${resolvedPath} exceeds the 75 MiB read limit`,
+        `${label}: ${resolvedPath} exceeds the 100 MiB read limit`,
       );
     }
     const mode = (st.mode & 0o7777).toString(8).padStart(4, '0');
@@ -524,7 +526,11 @@ export function handleWriteInPlace(
           // to avoid a path-based TOCTOU window. Fall back to path-based
           // chmodSync when rfd is undefined (e.g. mode-0000 files where the
           // read-open also failed with EACCES — lstatSync captured the mode).
-          const mode = savedMode ?? 0;
+          // savedMode must be defined at this point: if the O_RDONLY open
+          // succeeded, fstatSync set it; if not, lstatSync set it (and any
+          // other failure re-threw above rather than reaching here).
+          if (savedMode === undefined) throw firstOpenErr;
+          const mode = savedMode;
           if (rfd !== undefined) {
             // fd-based path: no TOCTOU window between stat and chmod.
             try {
@@ -842,11 +848,11 @@ function checkAncestorsSafeAsRoot(
 }
 
 // Base64 encoding inflates raw bytes by ~33%, so a 100 MiB file produces
-// ~133 MiB of JSON output. runPrivilegedWorker uses spawnSync with a 100 MiB
-// maxBuffer, meaning any file larger than ~75 MiB would overflow the buffer
-// before the parent can read it. Cap reads at 75 MiB so the base64 JSON stays
-// comfortably under 100 MiB. SudoWorkerSession (streaming) is unaffected.
-const MAX_READ = 75 * 1024 * 1024;
+// ~133 MiB of base64 in the JSON response. runPrivilegedWorker uses spawnSync
+// with maxBuffer = 150 MiB, so files up to 100 MiB are safely covered.
+// SudoWorkerSession (streaming readline, no fixed maxBuffer) can also handle
+// 100 MiB files without issue.
+const MAX_READ = 100 * 1024 * 1024;
 
 export function dispatch(
   op: WriteOp,
@@ -1012,10 +1018,36 @@ export function dispatch(
 
 // Entry point: only run when this file is the main module, not when imported.
 if (require.main === module) {
+  // Determine the input source from command-line flags:
+  //   --data-fd=N  : read from fd N (SudoWorkerSession passes this so stdin can
+  //                  be /dev/tty, allowing macOS sudo to find cached credentials
+  //                  via ttyname(STDIN_FILENO) instead of returning NULL)
+  //   --req-file=P : read a single request from file P then exit (runPrivilegedWorker
+  //                  keeps stdin as 'inherit' for the same ttyname() reason)
+  //   (default)    : read from stdin (tests, manual invocation, backward compat)
+  const dataFdArg = process.argv.find((a) => a.startsWith('--data-fd='));
+  const reqFileArg = process.argv.find((a) => a.startsWith('--req-file='));
+
+  let inputStream: NodeJS.ReadableStream;
+  if (dataFdArg) {
+    const dataFd = Number(dataFdArg.slice('--data-fd='.length));
+    // net.Socket wraps a file descriptor as a readable stream; used here for
+    // the IPC data channel (fd 3) when stdin is reserved for sudo's TTY lookup.
+    inputStream = new net.Socket({
+      fd: dataFd,
+      readable: true,
+      writable: false,
+    });
+  } else if (reqFileArg) {
+    inputStream = fs.createReadStream(reqFileArg.slice('--req-file='.length));
+  } else {
+    inputStream = process.stdin;
+  }
+
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const rl = (require('readline') as typeof import('readline')).createInterface(
     {
-      input: process.stdin,
+      input: inputStream,
       crlfDelay: Infinity,
     },
   );
@@ -1037,8 +1069,8 @@ if (require.main === module) {
     rl.close();
   });
 
-  process.stdin.on('error', (err) => {
-    process.stderr.write(`stdin error: ${err.message}\n`);
+  (inputStream as NodeJS.EventEmitter).on('error', (err: Error) => {
+    process.stderr.write(`data channel error: ${err.message}\n`);
     process.exitCode = 1;
     rl.close();
   });

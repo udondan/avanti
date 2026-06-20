@@ -85,13 +85,13 @@ jobs:
           mkdir -p "$SUDO_BIN_DIR"
           cat > "$SUDO_BIN_DIR/sudo" << 'WRAPPER'
           #!/bin/sh
-          echo "sudo: $*" >> "$SUDO_CALL_LOG"
+          echo "sudo: $*" >> "$AVANTI_SUDO_CALL_LOG"
           exec /usr/bin/sudo "$@"
           WRAPPER
           chmod +x "$SUDO_BIN_DIR/sudo"
           echo "$SUDO_BIN_DIR" >> "$GITHUB_PATH"
           echo "AVANTI_SUDO_TEST_DIR=$SUDO_TEST_DIR" >> "$GITHUB_ENV"
-          echo "SUDO_CALL_LOG=$SUDO_CALL_LOG_PATH" >> "$GITHUB_ENV"
+          echo "AVANTI_SUDO_CALL_LOG=$SUDO_CALL_LOG_PATH" >> "$GITHUB_ENV"
 
           # Named-user sudo: create a dedicated user and a world-readable temp
           # directory owned by that user so the named-user integration test can
