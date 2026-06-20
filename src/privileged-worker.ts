@@ -702,20 +702,23 @@ function checkDirSafeAsRoot(
     if (lst.isSymbolicLink()) {
       ownerUid = lst.uid;
       let targetOwnerUid: number | undefined;
+      let isDangling = false;
       try {
         const s = fs.statSync(absDir);
         mode = s.mode & 0o7777;
         targetOwnerUid = s.uid;
       } catch (e2) {
         if ((e2 as NodeJS.ErrnoException).code !== 'ENOENT') throw e2;
-        // Dangling symlink — ownerUid is captured; fall through for owner check.
+        isDangling = true;
+        // Dangling symlink — ownerUid (the symlink itself) is captured above;
+        // fall through to the owner check below.
       }
-      if (targetOwnerUid === undefined) {
+      if (!isDangling && targetOwnerUid === undefined) {
         throw new Error(
           `privileged write: ${label} directory ${absDir} symlink target UID unknown (TOCTOU risk)`,
         );
       }
-      if (!trustedUids.has(targetOwnerUid)) {
+      if (targetOwnerUid !== undefined && !trustedUids.has(targetOwnerUid)) {
         throw new Error(
           `privileged write: ${label} directory ${absDir} symlink target owned by UID ${targetOwnerUid}, not trusted (TOCTOU risk)`,
         );

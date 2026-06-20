@@ -181,6 +181,7 @@ export function resetCommand(): Command {
           `Restored ${writeTargets.length} file(s), deleted ${deletions.length + sudoDeletions.size} file(s).`,
         );
       } catch (err: unknown) {
+        closeAllSessions(sudoSessions);
         console.error(
           `Reset failed: ${err instanceof Error ? err.message : String(err)}`,
         );

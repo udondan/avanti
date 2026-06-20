@@ -1205,7 +1205,10 @@ export function pullCommand(): Command {
         staleDiffs.some((d) => d.hasChanges);
       printDiffs([...allDiffs, ...staleDiffs]);
 
-      if (staleHasError) process.exit(2);
+      if (staleHasError) {
+        closeAllSessions(sudoSessions);
+        process.exit(2);
+      }
 
       // Show SHA mismatch summary when using --accept-changes
       if (opts.acceptChanges && firstPass.shaErrors.length > 0) {
@@ -1373,6 +1376,7 @@ export function pullCommand(): Command {
           try {
             runHook(script, env);
           } catch (err: unknown) {
+            closeAllSessions(sudoSessions);
             console.error(
               `Hook ${key} failed for ${ctx.targetPath}: ${err instanceof Error ? err.message : String(err)}`,
             );
@@ -1532,8 +1536,9 @@ export function pullCommand(): Command {
         // Collect sudo mode-only targets before the write batch so they can be
         // included in the same per-identity worker exec as the content writes.
         // This keeps all sudo ops (writes + chmods) in a single batch per
-        // identity, so if any chmod fails the regular writes have not yet run
-        // and the working tree remains in a consistent state.
+        // identity, so if sudoAtomicWrite fails (for any reason, including a
+        // chmod failure), the unprivileged atomicWrite call below has not yet
+        // run and the working tree remains in a consistent state.
         const modeOnlySudoTargets: SudoChmodTarget[] =
           process.platform !== 'win32'
             ? writeTargets.flatMap((t, i) =>

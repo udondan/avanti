@@ -55,8 +55,11 @@ function resolveNodeExec(sudo: true | string): string {
   for (const dir of (process.env.PATH ?? '').split(path.delimiter)) {
     if (dir.startsWith(home)) continue;
     const candidate = path.join(dir, 'node');
-    if (fs.statSync(candidate, { throwIfNoEntry: false })?.isFile())
-      return candidate;
+    try {
+      if (fs.statSync(candidate).isFile()) return candidate;
+    } catch {
+      // ignore EACCES, ENOENT, and any other stat error
+    }
   }
   // No system node found in PATH; 'node' will be resolved by sudo's secure_path.
   // Requires Node.js to be installed system-wide (e.g. apt install nodejs).
@@ -690,30 +693,30 @@ export class SudoWorkerSession {
 
     this.proc.stdout!.on('data', (chunk: Buffer) => {
       this.lineChunks.push(chunk);
-      const combined = Buffer.concat(this.lineChunks);
-      const nl = combined.indexOf(0x0a);
-      if (nl === -1) return;
-      // Process all complete newline-terminated lines in the buffer.
-      this.lineChunks =
-        nl + 1 < combined.length ? [combined.subarray(nl + 1)] : [];
-      const lines = combined.subarray(0, nl).toString('utf8').split('\n');
-      for (const line of lines) {
-        if (!line.trim()) continue;
-        try {
-          const response = JSON.parse(line) as WorkerResponse;
-          const p = this.pending;
-          this.pending = null;
-          p?.resolve(response.results);
-        } catch (e) {
-          const p = this.pending;
-          this.pending = null;
-          p?.reject(
-            new Error(
-              `failed to parse worker response: ${(e as Error).message}`,
-            ),
-          );
+      let combined = Buffer.concat(this.lineChunks);
+      let nlIndex: number;
+      while ((nlIndex = combined.indexOf(0x0a)) !== -1) {
+        const line = combined.subarray(0, nlIndex).toString('utf8');
+        combined = combined.subarray(nlIndex + 1);
+        const trimmed = line.trim();
+        if (trimmed) {
+          try {
+            const response = JSON.parse(trimmed) as WorkerResponse;
+            const p = this.pending;
+            this.pending = null;
+            p?.resolve(response.results);
+          } catch (e) {
+            const p = this.pending;
+            this.pending = null;
+            p?.reject(
+              new Error(
+                `failed to parse worker response: ${(e as Error).message}`,
+              ),
+            );
+          }
         }
       }
+      this.lineChunks = combined.length > 0 ? [combined] : [];
     });
 
     this.proc.on('error', (err) => {
@@ -938,13 +941,13 @@ function checkDirSafe(
   } catch (e) {
     const code = (e as NodeJS.ErrnoException).code;
     if (code === 'ENOENT') return; // directory does not exist yet; mkdir -p will create it
-    // An unreadable (EACCES/EPERM) ancestor is safe: if the current user cannot
-    // traverse it, no other unprivileged user can race inside it either. Only the
-    // directory owner can perform a rename-to-symlink attack there, and the owner
-    // is necessarily in the trusted set (root for sudo: true, or the named user
-    // for sudo: "user"). Falling back to sudo stat here would produce an extra
-    // password prompt for every unreadable ancestor before the worker prompt,
-    // defeating the single-prompt guarantee on machines with timestamp_timeout=0.
+    // An unreadable (EACCES/EPERM) ancestor: we cannot lstat it without an
+    // extra sudo call, which would add a password prompt for every unreadable
+    // ancestor before the worker prompt and break the single-prompt guarantee
+    // on machines with timestamp_timeout=0. We skip the owner check here and
+    // rely on the privileged worker's checkAncestorsSafeAsRoot — which runs as
+    // root and has no EACCES early-return — to re-validate all ancestors at
+    // write time before touching any file.
     if (code === 'EACCES' || code === 'EPERM') return;
     throw e;
   }

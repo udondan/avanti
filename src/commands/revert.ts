@@ -290,6 +290,7 @@ export function revertCommand(): Command {
             writeTargets.length + deletions.length + sudoDeletions.size;
           console.log(`Reverted ${total} file(s).`);
         } catch (err: unknown) {
+          closeAllSessions(sudoSessions);
           console.error(
             `Revert failed: ${err instanceof Error ? err.message : String(err)}`,
           );
