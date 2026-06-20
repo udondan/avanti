@@ -42,8 +42,8 @@ export function sudoUserArgs(sudo: true | string): string[] {
 // is always accessible. For named-user sudo, if process.execPath is under the
 // calling user's home directory (nvm/fnm/mise installs), the target user cannot
 // traverse $HOME and would get EACCES. In that case, search PATH for the first
-// node binary outside $HOME; fall back to bare 'node' (resolved by sudo's
-// secure_path) only when no system node is found.
+// node binary outside $HOME; throws if none is found (a system-wide Node.js
+// install is required for named-user sudo).
 function resolveNodeExec(sudo: true | string): string {
   if (
     typeof sudo !== 'string' ||
@@ -61,9 +61,10 @@ function resolveNodeExec(sudo: true | string): string {
       // ignore EACCES, ENOENT, and any other stat error
     }
   }
-  // No system node found in PATH; 'node' will be resolved by sudo's secure_path.
-  // Requires Node.js to be installed system-wide (e.g. apt install nodejs).
-  return 'node';
+  throw new Error(
+    `No Node.js binary found outside $HOME for named-user sudo ('${sudo}'). ` +
+      `Install Node.js system-wide (e.g. apt install nodejs) so sudo can resolve it.`,
+  );
 }
 
 // Resolves the compiled privileged-worker.js path and throws if it does not

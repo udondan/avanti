@@ -871,27 +871,10 @@ export function dispatch(
     }
     case 'stat-read': {
       const resolvedPath = path.resolve(op.targetPath);
-      const lst = fs.lstatSync(resolvedPath);
-      if (lst.isSymbolicLink()) {
-        // readlinkSync can fail with EINVAL if the path was replaced with a
-        // regular file between lstatSync and here (TOCTOU). In that case fall
-        // through and read the file content instead.
-        try {
-          const target = fs.readlinkSync(resolvedPath);
-          return {
-            kind: 'read',
-            contentB64: Buffer.from(target).toString('base64'),
-            isSymlink: true,
-          };
-        } catch (e) {
-          if ((e as NodeJS.ErrnoException).code !== 'EINVAL') throw e;
-          // Fall through: path is now a regular file; read its content.
-        }
-      }
-      // readFileToBase64 opens with O_NOFOLLOW. If the path was replaced with a
-      // symlink between lstatSync (above) and openSync (inside readFileToBase64),
-      // we get ELOOP. Re-read the link target and return it as a symlink instead
-      // of propagating a fatal error that would abort the pull.
+      // readFileToBase64 opens with O_NOFOLLOW. If the path is (or becomes) a
+      // symlink we get ELOOP; read the link target and return it as a symlink.
+      // This is both simpler and eliminates the TOCTOU window that an initial
+      // lstatSync would introduce.
       try {
         return {
           kind: 'read',
