@@ -601,9 +601,12 @@ export function handleWriteSymlink(
   if (trustedUids)
     checkAncestorsSafeAsRoot(resolvedTarget, trustedUids, 'destination');
 
-  // Refuse to overwrite a real directory with a symlink.
+  // Refuse to overwrite a real directory with a symlink. Store the lstat
+  // result for reuse in the backup check below — eliminating a second syscall
+  // and the TOCTOU window between the two stats.
+  let lst: fs.Stats | undefined;
   try {
-    const lst = fs.lstatSync(resolvedTarget);
+    lst = fs.lstatSync(resolvedTarget);
     if (!lst.isSymbolicLink() && lst.isDirectory()) {
       throw new Error(
         `symlink: ${op.targetPath} is a directory; refusing to replace it with a symlink`,
@@ -613,51 +616,46 @@ export function handleWriteSymlink(
     if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
   }
 
-  if (op.backupPath) {
-    try {
-      const lst = fs.lstatSync(resolvedTarget);
-      if (lst.isSymbolicLink()) {
-        const resolvedBackup = path.resolve(op.backupPath);
-        const backupDir = path.dirname(resolvedBackup);
+  if (op.backupPath && lst !== undefined) {
+    if (lst.isSymbolicLink()) {
+      const resolvedBackup = path.resolve(op.backupPath);
+      const backupDir = path.dirname(resolvedBackup);
 
-        try {
-          if (fs.lstatSync(resolvedBackup).isDirectory()) {
-            throw new Error(`backup path is a directory: ${op.backupPath}`);
-          }
-        } catch (e) {
-          if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
+      try {
+        if (fs.lstatSync(resolvedBackup).isDirectory()) {
+          throw new Error(`backup path is a directory: ${op.backupPath}`);
         }
-
-        fs.mkdirSync(backupDir, { recursive: true, mode: 0o755 });
-        if (trustedUids)
-          checkAncestorsSafeAsRoot(resolvedBackup, trustedUids, 'backup');
-        const backupTmp = path.join(
-          path.resolve(backupDir),
-          `.avanti-backup-${randomHex()}`,
-        );
-
-        try {
-          // Store the symlink as absolute target so backup resolves correctly
-          // from backupDir regardless of whether the original was relative.
-          const rawTarget = fs.readlinkSync(resolvedTarget);
-          const absTarget = path.isAbsolute(rawTarget)
-            ? rawTarget
-            : path.resolve(path.dirname(resolvedTarget), rawTarget);
-          fs.symlinkSync(absTarget, backupTmp);
-          fs.renameSync(backupTmp, resolvedBackup);
-        } catch (err) {
-          try {
-            fs.unlinkSync(backupTmp);
-          } catch {
-            // best-effort cleanup
-          }
-          throw err;
-        }
-      } else if (lst.isFile()) {
-        backupRegularFile(resolvedTarget, op.backupPath, trustedUids);
+      } catch (e) {
+        if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
       }
-    } catch (e) {
-      if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
+
+      fs.mkdirSync(backupDir, { recursive: true, mode: 0o755 });
+      if (trustedUids)
+        checkAncestorsSafeAsRoot(resolvedBackup, trustedUids, 'backup');
+      const backupTmp = path.join(
+        path.resolve(backupDir),
+        `.avanti-backup-${randomHex()}`,
+      );
+
+      try {
+        // Store the symlink as absolute target so backup resolves correctly
+        // from backupDir regardless of whether the original was relative.
+        const rawTarget = fs.readlinkSync(resolvedTarget);
+        const absTarget = path.isAbsolute(rawTarget)
+          ? rawTarget
+          : path.resolve(path.dirname(resolvedTarget), rawTarget);
+        fs.symlinkSync(absTarget, backupTmp);
+        fs.renameSync(backupTmp, resolvedBackup);
+      } catch (err) {
+        try {
+          fs.unlinkSync(backupTmp);
+        } catch {
+          // best-effort cleanup
+        }
+        throw err;
+      }
+    } else if (lst.isFile()) {
+      backupRegularFile(resolvedTarget, op.backupPath, trustedUids);
     }
   }
 

@@ -119,6 +119,30 @@ function stageWorkerForSudo(workerPath: string): {
   return { stagedPath, tmpDir };
 }
 
+// Shared setup for both runPrivilegedWorker (one-shot spawnSync) and
+// SudoWorkerSession (persistent spawn): resolves the worker script path, the
+// node executable to invoke via sudo, and stages it to a world-readable temp
+// directory when using named-user sudo.  Callers are responsible for cleanup
+// of tmpDir: runPrivilegedWorker uses a try/finally; SudoWorkerSession stores
+// it in this.tmpDir and cleans up in close().
+function prepareWorkerExec(sudo: true | string): {
+  nodeExec: string;
+  resolvedWorkerPath: string;
+  tmpDir?: string;
+} {
+  const workerPath = resolveWorkerPath();
+  const nodeExec = resolveNodeExec(sudo);
+  if (typeof sudo === 'string') {
+    const staged = stageWorkerForSudo(workerPath);
+    return {
+      nodeExec,
+      resolvedWorkerPath: staged.stagedPath,
+      tmpDir: staged.tmpDir,
+    };
+  }
+  return { nodeExec, resolvedWorkerPath: workerPath };
+}
+
 function runPrivilegedWorker(
   sudo: true | string,
   ops: WriteOp[],
@@ -132,19 +156,8 @@ function runPrivilegedWorker(
   if (process.platform === 'win32') {
     throw new Error('sudo is not supported on Windows');
   }
-  // When running via tsx (TypeScript source, __filename ends in .ts), the
-  const workerPath = resolveWorkerPath();
-  let resolvedWorkerPath = workerPath;
-  const nodeExec = resolveNodeExec(sudo);
-  let cleanup: (() => void) | undefined;
-
-  if (typeof sudo === 'string') {
-    // Named-user sudo: copy the worker to a world-readable temp location so
-    // sudo -u <user> can exec it regardless of home-directory permissions.
-    const staged = stageWorkerForSudo(workerPath);
-    cleanup = () => cleanupWorkerDir(staged.tmpDir);
-    resolvedWorkerPath = staged.stagedPath;
-  }
+  const { nodeExec, resolvedWorkerPath, tmpDir } = prepareWorkerExec(sudo);
+  const cleanup = tmpDir ? () => cleanupWorkerDir(tmpDir) : undefined;
 
   let result;
   try {
@@ -664,17 +677,8 @@ export class SudoWorkerSession {
     this.sudo = sudo;
     this.trustedUids = buildTrustedUids(sudo);
 
-    const workerPath = resolveWorkerPath();
-    const nodeExec = resolveNodeExec(sudo);
-
-    let resolvedWorkerPath = workerPath;
-    if (typeof sudo === 'string') {
-      // Named-user sudo: copy the worker to a world-readable temp location so
-      // sudo -u <user> can exec it regardless of home-directory permissions.
-      const staged = stageWorkerForSudo(workerPath);
-      this.tmpDir = staged.tmpDir;
-      resolvedWorkerPath = staged.stagedPath;
-    }
+    const { nodeExec, resolvedWorkerPath, tmpDir } = prepareWorkerExec(sudo);
+    if (tmpDir) this.tmpDir = tmpDir;
 
     this.proc = spawn(
       'sudo',

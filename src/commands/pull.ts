@@ -1128,14 +1128,14 @@ export function pullCommand(): Command {
         if (allDiffs[i].isUnreadable && writeTargets[i].sudo) {
           const preRead = preReads.get(writeTargets[i].targetPath);
           if (preRead === null || preRead === undefined) continue;
+          const preReadBuf = Buffer.from(preRead.contentB64, 'base64');
 
           if (writeTargets[i].symlinkTarget !== undefined) {
             // Symlink entry: stat-read returns the link target when existing
             // path is a symlink. If it matches the desired target, no-op.
             if (
               preRead.isSymlink &&
-              Buffer.from(preRead.contentB64, 'base64').toString() ===
-                writeTargets[i].symlinkTarget
+              preReadBuf.toString() === writeTargets[i].symlinkTarget
             ) {
               const updatedHasChanges = allDiffs[i].modeChange !== undefined;
               allDiffs[i] = {
@@ -1159,7 +1159,7 @@ export function pullCommand(): Command {
           // the symlink rather than the symlink itself.
           if (preRead.isSymlink) continue;
 
-          const current = Buffer.from(preRead.contentB64, 'base64');
+          const current = preReadBuf;
           if (current.equals(writeTargets[i].content)) {
             const updatedHasChanges = allDiffs[i].modeChange !== undefined;
             allDiffs[i] = {
@@ -1471,18 +1471,19 @@ export function pullCommand(): Command {
             ) {
               const preRead = preReads.get(targetPath);
               if (preRead != null) {
+                const preReadBuf = Buffer.from(preRead.contentB64, 'base64');
                 if (preRead.isSymlink) {
                   if (writeTargets[i].symlinkTarget !== undefined) {
                     // Destination is a symlink and so is the write target — record
                     // the existing link target as v0 for faithful revert/reset.
-                    v0Override = Buffer.from(preRead.contentB64, 'base64');
+                    v0Override = preReadBuf;
                     v0IsSymlinkOverride = true;
                   }
                   // If the write target is a regular file but the destination is a
                   // symlink, skip v0: reading through the symlink could capture
                   // an unintended privileged file before write-path checks run.
                 } else {
-                  v0Override = Buffer.from(preRead.contentB64, 'base64');
+                  v0Override = preReadBuf;
                 }
               }
             }
