@@ -943,10 +943,60 @@ export function pullCommand(): Command {
         process.exit(2);
       }
 
+      // Fail fast if any symlink write target is a real directory: ln -sf would
+      // place the symlink inside it rather than replacing it, so abort before
+      // prompting the user rather than failing mid-write-batch.
+      for (const d of allDiffs) {
+        if (d.isDirectory && d.isSymlink) {
+          console.error(
+            `symlink: ${d.targetPath} is a directory; cannot replace with a symlink`,
+          );
+        }
+      }
+      if (allDiffs.some((d) => d.isDirectory && d.isSymlink)) {
+        process.exit(2);
+      }
+      // Create one persistent sudo worker session per distinct sudo identity.
+      // Sessions are split into two phases so the password prompt does not
+      // appear before the user has seen or accepted the diff:
+      //
+      //  Phase 1 (early, before pre-reads): only identities with unreadable
+      //    targets that need a stat-read for idempotency / v0 capture.
+      //  Phase 2 (deferred, after confirmation): identities that only have
+      //    readable changed targets or delete-only targets.
+      const sudoSessions = new Map<true | string, SudoWorkerSession>();
+      if (process.platform !== 'win32') {
+        const earlyIds = new Set<true | string>();
+        for (let i = 0; i < writeTargets.length; i++) {
+          const t = writeTargets[i];
+          if (t.sudo && (allDiffs[i].isUnreadable || allDiffs[i].lstatFailed)) {
+            earlyIds.add(t.sudo);
+          }
+        }
+        for (let i = 0; i < staleToRestore.length; i++) {
+          const t = staleToRestore[i];
+          if (t.sudo) {
+            const diffIdx = staleRestoreDiffIndices[i];
+            if (staleDiffs[diffIdx]?.isUnreadable) {
+              earlyIds.add(t.sudo);
+            }
+          }
+        }
+        try {
+          for (const id of earlyIds)
+            sudoSessions.set(id, new SudoWorkerSession(id));
+        } catch (err) {
+          closeAllSessions(sudoSessions);
+          console.error(err instanceof Error ? err.message : String(err));
+          process.exit(2);
+        }
+      }
+
       // For entries where lstatSync failed (parent directory not searchable),
-      // use sudoFileExists to determine whether the file actually exists so
-      // existedBeforeAvanti is recorded correctly. Also compute modeChange now
-      // that we have sudo access (computeDiff could not stat the file pre-auth).
+      // use individual sudo calls to determine existence, mode, and type.
+      // These run after Phase 1 session creation so the password is cached on
+      // machines with timestamp_timeout > 0; on timestamp_timeout=0 machines
+      // each call still prompts independently.
       for (let i = 0; i < writeTargets.length; i++) {
         if (allDiffs[i].lstatFailed && writeTargets[i].sudo) {
           const exists = sudoFileExists(
@@ -1022,54 +1072,6 @@ export function pullCommand(): Command {
           if (hookIdx >= 0) {
             fileHookContexts[hookIdx] = { ...fileHookContexts[hookIdx], isNew };
           }
-        }
-      }
-      // Fail fast if any symlink write target is a real directory: ln -sf would
-      // place the symlink inside it rather than replacing it, so abort before
-      // prompting the user rather than failing mid-write-batch.
-      for (const d of allDiffs) {
-        if (d.isDirectory && d.isSymlink) {
-          console.error(
-            `symlink: ${d.targetPath} is a directory; cannot replace with a symlink`,
-          );
-        }
-      }
-      if (allDiffs.some((d) => d.isDirectory && d.isSymlink)) {
-        process.exit(2);
-      }
-      // Create one persistent sudo worker session per distinct sudo identity.
-      // Sessions are split into two phases so the password prompt does not
-      // appear before the user has seen or accepted the diff:
-      //
-      //  Phase 1 (early, before pre-reads): only identities with unreadable
-      //    targets that need a stat-read for idempotency / v0 capture.
-      //  Phase 2 (deferred, after confirmation): identities that only have
-      //    readable changed targets or delete-only targets.
-      const sudoSessions = new Map<true | string, SudoWorkerSession>();
-      if (process.platform !== 'win32') {
-        const earlyIds = new Set<true | string>();
-        for (let i = 0; i < writeTargets.length; i++) {
-          const t = writeTargets[i];
-          if (t.sudo && allDiffs[i].isUnreadable) {
-            earlyIds.add(t.sudo);
-          }
-        }
-        for (let i = 0; i < staleToRestore.length; i++) {
-          const t = staleToRestore[i];
-          if (t.sudo) {
-            const diffIdx = staleRestoreDiffIndices[i];
-            if (staleDiffs[diffIdx]?.isUnreadable) {
-              earlyIds.add(t.sudo);
-            }
-          }
-        }
-        try {
-          for (const id of earlyIds)
-            sudoSessions.set(id, new SudoWorkerSession(id));
-        } catch (err) {
-          closeAllSessions(sudoSessions);
-          console.error(err instanceof Error ? err.message : String(err));
-          process.exit(2);
         }
       }
 

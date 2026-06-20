@@ -563,10 +563,16 @@ export function handleWriteInPlace(
         rfd = undefined;
       }
     } catch (err) {
-      // If we temporarily boosted the mode via rfd, restore it before closing.
+      // If we temporarily boosted the mode, restore it before closing.
       if (rfd !== undefined && savedMode !== undefined) {
         try {
           safeFchmodSync(rfd, savedMode);
+        } catch {
+          // best-effort restore
+        }
+      } else if (rfd === undefined && savedMode !== undefined) {
+        try {
+          fs.chmodSync(resolvedTarget, savedMode);
         } catch {
           // best-effort restore
         }
@@ -883,6 +889,10 @@ export function dispatch(
         };
       } catch (e) {
         if ((e as NodeJS.ErrnoException).code !== 'ELOOP') throw e;
+        // readlinkSync is path-based and has a narrow TOCTOU window: a concurrent
+        // process running as the same user could replace the symlink between the
+        // ELOOP above and this call. In practice avanti runs on single-user
+        // machines and this window is not exploitable by a different UID.
         const target = fs.readlinkSync(resolvedPath);
         return {
           kind: 'read',

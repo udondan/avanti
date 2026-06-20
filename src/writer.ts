@@ -56,7 +56,8 @@ function resolveNodeExec(sudo: true | string): string {
     if (dir.startsWith(home)) continue;
     const candidate = path.join(dir, 'node');
     try {
-      if (fs.statSync(candidate).isFile()) return candidate;
+      const st = fs.statSync(candidate);
+      if (st.isFile() && (st.mode & 0o111) !== 0) return candidate;
     } catch {
       // ignore EACCES, ENOENT, and any other stat error
     }
@@ -119,7 +120,7 @@ function stageWorkerForSudo(workerPath: string): {
   fs.chmodSync(tmpDir, 0o755);
   const stagedPath = path.join(tmpDir, 'privileged-worker.js');
   fs.copyFileSync(workerPath, stagedPath);
-  fs.chmodSync(stagedPath, 0o644);
+  fs.chmodSync(stagedPath, 0o444);
   return { stagedPath, tmpDir };
 }
 
@@ -151,6 +152,7 @@ function runPrivilegedWorker(
   sudo: true | string,
   ops: WriteOp[],
   continueOnError = false,
+  trustedUids?: Set<number>,
 ): Array<{
   ok: boolean;
   error?: string;
@@ -171,7 +173,7 @@ function runPrivilegedWorker(
       {
         input: JSON.stringify({
           ops,
-          trustedUids: [...buildTrustedUids(sudo)],
+          trustedUids: [...(trustedUids ?? buildTrustedUids(sudo))],
           continueOnError,
         }),
         stdio: ['pipe', 'pipe', 'inherit'],
@@ -388,7 +390,12 @@ export async function sudoAtomicWrite(
         if (!r.ok) throw new Error(r.error ?? 'privileged worker op failed');
       }
     } else {
-      results = runPrivilegedWorker(sudo, ops);
+      results = runPrivilegedWorker(
+        sudo,
+        ops,
+        false,
+        trustedUidsBySudo.get(sudo),
+      );
     }
     // Count chmod results that weren't silently skipped (ENOENT/ELOOP).
     const start = chmodStartIndex.get(sudo) ?? ops.length;
@@ -775,11 +782,12 @@ export class SudoWorkerSession {
         resolve: (r) => {
           clearTimeout(timer);
           if (r.length !== ops.length) {
-            reject(
-              new Error(
-                `privileged worker returned ${r.length} results, expected ${ops.length}`,
-              ),
-            );
+            const lastFailed = r.length > 0 ? r[r.length - 1] : undefined;
+            const detail =
+              lastFailed && !lastFailed.ok && lastFailed.error
+                ? lastFailed.error
+                : `privileged worker returned ${r.length} results, expected ${ops.length}`;
+            reject(new Error(detail));
           } else {
             resolve(r);
           }
@@ -948,7 +956,10 @@ function checkDirSafe(
     // on machines with timestamp_timeout=0. We skip the owner check here and
     // rely on the privileged worker's checkAncestorsSafeAsRoot — which runs as
     // root and has no EACCES early-return — to re-validate all ancestors at
-    // write time before touching any file.
+    // write time before touching any file. Note: a caller-side skip followed
+    // by a world-writable restore in the window before the worker check is a
+    // residual race; the worker's check catches it if the directory is still
+    // world-writable when the worker runs.
     if (code === 'EACCES' || code === 'EPERM') return;
     throw e;
   }
