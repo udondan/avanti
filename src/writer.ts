@@ -590,6 +590,58 @@ export async function sudoAtomicRead(
   return resultMap;
 }
 
+// Batches stat-read ops for paths whose parent directory is not searchable
+// (lstatFailed). Each stat-read result tells us: does the path exist, is it a
+// symlink, is it a directory? Uses the session when available so no extra sudo
+// process is spawned. Replaces the per-file sudoFileExists / sudoIsSymlink /
+// sudoIsDirectory helpers (each of which spawns a separate sudo process).
+export async function sudoStatBatch(
+  targets: Array<{ filePath: string; sudo: true | string }>,
+  sessions?: Map<true | string, SudoWorkerSession>,
+): Promise<
+  Map<string, { exists: boolean; isSymlink: boolean; isDirectory: boolean }>
+> {
+  const result = new Map<
+    string,
+    { exists: boolean; isSymlink: boolean; isDirectory: boolean }
+  >();
+  if (targets.length === 0) return result;
+
+  // Group by sudo identity.
+  const groups = new Map<
+    true | string,
+    Array<{ filePath: string; gIdx: number }>
+  >();
+  targets.forEach((t) => {
+    const existing = groups.get(t.sudo);
+    if (existing)
+      existing.push({ filePath: t.filePath, gIdx: existing.length });
+    else groups.set(t.sudo, [{ filePath: t.filePath, gIdx: 0 }]);
+  });
+
+  for (const [sudo, items] of groups) {
+    const ops: WriteOp[] = items.map((item) => ({
+      type: 'stat-read' as const,
+      targetPath: item.filePath,
+    }));
+    const session = sessions?.get(sudo);
+    let results: WorkerResult[];
+    if (session) {
+      results = await session.exec(ops, true);
+    } else {
+      results = runPrivilegedWorker(sudo, ops, true);
+    }
+    items.forEach((item, j) => {
+      const r = results[j];
+      const isSymlink = !!(r?.ok && r.isSymlink === true);
+      const isDirectory = !!(r && !r.ok && r.code === 'EISDIR');
+      const exists = !!(r?.ok || isDirectory);
+      result.set(item.filePath, { exists, isSymlink, isDirectory });
+    });
+  }
+  return result;
+}
+
 // Performs a privileged rename of src to dst. On Linux, GNU mv -T is used so
 // mv refuses to move src *inside* dst when dst is a directory — preventing a
 // TOCTOU race where dst is swapped for a directory after the precheck. BSD mv
@@ -739,10 +791,11 @@ export class SudoWorkerSession {
     this.proc.stdin!.on('error', (err) => {
       const p = this.pending;
       this.pending = null;
+      this.closed = true;
       p?.reject(err);
     });
 
-    this.proc.on('close', (code) => {
+    this.proc.on('close', (code, signal) => {
       const p = this.pending;
       this.pending = null;
       if (p) {
@@ -753,7 +806,9 @@ export class SudoWorkerSession {
           new Error(
             code === 0
               ? 'privileged worker exited unexpectedly with no response'
-              : `privileged worker failed (exit ${code})`,
+              : code !== null
+                ? `privileged worker failed (exit ${code})`
+                : `privileged worker killed (signal ${signal ?? 'unknown'})`,
           ),
         );
       }

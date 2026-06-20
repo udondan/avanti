@@ -178,6 +178,15 @@ function parseMode(modeStr: string): number {
   return parseInt(stripped, 8);
 }
 
+// Buffer.from(str, 'base64') silently drops invalid characters, which can
+// silently corrupt content if contentB64 is truncated (e.g. by a short-write
+// on the stdin pipe). Validate before decoding so the op fails loudly.
+function validateBase64(s: string, field: string): void {
+  if (s.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(s)) {
+    throw new Error(`${field}: invalid base64 string (length ${s.length})`);
+  }
+}
+
 // fs.fchmodSync is not implemented on Windows — no-op there since the worker
 // only ever runs under sudo on Unix.
 function safeFchmodSync(fd: number, mode: number): void {
@@ -298,6 +307,7 @@ export function handleWriteMv(op: WriteMvOp, trustedUids?: Set<number>): void {
   let tfd: number | undefined;
   try {
     tfd = fs.openSync(tmpPath, 'wx', 0o600);
+    validateBase64(op.contentB64, 'contentB64');
     fs.writeFileSync(tfd, Buffer.from(op.contentB64, 'base64'));
 
     const effectiveMode = op.mode ?? existingMode ?? op.defaultMode;
@@ -380,6 +390,7 @@ export function handleWriteInPlace(
     }
   }
 
+  validateBase64(op.contentB64, 'contentB64');
   const content = Buffer.from(op.contentB64, 'base64');
   const effectiveMode = op.mode ?? (isNewFile ? op.defaultMode : undefined);
 

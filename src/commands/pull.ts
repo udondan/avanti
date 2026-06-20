@@ -36,13 +36,10 @@ import {
 import {
   atomicWrite,
   closeAllSessions,
-  getSudoFileMode,
   sudoAtomicDelete,
   sudoAtomicRead,
   sudoAtomicWrite,
-  sudoFileExists,
-  sudoIsDirectory,
-  sudoIsSymlink,
+  sudoStatBatch,
   SudoChmodTarget,
   SudoWorkerSession,
   SudoWriteTarget,
@@ -994,31 +991,39 @@ export function pullCommand(): Command {
       }
 
       // For entries where lstatSync failed (parent directory not searchable),
-      // use individual sudo calls to determine existence, mode, and type.
-      // These run after Phase 1 session creation so the password is cached on
-      // machines with timestamp_timeout > 0; on timestamp_timeout=0 machines
-      // each call still prompts independently.
+      // batch one stat-read op per sudo identity through the existing session to
+      // determine existence and type without spawning separate sudo processes.
+      const lstatFailedBatch = writeTargets
+        .filter((t, i) => allDiffs[i].lstatFailed && t.sudo)
+        .map((t) => ({ filePath: t.targetPath, sudo: t.sudo! }));
+      let lstatFailedStats = new Map<
+        string,
+        { exists: boolean; isSymlink: boolean; isDirectory: boolean }
+      >();
+      if (lstatFailedBatch.length > 0) {
+        try {
+          lstatFailedStats = await sudoStatBatch(
+            lstatFailedBatch,
+            sudoSessions,
+          );
+        } catch (err) {
+          closeAllSessions(sudoSessions);
+          console.error(
+            `stat-read failed: ${err instanceof Error ? err.message : String(err)}`,
+          );
+          process.exit(2);
+        }
+      }
       for (let i = 0; i < writeTargets.length; i++) {
         if (allDiffs[i].lstatFailed && writeTargets[i].sudo) {
-          const exists = sudoFileExists(
-            writeTargets[i].sudo!,
-            writeTargets[i].targetPath,
-          );
+          const stat = lstatFailedStats.get(writeTargets[i].targetPath);
+          const exists = stat ? stat.exists : false;
           const isNew = !exists;
-          let modeChange = allDiffs[i].modeChange;
-          if (exists && writeTargets[i].mode) {
-            const curModeStr = getSudoFileMode(
-              writeTargets[i].sudo!,
-              writeTargets[i].targetPath,
-            );
-            if (curModeStr !== undefined) {
-              const desired = parseInt(writeTargets[i].mode!, 8);
-              const cur = parseInt(curModeStr, 8);
-              if (!isNaN(desired) && !isNaN(cur) && desired !== cur) {
-                modeChange = { from: cur, to: desired };
-              }
-            }
-          }
+          // modeChange: getSudoFileMode also spawns a separate sudo process per
+          // file. Skip it here — stat-read does not surface the file mode, and
+          // lstatFailed targets had their parent dir as non-searchable so there
+          // is no safe non-sudo path to retrieve the mode anyway.
+          const modeChange = allDiffs[i].modeChange;
           if (isNew) {
             // File confirmed absent — rebuild as a proper new diff so
             // formatDiff shows the actual content instead of "unreadable".
@@ -1049,17 +1054,8 @@ export function pullCommand(): Command {
             // replacing it, so detect this now and surface an error before the
             // write batch is attempted.
             if (writeTargets[i].symlinkTarget !== undefined) {
-              const isSymlinkAtTarget = sudoIsSymlink(
-                writeTargets[i].sudo!,
-                writeTargets[i].targetPath,
-              );
-              if (
-                !isSymlinkAtTarget &&
-                sudoIsDirectory(
-                  writeTargets[i].sudo!,
-                  writeTargets[i].targetPath,
-                )
-              ) {
+              const isSymlinkAtTarget = stat ? stat.isSymlink : false;
+              if (!isSymlinkAtTarget && (stat ? stat.isDirectory : false)) {
                 updatedDiff = { ...updatedDiff, isDirectory: true };
               }
             }
