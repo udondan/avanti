@@ -260,7 +260,7 @@ export function revertCommand(): Command {
           ...sudoTargets.map((t) => t.sudo),
           ...[...sudoDeletions.values()],
         ]);
-        let sudoSessions: Map<true | string, SudoWorkerSession>;
+        let sudoSessions: Map<true | string, SudoWorkerSession> = new Map();
         try {
           sudoSessions = openPrivilegedSessions(sudoIds);
         } catch (err) {
@@ -287,7 +287,6 @@ export function revertCommand(): Command {
             writeTargets.length + deletions.length + sudoDeletions.size;
           console.log(`Reverted ${total} file(s).`);
         } catch (err: unknown) {
-          closeAllSessions(sudoSessions);
           console.error(
             `Revert failed: ${err instanceof Error ? err.message : String(err)}`,
           );

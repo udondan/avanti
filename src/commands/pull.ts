@@ -36,7 +36,6 @@ import {
 import {
   atomicWrite,
   closeAllSessions,
-  sudoAtomicDelete,
   sudoAtomicRead,
   sudoAtomicWrite,
   sudoStatBatch,
@@ -1705,30 +1704,13 @@ export function pullCommand(): Command {
                 }
               }
             } else {
-              // No pre-created session for this identity — fall back to a
-              // one-shot privileged worker invocation.
-              try {
-                const deleted = await sudoAtomicDelete(
-                  paths.map((p) => [p, sv] as [string, true | string]),
-                  true,
-                );
-                for (const p of paths) {
-                  if (deleted.has(p)) {
-                    effectivelyDeleted.add(p);
-                    effectivelyCleaned.add(p);
-                  } else {
-                    console.warn(
-                      `Warning: could not delete ${p}: privileged deletion failed`,
-                    );
-                  }
-                }
-              } catch (fallbackErr) {
-                for (const p of paths) {
-                  console.warn(
-                    `Warning: could not delete ${p}: ${fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr)}`,
-                  );
-                }
-              }
+              // Phase 2 opens a session for every identity in deferredIds,
+              // which includes all identities that reach this deletion loop.
+              // A missing session means Phase 2 has a bug — surface it loudly
+              // rather than masking it with a silent fallback invocation.
+              throw new Error(
+                `internal: no privileged session for sudo identity "${String(sv)}" during stale-file cleanup`,
+              );
             }
           }
         }

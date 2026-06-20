@@ -878,6 +878,7 @@ export class SudoWorkerSession {
               lastFailed && !lastFailed.ok && lastFailed.error
                 ? lastFailed.error
                 : `privileged worker returned ${r.length} results, expected ${ops.length}`;
+            this.close();
             reject(new Error(detail));
           } else {
             resolve(r);
