@@ -81,7 +81,7 @@ jobs:
         run: |
           sudo rm -rf "$SUDO_TEST_DIR"
           sudo mkdir -p "$SUDO_TEST_DIR"
-          sudo chmod 755 "$SUDO_TEST_DIR"
+          sudo chmod 700 "$SUDO_TEST_DIR"
           mkdir -p "$SUDO_BIN_DIR"
           cat > "$SUDO_BIN_DIR/sudo" << 'WRAPPER'
           #!/bin/sh

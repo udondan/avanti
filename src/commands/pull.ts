@@ -998,7 +998,12 @@ export function pullCommand(): Command {
         .map((t) => ({ filePath: t.targetPath, sudo: t.sudo! }));
       let lstatFailedStats = new Map<
         string,
-        { exists: boolean; isSymlink: boolean; isDirectory: boolean }
+        {
+          exists: boolean;
+          isSymlink: boolean;
+          isDirectory: boolean;
+          mode?: string;
+        }
       >();
       if (lstatFailedBatch.length > 0) {
         try {
@@ -1023,7 +1028,28 @@ export function pullCommand(): Command {
           // file. Skip it here — stat-read does not surface the file mode, and
           // lstatFailed targets had their parent dir as non-searchable so there
           // is no safe non-sudo path to retrieve the mode anyway.
-          const modeChange = allDiffs[i].modeChange;
+          // Compute modeChange from the stat-read result when the worker
+          // returned a mode (regular files only). This restores permission-drift
+          // detection for files in non-searchable directories, which the initial
+          // lstatSync could not cover.
+          const modeChange = (() => {
+            const desiredMode = writeTargets[i].mode;
+            const actualModeStr = stat?.mode;
+            if (
+              desiredMode &&
+              actualModeStr &&
+              !isNew &&
+              writeTargets[i].symlinkTarget === undefined
+            ) {
+              const desired = parseInt(desiredMode, 8);
+              const current = parseInt(actualModeStr, 8);
+              if (!isNaN(desired) && !isNaN(current) && desired !== current) {
+                return { from: current, to: desired };
+              }
+              return undefined;
+            }
+            return allDiffs[i].modeChange;
+          })();
           if (isNew) {
             // File confirmed absent — rebuild as a proper new diff so
             // formatDiff shows the actual content instead of "unreadable".
@@ -1071,6 +1097,20 @@ export function pullCommand(): Command {
           }
         }
       }
+
+      // Second hasDirConflict pass: the lstatFailed loop above may have set
+      // isDirectory:true on diffs that previously appeared clean (lstat failed
+      // so isDirectory was false before the stat-read). Re-check and abort if
+      // any newly-discovered directory conflicts exist.
+      for (const d of allDiffs) {
+        if (d.isDirectory && d.isSymlink) {
+          console.error(
+            `symlink: ${d.targetPath} is a directory; cannot replace with a symlink`,
+          );
+          hasDirConflict = true;
+        }
+      }
+      if (hasDirConflict) process.exit(2);
 
       // Batch all pre-write reads for unreadable sudo targets into one
       // worker exec per identity using stat-read ops. A stat-read returns

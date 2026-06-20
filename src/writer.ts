@@ -600,18 +600,22 @@ export async function sudoAtomicRead(
 
 // Batches stat-read ops for paths whose parent directory is not searchable
 // (lstatFailed). Each stat-read result tells us: does the path exist, is it a
-// symlink, is it a directory? Uses the session when available so no extra sudo
-// process is spawned. Replaces the per-file sudoFileExists / sudoIsSymlink /
-// sudoIsDirectory helpers (each of which spawns a separate sudo process).
+// symlink, is it a directory, and what is its current mode (regular files only)?
+// Uses the session when available so no extra sudo process is spawned. Replaces
+// the per-file sudoFileExists / sudoIsSymlink / sudoIsDirectory helpers (each
+// of which spawns a separate sudo process).
 export async function sudoStatBatch(
   targets: Array<{ filePath: string; sudo: true | string }>,
   sessions?: Map<true | string, SudoWorkerSession>,
 ): Promise<
-  Map<string, { exists: boolean; isSymlink: boolean; isDirectory: boolean }>
+  Map<
+    string,
+    { exists: boolean; isSymlink: boolean; isDirectory: boolean; mode?: string }
+  >
 > {
   const result = new Map<
     string,
-    { exists: boolean; isSymlink: boolean; isDirectory: boolean }
+    { exists: boolean; isSymlink: boolean; isDirectory: boolean; mode?: string }
   >();
   if (targets.length === 0) return result;
 
@@ -638,7 +642,12 @@ export async function sudoStatBatch(
       const isSymlink = !!(r?.ok && r.isSymlink === true);
       const isDirectory = !!(r && !r.ok && r.code === 'EISDIR');
       const exists = !!(r?.ok || isDirectory);
-      result.set(item.filePath, { exists, isSymlink, isDirectory });
+      result.set(item.filePath, {
+        exists,
+        isSymlink,
+        isDirectory,
+        mode: r?.mode,
+      });
     });
   }
   return result;
@@ -782,6 +791,7 @@ export class SudoWorkerSession {
     });
 
     this.proc.on('error', (err) => {
+      this.closed = true;
       const p = this.pending;
       this.pending = null;
       p?.reject(err);
@@ -798,6 +808,7 @@ export class SudoWorkerSession {
     });
 
     this.proc.on('close', (code, signal) => {
+      this.closed = true;
       const p = this.pending;
       this.pending = null;
       if (p) {

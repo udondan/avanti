@@ -88,6 +88,8 @@ export interface WorkerResult {
   contentB64?: string;
   /** true when stat-read resolved a symlink (contentB64 is the link target) */
   isSymlink?: boolean;
+  /** octal mode string (e.g. '0644'), set by stat-read for regular files only */
+  mode?: string;
 }
 
 export interface WorkerResponse {
@@ -97,7 +99,7 @@ export interface WorkerResponse {
 type DispatchResult =
   | { kind: 'ok' }
   | { kind: 'skipped' }
-  | { kind: 'read'; contentB64: string; isSymlink: boolean };
+  | { kind: 'read'; contentB64: string; isSymlink: boolean; mode?: string };
 
 function randomHex(): string {
   return crypto.randomBytes(5).toString('hex');
@@ -704,8 +706,15 @@ export function handleWriteSymlink(
 }
 
 export function handleDelete(op: DeleteOp): void {
+  const resolved = path.resolve(op.targetPath);
   try {
-    fs.unlinkSync(path.resolve(op.targetPath));
+    const lst = fs.lstatSync(resolved);
+    if (!lst.isFile() && !lst.isSymbolicLink()) {
+      throw new Error(
+        `delete: ${op.targetPath} is not a regular file or symlink; refusing to unlink`,
+      );
+    }
+    fs.unlinkSync(resolved);
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code !== 'ENOENT') {
       throw e;
@@ -903,12 +912,20 @@ export function dispatch(
       // symlink we get ELOOP; read the link target and return it as a symlink.
       // This is both simpler and eliminates the TOCTOU window that an initial
       // lstatSync would introduce.
+      const readRegular = (): DispatchResult => {
+        const contentB64 = readFileToBase64(resolvedPath, 'stat-read');
+        let mode: string | undefined;
+        try {
+          const st = fs.lstatSync(resolvedPath);
+          if (st.isFile())
+            mode = (st.mode & 0o7777).toString(8).padStart(4, '0');
+        } catch {
+          // best-effort mode read; caller falls back to no modeChange
+        }
+        return { kind: 'read', contentB64, isSymlink: false, mode };
+      };
       try {
-        return {
-          kind: 'read',
-          contentB64: readFileToBase64(resolvedPath, 'stat-read'),
-          isSymlink: false,
-        };
+        return readRegular();
       } catch (e) {
         if ((e as NodeJS.ErrnoException).code !== 'ELOOP') throw e;
         // readlinkSync is path-based and has a narrow TOCTOU window: a concurrent
@@ -926,11 +943,7 @@ export function dispatch(
           };
         } catch (e2) {
           if ((e2 as NodeJS.ErrnoException).code !== 'EINVAL') throw e2;
-          return {
-            kind: 'read',
-            contentB64: readFileToBase64(resolvedPath, 'stat-read'),
-            isSymlink: false,
-          };
+          return readRegular();
         }
       }
     }
@@ -1110,6 +1123,7 @@ if (require.main === module) {
             ok: true,
             contentB64: dr.contentB64,
             isSymlink: dr.isSymlink,
+            ...(dr.mode !== undefined ? { mode: dr.mode } : {}),
           });
         } else {
           results.push({ ok: true });
