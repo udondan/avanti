@@ -37,6 +37,7 @@ import {
   atomicWrite,
   closeAllSessions,
   getSudoFileMode,
+  sudoAtomicDelete,
   sudoAtomicRead,
   sudoAtomicWrite,
   sudoFileExists,
@@ -1661,6 +1662,31 @@ export function pullCommand(): Command {
                 ) {
                   console.warn(
                     `Warning: could not delete ${paths[di]}: ${deleteResults[di].error}`,
+                  );
+                }
+              }
+            } else {
+              // No pre-created session for this identity — fall back to a
+              // one-shot privileged worker invocation.
+              try {
+                const deleted = await sudoAtomicDelete(
+                  paths.map((p) => [p, sv] as [string, true | string]),
+                  true,
+                );
+                for (const p of paths) {
+                  if (deleted.has(p)) {
+                    effectivelyDeleted.add(p);
+                    effectivelyCleaned.add(p);
+                  } else {
+                    console.warn(
+                      `Warning: could not delete ${p}: privileged deletion failed`,
+                    );
+                  }
+                }
+              } catch (fallbackErr) {
+                for (const p of paths) {
+                  console.warn(
+                    `Warning: could not delete ${p}: ${fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr)}`,
                   );
                 }
               }

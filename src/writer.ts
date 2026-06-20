@@ -815,9 +815,12 @@ export class SudoWorkerSession {
 
   close(): void {
     if (this.closed) return;
+    const p = this.pending;
+    this.pending = null;
     this.closed = true;
+    p?.reject(new Error('SudoWorkerSession: session closed'));
     this.proc.stdin!.end();
-    const t = setTimeout(() => this.proc.kill('SIGTERM'), 5_000);
+    const t = setTimeout(() => this.proc.kill('SIGKILL'), 5_000);
     t.unref();
     this.proc.once('close', () => clearTimeout(t));
     if (this.tmpDir) {

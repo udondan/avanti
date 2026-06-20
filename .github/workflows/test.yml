@@ -72,30 +72,36 @@ jobs:
       # every sudo invocation before delegating to the real sudo.
       - name: Set up sudo integration test environment
         if: runner.os == 'Linux'
+        env:
+          SUDO_TEST_DIR: /usr/local/avanti-sudo-test
+          SUDO_BIN_DIR: /tmp/sudo-bin
+          SUDO_CALL_LOG_PATH: /tmp/sudo-call-log.txt
+          SUDO_NAMED_USER: testwriter
+          SUDO_NAMED_USER_DIR: /tmp/avanti-named-test
         run: |
-          sudo rm -rf /usr/local/avanti-sudo-test
-          sudo mkdir -p /usr/local/avanti-sudo-test
-          sudo chmod 755 /usr/local/avanti-sudo-test
-          mkdir -p /tmp/sudo-bin
-          cat > /tmp/sudo-bin/sudo << 'WRAPPER'
+          sudo rm -rf "$SUDO_TEST_DIR"
+          sudo mkdir -p "$SUDO_TEST_DIR"
+          sudo chmod 755 "$SUDO_TEST_DIR"
+          mkdir -p "$SUDO_BIN_DIR"
+          cat > "$SUDO_BIN_DIR/sudo" << 'WRAPPER'
           #!/bin/sh
           echo "sudo: $*" >> "$SUDO_CALL_LOG"
           exec /usr/bin/sudo "$@"
           WRAPPER
-          chmod +x /tmp/sudo-bin/sudo
-          echo "/tmp/sudo-bin" >> "$GITHUB_PATH"
-          echo "AVANTI_SUDO_TEST_DIR=/usr/local/avanti-sudo-test" >> "$GITHUB_ENV"
-          echo "SUDO_CALL_LOG=/tmp/sudo-call-log.txt" >> "$GITHUB_ENV"
+          chmod +x "$SUDO_BIN_DIR/sudo"
+          echo "$SUDO_BIN_DIR" >> "$GITHUB_PATH"
+          echo "AVANTI_SUDO_TEST_DIR=$SUDO_TEST_DIR" >> "$GITHUB_ENV"
+          echo "SUDO_CALL_LOG=$SUDO_CALL_LOG_PATH" >> "$GITHUB_ENV"
 
           # Named-user sudo: create a dedicated user and a world-readable temp
           # directory owned by that user so the named-user integration test can
           # write there via sudo -u.
-          sudo useradd -m testwriter 2>/dev/null || true
-          sudo mkdir -p /tmp/avanti-named-test
-          sudo chown testwriter:testwriter /tmp/avanti-named-test
-          sudo chmod 755 /tmp/avanti-named-test
-          echo "AVANTI_SUDO_NAMED_USER=testwriter" >> "$GITHUB_ENV"
-          echo "AVANTI_SUDO_NAMED_USER_DIR=/tmp/avanti-named-test" >> "$GITHUB_ENV"
+          sudo useradd -m "$SUDO_NAMED_USER" 2>/dev/null || true
+          sudo mkdir -p "$SUDO_NAMED_USER_DIR"
+          sudo chown "$SUDO_NAMED_USER:$SUDO_NAMED_USER" "$SUDO_NAMED_USER_DIR"
+          sudo chmod 755 "$SUDO_NAMED_USER_DIR"
+          echo "AVANTI_SUDO_NAMED_USER=$SUDO_NAMED_USER" >> "$GITHUB_ENV"
+          echo "AVANTI_SUDO_NAMED_USER_DIR=$SUDO_NAMED_USER_DIR" >> "$GITHUB_ENV"
 
       - name: Test
         # No `if: runner.os == 'Linux'` guard: sudo integration tests only run

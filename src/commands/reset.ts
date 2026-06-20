@@ -169,7 +169,7 @@ export function resetCommand(): Command {
         if (process.platform !== 'win32') {
           if (sudoTargets.length > 0)
             await sudoAtomicWrite(sudoTargets, [], sudoSessions);
-          await sudoAtomicDelete([...sudoDeletions], true, sudoSessions);
+          await sudoAtomicDelete([...sudoDeletions], false, sudoSessions);
         } else if (sudoTargets.length > 0 || sudoDeletions.size > 0) {
           const n = sudoTargets.length + sudoDeletions.size;
           console.warn(

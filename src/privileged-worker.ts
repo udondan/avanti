@@ -958,6 +958,7 @@ if (require.main === module) {
         }) + '\n',
       );
       process.exitCode = 1;
+      rl.close();
       return;
     }
 
@@ -970,6 +971,7 @@ if (require.main === module) {
         }) + '\n',
       );
       process.exitCode = 1;
+      rl.close();
       return;
     }
 
