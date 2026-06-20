@@ -55,18 +55,27 @@ describe.skipIf(!sudoTestDir || process.platform === 'win32')(
 
       await sudoAtomicWrite(targets);
 
-      // Verify all files landed with correct content.
+      // The key assertion: sudo was called exactly once for all 3 files.
+      // Checked immediately after the write, before any read operations below
+      // that would add their own sudo calls to the log.
+      if (sudoCallLog) {
+        const log = fs.readFileSync(sudoCallLog, 'utf8');
+        const calls = log.split('\n').filter(Boolean);
+        expect(calls).toHaveLength(1);
+      }
+
+      // Verify all files landed with correct content. Batch all 3 reads into a
+      // single sudoAtomicRead call so the privileged reader itself adds at most
+      // one more log entry (separate from the count assertion above).
+      const allReads = await sudoAtomicRead(
+        targets.map((t) => ({ filePath: t.targetPath, sudo: true })),
+      );
       for (const t of targets) {
         let body: string | null = null;
         try {
           body = fs.readFileSync(t.targetPath, 'utf8');
         } catch {
-          // If the file is root-owned and not world-readable, or the directory
-          // is unreadable (e.g. mode 700), read it via the batch privileged reader.
-          const reads = await sudoAtomicRead([
-            { filePath: t.targetPath, sudo: true },
-          ]);
-          const r = reads.get(t.targetPath);
+          const r = allReads.get(t.targetPath);
           if (r) body = Buffer.from(r.contentB64, 'base64').toString('utf8');
         }
         if (body !== null) {
@@ -83,13 +92,6 @@ describe.skipIf(!sudoTestDir || process.platform === 'win32')(
             })(),
           ).toBe(true);
         }
-      }
-
-      // The key assertion: sudo was called exactly once for all 3 files.
-      if (sudoCallLog) {
-        const log = fs.readFileSync(sudoCallLog, 'utf8');
-        const calls = log.split('\n').filter(Boolean);
-        expect(calls).toHaveLength(1);
       }
     });
   },
