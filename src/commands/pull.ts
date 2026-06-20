@@ -1608,7 +1608,7 @@ export function pullCommand(): Command {
         for (const [p, sv] of staleDeleteSudo) {
           const idx = staleDeleteDiffIndex.get(p);
           if (idx === undefined) continue;
-          if (!staleDiffs[idx].hasChanges) {
+          if (!staleDiffs[idx]?.hasChanges) {
             // File is already gone — no-op, but still clean up its history ref.
             effectivelyCleaned.add(p);
           } else {

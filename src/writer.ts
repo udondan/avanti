@@ -209,6 +209,11 @@ function runPrivilegedWorker(
       );
     }
     results = parsed.results;
+    if (results.length !== ops.length) {
+      throw new Error(
+        `privileged worker returned ${results.length} results, expected ${ops.length}`,
+      );
+    }
   } catch (e) {
     if (!(e instanceof SyntaxError)) throw e;
     throw new Error(
@@ -756,7 +761,15 @@ export class SudoWorkerSession {
       this.pending = {
         resolve: (r) => {
           clearTimeout(timer);
-          resolve(r);
+          if (r.length !== ops.length) {
+            reject(
+              new Error(
+                `privileged worker returned ${r.length} results, expected ${ops.length}`,
+              ),
+            );
+          } else {
+            resolve(r);
+          }
         },
         reject: (e) => {
           clearTimeout(timer);
