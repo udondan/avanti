@@ -754,8 +754,8 @@ export class SudoWorkerSession {
       const timer = setTimeout(() => {
         if (!this.pending) return;
         this.pending = null;
-        this.closed = true;
         this.proc.kill('SIGTERM');
+        this.close(); // sets this.closed=true and cleans up tmpDir
         reject(new Error('SudoWorkerSession: exec() timed out'));
       }, timeoutMs);
       this.pending = {

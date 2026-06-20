@@ -976,7 +976,12 @@ if (require.main === module) {
     const continueOnError = request.continueOnError ?? false;
 
     const results: WorkerResult[] = [];
+    let aborted = false;
     for (const op of request.ops) {
+      if (aborted) {
+        results.push({ ok: false, error: 'aborted due to previous failure' });
+        continue;
+      }
       try {
         // Validate required fields before dispatching so errors are actionable.
         if (typeof op !== 'object' || op === null) {
@@ -1065,7 +1070,7 @@ if (require.main === module) {
           error: (e as Error).message,
           code: (e as NodeJS.ErrnoException).code,
         });
-        if (!continueOnError) break; // fail-fast for writes; continue for deletes
+        if (!continueOnError) aborted = true;
       }
     }
     process.stdout.write(JSON.stringify({ results }) + '\n');
