@@ -107,9 +107,14 @@ function randomHex(): string {
 
 // Opens resolvedPath with O_RDONLY|O_NOFOLLOW|O_NONBLOCK, verifies it is a
 // regular file within the MAX_READ limit, reads it fully, and returns the
-// base64-encoded contents. The label ('read' or 'stat-read') is used in error
-// messages. The fd is always closed, even on error.
-function readFileToBase64(resolvedPath: string, label: string): string {
+// base64-encoded contents and the file's permission bits (octal string, e.g.
+// "0644"). The label ('read' or 'stat-read') is used in error messages. The fd
+// is always closed, even on error. Mode is captured via fstatSync while the fd
+// is still open — atomically bound to the same inode as the content being read.
+function readFileToBase64(
+  resolvedPath: string,
+  label: string,
+): { contentB64: string; mode: string } {
   let fd: number | undefined;
   try {
     fd = fs.openSync(
@@ -131,6 +136,7 @@ function readFileToBase64(resolvedPath: string, label: string): string {
         `${label}: ${resolvedPath} exceeds the 75 MiB read limit`,
       );
     }
+    const mode = (st.mode & 0o7777).toString(8).padStart(4, '0');
     // Read until EOF rather than st.size bytes: st.size may be 0 for special
     // filesystems (procfs, sysfs) and also for empty regular files. Reading
     // until EOF handles both cases correctly.
@@ -147,7 +153,7 @@ function readFileToBase64(resolvedPath: string, label: string): string {
       }
       chunks.push(Buffer.from(chunk.subarray(0, n)));
     }
-    return Buffer.concat(chunks).toString('base64');
+    return { contentB64: Buffer.concat(chunks).toString('base64'), mode };
   } finally {
     if (fd !== undefined) {
       try {
@@ -229,7 +235,11 @@ function backupRegularFile(
   let backupTmp: string | undefined;
   try {
     const srcStat = fs.fstatSync(sfd);
-    if (!srcStat.isFile()) return; // not a regular file; skip backup
+    if (!srcStat.isFile()) {
+      fs.closeSync(sfd);
+      sfd = undefined;
+      return;
+    }
 
     const resolvedBackup = path.resolve(backupPath);
     const backupDir = path.dirname(resolvedBackup);
@@ -243,10 +253,12 @@ function backupRegularFile(
       if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
     }
 
+    // Pre-validate before mkdirSync so we catch world-writable ancestors that
+    // the caller could not lstat (EACCES); re-validate after to cover any
+    // intermediate directories that mkdirSync itself creates.
+    if (trustedUids)
+      checkAncestorsSafeAsRoot(resolvedBackup, trustedUids, 'backup');
     fs.mkdirSync(backupDir, { recursive: true, mode: 0o755 });
-    // Re-validate after mkdirSync: dirs just created (or that appeared during
-    // the race window between the pre-dispatch check and mkdirSync) are now
-    // visible and can be properly verified.
     if (trustedUids)
       checkAncestorsSafeAsRoot(resolvedBackup, trustedUids, 'backup');
 
@@ -300,10 +312,12 @@ export function handleWriteMv(op: WriteMvOp, trustedUids?: Set<number>): void {
   const resolvedTarget = path.resolve(op.targetPath);
   const dir = path.dirname(resolvedTarget);
 
+  // Pre-validate before mkdirSync so we catch world-writable ancestors that
+  // the caller could not lstat (EACCES); re-validate after to cover any
+  // intermediate directories that mkdirSync itself creates.
+  if (trustedUids)
+    checkAncestorsSafeAsRoot(resolvedTarget, trustedUids, 'destination');
   fs.mkdirSync(dir, { recursive: true, mode: 0o755 });
-  // Re-validate after mkdirSync: dirs that appeared or were created during the
-  // race window between the pre-dispatch ancestor check and mkdirSync are now
-  // visible and can be properly verified.
   if (trustedUids)
     checkAncestorsSafeAsRoot(resolvedTarget, trustedUids, 'destination');
 
@@ -378,6 +392,8 @@ export function handleWriteInPlace(
   const resolvedTarget = path.resolve(op.targetPath);
   const dir = path.dirname(resolvedTarget);
 
+  if (trustedUids)
+    checkAncestorsSafeAsRoot(resolvedTarget, trustedUids, 'destination');
   fs.mkdirSync(dir, { recursive: true, mode: 0o755 });
   if (trustedUids)
     checkAncestorsSafeAsRoot(resolvedTarget, trustedUids, 'destination');
@@ -633,6 +649,8 @@ export function handleWriteSymlink(
   const resolvedTarget = path.resolve(op.targetPath);
   const dir = path.dirname(resolvedTarget);
 
+  if (trustedUids)
+    checkAncestorsSafeAsRoot(resolvedTarget, trustedUids, 'destination');
   fs.mkdirSync(dir, { recursive: true, mode: 0o755 });
   if (trustedUids)
     checkAncestorsSafeAsRoot(resolvedTarget, trustedUids, 'destination');
@@ -665,6 +683,8 @@ export function handleWriteSymlink(
         if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
       }
 
+      if (trustedUids)
+        checkAncestorsSafeAsRoot(resolvedBackup, trustedUids, 'backup');
       fs.mkdirSync(backupDir, { recursive: true, mode: 0o755 });
       if (trustedUids)
         checkAncestorsSafeAsRoot(resolvedBackup, trustedUids, 'backup');
@@ -932,7 +952,7 @@ export function dispatch(
       const resolvedPath = path.resolve(op.targetPath);
       return {
         kind: 'read',
-        contentB64: readFileToBase64(resolvedPath, 'read'),
+        contentB64: readFileToBase64(resolvedPath, 'read').contentB64,
         isSymlink: false,
       };
     }
@@ -952,15 +972,12 @@ export function dispatch(
       // This is both simpler and eliminates the TOCTOU window that an initial
       // lstatSync would introduce.
       const readRegular = (): DispatchResult => {
-        const contentB64 = readFileToBase64(resolvedPath, 'stat-read');
-        let mode: string | undefined;
-        try {
-          const st = fs.lstatSync(resolvedPath);
-          if (st.isFile())
-            mode = (st.mode & 0o7777).toString(8).padStart(4, '0');
-        } catch {
-          // best-effort mode read; caller falls back to no modeChange
-        }
+        // readFileToBase64 captures the mode via fstatSync while the fd is
+        // still open — atomically bound to the same inode as the content read.
+        const { contentB64, mode } = readFileToBase64(
+          resolvedPath,
+          'stat-read',
+        );
         return { kind: 'read', contentB64, isSymlink: false, mode };
       };
       try {

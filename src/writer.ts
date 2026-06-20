@@ -2,6 +2,7 @@ import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import * as readline from 'readline';
 import { spawn, spawnSync } from 'child_process';
 import type {
   WorkerRequest,
@@ -54,12 +55,15 @@ function resolveNodeExec(sudo: true | string): string {
   const home = os.homedir() + path.sep;
   for (const dir of (process.env.PATH ?? '').split(path.delimiter)) {
     if (dir.startsWith(home)) continue;
-    const candidate = path.join(dir, 'node');
-    try {
-      const st = fs.statSync(candidate);
-      if (st.isFile() && (st.mode & 0o111) !== 0) return candidate;
-    } catch {
-      // ignore EACCES, ENOENT, and any other stat error
+    // Try both 'node' and 'nodejs': Debian/Ubuntu ship the binary as 'nodejs'.
+    for (const name of ['node', 'nodejs']) {
+      const candidate = path.join(dir, name);
+      try {
+        const st = fs.statSync(candidate);
+        if (st.isFile() && (st.mode & 0o111) !== 0) return candidate;
+      } catch {
+        // ignore EACCES, ENOENT, and any other stat error
+      }
     }
   }
   throw new Error(
@@ -94,15 +98,18 @@ function cleanupWorkerDir(dir: string): void {
   }
 }
 
-// Module-level registry of staged worker temp dirs. A single 'exit' handler
-// removes any dirs still present at process shutdown (covers SIGTERM and
-// normal exit; SIGKILL is uninterceptable and cannot be cleaned up).
+// Module-level registry of staged worker temp dirs. The 'exit' handler fires
+// on normal exit and on explicit process.exit() calls. SIGTERM and SIGINT do
+// NOT trigger 'exit' unless a signal handler calls process.exit() first;
+// SIGKILL is uninterceptable and cannot be cleaned up.
 const stagedWorkerDirs = new Set<string>();
 process.on('exit', () => {
   for (const d of [...stagedWorkerDirs]) {
     cleanupWorkerDir(d);
   }
 });
+process.on('SIGTERM', () => process.exit(1));
+process.on('SIGINT', () => process.exit(1));
 
 // Copies the privileged-worker script to a world-readable temp directory so
 // that `sudo -u <user>` can reach and exec it regardless of the calling user's
@@ -352,6 +359,22 @@ export async function sudoAtomicWrite(
             },
       });
     }
+  }
+
+  // Validate ancestor safety for chmod targets. These share the checkedDirsBySudo
+  // set so dirs already validated for write targets are not rechecked.
+  for (const t of chmodTargets) {
+    const trustedUids = trustedUidsBySudo.get(t.sudo)!;
+    if (!checkedDirsBySudo.has(t.sudo))
+      checkedDirsBySudo.set(t.sudo, new Set());
+    const checkedDirs = checkedDirsBySudo.get(t.sudo)!;
+    checkAncestorsSafe(
+      t.sudo,
+      t.targetPath,
+      trustedUids,
+      'destination',
+      checkedDirs,
+    );
   }
 
   // Append chmod ops after write ops so they share the same per-identity worker.
@@ -740,7 +763,7 @@ function buildTrustedUids(sudo: true | string): Set<number> {
 export class SudoWorkerSession {
   private proc: ReturnType<typeof spawn>;
   private tmpDir?: string;
-  private lineChunks: Buffer[] = [];
+  private rl: readline.Interface;
   private pending: {
     resolve: (results: WorkerResult[]) => void;
     reject: (err: Error) => void;
@@ -766,35 +789,28 @@ export class SudoWorkerSession {
       },
     );
 
-    this.proc.stdout!.on('data', (chunk: Buffer) => {
-      this.lineChunks.push(chunk);
-      let combined = Buffer.concat(this.lineChunks);
-      let nlIndex: number;
-      while ((nlIndex = combined.indexOf(0x0a)) !== -1) {
-        const line = combined.subarray(0, nlIndex).toString('utf8');
-        combined = combined.subarray(nlIndex + 1);
-        const trimmed = line.trim();
-        if (trimmed) {
-          try {
-            const response = JSON.parse(trimmed) as WorkerResponse;
-            const p = this.pending;
-            this.pending = null;
-            p?.resolve(response.results);
-          } catch (e) {
-            this.closed = true;
-            this.lineChunks = [];
-            const p = this.pending;
-            this.pending = null;
-            p?.reject(
-              new Error(
-                `failed to parse worker response: ${(e as Error).message}`,
-              ),
-            );
-            return;
-          }
-        }
+    // readline handles line buffering internally, avoiding the O(n²) cost of
+    // Buffer.concat on every data event for large responses.
+    this.rl = readline.createInterface({
+      input: this.proc.stdout!,
+      crlfDelay: Infinity,
+    });
+    this.rl.on('line', (line: string) => {
+      const trimmed = line.trim();
+      if (!trimmed) return;
+      try {
+        const response = JSON.parse(trimmed) as WorkerResponse;
+        const p = this.pending;
+        this.pending = null;
+        p?.resolve(response.results);
+      } catch (e) {
+        this.closed = true;
+        const p = this.pending;
+        this.pending = null;
+        p?.reject(
+          new Error(`failed to parse worker response: ${(e as Error).message}`),
+        );
       }
-      this.lineChunks = combined.length > 0 ? [combined] : [];
     });
 
     this.proc.on('error', (err) => {
@@ -894,6 +910,7 @@ export class SudoWorkerSession {
     this.pending = null;
     this.closed = true;
     p?.reject(new Error('SudoWorkerSession: session closed'));
+    this.rl.close();
     this.proc.stdin!.end();
     const t = setTimeout(() => this.proc.kill('SIGKILL'), 5_000);
     t.unref();

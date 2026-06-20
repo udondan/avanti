@@ -1110,7 +1110,10 @@ export function pullCommand(): Command {
           hasDirConflict = true;
         }
       }
-      if (hasDirConflict) process.exit(2);
+      if (hasDirConflict) {
+        closeAllSessions(sudoSessions);
+        process.exit(2);
+      }
 
       // Batch all pre-write reads for unreadable sudo targets into one
       // worker exec per identity using stat-read ops. A stat-read returns
