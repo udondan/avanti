@@ -118,7 +118,13 @@ function readFileToBase64(resolvedPath: string, label: string): string {
     );
     const st = fs.fstatSync(fd);
     if (!st.isFile()) {
-      throw new Error(`${label}: ${resolvedPath} is not a regular file`);
+      // Attach a recognisable errno code for directories so callers (e.g.
+      // sudoStatBatch) can distinguish EISDIR from a generic "not a file".
+      const err = Object.assign(
+        new Error(`${label}: ${resolvedPath} is not a regular file`),
+        { code: st.isDirectory() ? 'EISDIR' : undefined },
+      );
+      throw err;
     }
     if (st.size > MAX_READ) {
       throw new Error(
@@ -858,11 +864,44 @@ export function dispatch(
               );
             } catch (e2) {
               if ((e2 as NodeJS.ErrnoException).code === 'EACCES') {
-                // mode-0000 (or execute-only) file owned by this user: both opens
-                // failed. The file is a regular file (O_NOFOLLOW gave EACCES not ELOOP)
-                // and the process owns it (sudo -u), so path-based chmod is safe.
-                fs.chmodSync(resolvedPath, parseMode(op.mode));
-                chmodApplied = true;
+                // Both O_RDONLY and O_WRONLY failed (e.g. mode-0000 file, or root
+                // blocked by a MAC policy). Use O_PATH (Linux ≥ 2.6.39) to obtain
+                // a no-permission-required fd for a TOCTOU-free fchmod. Fall back
+                // to a path-based chmod with a pre-flight lstat guard on platforms
+                // that lack O_PATH (macOS, Windows).
+                const O_PATH_FLAG =
+                  (fs.constants as Record<string, number>).O_PATH ?? 0;
+                let pathFd: number | undefined;
+                if (O_PATH_FLAG !== 0) {
+                  try {
+                    pathFd = fs.openSync(
+                      resolvedPath,
+                      O_PATH_FLAG | O_NOFOLLOW,
+                    );
+                  } catch {
+                    /* fall through to path-based */
+                  }
+                }
+                if (pathFd !== undefined) {
+                  try {
+                    safeFchmodSync(pathFd, parseMode(op.mode));
+                    chmodApplied = true;
+                  } finally {
+                    fs.closeSync(pathFd);
+                  }
+                } else {
+                  // Narrow the TOCTOU window: verify it is still a regular file
+                  // immediately before the path-based chmod.
+                  const lst = fs.lstatSync(resolvedPath);
+                  if (!lst.isFile()) {
+                    throw new Error(
+                      `chmod: ${op.targetPath} is not a regular file`,
+                      { cause: e2 },
+                    );
+                  }
+                  fs.chmodSync(resolvedPath, parseMode(op.mode));
+                  chmodApplied = true;
+                }
               } else {
                 throw e2;
               }

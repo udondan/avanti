@@ -229,8 +229,12 @@ function runPrivilegedWorker(
     }
     results = parsed.results;
     if (results.length !== ops.length) {
+      // Surface the actual failure message if an op failed early; a count
+      // mismatch alone tells the caller nothing useful.
+      const firstFailed = results.find((r) => !r.ok);
       throw new Error(
-        `privileged worker returned ${results.length} results, expected ${ops.length}`,
+        firstFailed?.error ??
+          `privileged worker returned ${results.length} results, expected ${ops.length}`,
       );
     }
   } catch (e) {
@@ -777,6 +781,8 @@ export class SudoWorkerSession {
             this.pending = null;
             p?.resolve(response.results);
           } catch (e) {
+            this.closed = true;
+            this.lineChunks = [];
             const p = this.pending;
             this.pending = null;
             p?.reject(
@@ -784,6 +790,7 @@ export class SudoWorkerSession {
                 `failed to parse worker response: ${(e as Error).message}`,
               ),
             );
+            return;
           }
         }
       }
