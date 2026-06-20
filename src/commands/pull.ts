@@ -1298,8 +1298,13 @@ export function pullCommand(): Command {
             deferredIds.add(sv);
           }
         }
-        for (const id of deferredIds)
-          sudoSessions.set(id, new SudoWorkerSession(id));
+        try {
+          for (const id of deferredIds)
+            sudoSessions.set(id, new SudoWorkerSession(id));
+        } catch (err) {
+          for (const session of sudoSessions.values()) session.close();
+          throw err;
+        }
       }
 
       // Warn when --accept-changes is used with a remote config: SHA values
@@ -1649,7 +1654,7 @@ export function pullCommand(): Command {
                 p,
                 sv,
               ]);
-              const deleted = await sudoAtomicDelete(batch, true);
+              const deleted = await sudoAtomicDelete(batch, true, sudoSessions);
               for (const p of paths) {
                 if (deleted.has(p)) {
                   effectivelyDeleted.add(p);

@@ -123,14 +123,23 @@ function readFileToBase64(resolvedPath: string, label: string): string {
         `${label}: ${resolvedPath} exceeds the 100 MiB read limit`,
       );
     }
-    const buf = Buffer.alloc(st.size);
-    let offset = 0;
-    while (offset < st.size) {
-      const n = fs.readSync(fd, buf, offset, st.size - offset, offset);
-      if (n === 0) break;
-      offset += n;
+    // Read until EOF rather than st.size bytes: st.size may be 0 for special
+    // filesystems (procfs, sysfs) and also for empty regular files. Reading
+    // until EOF handles both cases correctly.
+    const chunks: Buffer[] = [];
+    let total = 0;
+    const chunk = Buffer.alloc(65536);
+    let n: number;
+    while ((n = fs.readSync(fd, chunk, 0, chunk.length, null)) > 0) {
+      total += n;
+      if (total > MAX_READ) {
+        throw new Error(
+          `${label}: ${resolvedPath} exceeds the 100 MiB read limit`,
+        );
+      }
+      chunks.push(Buffer.from(chunk.subarray(0, n)));
     }
-    return buf.toString('base64');
+    return Buffer.concat(chunks).toString('base64');
   } finally {
     if (fd !== undefined) {
       try {
@@ -179,56 +188,56 @@ function backupRegularFile(
   backupPath: string,
   trustedUids?: Set<number>,
 ): void {
-  // Only back up regular files (not symlinks, not absent).
-  try {
-    if (!fs.lstatSync(targetPath).isFile()) return;
-  } catch (e) {
-    if ((e as NodeJS.ErrnoException).code === 'ENOENT') return;
-    throw e;
-  }
-
-  const resolvedBackup = path.resolve(backupPath);
-  const backupDir = path.dirname(resolvedBackup);
-
-  // Refuse if backup destination is a directory.
-  try {
-    if (fs.lstatSync(resolvedBackup).isDirectory()) {
-      throw new Error(`backup path is a directory: ${backupPath}`);
-    }
-  } catch (e) {
-    if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
-  }
-
-  fs.mkdirSync(backupDir, { recursive: true, mode: 0o755 });
-  // Re-validate after mkdirSync: dirs just created (or that appeared during
-  // the race window between the pre-dispatch check and mkdirSync) are now
-  // visible and can be properly verified.
-  if (trustedUids)
-    checkAncestorsSafeAsRoot(resolvedBackup, trustedUids, 'backup');
-
-  const backupTmp = path.join(
-    path.resolve(backupDir),
-    `.avanti-backup-${randomHex()}`,
-  );
-
-  // O_EXCL creation — prevents TOCTOU in the backup staging directory. Keep
-  // the fd open and write through it so no path-based TOCTOU window opens
-  // between open and write.
-  let bfd: number | undefined;
+  // Open the source first with O_NOFOLLOW so the isFile check is on the same
+  // fd that will be read — eliminates the TOCTOU window between lstatSync and
+  // openSync where a symlink swap could silently skip the backup.
+  // O_NOFOLLOW: ELOOP if targetPath is a symlink (→ not a regular file, skip).
+  // O_NONBLOCK: prevents opening FIFOs.
   let sfd: number | undefined;
   try {
-    // Open source with O_NOFOLLOW|O_NONBLOCK to reject symlinks and FIFOs; fstat
-    // to verify it is still a regular file before reading.
     sfd = fs.openSync(
       targetPath,
       fs.constants.O_RDONLY | O_NOFOLLOW | O_NONBLOCK,
     );
+  } catch (e) {
+    const code = (e as NodeJS.ErrnoException).code;
+    if (code === 'ENOENT' || code === 'ELOOP' || code === 'ENOTDIR') return;
+    throw e;
+  }
+
+  let bfd: number | undefined;
+  let backupTmp: string | undefined;
+  try {
     const srcStat = fs.fstatSync(sfd);
-    if (!srcStat.isFile()) {
-      throw new Error(
-        `backup source ${targetPath} is not a regular file; refusing to back up`,
-      );
+    if (!srcStat.isFile()) return; // not a regular file; skip backup
+
+    const resolvedBackup = path.resolve(backupPath);
+    const backupDir = path.dirname(resolvedBackup);
+
+    // Refuse if backup destination is a directory.
+    try {
+      if (fs.lstatSync(resolvedBackup).isDirectory()) {
+        throw new Error(`backup path is a directory: ${backupPath}`);
+      }
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
     }
+
+    fs.mkdirSync(backupDir, { recursive: true, mode: 0o755 });
+    // Re-validate after mkdirSync: dirs just created (or that appeared during
+    // the race window between the pre-dispatch check and mkdirSync) are now
+    // visible and can be properly verified.
+    if (trustedUids)
+      checkAncestorsSafeAsRoot(resolvedBackup, trustedUids, 'backup');
+
+    backupTmp = path.join(
+      path.resolve(backupDir),
+      `.avanti-backup-${randomHex()}`,
+    );
+
+    // O_EXCL creation — prevents TOCTOU in the backup staging directory. Keep
+    // the fd open and write through it so no path-based TOCTOU window opens
+    // between open and write.
     bfd = fs.openSync(backupTmp, 'wx', 0o600);
     const buf = Buffer.alloc(65536);
     let bytesRead: number;
@@ -256,10 +265,12 @@ function backupRegularFile(
         // best-effort close
       }
     }
-    try {
-      fs.unlinkSync(backupTmp);
-    } catch {
-      // best-effort cleanup
+    if (backupTmp !== undefined) {
+      try {
+        fs.unlinkSync(backupTmp);
+      } catch {
+        // best-effort cleanup
+      }
     }
     throw err;
   }
@@ -844,12 +855,20 @@ export function dispatch(
       const resolvedPath = path.resolve(op.targetPath);
       const lst = fs.lstatSync(resolvedPath);
       if (lst.isSymbolicLink()) {
-        const target = fs.readlinkSync(resolvedPath);
-        return {
-          kind: 'read',
-          contentB64: Buffer.from(target).toString('base64'),
-          isSymlink: true,
-        };
+        // readlinkSync can fail with EINVAL if the path was replaced with a
+        // regular file between lstatSync and here (TOCTOU). In that case fall
+        // through and read the file content instead.
+        try {
+          const target = fs.readlinkSync(resolvedPath);
+          return {
+            kind: 'read',
+            contentB64: Buffer.from(target).toString('base64'),
+            isSymlink: true,
+          };
+        } catch (e) {
+          if ((e as NodeJS.ErrnoException).code !== 'EINVAL') throw e;
+          // Fall through: path is now a regular file; read its content.
+        }
       }
       return {
         kind: 'read',
@@ -892,9 +911,10 @@ if (require.main === module) {
     rl.close();
   });
 
-  const checkedDirs = new Set<string>();
-
   rl.on('line', (line: string) => {
+    // Fresh per-batch: ancestor checks are not carried over across requests so
+    // that a malicious interleaved rename cannot poison a future batch's checks.
+    const checkedDirs = new Set<string>();
     const trimmed = line.trim();
     if (!trimmed) return;
 

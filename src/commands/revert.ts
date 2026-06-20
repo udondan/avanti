@@ -268,9 +268,11 @@ export function revertCommand(): Command {
           // Perform privileged operations first: if sudo fails, the
           // unprivileged writes have not yet happened, keeping the project in a
           // consistent (if incomplete) state.
-          if (sudoTargets.length > 0)
-            await sudoAtomicWrite(sudoTargets, [], sudoSessions);
-          await sudoAtomicDelete([...sudoDeletions], false, sudoSessions);
+          if (process.platform !== 'win32') {
+            if (sudoTargets.length > 0)
+              await sudoAtomicWrite(sudoTargets, [], sudoSessions);
+            await sudoAtomicDelete([...sudoDeletions], false, sudoSessions);
+          }
           atomicWrite(regularTargets, deletions);
           const total =
             writeTargets.length + deletions.length + sudoDeletions.size;

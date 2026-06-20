@@ -10,6 +10,12 @@ import type {
   WriteOp,
 } from './privileged-worker';
 
+// os.tmpdir() may return a per-user private path on macOS (/var/folders/…)
+// whose ancestor directories are not world-traversable, so a named sudo user
+// cannot reach files placed there. /tmp is always world-executable on Unix
+// (sticky 01777). Fall back to os.tmpdir() only on Windows.
+const WORLD_TMP = process.platform === 'win32' ? os.tmpdir() : '/tmp';
+
 export interface SudoChmodTarget {
   targetPath: string;
   mode: string;
@@ -93,13 +99,8 @@ function runPrivilegedWorker(
     // path so sudo -u <user> can exec it.
     // Use a private subdirectory so the worker file cannot be swapped out by
     // another unprivileged process between the copy and the sudo exec.
-    // os.tmpdir() may return a per-user private path on macOS (e.g.
-    // /var/folders/…) whose ancestor directories are not world-traversable,
-    // so the named sudo user cannot reach the worker. /tmp is always
-    // world-executable on Unix (sticky 01777); fall back to os.tmpdir() only
-    // on Windows where /tmp is not a standard path.
     const tmpWorkerDir = path.join(
-      '/tmp',
+      WORLD_TMP,
       `.avanti-worker-${crypto.randomBytes(5).toString('hex')}`,
     );
     fs.mkdirSync(tmpWorkerDir, { mode: 0o755 });
@@ -665,7 +666,7 @@ export class SudoWorkerSession {
 
     let resolvedWorkerPath = workerPath;
     if (typeof sudo === 'string' && fs.existsSync(workerPath)) {
-      const tmpDir = fs.mkdtempSync(path.join('/tmp', 'avanti-worker-'));
+      const tmpDir = fs.mkdtempSync(path.join(WORLD_TMP, 'avanti-worker-'));
       this.tmpDir = tmpDir;
       fs.chmodSync(tmpDir, 0o755);
       const tmpWorker = path.join(tmpDir, 'privileged-worker.js');
@@ -712,10 +713,19 @@ export class SudoWorkerSession {
     });
 
     this.proc.on('close', (code) => {
-      if (code !== 0) {
-        const p = this.pending;
-        this.pending = null;
-        p?.reject(new Error(`privileged worker failed (exit ${code})`));
+      const p = this.pending;
+      this.pending = null;
+      if (p) {
+        // Reject whether exit was clean (0) or not — a clean exit with an
+        // in-flight request means the worker died without sending a response,
+        // and leaving the promise pending would cause a 30s timeout hang.
+        p.reject(
+          new Error(
+            code === 0
+              ? 'privileged worker exited unexpectedly with no response'
+              : `privileged worker failed (exit ${code})`,
+          ),
+        );
       }
     });
   }
