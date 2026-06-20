@@ -35,6 +35,7 @@ import {
 } from '../diff';
 import {
   atomicWrite,
+  closeAllSessions,
   getSudoFileMode,
   sudoAtomicRead,
   sudoAtomicWrite,
@@ -1066,7 +1067,7 @@ export function pullCommand(): Command {
           for (const id of earlyIds)
             sudoSessions.set(id, new SudoWorkerSession(id));
         } catch (err) {
-          for (const session of sudoSessions.values()) session.close();
+          closeAllSessions(sudoSessions);
           console.error(err instanceof Error ? err.message : String(err));
           process.exit(2);
         }
@@ -1108,7 +1109,7 @@ export function pullCommand(): Command {
         try {
           preReads = await sudoAtomicRead(preReadRequests, sudoSessions);
         } catch (err) {
-          for (const session of sudoSessions.values()) session.close();
+          closeAllSessions(sudoSessions);
           console.error(
             `Read failed: ${err instanceof Error ? err.message : String(err)}`,
           );
@@ -1250,7 +1251,7 @@ export function pullCommand(): Command {
             survivingRefs,
           );
         }
-        for (const session of sudoSessions.values()) session.close();
+        closeAllSessions(sudoSessions);
         console.log('Nothing to do.');
         process.exit(0);
       }
@@ -1263,7 +1264,7 @@ export function pullCommand(): Command {
             : 'Apply changes? [y/N] ';
         const ok = await confirm(promptMsg);
         if (!ok) {
-          for (const session of sudoSessions.values()) session.close();
+          closeAllSessions(sudoSessions);
           console.log('Aborted.');
           process.exit(0);
         }
@@ -1307,7 +1308,7 @@ export function pullCommand(): Command {
           for (const id of deferredIds)
             sudoSessions.set(id, new SudoWorkerSession(id));
         } catch (err) {
-          for (const session of sudoSessions.values()) session.close();
+          closeAllSessions(sudoSessions);
           console.error(err instanceof Error ? err.message : String(err));
           process.exit(2);
         }
@@ -1702,14 +1703,14 @@ export function pullCommand(): Command {
             runNamedPostHook('update', ctx.hooks.update);
         }
       } catch (err: unknown) {
-        for (const session of sudoSessions.values()) session.close();
+        closeAllSessions(sudoSessions);
         console.error(
           `Write failed: ${err instanceof Error ? err.message : String(err)}`,
         );
         process.exit(2);
       }
       // Close worker sessions — stdin close signals the worker to exit cleanly.
-      for (const session of sudoSessions.values()) session.close();
+      closeAllSessions(sudoSessions);
 
       // meta.sudo is updated by stageFileVersion for every file that was
       // actually written. No extra sync needed here: updating meta.sudo for

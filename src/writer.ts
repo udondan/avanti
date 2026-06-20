@@ -649,7 +649,7 @@ function buildTrustedUids(sudo: true | string): Set<number> {
 export class SudoWorkerSession {
   private proc: ReturnType<typeof spawn>;
   private tmpDir?: string;
-  private lineBuffer = '';
+  private lineChunks: Buffer[] = [];
   private pending: {
     resolve: (results: WorkerResult[]) => void;
     reject: (err: Error) => void;
@@ -685,9 +685,14 @@ export class SudoWorkerSession {
     );
 
     this.proc.stdout!.on('data', (chunk: Buffer) => {
-      this.lineBuffer += chunk.toString('utf8');
-      const lines = this.lineBuffer.split('\n');
-      this.lineBuffer = lines.pop()!;
+      this.lineChunks.push(chunk);
+      const combined = Buffer.concat(this.lineChunks);
+      const nl = combined.indexOf(0x0a);
+      if (nl === -1) return;
+      // Process all complete newline-terminated lines in the buffer.
+      this.lineChunks =
+        nl + 1 < combined.length ? [combined.subarray(nl + 1)] : [];
+      const lines = combined.subarray(0, nl).toString('utf8').split('\n');
       for (const line of lines) {
         if (!line.trim()) continue;
         try {
@@ -803,6 +808,14 @@ export class SudoWorkerSession {
       cleanupWorkerDir(this.tmpDir);
     }
   }
+}
+
+// Closes every session in the map. Call this in error paths and finally blocks
+// so callers do not need to repeat the loop in every early-exit path.
+export function closeAllSessions(
+  sessions: Map<true | string, SudoWorkerSession>,
+): void {
+  for (const session of sessions.values()) session.close();
 }
 
 // Returns the existing file's permission bits as an octal string via sudo stat,

@@ -436,7 +436,16 @@ export function handleWriteInPlace(
         }
         savedMode = rst.mode & 0o7777;
       } catch (e) {
-        if ((e as NodeJS.ErrnoException).code !== 'EACCES') throw e;
+        const code = (e as NodeJS.ErrnoException).code;
+        if (code === 'ELOOP') {
+          // TOCTOU: a symlink was placed at the path after the lstatSync check
+          // above but before O_NOFOLLOW openSync. Surface a clear error.
+          throw new Error(
+            `writeInPlace: ${op.targetPath} is a symlink; refusing to follow`,
+            { cause: e },
+          );
+        }
+        if (code !== 'EACCES') throw e;
         // Write-only file (e.g. mode 0200): O_RDONLY fails with EACCES.
         // Fall back to a path-based stat to capture the mode; the write open
         // below will succeed directly so no rfd-based EACCES recovery is needed.

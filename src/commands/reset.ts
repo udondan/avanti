@@ -11,6 +11,7 @@ import {
 } from '../diff';
 import {
   atomicWrite,
+  closeAllSessions,
   sudoAtomicDelete,
   sudoAtomicWrite,
   SudoWorkerSession,
@@ -155,7 +156,7 @@ export function resetCommand(): Command {
           for (const id of sudoIds)
             sudoSessions.set(id, new SudoWorkerSession(id));
         } catch (err) {
-          for (const session of sudoSessions.values()) session.close();
+          closeAllSessions(sudoSessions);
           console.error(err instanceof Error ? err.message : String(err));
           process.exit(2);
         }
@@ -185,7 +186,7 @@ export function resetCommand(): Command {
         );
         process.exit(2);
       } finally {
-        for (const session of sudoSessions.values()) session.close();
+        closeAllSessions(sudoSessions);
       }
     });
 }
