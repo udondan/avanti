@@ -62,6 +62,25 @@ function resolveNodeExec(sudo: true | string): string {
   return 'node';
 }
 
+// Copies the privileged-worker script to a world-readable temp directory so
+// that `sudo -u <user>` can reach and exec it regardless of the calling user's
+// home-directory permissions. Returns the staged path and temp directory;
+// callers are responsible for cleaning up tmpDir when done.
+function stageWorkerForSudo(workerPath: string): {
+  stagedPath: string;
+  tmpDir: string;
+} {
+  const tmpDir = fs.mkdtempSync(path.join(WORLD_TMP, 'avanti-worker-'));
+  // mkdtempSync mode is masked by the caller's umask (e.g. 077 → 0700), which
+  // would prevent the named sudo user from traversing this directory. Chmod
+  // explicitly to ensure the directory is always world-executable.
+  fs.chmodSync(tmpDir, 0o755);
+  const stagedPath = path.join(tmpDir, 'privileged-worker.js');
+  fs.copyFileSync(workerPath, stagedPath);
+  fs.chmodSync(stagedPath, 0o644);
+  return { stagedPath, tmpDir };
+}
+
 function runPrivilegedWorker(
   sudo: true | string,
   ops: WriteOp[],
@@ -93,32 +112,18 @@ function runPrivilegedWorker(
   const nodeExec = resolveNodeExec(sudo);
   let cleanup: (() => void) | undefined;
 
-  if (typeof sudo === 'string' && fs.existsSync(workerPath)) {
-    // Named-user sudo: the target user may not be able to read the worker
-    // from a private project directory. Copy it to a world-readable temp
-    // path so sudo -u <user> can exec it.
-    // Use a private subdirectory so the worker file cannot be swapped out by
-    // another unprivileged process between the copy and the sudo exec.
-    const tmpWorkerDir = path.join(
-      WORLD_TMP,
-      `.avanti-worker-${crypto.randomBytes(5).toString('hex')}`,
-    );
-    fs.mkdirSync(tmpWorkerDir, { mode: 0o755 });
+  if (typeof sudo === 'string') {
+    // Named-user sudo: copy the worker to a world-readable temp location so
+    // sudo -u <user> can exec it regardless of home-directory permissions.
+    const staged = stageWorkerForSudo(workerPath);
     cleanup = () => {
       try {
-        fs.rmSync(tmpWorkerDir, { recursive: true, force: true });
+        fs.rmSync(staged.tmpDir, { recursive: true, force: true });
       } catch {
         // best-effort cleanup
       }
     };
-    // mkdirSync mode is masked by the caller's umask (e.g. 077 → 0700), which
-    // would prevent the named sudo user from traversing this directory. Chmod
-    // explicitly to ensure the directory is always world-executable.
-    fs.chmodSync(tmpWorkerDir, 0o755);
-    const tmpWorker = path.join(tmpWorkerDir, 'privileged-worker.js');
-    fs.copyFileSync(workerPath, tmpWorker);
-    fs.chmodSync(tmpWorker, 0o644);
-    resolvedWorkerPath = tmpWorker;
+    resolvedWorkerPath = staged.stagedPath;
   }
 
   let result;
@@ -134,7 +139,7 @@ function runPrivilegedWorker(
         }),
         stdio: ['pipe', 'pipe', 'inherit'],
         encoding: 'utf8',
-        maxBuffer: 10 * 1024 * 1024,
+        maxBuffer: 100 * 1024 * 1024,
       },
     );
   } finally {
@@ -142,6 +147,15 @@ function runPrivilegedWorker(
   }
 
   if (result.error) {
+    if (
+      (result.error as NodeJS.ErrnoException).code ===
+      'ERR_CHILD_PROCESS_STDIO_MAXBUFFER'
+    ) {
+      throw new Error(
+        'privileged worker stdout exceeded the 100 MiB buffer — batch is too large; use SudoWorkerSession for large read ops',
+        { cause: result.error },
+      );
+    }
     throw result.error;
   }
   if (result.status !== 0) {
@@ -176,6 +190,7 @@ function runPrivilegedWorker(
     }
     results = parsed.results;
   } catch (e) {
+    if (!(e instanceof SyntaxError)) throw e;
     throw new Error(
       `privileged worker returned non-JSON output: ${result.stdout}`,
       { cause: e },
@@ -665,14 +680,12 @@ export class SudoWorkerSession {
     const nodeExec = resolveNodeExec(sudo);
 
     let resolvedWorkerPath = workerPath;
-    if (typeof sudo === 'string' && fs.existsSync(workerPath)) {
-      const tmpDir = fs.mkdtempSync(path.join(WORLD_TMP, 'avanti-worker-'));
-      this.tmpDir = tmpDir;
-      fs.chmodSync(tmpDir, 0o755);
-      const tmpWorker = path.join(tmpDir, 'privileged-worker.js');
-      fs.copyFileSync(workerPath, tmpWorker);
-      fs.chmodSync(tmpWorker, 0o644);
-      resolvedWorkerPath = tmpWorker;
+    if (typeof sudo === 'string') {
+      // Named-user sudo: copy the worker to a world-readable temp location so
+      // sudo -u <user> can exec it regardless of home-directory permissions.
+      const staged = stageWorkerForSudo(workerPath);
+      this.tmpDir = staged.tmpDir;
+      resolvedWorkerPath = staged.stagedPath;
     }
 
     this.proc = spawn(

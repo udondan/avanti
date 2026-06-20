@@ -848,7 +848,7 @@ export function dispatch(
       return {
         kind: 'read',
         contentB64: Buffer.from(target).toString('base64'),
-        isSymlink: false,
+        isSymlink: true,
       };
     }
     case 'stat-read': {
