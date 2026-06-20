@@ -170,9 +170,12 @@ function getExistingMode(filePath: string): string | undefined {
 // to 0000. Strip the prefix so both '0644' and '0o644' parse correctly.
 function parseMode(modeStr: string): number {
   const stripped = modeStr.replace(/^0[oO]/, '');
-  const result = parseInt(stripped, 8);
-  if (isNaN(result)) throw new Error(`invalid mode: ${modeStr}`);
-  return result;
+  // Validate before parsing: parseInt stops at the first non-octal character
+  // and returns the partial result (e.g. "644abc" → 420), which would
+  // silently set wrong permissions. The isNaN guard only catches the case
+  // where the FIRST character is invalid.
+  if (!/^[0-7]+$/.test(stripped)) throw new Error(`invalid mode: ${modeStr}`);
+  return parseInt(stripped, 8);
 }
 
 // fs.fchmodSync is not implemented on Windows — no-op there since the worker

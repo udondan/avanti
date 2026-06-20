@@ -55,7 +55,8 @@ function resolveNodeExec(sudo: true | string): string {
   for (const dir of (process.env.PATH ?? '').split(path.delimiter)) {
     if (dir.startsWith(home)) continue;
     const candidate = path.join(dir, 'node');
-    if (fs.existsSync(candidate)) return candidate;
+    if (fs.statSync(candidate, { throwIfNoEntry: false })?.isFile())
+      return candidate;
   }
   // No system node found in PATH; 'node' will be resolved by sudo's secure_path.
   // Requires Node.js to be installed system-wide (e.g. apt install nodejs).
@@ -243,14 +244,18 @@ export async function sudoAtomicWrite(
   const mask = process.umask();
   const defaultMode = (0o666 & ~mask).toString(8).padStart(4, '0');
 
-  // Hoist UID lookup: buildTrustedUids spawns `id -u <user>` — dedupe per identity.
+  // Hoist UID lookup: buildTrustedUids spawns `id -u <user>` — dedupe per
+  // identity and reuse session.trustedUids when a session already holds them.
   const trustedUidsBySudo = new Map<true | string, Set<number>>();
   const allSudoIds = new Set<true | string>([
     ...targets.map((t) => t.sudo),
     ...chmodTargets.map((t) => t.sudo),
   ]);
   for (const sudoId of allSudoIds) {
-    trustedUidsBySudo.set(sudoId, buildTrustedUids(sudoId));
+    trustedUidsBySudo.set(
+      sudoId,
+      sessions?.get(sudoId)?.trustedUids ?? buildTrustedUids(sudoId),
+    );
   }
 
   // Validate ancestor safety for all targets before any privileged work.
@@ -744,6 +749,7 @@ export class SudoWorkerSession {
       const timer = setTimeout(() => {
         if (!this.pending) return;
         this.pending = null;
+        this.closed = true;
         this.proc.kill('SIGTERM');
         reject(new Error('SudoWorkerSession: exec() timed out'));
       }, timeoutMs);

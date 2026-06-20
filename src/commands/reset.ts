@@ -168,7 +168,12 @@ export function resetCommand(): Command {
         if (process.platform !== 'win32') {
           if (sudoTargets.length > 0)
             await sudoAtomicWrite(sudoTargets, [], sudoSessions);
-          await sudoAtomicDelete([...sudoDeletions], false, sudoSessions);
+          await sudoAtomicDelete([...sudoDeletions], true, sudoSessions);
+        } else if (sudoTargets.length > 0 || sudoDeletions.size > 0) {
+          const n = sudoTargets.length + sudoDeletions.size;
+          console.warn(
+            `Warning: ${n} privileged file(s) were not reset — sudo is not supported on Windows.`,
+          );
         }
         atomicWrite(regularTargets, deletions);
         console.log(

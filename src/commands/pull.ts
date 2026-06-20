@@ -36,7 +36,6 @@ import {
 import {
   atomicWrite,
   getSudoFileMode,
-  sudoAtomicDelete,
   sudoAtomicRead,
   sudoAtomicWrite,
   sudoFileExists,
@@ -1654,18 +1653,6 @@ export function pullCommand(): Command {
                   console.warn(
                     `Warning: could not delete ${paths[di]}: ${deleteResults[di].error}`,
                   );
-                }
-              }
-            } else {
-              const batch: Array<[string, true | string]> = paths.map((p) => [
-                p,
-                sv,
-              ]);
-              const deleted = await sudoAtomicDelete(batch, true, sudoSessions);
-              for (const p of paths) {
-                if (deleted.has(p)) {
-                  effectivelyDeleted.add(p);
-                  effectivelyCleaned.add(p);
                 }
               }
             }
