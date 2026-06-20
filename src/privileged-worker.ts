@@ -989,8 +989,7 @@ if (require.main === module) {
     let aborted = false;
     for (const op of request.ops) {
       if (aborted) {
-        results.push({ ok: false, error: 'aborted due to previous failure' });
-        continue;
+        break;
       }
       try {
         // Validate required fields before dispatching so errors are actionable.
