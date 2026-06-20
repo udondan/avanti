@@ -62,6 +62,35 @@ function resolveNodeExec(sudo: true | string): string {
   return 'node';
 }
 
+// Resolves the compiled privileged-worker.js path and throws if it does not
+// exist (i.e. the user forgot to run `mise run build`).
+function resolveWorkerPath(): string {
+  const workerPath = __filename.endsWith('.ts')
+    ? path.resolve(__dirname, '..', 'dist', 'privileged-worker.js')
+    : path.join(__dirname, 'privileged-worker.js');
+  if (!fs.existsSync(workerPath)) {
+    throw new Error(
+      `privileged worker not found at ${workerPath}` +
+        (__filename.endsWith('.ts') ? '; run `mise run build` first' : ''),
+    );
+  }
+  return workerPath;
+}
+
+// Module-level registry of staged worker temp dirs. A single 'exit' handler
+// removes any dirs still present at process shutdown (covers SIGTERM and
+// normal exit; SIGKILL is uninterceptable and cannot be cleaned up).
+const stagedWorkerDirs = new Set<string>();
+process.on('exit', () => {
+  for (const d of stagedWorkerDirs) {
+    try {
+      fs.rmSync(d, { recursive: true, force: true });
+    } catch {
+      // best-effort
+    }
+  }
+});
+
 // Copies the privileged-worker script to a world-readable temp directory so
 // that `sudo -u <user>` can reach and exec it regardless of the calling user's
 // home-directory permissions. Returns the staged path and temp directory;
@@ -71,6 +100,7 @@ function stageWorkerForSudo(workerPath: string): {
   tmpDir: string;
 } {
   const tmpDir = fs.mkdtempSync(path.join(WORLD_TMP, 'avanti-worker-'));
+  stagedWorkerDirs.add(tmpDir); // tracked for cleanup on abnormal exit
   // mkdtempSync mode is masked by the caller's umask (e.g. 077 → 0700), which
   // would prevent the named sudo user from traversing this directory. Chmod
   // explicitly to ensure the directory is always world-executable.
@@ -95,19 +125,7 @@ function runPrivilegedWorker(
     throw new Error('sudo is not supported on Windows');
   }
   // When running via tsx (TypeScript source, __filename ends in .ts), the
-  // compiled worker is one level up in dist/. In production (dist/writer.js),
-  // the worker is a sibling.
-  const workerPath = __filename.endsWith('.ts')
-    ? path.resolve(__dirname, '..', 'dist', 'privileged-worker.js')
-    : path.join(__dirname, 'privileged-worker.js');
-
-  if (!fs.existsSync(workerPath)) {
-    throw new Error(
-      `privileged worker not found at ${workerPath}` +
-        (__filename.endsWith('.ts') ? '; run `mise run build` first' : ''),
-    );
-  }
-
+  const workerPath = resolveWorkerPath();
   let resolvedWorkerPath = workerPath;
   const nodeExec = resolveNodeExec(sudo);
   let cleanup: (() => void) | undefined;
@@ -117,6 +135,7 @@ function runPrivilegedWorker(
     // sudo -u <user> can exec it regardless of home-directory permissions.
     const staged = stageWorkerForSudo(workerPath);
     cleanup = () => {
+      stagedWorkerDirs.delete(staged.tmpDir);
       try {
         fs.rmSync(staged.tmpDir, { recursive: true, force: true });
       } catch {
@@ -152,7 +171,7 @@ function runPrivilegedWorker(
       'ERR_CHILD_PROCESS_STDIO_MAXBUFFER'
     ) {
       throw new Error(
-        'privileged worker stdout exceeded the 100 MiB buffer — batch is too large; use SudoWorkerSession for large read ops',
+        'privileged worker stdout exceeded the 100 MiB maxBuffer — batch is too large; use SudoWorkerSession for large read ops',
         { cause: result.error },
       );
     }
@@ -416,30 +435,6 @@ export async function sudoAtomicDelete(
   return succeeded;
 }
 
-export function sudoRead(sudo: true | string, filePath: string): Buffer | null {
-  // Use sudo cat with piped stdout — no temp file, no world-writable surface,
-  // no TOCTOU. maxBuffer is set high enough to cover any config file avanti
-  // would manage (individual config files are always well under 100 MB).
-  const absPath = path.resolve(filePath);
-  const result = spawnSync(
-    'sudo',
-    [...sudoUserArgs(sudo), 'cat', '--', absPath],
-    { stdio: ['inherit', 'pipe', 'inherit'], maxBuffer: 100 * 1024 * 1024 },
-  );
-  if (result.error) {
-    // Distinguish buffer overflow (file too large to manage via sudo) from a
-    // normal read failure (e.g. file absent, permission denied by sudo policy).
-    if (result.error.message.includes('maxBuffer length exceeded')) {
-      throw new Error(
-        `${filePath} exceeds the 100 MiB sudo read limit — avanti is designed for config files, not large binaries`,
-      );
-    }
-    return null;
-  }
-  if (result.status !== 0) return null;
-  return result.stdout;
-}
-
 export function sudoFileExists(
   sudo: true | string,
   targetPath: string,
@@ -477,20 +472,6 @@ export function sudoIsDirectory(
   );
   if (r.error) throw new Error(`sudo test -d failed: ${r.error.message}`);
   return r.status === 0;
-}
-
-export function sudoReadlink(
-  sudo: true | string,
-  targetPath: string,
-): string | null {
-  const r = spawnSync(
-    'sudo',
-    [...sudoUserArgs(sudo), 'readlink', path.resolve(targetPath)],
-    { stdio: ['inherit', 'pipe', 'ignore'] },
-  );
-  if (r.error) throw new Error(`sudo readlink failed: ${r.error.message}`);
-  if (r.status !== 0) return null;
-  return r.stdout.toString().trim();
 }
 
 // Batches multiple privileged reads into a single worker invocation per
@@ -667,16 +648,7 @@ export class SudoWorkerSession {
     this.sudo = sudo;
     this.trustedUids = buildTrustedUids(sudo);
 
-    const workerPath = __filename.endsWith('.ts')
-      ? path.resolve(__dirname, '..', 'dist', 'privileged-worker.js')
-      : path.join(__dirname, 'privileged-worker.js');
-    if (!fs.existsSync(workerPath)) {
-      throw new Error(
-        `privileged worker not found at ${workerPath}` +
-          (__filename.endsWith('.ts') ? '; run `mise run build` first' : ''),
-      );
-    }
-
+    const workerPath = resolveWorkerPath();
     const nodeExec = resolveNodeExec(sudo);
 
     let resolvedWorkerPath = workerPath;
@@ -748,6 +720,7 @@ export class SudoWorkerSession {
     continueOnError = false,
     timeoutMs = 30_000,
   ): Promise<WorkerResult[]> {
+    if (this.closed) throw new Error('SudoWorkerSession: session is closed');
     if (this.pending)
       throw new Error(
         'SudoWorkerSession: concurrent exec() calls are not supported',
@@ -792,6 +765,7 @@ export class SudoWorkerSession {
     t.unref();
     this.proc.once('close', () => clearTimeout(t));
     if (this.tmpDir) {
+      stagedWorkerDirs.delete(this.tmpDir);
       try {
         fs.rmSync(this.tmpDir, { recursive: true, force: true });
       } catch {

@@ -120,7 +120,7 @@ function readFileToBase64(resolvedPath: string, label: string): string {
     }
     if (st.size > MAX_READ) {
       throw new Error(
-        `${label}: ${resolvedPath} exceeds the 100 MiB read limit`,
+        `${label}: ${resolvedPath} exceeds the 75 MiB read limit`,
       );
     }
     // Read until EOF rather than st.size bytes: st.size may be 0 for special
@@ -134,7 +134,7 @@ function readFileToBase64(resolvedPath: string, label: string): string {
       total += n;
       if (total > MAX_READ) {
         throw new Error(
-          `${label}: ${resolvedPath} exceeds the 100 MiB read limit`,
+          `${label}: ${resolvedPath} exceeds the 75 MiB read limit`,
         );
       }
       chunks.push(Buffer.from(chunk.subarray(0, n)));
@@ -765,7 +765,12 @@ function checkAncestorsSafeAsRoot(
   }
 }
 
-const MAX_READ = 100 * 1024 * 1024;
+// Base64 encoding inflates raw bytes by ~33%, so a 100 MiB file produces
+// ~133 MiB of JSON output. runPrivilegedWorker uses spawnSync with a 100 MiB
+// maxBuffer, meaning any file larger than ~75 MiB would overflow the buffer
+// before the parent can read it. Cap reads at 75 MiB so the base64 JSON stays
+// comfortably under 100 MiB. SudoWorkerSession (streaming) is unaffected.
+const MAX_READ = 75 * 1024 * 1024;
 
 export function dispatch(
   op: WriteOp,
@@ -870,11 +875,25 @@ export function dispatch(
           // Fall through: path is now a regular file; read its content.
         }
       }
-      return {
-        kind: 'read',
-        contentB64: readFileToBase64(resolvedPath, 'stat-read'),
-        isSymlink: false,
-      };
+      // readFileToBase64 opens with O_NOFOLLOW. If the path was replaced with a
+      // symlink between lstatSync (above) and openSync (inside readFileToBase64),
+      // we get ELOOP. Re-read the link target and return it as a symlink instead
+      // of propagating a fatal error that would abort the pull.
+      try {
+        return {
+          kind: 'read',
+          contentB64: readFileToBase64(resolvedPath, 'stat-read'),
+          isSymlink: false,
+        };
+      } catch (e) {
+        if ((e as NodeJS.ErrnoException).code !== 'ELOOP') throw e;
+        const target = fs.readlinkSync(resolvedPath);
+        return {
+          kind: 'read',
+          contentB64: Buffer.from(target).toString('base64'),
+          isSymlink: true,
+        };
+      }
     }
     default: {
       const _exhaustive: never = op;

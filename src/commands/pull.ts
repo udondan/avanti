@@ -1063,8 +1063,13 @@ export function pullCommand(): Command {
             }
           }
         }
-        for (const id of earlyIds)
-          sudoSessions.set(id, new SudoWorkerSession(id));
+        try {
+          for (const id of earlyIds)
+            sudoSessions.set(id, new SudoWorkerSession(id));
+        } catch (err) {
+          for (const session of sudoSessions.values()) session.close();
+          throw err;
+        }
       }
 
       // Batch all pre-write reads for unreadable sudo targets into one

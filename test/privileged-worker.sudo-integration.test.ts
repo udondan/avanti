@@ -2,7 +2,11 @@ import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 import { describe, it, expect, beforeEach } from 'vitest';
-import { sudoAtomicWrite, sudoRead, SudoWriteTarget } from '../src/writer';
+import {
+  sudoAtomicWrite,
+  sudoAtomicRead,
+  SudoWriteTarget,
+} from '../src/writer';
 
 // This test only runs when AVANTI_SUDO_TEST_DIR is set to a root-owned directory.
 // In CI the directory is /usr/local/avanti-sudo-test (created by the workflow step).
@@ -58,11 +62,12 @@ describe.skipIf(!sudoTestDir || process.platform === 'win32')(
           body = fs.readFileSync(t.targetPath, 'utf8');
         } catch {
           // If the file is root-owned and not world-readable, or the directory
-          // is unreadable (e.g. mode 700), try reading it via sudoRead.
-          const buf = sudoRead(true, t.targetPath);
-          if (buf !== null) {
-            body = buf.toString('utf8');
-          }
+          // is unreadable (e.g. mode 700), read it via the batch privileged reader.
+          const reads = await sudoAtomicRead([
+            { filePath: t.targetPath, sudo: true },
+          ]);
+          const r = reads.get(t.targetPath);
+          if (r) body = Buffer.from(r.contentB64, 'base64').toString('utf8');
         }
         if (body !== null) {
           expect(body).toBe(t.content.toString('utf8'));
@@ -125,8 +130,11 @@ describe.skipIf(
     try {
       body = fs.readFileSync(targetPath, 'utf8');
     } catch {
-      const buf = sudoRead(sudoNamedUser!, targetPath);
-      if (buf !== null) body = buf.toString('utf8');
+      const reads = await sudoAtomicRead([
+        { filePath: targetPath, sudo: sudoNamedUser! },
+      ]);
+      const r = reads.get(targetPath);
+      if (r) body = Buffer.from(r.contentB64, 'base64').toString('utf8');
     }
     expect(body).toBe(content);
 

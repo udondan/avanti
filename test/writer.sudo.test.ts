@@ -3,8 +3,6 @@ import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import {
   sudoAtomicDelete,
   sudoAtomicWrite,
-  sudoRead,
-  sudoReadlink,
   sudoFileExists,
   sudoUserArgs,
   SudoWorkerSession,
@@ -79,71 +77,6 @@ describe('sudoUserArgs', () => {
 });
 
 const isWindows = process.platform === 'win32';
-
-describe('sudoRead', () => {
-  it('returns stdout buffer on success', () => {
-    mockSpawnSync.mockReturnValue(okResult('hello'));
-    const result = sudoRead(true, '/etc/passwd');
-    expect(result?.toString()).toBe('hello');
-  });
-
-  it('returns null when cat fails', () => {
-    mockSpawnSync.mockReturnValue(failResult());
-    expect(sudoRead(true, '/etc/passwd')).toBeNull();
-  });
-
-  it('uses cat with -u args for named user', () => {
-    mockSpawnSync.mockReturnValue(okResult('data'));
-    sudoRead('nobody', '/tmp/file');
-    expect(mockSpawnSync).toHaveBeenCalledWith(
-      'sudo',
-      expect.arrayContaining(['-u', 'nobody', 'cat', '--']),
-      expect.any(Object),
-    );
-  });
-});
-
-describe('sudoReadlink', () => {
-  it('returns trimmed symlink target on success', () => {
-    mockSpawnSync.mockReturnValue(okResult('/etc/hosts\n'));
-    expect(sudoReadlink(true, '/etc/link')).toBe('/etc/hosts');
-  });
-
-  it('returns null when readlink exits non-zero', () => {
-    mockSpawnSync.mockReturnValue(failResult());
-    expect(sudoReadlink(true, '/etc/link')).toBeNull();
-  });
-
-  it('calls sudo readlink with resolved path for root', () => {
-    mockSpawnSync.mockReturnValue(okResult('/target'));
-    sudoReadlink(true, '/etc/link');
-    expect(mockSpawnSync).toHaveBeenCalledWith(
-      'sudo',
-      ['readlink', path.resolve('/etc/link')],
-      { stdio: ['inherit', 'pipe', 'ignore'] },
-    );
-  });
-
-  it('calls sudo -u <name> readlink for a named user', () => {
-    mockSpawnSync.mockReturnValue(okResult('/target'));
-    sudoReadlink('nobody', '/etc/link');
-    expect(mockSpawnSync).toHaveBeenCalledWith(
-      'sudo',
-      ['-u', 'nobody', 'readlink', path.resolve('/etc/link')],
-      { stdio: ['inherit', 'pipe', 'ignore'] },
-    );
-  });
-
-  it('throws when spawnSync returns an error', () => {
-    mockSpawnSync.mockReturnValue({
-      ...failResult(),
-      error: new Error('ENOENT'),
-    });
-    expect(() => sudoReadlink(true, '/etc/link')).toThrow(
-      'sudo readlink failed',
-    );
-  });
-});
 
 describe('sudoFileExists', () => {
   it('returns true when test -e exits 0', () => {
