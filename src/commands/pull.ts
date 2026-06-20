@@ -1068,7 +1068,8 @@ export function pullCommand(): Command {
             sudoSessions.set(id, new SudoWorkerSession(id));
         } catch (err) {
           for (const session of sudoSessions.values()) session.close();
-          throw err;
+          console.error(err instanceof Error ? err.message : String(err));
+          process.exit(2);
         }
       }
 
@@ -1308,7 +1309,8 @@ export function pullCommand(): Command {
             sudoSessions.set(id, new SudoWorkerSession(id));
         } catch (err) {
           for (const session of sudoSessions.values()) session.close();
-          throw err;
+          console.error(err instanceof Error ? err.message : String(err));
+          process.exit(2);
         }
       }
 

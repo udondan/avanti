@@ -77,17 +77,24 @@ function resolveWorkerPath(): string {
   return workerPath;
 }
 
+// Deregisters dir from stagedWorkerDirs and removes it from disk.
+// Called from normal cleanup paths and the process.on('exit') fallback.
+function cleanupWorkerDir(dir: string): void {
+  stagedWorkerDirs.delete(dir);
+  try {
+    fs.rmSync(dir, { recursive: true, force: true });
+  } catch {
+    // best-effort
+  }
+}
+
 // Module-level registry of staged worker temp dirs. A single 'exit' handler
 // removes any dirs still present at process shutdown (covers SIGTERM and
 // normal exit; SIGKILL is uninterceptable and cannot be cleaned up).
 const stagedWorkerDirs = new Set<string>();
 process.on('exit', () => {
-  for (const d of stagedWorkerDirs) {
-    try {
-      fs.rmSync(d, { recursive: true, force: true });
-    } catch {
-      // best-effort
-    }
+  for (const d of [...stagedWorkerDirs]) {
+    cleanupWorkerDir(d);
   }
 });
 
@@ -134,14 +141,7 @@ function runPrivilegedWorker(
     // Named-user sudo: copy the worker to a world-readable temp location so
     // sudo -u <user> can exec it regardless of home-directory permissions.
     const staged = stageWorkerForSudo(workerPath);
-    cleanup = () => {
-      stagedWorkerDirs.delete(staged.tmpDir);
-      try {
-        fs.rmSync(staged.tmpDir, { recursive: true, force: true });
-      } catch {
-        // best-effort cleanup
-      }
-    };
+    cleanup = () => cleanupWorkerDir(staged.tmpDir);
     resolvedWorkerPath = staged.stagedPath;
   }
 
@@ -334,22 +334,19 @@ export async function sudoAtomicWrite(
   }
 
   // Group ops by sudo identity; one worker invocation per group.
+  // Track the index of the first chmod op per identity while building the
+  // groups — avoids a redundant findIndex scan afterward.
   const groups = new Map<true | string, WriteOp[]>();
   for (const { sudo, op } of targetOps) {
     const existing = groups.get(sudo);
     if (existing) {
+      if (op.type === 'chmod' && !chmodStartIndex.has(sudo)) {
+        chmodStartIndex.set(sudo, existing.length);
+      }
       existing.push(op);
     } else {
+      if (op.type === 'chmod') chmodStartIndex.set(sudo, 0);
       groups.set(sudo, [op]);
-    }
-  }
-  // Determine where chmod ops start within each identity's op list.
-  for (const t of chmodTargets) {
-    if (!chmodStartIndex.has(t.sudo)) {
-      const ops = groups.get(t.sudo)!;
-      // Find first chmod op in this identity's list.
-      const idx = ops.findIndex((o) => o.type === 'chmod');
-      chmodStartIndex.set(t.sudo, idx >= 0 ? idx : ops.length);
     }
   }
 
@@ -534,10 +531,19 @@ export async function sudoAtomicRead(
           contentB64: r.contentB64,
           isSymlink: r.isSymlink,
         });
-      } else if (r && !r.ok && r.code !== 'ENOENT') {
-        // Non-absence errors (e.g. file too large, not a regular file) must not
-        // be silently treated as missing — the write would proceed without
-        // capturing v0 content, risking data loss.
+      } else if (
+        r &&
+        !r.ok &&
+        r.code !== 'ENOENT' &&
+        r.code !== 'EACCES' &&
+        r.code !== 'EPERM'
+      ) {
+        // Non-absence, non-permission errors (e.g. file too large, not a
+        // regular file) must not be silently treated as missing — the write
+        // would proceed without capturing v0 content, risking data loss.
+        // EACCES/EPERM mean the worker cannot read the file (e.g. named-user
+        // cannot traverse a parent directory); treat as null so the pull
+        // proceeds without idempotency pre-read rather than aborting.
         throw new Error(
           `privileged read of ${item.filePath} failed: ${r.error}`,
         );
@@ -697,6 +703,15 @@ export class SudoWorkerSession {
       p?.reject(err);
     });
 
+    // EPIPE is emitted on stdin when the child exits while we are writing to
+    // it. Without a listener Node.js would throw an unhandled exception and
+    // crash the CLI process. Reject the in-flight request instead.
+    this.proc.stdin!.on('error', (err) => {
+      const p = this.pending;
+      this.pending = null;
+      p?.reject(err);
+    });
+
     this.proc.on('close', (code) => {
       const p = this.pending;
       this.pending = null;
@@ -765,12 +780,7 @@ export class SudoWorkerSession {
     t.unref();
     this.proc.once('close', () => clearTimeout(t));
     if (this.tmpDir) {
-      stagedWorkerDirs.delete(this.tmpDir);
-      try {
-        fs.rmSync(this.tmpDir, { recursive: true, force: true });
-      } catch {
-        /* best-effort */
-      }
+      cleanupWorkerDir(this.tmpDir);
     }
   }
 }

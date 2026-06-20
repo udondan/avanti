@@ -397,6 +397,7 @@ describe.skipIf(isWindows)('SudoWorkerSession via sudoAtomicWrite', () => {
         return true;
       }),
       end: vi.fn(),
+      on: vi.fn(),
     };
     const fakeStdout = new EventEmitter();
     const fakeProc = Object.assign(new EventEmitter(), {

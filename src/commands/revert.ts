@@ -260,8 +260,14 @@ export function revertCommand(): Command {
             ...sudoTargets.map((t) => t.sudo),
             ...[...sudoDeletions.values()],
           ]);
-          for (const id of sudoIds)
-            sudoSessions.set(id, new SudoWorkerSession(id));
+          try {
+            for (const id of sudoIds)
+              sudoSessions.set(id, new SudoWorkerSession(id));
+          } catch (err) {
+            for (const session of sudoSessions.values()) session.close();
+            console.error(err instanceof Error ? err.message : String(err));
+            process.exit(2);
+          }
         }
 
         try {
