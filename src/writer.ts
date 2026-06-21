@@ -63,6 +63,10 @@ function resolveNodeExec(sudo: true | string): string {
   // with a SyntaxError surfaced as "privileged worker failed (exit 1)". Ensure
   // a compatible Node.js is installed system-wide when using named-user sudo
   // with an nvm/fnm/mise-managed Node.
+  // Allow an explicit override so users on systems with no system-wide Node
+  // (e.g. developer machines that use nvm/fnm/mise exclusively) can still use
+  // named-user sudo without installing a system-wide Node.js.
+  if (process.env.AVANTI_NODE_EXEC) return process.env.AVANTI_NODE_EXEC;
   // Scan only known-safe system directories, not all of PATH. PATH may contain
   // world-writable directories under an attacker's control; returning a binary
   // from one of those would cause sudo -u <user> to execute attacker code.
@@ -86,7 +90,7 @@ function resolveNodeExec(sudo: true | string): string {
   }
   throw new Error(
     `No Node.js binary found in ${SAFE_DIRS.join(', ')} for named-user sudo ('${sudo}'). ` +
-      `Install Node.js system-wide (e.g. apt install nodejs) so sudo can resolve it.`,
+      `Install Node.js system-wide (e.g. apt install nodejs) or set AVANTI_NODE_EXEC to the full path of a compatible Node.js binary.`,
   );
 }
 

@@ -278,7 +278,7 @@ function backupRegularFile(
     while ((bytesRead = fs.readSync(sfd, buf, 0, buf.length, null)) > 0) {
       fs.writeSync(bfd, buf, 0, bytesRead);
     }
-    safeFchmodSync(bfd, srcStat.mode & 0o0777);
+    safeFchmodSync(bfd, srcStat.mode & 0o7777);
     fs.closeSync(bfd);
     bfd = undefined;
     fs.closeSync(sfd);
@@ -402,14 +402,20 @@ export function handleWriteInPlace(
   if (trustedUids)
     checkAncestorsSafeAsRoot(resolvedTarget, trustedUids, 'destination');
 
-  // Stage backup to a temp path; commit (rename) only after write succeeds so
-  // a failed write does not clobber the previous backup.
   let backupTmpPath: string | undefined;
   if (op.backupPath) {
     const resolvedBackup = path.resolve(op.backupPath);
     const backupDir = path.dirname(resolvedBackup);
     backupTmpPath = path.join(backupDir, `.avanti-backup-${randomHex()}`);
     backupRegularFile(resolvedTarget, backupTmpPath, trustedUids);
+    // Commit the backup to its final path BEFORE truncating the target.
+    // If SIGTERM kills the worker mid-write, the backup exists at a known,
+    // user-discoverable location rather than an opaque temp path. Committing
+    // after the write would leave the backup at backupTmpPath — the finally
+    // block would not delete it (backupTmpPath is in the user's filesystem, not
+    // the worker tmpDir), but the user would not know where to find it.
+    fs.renameSync(backupTmpPath, resolvedBackup);
+    backupTmpPath = undefined;
   }
 
   // Refuse symlinks (would follow to unintended target).
@@ -655,13 +661,9 @@ export function handleWriteInPlace(
         throw err;
       }
     }
-    // Write succeeded — commit the staged backup atomically.
-    if (backupTmpPath) {
-      fs.renameSync(backupTmpPath, path.resolve(op.backupPath!));
-      backupTmpPath = undefined;
-    }
   } finally {
-    // Write failed (or backup commit failed) — clean up the uncommitted temp backup.
+    // Safety net: clean up any uncommitted backup temp if the pre-write rename
+    // failed (EROFS, EXDEV, etc.) and left backupTmpPath defined.
     if (backupTmpPath) {
       try {
         fs.unlinkSync(backupTmpPath);
