@@ -525,8 +525,11 @@ describe('history integration', () => {
           fakeSudoBin,
           // Intercept stat calls used by the ancestor safety checks and return
           // safe values (mode 755, UID 0) so the test works under world-writable
-          // tmpdir on Linux. All other commands are passed through unchanged.
-          `#!/bin/sh\necho "$@" >> "${fakeSudoLog}"\n[ "$1" = "-v" ] && exit 0\nif [ "$1" = "stat" ]; then\n  case "$*" in\n    *%u*) echo "0"; exit 0 ;;\n    *%a*|*%Lp*) echo "755"; exit 0 ;;\n  esac\nfi\nexec "$@"\n`,
+          // tmpdir on Linux. All other commands are passed through unchanged,
+          // but sudo options (-C <n>, -u <user>, etc.) are stripped before the
+          // exec so that the shell's exec builtin does not misinterpret them as
+          // its own options (e.g. exec -C 4 node ... would fail in POSIX sh).
+          `#!/bin/sh\necho "$@" >> "${fakeSudoLog}"\n[ "$1" = "-v" ] && exit 0\nif [ "$1" = "stat" ]; then\n  case "$*" in\n    *%u*) echo "0"; exit 0 ;;\n    *%a*|*%Lp*) echo "755"; exit 0 ;;\n  esac\nfi\nwhile [ "$#" -gt 0 ]; do\n  case "$1" in\n    -C|-u|-g|-D|-p|-U|-r|-t) shift 2 ;;\n    --) shift; break ;;\n    -*) shift ;;\n    *) break ;;\n  esac\ndone\nexec "$@"\n`,
         );
         chmodSync(fakeSudoBin, 0o755);
 

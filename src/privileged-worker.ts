@@ -1073,12 +1073,19 @@ if (require.main === module) {
       );
       process.exit(1);
     }
-    // net.Socket wraps a file descriptor as a readable stream; used here for
-    // the IPC data channel (fd 3) when stdin is reserved for sudo's TTY lookup.
+    // net.Socket wraps a file descriptor as a stream; used here for the IPC
+    // data channel (fd 3) when stdin is reserved for sudo's TTY lookup.
+    // readable: true, writable: true, allowHalfOpen: true — all three are
+    // required: setting writable: false causes Node.js to force-set
+    // allowHalfOpen: false, which makes the socket auto-destroy when the peer
+    // half-closes (e.g. on write-side constraints), causing ECONNRESET on the
+    // parent before the first request is processed. The worker never writes to
+    // this socket (readline only reads), so writable: true is harmless.
     inputStream = new net.Socket({
       fd: dataFd,
       readable: true,
-      writable: false,
+      writable: true,
+      allowHalfOpen: true,
     });
   } else if (reqFileArg) {
     inputStream = fs.createReadStream(reqFileArg.slice('--req-file='.length));
