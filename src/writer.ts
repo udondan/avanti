@@ -1222,16 +1222,33 @@ export class SudoWorkerSession {
         ops,
         continueOnError,
       };
-      this.dataIn!.write(JSON.stringify(request) + '\n', (err) => {
-        if (err) {
+      try {
+        this.dataIn!.write(JSON.stringify(request) + '\n', (err) => {
+          if (err) {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timer);
+            // Null pending first so close() does not double-reject with
+            // "session closed" and swallow the real write error.
+            this.pending = null;
+            this.close();
+            reject(err);
+          }
+        });
+      } catch (writeErr) {
+        // socket.write() can throw synchronously on a destroyed socket
+        // (ERR_STREAM_DESTROYED). Guard with settled so the timer does not
+        // also fire after we reject — it would otherwise linger for timeoutMs.
+        if (!settled) {
+          settled = true;
           clearTimeout(timer);
-          // Null pending first so close() does not double-reject with
-          // "session closed" and swallow the real write error.
           this.pending = null;
           this.close();
-          reject(err);
+          reject(
+            writeErr instanceof Error ? writeErr : new Error(String(writeErr)),
+          );
         }
-      });
+      }
     });
   }
 
