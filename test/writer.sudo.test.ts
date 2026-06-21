@@ -1,3 +1,4 @@
+import * as fs from 'fs';
 import * as path from 'path';
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import {
@@ -78,6 +79,30 @@ describe('sudoUserArgs', () => {
 
 const isWindows = process.platform === 'win32';
 
+// runPrivilegedWorker now writes the JSON request to a temp file and passes
+// its path as --req-file=<path> to the worker, keeping stdin as 'inherit' for
+// macOS sudo credential-cache lookup. This helper mocks spawnSync to capture
+// the req file content (which is synchronously readable during the mock
+// callback, before the finally block deletes it) and returns it as parsed JSON.
+function mockSpawnSyncCapturingReq(resultCount: number): {
+  getReq: () => { ops: unknown[] };
+} {
+  let captured: string | undefined;
+  mockSpawnSync.mockImplementation((cmd: string, args: readonly string[]) => {
+    if (cmd === 'sudo') {
+      const reqArg = (args as string[]).find((a) =>
+        a.startsWith('--req-file='),
+      );
+      if (reqArg) {
+        captured = fs.readFileSync(reqArg.slice('--req-file='.length), 'utf8');
+      }
+      return workerOkResult(resultCount);
+    }
+    return okResult('0'); // id -u calls from buildTrustedUids
+  });
+  return { getReq: () => JSON.parse(captured ?? 'null') as { ops: unknown[] } };
+}
+
 describe('sudoFileExists', () => {
   it('returns true when test -e exits 0', () => {
     mockSpawnSync.mockReturnValue(okResult());
@@ -132,12 +157,12 @@ describe.skipIf(isWindows)('sudoAtomicWrite', () => {
       ]),
     );
     expect(sudoCalls[0][2]).toMatchObject({
-      stdio: ['pipe', 'pipe', 'inherit'],
+      stdio: ['inherit', 'pipe', 'inherit'],
     });
   });
 
   it('encodes all ops in a single JSON input for the worker', async () => {
-    mockSpawnSync.mockReturnValue(workerOkResult(2));
+    const { getReq } = mockSpawnSyncCapturingReq(2);
 
     const targets: SudoWriteTarget[] = [
       { targetPath: '/etc/a.conf', content: Buffer.from('a'), sudo: true },
@@ -154,9 +179,9 @@ describe.skipIf(isWindows)('sudoAtomicWrite', () => {
       ([cmd]) => cmd === 'sudo',
     );
     expect(sudoCalls).toHaveLength(1);
-    const { ops } = JSON.parse(
-      (sudoCalls[0][2] as { input: string }).input,
-    ) as { ops: Array<{ type: string; targetPath: string }> };
+    const { ops } = getReq() as {
+      ops: Array<{ type: string; targetPath: string }>;
+    };
     expect(ops).toHaveLength(2);
     expect(ops[0]).toMatchObject({
       type: 'write-mv',
@@ -169,7 +194,7 @@ describe.skipIf(isWindows)('sudoAtomicWrite', () => {
   });
 
   it('encodes write-symlink ops without a contentSrc temp file', async () => {
-    mockSpawnSync.mockReturnValue(workerOkResult(1));
+    const { getReq } = mockSpawnSyncCapturingReq(1);
 
     const target: SudoWriteTarget = {
       targetPath: '/etc/link',
@@ -179,12 +204,9 @@ describe.skipIf(isWindows)('sudoAtomicWrite', () => {
     };
     await sudoAtomicWrite([target]);
 
-    const sudoCalls = mockSpawnSync.mock.calls.filter(
-      ([cmd]) => cmd === 'sudo',
-    );
-    const { ops } = JSON.parse(
-      (sudoCalls[0][2] as { input: string }).input,
-    ) as { ops: Array<{ type: string; symlinkTarget?: string }> };
+    const { ops } = getReq() as {
+      ops: Array<{ type: string; symlinkTarget?: string }>;
+    };
     expect(ops[0].type).toBe('write-symlink');
     expect(ops[0].symlinkTarget).toBe('/etc/hosts');
     expect((ops[0] as Record<string, unknown>).contentB64).toBeUndefined();
@@ -267,7 +289,7 @@ describe.skipIf(isWindows)('sudoAtomicWrite', () => {
   });
 
   it('passes a backupPath through to the op when specified', async () => {
-    mockSpawnSync.mockReturnValue(workerOkResult(1));
+    const { getReq } = mockSpawnSyncCapturingReq(1);
 
     const target: SudoWriteTarget = {
       targetPath: '/etc/test.conf',
@@ -277,12 +299,7 @@ describe.skipIf(isWindows)('sudoAtomicWrite', () => {
     };
     await sudoAtomicWrite([target]);
 
-    const sudoCalls = mockSpawnSync.mock.calls.filter(
-      ([cmd]) => cmd === 'sudo',
-    );
-    const { ops } = JSON.parse(
-      (sudoCalls[0][2] as { input: string }).input,
-    ) as { ops: Array<{ backupPath?: string }> };
+    const { ops } = getReq() as { ops: Array<{ backupPath?: string }> };
     expect(ops[0].backupPath).toBe('/etc/test.conf.bak');
   });
 });
@@ -294,7 +311,7 @@ describe.skipIf(isWindows)('sudoAtomicDelete', () => {
   });
 
   it('sends a delete op to the worker for a single path', async () => {
-    mockSpawnSync.mockReturnValue(workerOkResult(1));
+    const { getReq } = mockSpawnSyncCapturingReq(1);
 
     await sudoAtomicDelete([['/etc/stale.conf', true]]);
 
@@ -302,9 +319,9 @@ describe.skipIf(isWindows)('sudoAtomicDelete', () => {
       ([cmd]) => cmd === 'sudo',
     );
     expect(sudoCalls).toHaveLength(1);
-    const { ops } = JSON.parse(
-      (sudoCalls[0][2] as { input: string }).input,
-    ) as { ops: Array<{ type: string; targetPath: string }> };
+    const { ops } = getReq() as {
+      ops: Array<{ type: string; targetPath: string }>;
+    };
     expect(ops).toHaveLength(1);
     expect(ops[0]).toMatchObject({
       type: 'delete',
@@ -313,7 +330,7 @@ describe.skipIf(isWindows)('sudoAtomicDelete', () => {
   });
 
   it('batches multiple deletions with the same identity into one worker call', async () => {
-    mockSpawnSync.mockReturnValue(workerOkResult(3));
+    const { getReq } = mockSpawnSyncCapturingReq(3);
 
     await sudoAtomicDelete([
       ['/etc/a.conf', true],
@@ -325,9 +342,7 @@ describe.skipIf(isWindows)('sudoAtomicDelete', () => {
       ([cmd]) => cmd === 'sudo',
     );
     expect(sudoCalls).toHaveLength(1);
-    const { ops } = JSON.parse(
-      (sudoCalls[0][2] as { input: string }).input,
-    ) as { ops: Array<{ type: string }> };
+    const { ops } = getReq() as { ops: Array<{ type: string }> };
     expect(ops).toHaveLength(3);
     for (const op of ops) expect(op.type).toBe('delete');
   });
