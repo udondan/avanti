@@ -163,26 +163,34 @@ function cleanupWorkerDir(dir: string): void {
   }
 }
 
-// Module-level registry of staged worker temp dirs. The 'exit' handler fires
-// on normal exit and on explicit process.exit() calls. SIGTERM and SIGINT do
-// NOT trigger 'exit' unless a signal handler calls process.exit() first;
-// SIGKILL is uninterceptable and cannot be cleaned up.
-// Guard against duplicate registration: Vitest can re-evaluate modules between
-// test files, which would accumulate listeners and trigger MaxListenersExceededWarning.
-const stagedWorkerDirs = new Set<string>();
+// Use process-level Symbols to store the Sets so that all evaluations of this
+// module (e.g. Vitest re-importing between test files) share the exact same
+// Set instances. Module-level `const` Sets are re-created on each re-import,
+// but the exit/signal handlers (registered only once via _HANDLERS_KEY) capture
+// the FIRST evaluation's Sets via closure — new entries added after re-import
+// would be invisible to the handlers and leaked on process exit.
+const _DIRS_KEY = Symbol.for('avanti.writer.stagedWorkerDirs');
+const _SESSIONS_KEY = Symbol.for('avanti.writer.activeSudoSessions');
+const _proc = process as unknown as Record<symbol, unknown>;
+
+// Registry of staged worker temp dirs. The 'exit' handler fires on normal exit
+// and on explicit process.exit() calls. SIGTERM and SIGINT do NOT trigger
+// 'exit' unless a signal handler calls process.exit() first; SIGKILL is
+// uninterceptable and cannot be cleaned up.
+if (!_proc[_DIRS_KEY]) _proc[_DIRS_KEY] = new Set<string>();
+const stagedWorkerDirs = _proc[_DIRS_KEY] as Set<string>;
+
 // Tracks all live SudoWorkerSession instances so signal handlers can close them
 // before calling process.exit(1). This prevents write batches from completing
 // in the worker after the parent exits and leaving history in an inconsistent state.
-const activeSudoSessions = new Set<SudoWorkerSession>();
+if (!_proc[_SESSIONS_KEY]) _proc[_SESSIONS_KEY] = new Set<SudoWorkerSession>();
+const activeSudoSessions = _proc[_SESSIONS_KEY] as Set<SudoWorkerSession>;
+
 // Module-level flag prevents duplicate handler registration when Vitest
-// re-evaluates this module between test files without being affected by
-// other modules that may have already registered their own 'exit' listeners.
-// Use a process-level Symbol so the flag persists across Vitest module
-// re-evaluations: a module-level boolean resets to false on each re-import,
-// causing duplicate handler accumulation and MaxListenersExceededWarning.
+// re-evaluates this module between test files.
 const _HANDLERS_KEY = Symbol.for('avanti.writer.exitHandlersRegistered');
-if (!(process as unknown as Record<symbol, unknown>)[_HANDLERS_KEY]) {
-  (process as unknown as Record<symbol, unknown>)[_HANDLERS_KEY] = true;
+if (!_proc[_HANDLERS_KEY]) {
+  _proc[_HANDLERS_KEY] = true;
   process.on('exit', () => {
     for (const d of [...stagedWorkerDirs]) {
       cleanupWorkerDir(d);
@@ -216,8 +224,10 @@ function stageWorkerForSudo(workerPath: string): {
   // would prevent the named sudo user from traversing this directory. Chmod
   // explicitly to ensure the directory is always world-executable. Use 0o711
   // (not 0o755): the named user needs to traverse and exec the script but must
-  // not be able to list the directory — hiding the socket filename prevents
-  // other users from enumerating the IPC socket path.
+  // not be able to list the directory. Note: /proc/net/unix on Linux can still
+  // reveal the full socket path to any local user; the nonce handshake
+  // (256-bit random, verified before the connection is promoted) is the primary
+  // defense against a rogue process connecting to the socket.
   fs.chmodSync(tmpDir, 0o711);
   const stagedPath = path.join(tmpDir, 'privileged-worker.js');
   fs.copyFileSync(workerPath, stagedPath);
@@ -796,7 +806,7 @@ export async function sudoStatBatch(
       // Unexpected error codes (EIO, ESTALE, EREMOTE, …) must not be silently
       // mapped to exists=false: that would treat the target as a new file and
       // skip v0 capture, permanently breaking `avanti revert` with no warning.
-      if (!r.ok && !isDirectory && !isSpecialFile && r.code !== 'ENOENT') {
+      if (r && !r.ok && !isDirectory && !isSpecialFile && r.code !== 'ENOENT') {
         throw new Error(
           `stat-read failed for ${item.filePath}: ${r.error ?? r.code ?? 'unknown error'}`,
         );
@@ -892,10 +902,15 @@ export class SudoWorkerSession {
     //   - Named-user sudo: tmpDir (mode 0711) — created by prepareWorkerExec.
     //   - Root sudo: a fresh 0700 dir in WORLD_TMP, created here.
     // net.Server.listen() creates the socket with mode 0777 & ~umask (typically
-    // 0755 — world-connectable) before our chmodSync runs. Placing the socket
-    // inside a directory that only the invoking user can list or traverse closes
-    // that race window entirely — no other user can enumerate or connect to the
-    // socket regardless of the socket's own permissions.
+    // 0755 — world-connectable) before our chmodSync runs. For root sudo (0700),
+    // no other user can reach the socket at all. For named-user sudo (0711), the
+    // directory prevents filesystem enumeration but /proc/net/unix on Linux
+    // reveals the full socket path to any local user; the nonce handshake
+    // (256-bit random) and the server.on (not server.once) multi-accept design
+    // are the primary defenses: a rogue process that connects first will fail the
+    // nonce check and be destroyed, and the server keeps listening for the real
+    // worker. A full mitigation would require SO_PEERCRED/SCM_CREDENTIALS
+    // (Linux-only) to verify the connecting process's UID.
     if (tmpDir) {
       this.tmpDir = tmpDir;
     } else {
@@ -1020,10 +1035,9 @@ export class SudoWorkerSession {
       rl.on('close', () => {
         if (this.ipcSocket !== socket) return;
         const p = this.pending;
-        if (!p) return;
         this.pending = null;
         this.close();
-        p.reject(
+        p?.reject(
           new Error('SudoWorkerSession: IPC stream closed without a response'),
         );
       });
@@ -1038,10 +1052,11 @@ export class SudoWorkerSession {
       // Server is listening — now safe to spawn the worker so it cannot miss
       // the listening socket. Set socket permissions: root sudo needs 0600
       // (only invoking user can connect); named-user sudo needs 0666 so the
-      // target user can connect regardless of group membership. Security:
-      // the socket lives inside tmpDir which has mode 0o711 (world-traversable
-      // but NOT world-listable), so other users cannot enumerate the socket
-      // filename to connect even though the file itself is world-writable.
+      // target user can connect regardless of group membership. For named-user
+      // sudo, tmpDir has mode 0711 (world-traversable, not world-listable) to
+      // prevent filesystem enumeration of the socket filename. Note that
+      // /proc/net/unix can still reveal the path to local users; the nonce
+      // handshake is the primary defense (see constructor comment above).
       try {
         fs.chmodSync(
           this.ipcSocketPath!,
