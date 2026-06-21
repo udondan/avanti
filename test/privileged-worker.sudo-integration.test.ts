@@ -80,20 +80,8 @@ describe.skipIf(!sudoTestDir || process.platform === 'win32')(
           const r = allReads.get(t.targetPath);
           if (r) body = Buffer.from(r.contentB64, 'base64').toString('utf8');
         }
-        if (body !== null) {
-          expect(body).toBe(t.content.toString('utf8'));
-        } else {
-          expect(
-            (() => {
-              try {
-                fs.statSync(t.targetPath);
-                return true;
-              } catch {
-                return false;
-              }
-            })(),
-          ).toBe(true);
-        }
+        expect(body).not.toBeNull();
+        expect(body).toBe(t.content.toString('utf8'));
       }
     });
 
