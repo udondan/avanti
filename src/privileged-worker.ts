@@ -1192,6 +1192,13 @@ if (require.main === module) {
     // Write a JSON error line before closing so the parent's exec() receives a
     // structured rejection with the actual error message rather than the generic
     // "IPC stream closed without a response" from the rl.on('close') fallback.
+    // NOTE: we always emit exactly 1 result regardless of batch size, because a
+    // crash loses track of which ops completed. In the spawnSync path with
+    // continueOnError=true, the caller's padding fills the remaining slots with
+    // "worker exited before processing this op" — ops that completed before the
+    // crash are also incorrectly reported as failed. This is an inherent
+    // limitation of a single-response protocol: use SudoWorkerSession (IPC mode)
+    // for workloads where per-op accuracy in crash scenarios matters.
     try {
       writeResponse({ results: [{ ok: false, error: msg }] }, () => {
         process.exit(1);

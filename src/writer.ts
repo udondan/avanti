@@ -253,7 +253,6 @@ function runPrivilegedWorker(
   sudo: true | string,
   ops: WriteOp[],
   continueOnError = false,
-  trustedUids?: Set<number>,
 ): WorkerResult[] {
   if (process.platform === 'win32') {
     throw new Error('sudo is not supported on Windows');
@@ -261,9 +260,13 @@ function runPrivilegedWorker(
   const { nodeExec, resolvedWorkerPath, tmpDir } = prepareWorkerExec(sudo);
   const cleanup = tmpDir ? () => cleanupWorkerDir(tmpDir) : undefined;
 
+  // The worker does not accept trustedUids over the wire — it recomputes the
+  // trusted set from SUDO_UID (set by sudo) and its own UID. Hardened sudoers
+  // configurations that strip SUDO_UID (env_reset without env_keep += SUDO_UID)
+  // will limit the worker's trusted set to {0, workerUid}, which may cause
+  // ancestor-safety checks to reject user-owned backup/config paths.
   const reqPayload = JSON.stringify({
     ops,
-    trustedUids: [...(trustedUids ?? buildTrustedUids(sudo))],
     continueOnError,
   });
 
@@ -577,12 +580,7 @@ export async function sudoAtomicWrite(
         if (!r.ok) throw new Error(r.error ?? 'privileged worker op failed');
       }
     } else {
-      results = runPrivilegedWorker(
-        sudo,
-        ops,
-        false,
-        trustedUidsBySudo.get(sudo),
-      );
+      results = runPrivilegedWorker(sudo, ops, false);
     }
     // Count chmod results that weren't silently skipped (ENOENT/ELOOP).
     const start = chmodStartIndex.get(sudo) ?? ops.length;
