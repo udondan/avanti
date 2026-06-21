@@ -63,15 +63,20 @@ function resolveNodeExec(sudo: true | string): string {
   // could replace it with malicious code that runs with elevated privileges.
   // Fall through to the SAFE_DIRS scan if the ownership check fails or if
   // process.execPath is inside $HOME.
+  // Resolve symlinks before checking ownership to eliminate the TOCTOU window
+  // where a symlink in a user-writable directory (e.g. /usr/local/bin on macOS)
+  // could be swapped between our stat check and sudo's exec. realpathSync also
+  // ensures we stat and return the real inode, not an intermediate link.
   try {
-    const st = fs.statSync(process.execPath);
+    const realPath = fs.realpathSync(process.execPath);
+    const st = fs.statSync(realPath);
     if (
       st.isFile() &&
       (st.mode & 0o111) !== 0 &&
       st.uid === 0 &&
-      !process.execPath.startsWith(os.homedir() + path.sep)
+      !realPath.startsWith(os.homedir() + path.sep)
     ) {
-      return process.execPath;
+      return realPath;
     }
   } catch {
     // ignore and fall through to SAFE_DIRS search
@@ -97,7 +102,8 @@ function resolveNodeExec(sudo: true | string): string {
     for (const name of ['node', 'nodejs']) {
       const candidate = path.join(dir, name);
       try {
-        const st = fs.statSync(candidate);
+        const realPath = fs.realpathSync(candidate);
+        const st = fs.statSync(realPath);
         // Require root ownership: on Apple Silicon, /opt/homebrew is user-owned
         // so a Homebrew-installed node binary is writable by the calling user.
         // Accepting such a binary would allow the calling user to replace it with
@@ -106,7 +112,7 @@ function resolveNodeExec(sudo: true | string): string {
         // Version check: reject binaries older than the compiled worker requires.
         // This turns an opaque "privileged worker failed (exit 1)" SyntaxError
         // into an actionable "no compatible binary found" message.
-        const versionResult = spawnSync(candidate, ['--version'], {
+        const versionResult = spawnSync(realPath, ['--version'], {
           encoding: 'utf8',
           timeout: 5000,
         });
@@ -116,7 +122,7 @@ function resolveNodeExec(sudo: true | string): string {
         if (candidateMajor < WORKER_MIN_NODE_MAJOR) {
           continue;
         }
-        return candidate;
+        return realPath;
       } catch {
         // ignore EACCES, ENOENT, and any other stat/spawn error
       }
