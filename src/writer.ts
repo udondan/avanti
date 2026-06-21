@@ -149,8 +149,8 @@ if (!(process as unknown as Record<symbol, unknown>)[_HANDLERS_KEY]) {
       cleanupWorkerDir(d);
     }
   });
-  process.once('SIGTERM', () => process.exit(1));
-  process.once('SIGINT', () => process.exit(1));
+  process.on('SIGTERM', () => process.exit(1));
+  process.on('SIGINT', () => process.exit(1));
 }
 
 // Copies the privileged-worker script to a world-readable temp directory so
@@ -813,7 +813,6 @@ export class SudoWorkerSession {
     this.trustedUids = buildTrustedUids(sudo);
 
     const { nodeExec, resolvedWorkerPath, tmpDir } = prepareWorkerExec(sudo);
-    if (tmpDir) this.tmpDir = tmpDir;
 
     // Use a Unix domain socket for IPC so that sudo's fd table is unaffected.
     // The previous approach passed fd 3 via a pipe and used `sudo -C 4` to
@@ -823,14 +822,24 @@ export class SudoWorkerSession {
     // option" on virtually all real installations. A Unix socket has no fd
     // that needs to survive sudo's closefrom, so no sudoers changes are needed.
     //
-    // For root sudo the socket lands directly in WORLD_TMP (/tmp) with mode
-    // 0600 — only the invoking user can connect. For named-user sudo the socket
-    // lands inside tmpDir (mode 0711: world-traversable but NOT world-listable)
-    // with mode 0666 so the target user can connect regardless of group
-    // membership. The non-listable parent prevents other users from enumerating
-    // the socket filename even though the file itself is world-accessible.
+    // The IPC socket is always placed inside a private directory:
+    //   - Named-user sudo: tmpDir (mode 0711) — created by prepareWorkerExec.
+    //   - Root sudo: a fresh 0700 dir in WORLD_TMP, created here.
+    // net.Server.listen() creates the socket with mode 0777 & ~umask (typically
+    // 0755 — world-connectable) before our chmodSync runs. Placing the socket
+    // inside a directory that only the invoking user can list or traverse closes
+    // that race window entirely — no other user can enumerate or connect to the
+    // socket regardless of the socket's own permissions.
+    if (tmpDir) {
+      this.tmpDir = tmpDir;
+    } else {
+      const ipcDir = fs.mkdtempSync(path.join(WORLD_TMP, 'avanti-ipc-'));
+      stagedWorkerDirs.add(ipcDir);
+      fs.chmodSync(ipcDir, 0o700);
+      this.tmpDir = ipcDir;
+    }
     this.ipcSocketPath = path.join(
-      tmpDir ?? WORLD_TMP,
+      this.tmpDir,
       `ipc-${crypto.randomBytes(4).toString('hex')}.sock`,
     );
 
@@ -885,6 +894,21 @@ export class SudoWorkerSession {
             ),
           );
         }
+      });
+
+      // Guard against a worker that closes its socket while still alive (e.g.
+      // an unhandled exception that drains and closes streams before the process
+      // exits). proc.on('close') handles the normal crash path, but if the
+      // socket EOF arrives first and no 'close' handler is registered here,
+      // this.pending is never settled and exec() hangs for the full timeout.
+      this.rl.on('close', () => {
+        const p = this.pending;
+        if (!p) return;
+        this.pending = null;
+        this.closed = true;
+        p.reject(
+          new Error('SudoWorkerSession: IPC stream closed without a response'),
+        );
       });
 
       readyResolve();

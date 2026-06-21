@@ -177,8 +177,15 @@ function getExistingMode(filePath: string): string | undefined {
     const stat = lst.isSymbolicLink() ? fs.statSync(filePath) : lst;
     if (!stat.isFile()) return undefined;
     return (stat.mode & 0o7777).toString(8).padStart(4, '0');
-  } catch {
-    return undefined;
+  } catch (e) {
+    const code = (e as NodeJS.ErrnoException).code;
+    // ENOENT: file doesn't exist yet → use defaultMode (expected, suppress).
+    // ELOOP/ENOTDIR: target is a broken symlink or non-dir component → skip.
+    // EACCES/EPERM: even root was denied (SELinux/AppArmor MAC policy) →
+    //   rethrow so the caller doesn't silently reset the file's mode.
+    if (code === 'ENOENT' || code === 'ELOOP' || code === 'ENOTDIR')
+      return undefined;
+    throw e;
   }
 }
 
@@ -198,11 +205,9 @@ function parseMode(modeStr: string): number {
 // silently corrupt content if contentB64 is truncated (e.g. by a short-write
 // on the stdin pipe). Validate before decoding so the op fails loudly.
 function validateBase64(s: string, field: string): void {
-  // Do NOT short-circuit the regex with `s.length > 0`: an empty string passes
-  // the length check (0 % 4 === 0) and the regex must catch it — the `+`
-  // quantifier requires at least one character, so "" fails correctly.
-  // Silently accepting "" would let a missing contentB64 field write a zero-byte
-  // file (e.g. to /etc/sudoers or /etc/shadow) instead of surfacing the error.
+  // Empty string is valid: it encodes an empty file (.gitkeep, empty __init__.py, etc.).
+  // Only non-empty strings need the length/character check.
+  if (s === '') return;
   if (s.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(s)) {
     throw new Error(`${field}: invalid base64 string (length ${s.length})`);
   }
@@ -412,31 +417,11 @@ export function handleWriteInPlace(
   if (trustedUids)
     checkAncestorsSafeAsRoot(resolvedTarget, trustedUids, 'destination');
 
-  let backupTmpPath: string | undefined;
-  try {
-    if (op.backupPath) {
-      const resolvedBackup = path.resolve(op.backupPath);
-      const backupDir = path.dirname(resolvedBackup);
-      backupTmpPath = path.join(backupDir, `.avanti-backup-${randomHex()}`);
-      backupRegularFile(resolvedTarget, backupTmpPath, trustedUids);
-      // Commit the backup to its final path BEFORE truncating the target.
-      // If SIGTERM kills the worker mid-write, the backup exists at a known,
-      // user-discoverable location rather than an opaque temp path. Committing
-      // after the write would leave the backup at backupTmpPath — the finally
-      // block would not delete it (backupTmpPath is in the user's filesystem, not
-      // the worker tmpDir), but the user would not know where to find it.
-      fs.renameSync(backupTmpPath, resolvedBackup);
-      backupTmpPath = undefined;
-    }
-  } catch (err) {
-    if (backupTmpPath !== undefined) {
-      try {
-        fs.unlinkSync(backupTmpPath);
-      } catch {
-        // best-effort cleanup
-      }
-    }
-    throw err;
+  // Commit the backup to its final path BEFORE truncating the target.
+  // backupRegularFile internally stages to an O_EXCL temp and renames atomically,
+  // so no outer try/catch wrapper or intermediate backupTmpPath is needed here.
+  if (op.backupPath) {
+    backupRegularFile(resolvedTarget, path.resolve(op.backupPath), trustedUids);
   }
 
   // Refuse symlinks (would follow to unintended target).
@@ -466,270 +451,258 @@ export function handleWriteInPlace(
   const content = Buffer.from(op.contentB64, 'base64');
   const effectiveMode = op.mode ?? (isNewFile ? op.defaultMode : undefined);
 
-  try {
-    if (isNewFile) {
-      // O_EXCL (the 'x' flag) ensures atomic creation — no symlink can exist at
-      // the path at open time, so following is impossible by construction. Keep
-      // the fd open and write through it (no path-based TOCTOU after open).
-      let fd: number | undefined;
-      try {
-        fd = fs.openSync(resolvedTarget, 'wx', 0o600);
-        fs.writeFileSync(fd, content);
-        if (effectiveMode !== undefined) {
-          safeFchmodSync(fd, parseMode(effectiveMode));
-        }
-        fs.closeSync(fd);
-        fd = undefined;
-      } catch (err) {
-        if (fd !== undefined) {
-          try {
-            fs.closeSync(fd);
-          } catch {
-            // best-effort close
-          }
-        }
-        throw err;
+  if (isNewFile) {
+    // O_EXCL (the 'x' flag) ensures atomic creation — no symlink can exist at
+    // the path at open time, so following is impossible by construction. Keep
+    // the fd open and write through it (no path-based TOCTOU after open).
+    let fd: number | undefined;
+    try {
+      fd = fs.openSync(resolvedTarget, 'wx', 0o600);
+      fs.writeFileSync(fd, content);
+      if (effectiveMode !== undefined) {
+        safeFchmodSync(fd, parseMode(effectiveMode));
       }
-    } else {
-      // Open read-only first (O_NOFOLLOW|O_NONBLOCK) to:
-      //   1. Verify the file is still a regular file (not a symlink/FIFO).
-      //   2. Capture the current mode including setuid/setgid bits BEFORE the
-      //      O_TRUNC write-open clears them on Linux.
-      // Then open for writing. If the write-open fails with EACCES (named-user
-      // sudo running as a non-root uid), fchmod via the read fd to temporarily
-      // add a write bit, retry, then always restore the original mode.
-      const openFlags =
-        fs.constants.O_WRONLY | fs.constants.O_TRUNC | O_NOFOLLOW | O_NONBLOCK;
-      let fd: number | undefined;
-      let rfd: number | undefined;
-      let savedMode: number | undefined;
-      // Capture the initial write-open error so we can do EACCES recovery
-      // outside the catch block, avoiding the preserve-caught-error lint constraint.
-      let firstOpenErr: NodeJS.ErrnoException | undefined;
+      fs.closeSync(fd);
+      fd = undefined;
+    } catch (err) {
+      if (fd !== undefined) {
+        try {
+          fs.closeSync(fd);
+        } catch {
+          // best-effort close
+        }
+      }
+      throw err;
+    }
+  } else {
+    // Open read-only first (O_NOFOLLOW|O_NONBLOCK) to:
+    //   1. Verify the file is still a regular file (not a symlink/FIFO).
+    //   2. Capture the current mode including setuid/setgid bits BEFORE the
+    //      O_TRUNC write-open clears them on Linux.
+    // Then open for writing. If the write-open fails with EACCES (named-user
+    // sudo running as a non-root uid), fchmod via the read fd to temporarily
+    // add a write bit, retry, then always restore the original mode.
+    const openFlags =
+      fs.constants.O_WRONLY | fs.constants.O_TRUNC | O_NOFOLLOW | O_NONBLOCK;
+    let fd: number | undefined;
+    let rfd: number | undefined;
+    let savedMode: number | undefined;
+    // Capture the initial write-open error so we can do EACCES recovery
+    // outside the catch block, avoiding the preserve-caught-error lint constraint.
+    let firstOpenErr: NodeJS.ErrnoException | undefined;
+    try {
       try {
-        try {
-          rfd = fs.openSync(
-            resolvedTarget,
-            fs.constants.O_RDONLY | O_NOFOLLOW | O_NONBLOCK,
+        rfd = fs.openSync(
+          resolvedTarget,
+          fs.constants.O_RDONLY | O_NOFOLLOW | O_NONBLOCK,
+        );
+        const rst = fs.fstatSync(rfd);
+        if (!rst.isFile()) {
+          throw new Error(
+            `writeInPlace: ${op.targetPath} is not a regular file; refusing to write`,
           );
-          const rst = fs.fstatSync(rfd);
-          if (!rst.isFile()) {
-            throw new Error(
-              `writeInPlace: ${op.targetPath} is not a regular file; refusing to write`,
-            );
-          }
-          savedMode = rst.mode & 0o7777;
-        } catch (e) {
-          const code = (e as NodeJS.ErrnoException).code;
-          if (code === 'ELOOP') {
-            // TOCTOU: a symlink was placed at the path after the lstatSync check
-            // above but before O_NOFOLLOW openSync. Surface a clear error.
-            throw new Error(
-              `writeInPlace: ${op.targetPath} is a symlink; refusing to follow`,
-              { cause: e },
-            );
-          }
-          if (code !== 'EACCES') throw e;
-          // Write-only file (e.g. mode 0200): O_RDONLY fails with EACCES.
-          // Fall back to a path-based stat to capture the mode; the write open
-          // below will succeed directly so no rfd-based EACCES recovery is needed.
-          // Use lstatSync (not statSync) to avoid following symlinks — the caller
-          // already verified the path is a regular file via lstatSync above.
-          const rst = fs.lstatSync(resolvedTarget);
-          if (!rst.isFile()) {
-            throw new Error(
-              `writeInPlace: ${op.targetPath} is not a regular file; refusing to write`,
-              { cause: e },
-            );
-          }
-          savedMode = rst.mode & 0o7777;
-          // rfd stays undefined — no EACCES recovery fchmod needed.
         }
+        savedMode = rst.mode & 0o7777;
+      } catch (e) {
+        const code = (e as NodeJS.ErrnoException).code;
+        if (code === 'ELOOP') {
+          // TOCTOU: a symlink was placed at the path after the lstatSync check
+          // above but before O_NOFOLLOW openSync. Surface a clear error.
+          throw new Error(
+            `writeInPlace: ${op.targetPath} is a symlink; refusing to follow`,
+            { cause: e },
+          );
+        }
+        if (code !== 'EACCES') throw e;
+        // Write-only file (e.g. mode 0200): O_RDONLY fails with EACCES.
+        // Fall back to a path-based stat to capture the mode; the write open
+        // below will succeed directly so no rfd-based EACCES recovery is needed.
+        // Use lstatSync (not statSync) to avoid following symlinks — the caller
+        // already verified the path is a regular file via lstatSync above.
+        const rst = fs.lstatSync(resolvedTarget);
+        if (!rst.isFile()) {
+          throw new Error(
+            `writeInPlace: ${op.targetPath} is not a regular file; refusing to write`,
+            { cause: e },
+          );
+        }
+        savedMode = rst.mode & 0o7777;
+        // rfd stays undefined — no EACCES recovery fchmod needed.
+      }
 
-        try {
-          fd = fs.openSync(resolvedTarget, openFlags);
-        } catch (e) {
-          firstOpenErr = e as NodeJS.ErrnoException;
-        }
-        if (firstOpenErr !== undefined) {
-          if (
-            firstOpenErr.code === 'EACCES' &&
-            typeof process.getuid === 'function' &&
-            process.getuid() !== 0
-          ) {
-            // Named-user sudo: temporarily add the write bit so we can open the
-            // file for writing. Prefer fd-based fchmod (via rfd) when available
-            // to avoid a path-based TOCTOU window. Fall back to path-based
-            // chmodSync when rfd is undefined (e.g. mode-0000 files where the
-            // read-open also failed with EACCES — lstatSync captured the mode).
-            // savedMode must be defined at this point: if the O_RDONLY open
-            // succeeded, fstatSync set it; if not, lstatSync set it (and any
-            // other failure re-threw above rather than reaching here).
-            if (savedMode === undefined) throw firstOpenErr;
-            const mode = savedMode;
-            if (rfd !== undefined) {
-              // fd-based path: no TOCTOU window between stat and chmod.
+      try {
+        fd = fs.openSync(resolvedTarget, openFlags);
+      } catch (e) {
+        firstOpenErr = e as NodeJS.ErrnoException;
+      }
+      if (firstOpenErr !== undefined) {
+        if (
+          firstOpenErr.code === 'EACCES' &&
+          typeof process.getuid === 'function' &&
+          process.getuid() !== 0
+        ) {
+          // Named-user sudo: temporarily add the write bit so we can open the
+          // file for writing. Prefer fd-based fchmod (via rfd) when available
+          // to avoid a path-based TOCTOU window. Fall back to path-based
+          // chmodSync when rfd is undefined (e.g. mode-0000 files where the
+          // read-open also failed with EACCES — lstatSync captured the mode).
+          // savedMode must be defined at this point: if the O_RDONLY open
+          // succeeded, fstatSync set it; if not, lstatSync set it (and any
+          // other failure re-threw above rather than reaching here).
+          if (savedMode === undefined) throw firstOpenErr;
+          const mode = savedMode;
+          if (rfd !== undefined) {
+            // fd-based path: no TOCTOU window between stat and chmod.
+            try {
+              safeFchmodSync(rfd, mode | 0o200);
+            } catch {
+              throw firstOpenErr;
+            }
+          } else {
+            // rfd is undefined: O_RDONLY|O_NOFOLLOW failed with EACCES (write-only
+            // or no-permission file). Try to acquire a write-only fd without following
+            // symlinks so fchmod can go through the fd (no TOCTOU window).
+            let wfd: number | undefined;
+            try {
+              wfd = fs.openSync(
+                resolvedTarget,
+                fs.constants.O_WRONLY | O_NOFOLLOW | O_NONBLOCK,
+              );
+            } catch (e2) {
+              const c2 = (e2 as NodeJS.ErrnoException).code;
+              if (c2 === 'ELOOP') {
+                // A symlink was raced in after lstatSync confirmed a regular file.
+                throw new Error(
+                  `writeInPlace: ${op.targetPath} is a symlink; refusing to follow`,
+                  { cause: e2 },
+                );
+              }
+              // EACCES: mode 0000 or no write bit — fd-based fchmod not possible;
+              // fall through to path-based chmodSync (residual TOCTOU window).
+            }
+            if (wfd !== undefined) {
               try {
-                safeFchmodSync(rfd, mode | 0o200);
+                safeFchmodSync(wfd, mode | 0o200);
+              } catch {
+                throw firstOpenErr;
+              } finally {
+                try {
+                  fs.closeSync(wfd);
+                } catch {
+                  // best-effort
+                }
+              }
+            } else {
+              // Path-based fallback: only works if the named user owns the file.
+              // Residual TOCTOU: an attacker controlling a trusted-UID ancestor
+              // could race a symlink between lstatSync and chmodSync. This window
+              // only applies to mode-0000 (or no-write) files where O_WRONLY also
+              // fails; tracked in https://github.com/udondan/avanti/issues/295.
+              try {
+                fs.chmodSync(resolvedTarget, mode | 0o200);
               } catch {
                 throw firstOpenErr;
               }
-            } else {
-              // rfd is undefined: O_RDONLY|O_NOFOLLOW failed with EACCES (write-only
-              // or no-permission file). Try to acquire a write-only fd without following
-              // symlinks so fchmod can go through the fd (no TOCTOU window).
-              let wfd: number | undefined;
-              try {
-                wfd = fs.openSync(
-                  resolvedTarget,
-                  fs.constants.O_WRONLY | O_NOFOLLOW | O_NONBLOCK,
-                );
-              } catch (e2) {
-                const c2 = (e2 as NodeJS.ErrnoException).code;
-                if (c2 === 'ELOOP') {
-                  // A symlink was raced in after lstatSync confirmed a regular file.
-                  throw new Error(
-                    `writeInPlace: ${op.targetPath} is a symlink; refusing to follow`,
-                    { cause: e2 },
-                  );
-                }
-                // EACCES: mode 0000 or no write bit — fd-based fchmod not possible;
-                // fall through to path-based chmodSync (residual TOCTOU window).
-              }
-              if (wfd !== undefined) {
-                try {
-                  safeFchmodSync(wfd, mode | 0o200);
-                } catch {
-                  throw firstOpenErr;
-                } finally {
-                  try {
-                    fs.closeSync(wfd);
-                  } catch {
-                    // best-effort
-                  }
-                }
-              } else {
-                // Path-based fallback: only works if the named user owns the file.
-                // Residual TOCTOU: an attacker controlling a trusted-UID ancestor
-                // could race a symlink between lstatSync and chmodSync. This window
-                // only applies to mode-0000 (or no-write) files where O_WRONLY also
-                // fails; tracked in https://github.com/udondan/avanti/issues/295.
-                try {
-                  fs.chmodSync(resolvedTarget, mode | 0o200);
-                } catch {
-                  throw firstOpenErr;
-                }
-              }
             }
-            try {
-              fd = fs.openSync(resolvedTarget, openFlags);
-            } catch (retryErr) {
-              // Restore original mode before surfacing the error.
-              try {
-                if (rfd !== undefined) {
-                  safeFchmodSync(rfd, mode);
-                } else {
-                  fs.chmodSync(resolvedTarget, mode);
-                }
-              } catch {
-                // best-effort restore
-              }
-              throw retryErr;
-            }
-            // Restore original mode immediately after the write-open succeeds —
-            // the write bit was temporary. The conditional fchmod below handles
-            // explicit mode and setuid/setgid bits via fd; this restore
-            // covers the case where neither applies (e.g. a plain 0o400 file).
+          }
+          try {
+            fd = fs.openSync(resolvedTarget, openFlags);
+          } catch (retryErr) {
+            // Restore original mode before surfacing the error.
             try {
               if (rfd !== undefined) {
                 safeFchmodSync(rfd, mode);
               } else {
                 fs.chmodSync(resolvedTarget, mode);
               }
-            } catch (restoreErr) {
-              throw new Error(
-                `writeInPlace: failed to restore mode on ${op.targetPath} after temporary write-bit grant: ${(restoreErr as Error).message}`,
-                { cause: restoreErr },
-              );
+            } catch {
+              // best-effort restore
             }
-          } else {
-            throw firstOpenErr;
+            throw retryErr;
           }
+          // Restore original mode immediately after the write-open succeeds —
+          // the write bit was temporary. The conditional fchmod below handles
+          // explicit mode and setuid/setgid bits via fd; this restore
+          // covers the case where neither applies (e.g. a plain 0o400 file).
+          try {
+            if (rfd !== undefined) {
+              safeFchmodSync(rfd, mode);
+            } else {
+              fs.chmodSync(resolvedTarget, mode);
+            }
+          } catch (restoreErr) {
+            throw new Error(
+              `writeInPlace: failed to restore mode on ${op.targetPath} after temporary write-bit grant: ${(restoreErr as Error).message}`,
+              { cause: restoreErr },
+            );
+          }
+        } else {
+          throw firstOpenErr;
         }
-        if (fd === undefined)
-          throw new Error('writeInPlace: internal error: fd not set');
-        // fstat after the write-open as a belt-and-suspenders check: a FIFO
-        // or other non-regular file could have been substituted in the window
-        // between the rfd open and fd open.
-        const fst = fs.fstatSync(fd);
-        if (!fst.isFile()) {
-          throw new Error(
-            `writeInPlace: ${op.targetPath} is not a regular file after open; refusing to write`,
-          );
+      }
+      if (fd === undefined)
+        throw new Error('writeInPlace: internal error: fd not set');
+      // fstat after the write-open as a belt-and-suspenders check: a FIFO
+      // or other non-regular file could have been substituted in the window
+      // between the rfd open and fd open.
+      const fst = fs.fstatSync(fd);
+      if (!fst.isFile()) {
+        throw new Error(
+          `writeInPlace: ${op.targetPath} is not a regular file after open; refusing to write`,
+        );
+      }
+      fs.writeFileSync(fd, content);
+      // fchmod only when needed: apply explicit mode, or restore setuid/setgid
+      // bits that Linux strips on O_TRUNC. Skip when neither applies — a named
+      // user writing via group permission may not own the file and fchmod would
+      // fail with EPERM even though the write succeeded.
+      if (
+        effectiveMode !== undefined ||
+        (savedMode !== undefined && (savedMode & 0o7000) !== 0)
+      ) {
+        safeFchmodSync(
+          fd,
+          effectiveMode !== undefined
+            ? parseMode(effectiveMode)
+            : (savedMode ?? 0),
+        );
+      }
+      fs.closeSync(fd);
+      fd = undefined;
+      if (rfd !== undefined) {
+        fs.closeSync(rfd);
+        rfd = undefined;
+      }
+    } catch (err) {
+      // If we temporarily boosted the mode, restore it before closing.
+      if (rfd !== undefined && savedMode !== undefined) {
+        try {
+          safeFchmodSync(rfd, savedMode);
+        } catch {
+          // best-effort restore
         }
-        fs.writeFileSync(fd, content);
-        // fchmod only when needed: apply explicit mode, or restore setuid/setgid
-        // bits that Linux strips on O_TRUNC. Skip when neither applies — a named
-        // user writing via group permission may not own the file and fchmod would
-        // fail with EPERM even though the write succeeded.
-        if (
-          effectiveMode !== undefined ||
-          (savedMode !== undefined && (savedMode & 0o7000) !== 0)
-        ) {
-          safeFchmodSync(
-            fd,
-            effectiveMode !== undefined
-              ? parseMode(effectiveMode)
-              : (savedMode ?? 0),
-          );
+      } else if (rfd === undefined && savedMode !== undefined) {
+        try {
+          fs.chmodSync(resolvedTarget, savedMode);
+        } catch {
+          // best-effort restore
         }
-        fs.closeSync(fd);
-        fd = undefined;
-        if (rfd !== undefined) {
+      }
+      if (fd !== undefined) {
+        try {
+          fs.closeSync(fd);
+        } catch {
+          // best-effort close
+        }
+      }
+      if (rfd !== undefined) {
+        try {
           fs.closeSync(rfd);
-          rfd = undefined;
+        } catch {
+          // best-effort close
         }
-      } catch (err) {
-        // If we temporarily boosted the mode, restore it before closing.
-        if (rfd !== undefined && savedMode !== undefined) {
-          try {
-            safeFchmodSync(rfd, savedMode);
-          } catch {
-            // best-effort restore
-          }
-        } else if (rfd === undefined && savedMode !== undefined) {
-          try {
-            fs.chmodSync(resolvedTarget, savedMode);
-          } catch {
-            // best-effort restore
-          }
-        }
-        if (fd !== undefined) {
-          try {
-            fs.closeSync(fd);
-          } catch {
-            // best-effort close
-          }
-        }
-        if (rfd !== undefined) {
-          try {
-            fs.closeSync(rfd);
-          } catch {
-            // best-effort close
-          }
-        }
-        throw err;
       }
-    }
-  } finally {
-    // Safety net: clean up any uncommitted backup temp if the pre-write rename
-    // failed (EROFS, EXDEV, etc.) and left backupTmpPath defined.
-    if (backupTmpPath) {
-      try {
-        fs.unlinkSync(backupTmpPath);
-      } catch {
-        // best-effort cleanup
-      }
+      throw err;
     }
   }
 }
