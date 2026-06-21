@@ -1182,8 +1182,7 @@ if (require.main === module) {
     } catch {
       // best-effort; if the output stream is broken we can't do anything
     }
-    process.exitCode = 1;
-    rl.close();
+    process.exit(1);
   });
   process.once('unhandledRejection', (reason) => {
     const msg = reason instanceof Error ? reason.message : String(reason);
@@ -1195,8 +1194,7 @@ if (require.main === module) {
     } catch {
       // best-effort
     }
-    process.exitCode = 1;
-    rl.close();
+    process.exit(1);
   });
 
   (inputStream as NodeJS.EventEmitter).on('error', (err: Error) => {

@@ -908,8 +908,28 @@ export class SudoWorkerSession {
     let readyResolve: () => void;
     let readyReject: (e: Error) => void;
     this.ready = new Promise<void>((res, rej) => {
-      readyResolve = res;
-      readyReject = rej;
+      // Connection timeout: if the worker never connects to the IPC socket
+      // (e.g. sudo hangs on a password prompt that has no TTY, PAM deadlock,
+      // or the binary is not found), await this.ready in exec() would hang
+      // indefinitely — the exec() timeout fires only AFTER ready resolves.
+      // Fail fast so the caller gets a clear error instead of a silent hang.
+      const readyTimer = setTimeout(() => {
+        this.close();
+        rej(
+          new Error(
+            'SudoWorkerSession: privileged worker failed to connect within 30s',
+          ),
+        );
+      }, 30_000);
+      readyTimer.unref();
+      readyResolve = () => {
+        clearTimeout(readyTimer);
+        res();
+      };
+      readyReject = (err: Error) => {
+        clearTimeout(readyTimer);
+        rej(err);
+      };
     });
     // Suppress unhandledRejection if the worker fails before exec() attaches
     // a .catch() via await this.ready. exec() will re-reject via its own promise.
@@ -924,13 +944,7 @@ export class SudoWorkerSession {
       socket.on('error', (err) => {
         const p = this.pending;
         this.pending = null;
-        this.closed = true;
-        this.rl?.close();
-        try {
-          this.proc?.kill('SIGKILL');
-        } catch {
-          // already dead
-        }
+        this.close();
         p?.reject(err);
       });
 
@@ -1040,44 +1054,47 @@ export class SudoWorkerSession {
         /* no controlling TTY */
       }
 
-      this.proc = spawn(
-        'sudo',
-        [
-          ...sudoUserArgs(sudo),
-          nodeExec,
-          resolvedWorkerPath,
-          `--socket-path=${this.ipcSocketPath!}`,
-          `--nonce=${ipcNonce}`,
-        ],
-        {
-          // stdin: /dev/tty (or inherited) so sudo's ttyname() succeeds
-          // stdout/stderr: ignored — all IPC goes through the Unix socket
-          stdio: [ttyFd ?? 'inherit', 'ignore', 'inherit'],
-        },
-      );
-      if (ttyFd !== undefined) fs.closeSync(ttyFd);
+      try {
+        this.proc = spawn(
+          'sudo',
+          [
+            ...sudoUserArgs(sudo),
+            nodeExec,
+            resolvedWorkerPath,
+            `--socket-path=${this.ipcSocketPath!}`,
+            `--nonce=${ipcNonce}`,
+          ],
+          {
+            // stdin: /dev/tty (or inherited) so sudo's ttyname() succeeds
+            // stdout/stderr: ignored — all IPC goes through the Unix socket
+            stdio: [ttyFd ?? 'inherit', 'ignore', 'inherit'],
+          },
+        );
+      } finally {
+        if (ttyFd !== undefined) {
+          try {
+            fs.closeSync(ttyFd);
+          } catch {
+            // ignore
+          }
+        }
+      }
 
       this.proc.on('error', (err) => {
-        this.closed = true;
         const p = this.pending;
         this.pending = null;
+        this.close();
         p?.reject(err);
         readyReject(err);
       });
 
       this.proc.on('close', (code, signal) => {
-        this.closed = true;
-        // If the worker exited before a socket connection was made, close the
-        // server so its listening socket fd does not leak.
-        if (!this.ipcSocket) {
-          this.server?.close();
-        }
-        if (this.tmpDir) {
-          cleanupWorkerDir(this.tmpDir);
-          this.tmpDir = undefined;
-        }
+        // Null proc before calling close() so close() does not attempt to
+        // kill a process that has already exited.
+        this.proc = undefined;
         const p = this.pending;
         this.pending = null;
+        this.close();
         if (p) {
           p.reject(
             new Error(
