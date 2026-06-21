@@ -990,6 +990,9 @@ export class SudoWorkerSession {
         }
         try {
           const response = JSON.parse(trimmed) as WorkerResponse;
+          if (!response || !Array.isArray(response.results)) {
+            throw new Error('malformed response: missing results array');
+          }
           const p = this.pending;
           this.pending = null;
           p?.resolve(response.results);
