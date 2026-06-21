@@ -1141,13 +1141,27 @@ if (require.main === module) {
     process.stderr.write(
       `avanti privileged-worker: uncaught exception: ${err.stack ?? String(err)}\n`,
     );
+    // Write a JSON error line before closing so the parent's exec() receives a
+    // structured rejection with the actual error message rather than the generic
+    // "IPC stream closed without a response" from the rl.on('close') fallback.
+    try {
+      writeResponse({ results: [{ ok: false, error: err.message }] });
+    } catch {
+      // best-effort; if the output stream is broken we can't do anything
+    }
     process.exitCode = 1;
     rl.close();
   });
   process.on('unhandledRejection', (reason) => {
+    const msg = reason instanceof Error ? reason.message : String(reason);
     process.stderr.write(
-      `avanti privileged-worker: unhandled rejection: ${String(reason)}\n`,
+      `avanti privileged-worker: unhandled rejection: ${msg}\n`,
     );
+    try {
+      writeResponse({ results: [{ ok: false, error: msg }] });
+    } catch {
+      // best-effort
+    }
     process.exitCode = 1;
     rl.close();
   });

@@ -1323,7 +1323,11 @@ export function pullCommand(): Command {
         const deferredIds = new Set<true | string>();
         for (let i = 0; i < writeTargets.length; i++) {
           const t = writeTargets[i];
-          if (t.sudo && allDiffs[i].hasChanges && !sudoSessions.has(t.sudo)) {
+          if (
+            t.sudo &&
+            (allDiffs[i].hasChanges || allDiffs[i].isNew) &&
+            !sudoSessions.has(t.sudo)
+          ) {
             deferredIds.add(t.sudo);
           }
         }
@@ -1331,14 +1335,17 @@ export function pullCommand(): Command {
           const t = staleToRestore[i];
           if (t.sudo) {
             const diffIdx = staleRestoreDiffIndices[i];
-            if (staleDiffs[diffIdx]?.hasChanges && !sudoSessions.has(t.sudo)) {
+            if (
+              (staleDiffs[diffIdx]?.hasChanges || staleDiffs[diffIdx]?.isNew) &&
+              !sudoSessions.has(t.sudo)
+            ) {
               deferredIds.add(t.sudo);
             }
           }
         }
-        // Thread 1: only add delete-only identities when the stale file still
-        // exists (hasChanges). Identities for already-absent files are skipped
-        // to avoid spurious password prompts on no-op runs.
+        // Only add delete-only identities when the stale file still exists
+        // (hasChanges). Identities for already-absent files are skipped to
+        // avoid spurious password prompts on no-op runs.
         for (const [p, sv] of staleDeleteSudo) {
           const idx = staleDeleteDiffIndex.get(p);
           if (

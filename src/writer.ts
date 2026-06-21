@@ -57,11 +57,26 @@ function resolveNodeExec(sudo: true | string): string {
   // home-dir check) so that tests and users who set it do not need to worry
   // about which branch applies to their system layout.
   if (process.env.AVANTI_NODE_EXEC) return process.env.AVANTI_NODE_EXEC;
-  if (
-    typeof sudo !== 'string' ||
-    !process.execPath.startsWith(os.homedir() + path.sep)
-  ) {
+  if (typeof sudo !== 'string') {
     return process.execPath;
+  }
+  // For named-user sudo, require the binary to be root-owned before trusting it.
+  // If process.execPath is user-owned (e.g. a Homebrew or nvm/fnm/mise install),
+  // the calling user could replace it with malicious code that runs as the target
+  // user. Fall through to the SAFE_DIRS scan if the ownership check fails or if
+  // process.execPath is inside $HOME.
+  try {
+    const st = fs.statSync(process.execPath);
+    if (
+      st.isFile() &&
+      (st.mode & 0o111) !== 0 &&
+      st.uid === 0 &&
+      !process.execPath.startsWith(os.homedir() + path.sep)
+    ) {
+      return process.execPath;
+    }
+  } catch {
+    // ignore and fall through to SAFE_DIRS search
   }
   // Known limitation: this search accepts the first node/nodejs binary outside
   // $HOME without checking its version. If the system Node (e.g. /usr/bin/node)
@@ -135,6 +150,10 @@ function cleanupWorkerDir(dir: string): void {
 // Guard against duplicate registration: Vitest can re-evaluate modules between
 // test files, which would accumulate listeners and trigger MaxListenersExceededWarning.
 const stagedWorkerDirs = new Set<string>();
+// Tracks all live SudoWorkerSession instances so signal handlers can close them
+// before calling process.exit(1). This prevents write batches from completing
+// in the worker after the parent exits and leaving history in an inconsistent state.
+const activeSudoSessions = new Set<SudoWorkerSession>();
 // Module-level flag prevents duplicate handler registration when Vitest
 // re-evaluates this module between test files without being affected by
 // other modules that may have already registered their own 'exit' listeners.
@@ -149,8 +168,18 @@ if (!(process as unknown as Record<symbol, unknown>)[_HANDLERS_KEY]) {
       cleanupWorkerDir(d);
     }
   });
-  process.on('SIGTERM', () => process.exit(1));
-  process.on('SIGINT', () => process.exit(1));
+  const teardown = (): void => {
+    for (const s of [...activeSudoSessions]) {
+      try {
+        s.close();
+      } catch {
+        // best-effort
+      }
+    }
+    process.exit(1);
+  };
+  process.on('SIGTERM', teardown);
+  process.on('SIGINT', teardown);
 }
 
 // Copies the privileged-worker script to a world-readable temp directory so
@@ -726,7 +755,7 @@ export async function sudoStatBatch(
   for (const [sudo, items] of groups) {
     const ops: WriteOp[] = items.map((item) => ({
       type: 'stat-read' as const,
-      targetPath: item.filePath,
+      targetPath: path.resolve(item.filePath),
     }));
     const session = sessions?.get(sudo);
     let results: WorkerResult[];
@@ -741,6 +770,14 @@ export async function sudoStatBatch(
       const isDirectory = !!(r && !r.ok && r.code === 'EISDIR');
       const isSpecialFile = !!(r && !r.ok && r.code === 'ENOTREGFILE');
       const exists = !!(r?.ok || isDirectory || isSpecialFile);
+      // Unexpected error codes (EIO, ESTALE, EREMOTE, …) must not be silently
+      // mapped to exists=false: that would treat the target as a new file and
+      // skip v0 capture, permanently breaking `avanti revert` with no warning.
+      if (!r.ok && !isDirectory && !isSpecialFile && r.code !== 'ENOENT') {
+        throw new Error(
+          `stat-read failed for ${item.filePath}: ${r.error ?? r.code ?? 'unknown error'}`,
+        );
+      }
       result.set(item.filePath, {
         exists,
         isSymlink,
@@ -811,6 +848,7 @@ export class SudoWorkerSession {
       throw new Error('sudo is not supported on Windows');
     this.sudo = sudo;
     this.trustedUids = buildTrustedUids(sudo);
+    activeSudoSessions.add(this);
 
     const { nodeExec, resolvedWorkerPath, tmpDir } = prepareWorkerExec(sudo);
 
@@ -1077,6 +1115,7 @@ export class SudoWorkerSession {
     const p = this.pending;
     this.pending = null;
     this.closed = true;
+    activeSudoSessions.delete(this);
     p?.reject(new Error('SudoWorkerSession: session closed'));
     this.rl?.close();
     this.server?.close();
