@@ -1083,6 +1083,12 @@ export class SudoWorkerSession {
             stdio: [ttyFd ?? 'inherit', 'ignore', 'inherit'],
           },
         );
+      } catch (spawnErr) {
+        readyReject(
+          spawnErr instanceof Error ? spawnErr : new Error(String(spawnErr)),
+        );
+        this.close();
+        return;
       } finally {
         if (ttyFd !== undefined) {
           try {
