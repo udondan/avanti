@@ -1146,6 +1146,9 @@ export class SudoWorkerSession {
 
     // Wait for the worker to connect (no-op after first call once ready resolves).
     await this.ready;
+    // Re-check after awaiting: the connection timeout or an external close()
+    // may have fired while this call was suspended, leaving this.dataIn undefined.
+    if (this.closed) throw new Error('SudoWorkerSession: session is closed');
 
     return new Promise<WorkerResult[]>((resolve, reject) => {
       const timer = setTimeout(() => {
@@ -1208,8 +1211,12 @@ export class SudoWorkerSession {
     activeSudoSessions.delete(this);
     p?.reject(new Error('SudoWorkerSession: session closed'));
     this.rl?.close();
+    this.rl = undefined;
     this.server?.close();
+    this.server = undefined;
     this.ipcSocket?.destroy();
+    this.ipcSocket = undefined;
+    this.dataIn = undefined;
     if (this.ipcSocketPath) {
       try {
         fs.unlinkSync(this.ipcSocketPath);
@@ -1224,7 +1231,7 @@ export class SudoWorkerSession {
       // — sent directly to sudo which is still alive at that point. Unlike
       // SIGKILL, SIGTERM cannot orphan the child because sudo forwards it.
       this.proc.kill('SIGTERM');
-      const t = setTimeout(() => this.proc!.kill('SIGKILL'), 5_000);
+      const t = setTimeout(() => this.proc?.kill('SIGKILL'), 5_000);
       t.unref();
       this.proc.once('close', () => clearTimeout(t));
     }
