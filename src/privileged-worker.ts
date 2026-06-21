@@ -359,10 +359,9 @@ function backupTarget(
     );
     try {
       const rawTarget = fs.readlinkSync(targetPath);
-      const absTarget = path.isAbsolute(rawTarget)
-        ? rawTarget
-        : path.resolve(path.dirname(targetPath), rawTarget);
-      fs.symlinkSync(absTarget, backupTmp);
+      // Preserve the original target verbatim — relative symlinks must stay
+      // relative so that backup/restore does not silently change semantics.
+      fs.symlinkSync(rawTarget, backupTmp);
       fs.renameSync(backupTmp, resolvedBackup);
     } catch (err) {
       try {
@@ -664,13 +663,18 @@ export function handleWriteInPlace(
                 throw firstOpenErr;
               }
               // Re-check: if chmodSync followed a symlink, abort immediately and
-              // attempt to undo the permission grant (best-effort).
+              // attempt to undo the permission grant (best-effort). Note: if
+              // resolvedTarget is now a symlink, this chmodSync follows it too
+              // and may chmod the symlink target rather than the original file —
+              // the original file's permissions remain at mode|0o200 until some
+              // future chmod restores them. The subsequent openSync uses
+              // O_NOFOLLOW so no write to the unintended path can occur.
               try {
                 if (!fs.lstatSync(resolvedTarget).isFile()) {
                   try {
                     fs.chmodSync(resolvedTarget, mode);
                   } catch {
-                    // best-effort restore
+                    // best-effort restore (may operate on wrong inode — see above)
                   }
                   throw new Error(
                     `writeInPlace: ${op.targetPath} changed to a non-file during chmod; possible symlink race`,
@@ -1141,7 +1145,10 @@ if (require.main === module) {
   const socketPathArg = process.argv.find((a) =>
     a.startsWith('--socket-path='),
   );
-  const nonceArg = process.argv.find((a) => a.startsWith('--nonce='));
+  // Nonce is passed via AVANTI_WORKER_NONCE env var (not cmdline) so that
+  // it does not appear in /proc/<pid>/cmdline, which is world-readable on Linux.
+  // The parent uses `sudo -E` to forward the env var to this process.
+  const nonce = process.env.AVANTI_WORKER_NONCE;
   const reqFileArg = process.argv.find((a) => a.startsWith('--req-file='));
 
   let inputStream: NodeJS.ReadableStream;
@@ -1153,8 +1160,8 @@ if (require.main === module) {
     // Send the nonce back as the very first line so the parent can verify this
     // is the worker it spawned (not a rogue process that connected to the socket
     // before us). Must be sent before any request is processed.
-    if (nonceArg) {
-      ipcSocket.write(nonceArg.slice('--nonce='.length) + '\n');
+    if (nonce) {
+      ipcSocket.write(nonce + '\n');
     }
     inputStream = ipcSocket;
     outputStream = ipcSocket;

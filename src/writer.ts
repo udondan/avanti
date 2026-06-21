@@ -51,12 +51,21 @@ export function sudoUserArgs(sudo: true | string): string[] {
 // traverse $HOME and would get EACCES. In that case, search PATH for the first
 // node binary outside $HOME; throws if none is found (a system-wide Node.js
 // install is required for named-user sudo).
+// Cache the resolved node binary path. The path is stable for the lifetime of
+// the process — no need to re-scan SAFE_DIRS and re-spawn `node --version` on
+// every new SudoWorkerSession.
+let resolvedNodeExecCached: string | undefined;
+
 function resolveNodeExec(sudo: true | string): string {
+  if (resolvedNodeExecCached !== undefined) return resolvedNodeExecCached;
   // AVANTI_NODE_EXEC is an explicit override for root-owned binary checks. It
   // is checked unconditionally (before the SAFE_DIRS scan and before the
   // home-dir check) so that tests and users who set it do not need to worry
   // about which branch applies to their system layout.
-  if (process.env.AVANTI_NODE_EXEC) return process.env.AVANTI_NODE_EXEC;
+  if (process.env.AVANTI_NODE_EXEC) {
+    resolvedNodeExecCached = process.env.AVANTI_NODE_EXEC;
+    return resolvedNodeExecCached;
+  }
   // Require the binary to be root-owned before trusting it when running via
   // sudo — whether elevating to root or to a named user. If process.execPath
   // is user-owned (e.g. a Homebrew or nvm/fnm/mise install), the calling user
@@ -76,6 +85,7 @@ function resolveNodeExec(sudo: true | string): string {
       st.uid === 0 &&
       !realPath.startsWith(os.homedir() + path.sep)
     ) {
+      resolvedNodeExecCached = realPath;
       return realPath;
     }
   } catch {
@@ -122,6 +132,7 @@ function resolveNodeExec(sudo: true | string): string {
         if (candidateMajor < WORKER_MIN_NODE_MAJOR) {
           continue;
         }
+        resolvedNodeExecCached = realPath;
         return realPath;
       } catch {
         // ignore EACCES, ENOENT, and any other stat/spawn error
@@ -905,12 +916,21 @@ export class SudoWorkerSession {
     // 0755 — world-connectable) before our chmodSync runs. For root sudo (0700),
     // no other user can reach the socket at all. For named-user sudo (0711), the
     // directory prevents filesystem enumeration but /proc/net/unix on Linux
-    // reveals the full socket path to any local user; the nonce handshake
-    // (256-bit random) and the server.on (not server.once) multi-accept design
-    // are the primary defenses: a rogue process that connects first will fail the
-    // nonce check and be destroyed, and the server keeps listening for the real
-    // worker. A full mitigation would require SO_PEERCRED/SCM_CREDENTIALS
-    // (Linux-only) to verify the connecting process's UID.
+    // reveals the full socket path to any local user.
+    //
+    // The nonce (256-bit random) is the primary guard against a rogue process
+    // connecting first. It is passed to the worker via AVANTI_WORKER_NONCE env
+    // (not cmdline) because /proc/<pid>/cmdline is world-readable on Linux,
+    // while /proc/<pid>/environ is readable only by the process owner. The parent
+    // uses `sudo -E` to forward the env var; this requires that the invoking
+    // user's sudoers entry does not set `!setenv`. A full mitigation would use
+    // SO_PEERCRED/SCM_CREDENTIALS (Linux-only) to verify the connecting PID.
+    //
+    // Note: there is a brief race between listen() and chmodSync() during which
+    // the socket is world-connectable. On Linux, combined with /proc/net/unix
+    // path visibility, a rogue local user could connect in this window — but
+    // without the nonce (not yet in any process's cmdline at that point, since
+    // the worker is spawned after chmodSync), so the handshake will reject them.
     if (tmpDir) {
       this.tmpDir = tmpDir;
     } else {
@@ -1055,8 +1075,10 @@ export class SudoWorkerSession {
       // target user can connect regardless of group membership. For named-user
       // sudo, tmpDir has mode 0711 (world-traversable, not world-listable) to
       // prevent filesystem enumeration of the socket filename. Note that
-      // /proc/net/unix can still reveal the path to local users; the nonce
-      // handshake is the primary defense (see constructor comment above).
+      // /proc/net/unix can still reveal the path to local users. The nonce
+      // handshake (passed via env, not cmdline) is the primary defense; a rogue
+      // process connecting during the brief listen→chmod race window cannot know
+      // the nonce because the worker is spawned after chmodSync completes.
       try {
         fs.chmodSync(
           this.ipcSocketPath!,
@@ -1093,13 +1115,20 @@ export class SudoWorkerSession {
         this.proc = spawn(
           'sudo',
           [
+            // -E: forward AVANTI_WORKER_NONCE from the parent env to the worker.
+            // This requires the invoking user's sudoers entry to allow setenv
+            // (i.e. not have !setenv). If denied, sudo exits non-zero before the
+            // worker starts and exec() rejects via the proc.on('close') handler.
+            '-E',
             ...sudoUserArgs(sudo),
             nodeExec,
             resolvedWorkerPath,
             `--socket-path=${this.ipcSocketPath!}`,
-            `--nonce=${ipcNonce}`,
           ],
           {
+            // Pass the nonce via env so it does not appear in /proc/<pid>/cmdline
+            // (world-readable on Linux). /proc/<pid>/environ is owner-readable only.
+            env: { ...process.env, AVANTI_WORKER_NONCE: ipcNonce },
             // stdin: /dev/tty (or inherited) so sudo's ttyname() succeeds
             // stdout/stderr: ignored — all IPC goes through the Unix socket
             stdio: [ttyFd ?? 'inherit', 'ignore', 'inherit'],
