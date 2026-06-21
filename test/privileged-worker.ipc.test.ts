@@ -25,8 +25,20 @@ function b64(content: string): string {
 }
 
 function runWorker(request: WorkerRequest): WorkerResponse {
+  // trustedUids is required by the worker since the round-6 hardening. For
+  // the IPC tests the worker runs as the current user (no sudo), so we need
+  // to trust both root (0) and the invoking user so ancestor-ownership checks
+  // pass for paths under /tmp (owned by root) and the test tmpDir (owned by
+  // the current user).
+  const withTrustedUids: WorkerRequest = {
+    trustedUids: [
+      0,
+      ...(typeof process.getuid === 'function' ? [process.getuid()] : []),
+    ],
+    ...request,
+  };
   const r = spawnSync('node', [WORKER], {
-    input: JSON.stringify(request),
+    input: JSON.stringify(withTrustedUids),
     stdio: ['pipe', 'pipe', 'inherit'],
     encoding: 'utf8',
     maxBuffer: 10 * 1024 * 1024,
