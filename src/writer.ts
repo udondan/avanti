@@ -1153,15 +1153,12 @@ export class SudoWorkerSession {
     return new Promise<WorkerResult[]>((resolve, reject) => {
       const timer = setTimeout(() => {
         setImmediate(() => {
-          // Always close the session on timeout, even if a late response already
-          // settled this.pending between setTimeout and setImmediate. Without this,
-          // the late-response path leaves closed=false and the session leaks in
-          // activeSudoSessions with the worker process still alive.
           const didTimeout = !!this.pending;
-          if (didTimeout) this.pending = null;
-          if (!this.closed) this.close();
-          if (didTimeout)
+          if (didTimeout) {
+            this.pending = null;
+            if (!this.closed) this.close();
             reject(new Error('SudoWorkerSession: exec() timed out'));
+          }
         });
       }, timeoutMs);
       this.pending = {
