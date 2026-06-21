@@ -291,7 +291,8 @@ export function revertCommand(): Command {
           console.error(
             `Revert failed: ${err instanceof Error ? err.message : String(err)}`,
           );
-          process.exit(2);
+          process.exitCode = 2;
+          return;
         } finally {
           closeAllSessions(sudoSessions);
         }

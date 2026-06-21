@@ -264,6 +264,22 @@ function runPrivilegedWorker(
     throw result.error;
   }
   if (result.status !== 0) {
+    // If continueOnError is set, the worker may have written partial results to
+    // stdout before exiting (e.g. crashed after some ops completed). Return
+    // them so callers can record which ops succeeded rather than losing all
+    // partial state.
+    if (continueOnError && result.stdout) {
+      try {
+        const partial = JSON.parse(result.stdout) as {
+          results: WorkerResult[];
+        };
+        if (Array.isArray(partial.results) && partial.results.length > 0) {
+          return partial.results;
+        }
+      } catch {
+        // fall through to throw
+      }
+    }
     let workerError =
       result.status === null
         ? `privileged worker terminated by signal ${result.signal}`
@@ -692,7 +708,8 @@ export async function sudoStatBatch(
       const r = results[j];
       const isSymlink = !!(r?.ok && r.isSymlink === true);
       const isDirectory = !!(r && !r.ok && r.code === 'EISDIR');
-      const exists = !!(r?.ok || isDirectory);
+      const isSpecialFile = !!(r && !r.ok && r.code === 'ENOTREGFILE');
+      const exists = !!(r?.ok || isDirectory || isSpecialFile);
       result.set(item.filePath, {
         exists,
         isSymlink,
@@ -829,6 +846,12 @@ export class SudoWorkerSession {
       const p = this.pending;
       this.pending = null;
       this.closed = true;
+      this.rl.close();
+      try {
+        this.proc.kill('SIGKILL');
+      } catch {
+        // already dead
+      }
       p?.reject(err as Error);
     });
 

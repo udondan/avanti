@@ -1697,6 +1697,13 @@ export function pullCommand(): Command {
                   effectivelyDeleted.add(paths[di]);
                   effectivelyCleaned.add(paths[di]);
                 } else if (
+                  deleteResults[di]?.ok &&
+                  deleteResults[di]?.skipped
+                ) {
+                  // File was already absent — clean up its history ref so we
+                  // don't re-attempt the deletion on every subsequent pull.
+                  effectivelyCleaned.add(paths[di]);
+                } else if (
                   deleteResults[di] &&
                   !deleteResults[di].ok &&
                   deleteResults[di].error

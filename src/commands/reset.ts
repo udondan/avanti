@@ -182,7 +182,8 @@ export function resetCommand(): Command {
         console.error(
           `Reset failed: ${err instanceof Error ? err.message : String(err)}`,
         );
-        process.exit(2);
+        process.exitCode = 2;
+        return;
       } finally {
         closeAllSessions(sudoSessions);
       }

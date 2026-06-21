@@ -5,6 +5,8 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import {
   sudoAtomicWrite,
   sudoAtomicRead,
+  openPrivilegedSessions,
+  closeAllSessions,
   SudoWriteTarget,
 } from '../src/writer';
 
@@ -91,6 +93,59 @@ describe.skipIf(!sudoTestDir || process.platform === 'win32')(
               }
             })(),
           ).toBe(true);
+        }
+      }
+    });
+
+    it('writes 3 files via SudoWorkerSession with exactly 1 sudo invocation', async () => {
+      if (sudoCallLog) fs.writeFileSync(sudoCallLog, '');
+      const runId = crypto.randomBytes(4).toString('hex');
+      const targets: SudoWriteTarget[] = [
+        {
+          targetPath: path.join(sudoTestDir!, `sess-a-${runId}.txt`),
+          content: Buffer.from(`session-a-${runId}`),
+          sudo: true,
+        },
+        {
+          targetPath: path.join(sudoTestDir!, `sess-b-${runId}.txt`),
+          content: Buffer.from(`session-b-${runId}`),
+          sudo: true,
+        },
+        {
+          targetPath: path.join(sudoTestDir!, `sess-c-${runId}.txt`),
+          content: Buffer.from(`session-c-${runId}`),
+          sudo: true,
+        },
+      ];
+
+      const sessions = openPrivilegedSessions([true as const]);
+      try {
+        await sudoAtomicWrite(targets, [], sessions);
+      } finally {
+        closeAllSessions(sessions);
+      }
+
+      // The session is opened with one sudo spawn; subsequent exec() calls reuse
+      // the same process. Exactly 1 sudo invocation total for 3 files.
+      if (sudoCallLog) {
+        const log = fs.readFileSync(sudoCallLog, 'utf8');
+        expect(log.split('\n').filter(Boolean)).toHaveLength(1);
+      }
+
+      // Verify all files landed with correct content.
+      const allReads = await sudoAtomicRead(
+        targets.map((t) => ({ filePath: t.targetPath, sudo: true })),
+      );
+      for (const t of targets) {
+        let body: string | null = null;
+        try {
+          body = fs.readFileSync(t.targetPath, 'utf8');
+        } catch {
+          const r = allReads.get(t.targetPath);
+          if (r) body = Buffer.from(r.contentB64, 'base64').toString('utf8');
+        }
+        if (body !== null) {
+          expect(body).toBe(t.content.toString('utf8'));
         }
       }
     });
