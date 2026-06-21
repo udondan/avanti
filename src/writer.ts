@@ -83,7 +83,13 @@ function resolveNodeExec(sudo: true | string): string {
   // from one of those would cause sudo -u <user> to execute attacker code.
   // sudo's secure_path would normally sanitise PATH, but spawnSync passes the
   // resolved binary as argv[0], bypassing secure_path entirely.
-  const currentMajor = parseInt(process.versions.node.split('.')[0], 10);
+  // Minimum Node.js major version that can run the compiled worker.
+  // The worker is compiled to ES2022 (tsconfig.build.json target), which
+  // Node.js 18+ supports fully. Using the current process's major version
+  // as the threshold is wrong: when the caller runs under nvm/mise (e.g.
+  // v24), a system node v18 is perfectly capable of running the ES2022
+  // compiled output and would be rejected without cause.
+  const WORKER_MIN_NODE_MAJOR = 18;
   const SAFE_DIRS =
     process.platform === 'darwin'
       ? ['/usr/bin', '/usr/local/bin', '/opt/homebrew/bin', '/bin']
@@ -99,9 +105,9 @@ function resolveNodeExec(sudo: true | string): string {
         // Accepting such a binary would allow the calling user to replace it with
         // malicious code that executes as the named sudo target.
         if (!st.isFile() || (st.mode & 0o111) === 0 || st.uid !== 0) continue;
-        // Version check: the system node must be at least the same major version
-        // as the running process. An older binary would fail with a SyntaxError
-        // when loading the compiled worker, producing an opaque "exit 1" error.
+        // Version check: reject binaries older than the compiled worker requires.
+        // This turns an opaque "privileged worker failed (exit 1)" SyntaxError
+        // into an actionable "no compatible binary found" message.
         const versionResult = spawnSync(candidate, ['--version'], {
           encoding: 'utf8',
           timeout: 5000,
@@ -109,7 +115,7 @@ function resolveNodeExec(sudo: true | string): string {
         const match = versionResult.stdout?.trim().match(/^v(\d+)\./);
         if (!match) continue;
         const candidateMajor = parseInt(match[1], 10);
-        if (candidateMajor < currentMajor) {
+        if (candidateMajor < WORKER_MIN_NODE_MAJOR) {
           continue;
         }
         return candidate;
@@ -119,7 +125,7 @@ function resolveNodeExec(sudo: true | string): string {
     }
   }
   throw new Error(
-    `No root-owned Node.js binary (v${currentMajor}+) found in ${SAFE_DIRS.join(', ')} for named-user sudo ('${sudo}'). ` +
+    `No root-owned Node.js binary (v${WORKER_MIN_NODE_MAJOR}+) found in ${SAFE_DIRS.join(', ')} for named-user sudo ('${sudo}'). ` +
       `Install Node.js system-wide (e.g. apt install nodejs) or set AVANTI_NODE_EXEC to the full path ` +
       `of a root-owned, compatible Node.js binary.`,
   );
