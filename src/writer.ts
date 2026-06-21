@@ -1,5 +1,6 @@
 import * as crypto from 'crypto';
 import * as fs from 'fs';
+import * as net from 'net';
 import * as os from 'os';
 import * as path from 'path';
 import * as readline from 'readline';
@@ -51,6 +52,11 @@ export function sudoUserArgs(sudo: true | string): string[] {
 // node binary outside $HOME; throws if none is found (a system-wide Node.js
 // install is required for named-user sudo).
 function resolveNodeExec(sudo: true | string): string {
+  // AVANTI_NODE_EXEC is an explicit override for root-owned binary checks. It
+  // is checked unconditionally (before the SAFE_DIRS scan and before the
+  // home-dir check) so that tests and users who set it do not need to worry
+  // about which branch applies to their system layout.
+  if (process.env.AVANTI_NODE_EXEC) return process.env.AVANTI_NODE_EXEC;
   if (
     typeof sudo !== 'string' ||
     !process.execPath.startsWith(os.homedir() + path.sep)
@@ -63,10 +69,6 @@ function resolveNodeExec(sudo: true | string): string {
   // with a SyntaxError surfaced as "privileged worker failed (exit 1)". Ensure
   // a compatible Node.js is installed system-wide when using named-user sudo
   // with an nvm/fnm/mise-managed Node.
-  // Allow an explicit override so users on systems with no system-wide Node
-  // (e.g. developer machines that use nvm/fnm/mise exclusively) can still use
-  // named-user sudo without installing a system-wide Node.js.
-  if (process.env.AVANTI_NODE_EXEC) return process.env.AVANTI_NODE_EXEC;
   // Scan only known-safe system directories, not all of PATH. PATH may contain
   // world-writable directories under an attacker's control; returning a binary
   // from one of those would cause sudo -u <user> to execute attacker code.
@@ -775,15 +777,20 @@ function buildTrustedUids(sudo: true | string): Set<number> {
 }
 
 export class SudoWorkerSession {
-  private proc: ReturnType<typeof spawn>;
-  private dataIn: NodeJS.WritableStream;
+  private proc?: ReturnType<typeof spawn>;
+  private server?: net.Server;
+  private ipcSocket?: net.Socket;
+  private dataIn?: net.Socket;
   private tmpDir?: string;
-  private rl: readline.Interface;
+  private rl?: readline.Interface;
   private pending: {
     resolve: (results: WorkerResult[]) => void;
     reject: (err: Error) => void;
   } | null = null;
   private closed = false;
+  // Resolves when the worker has connected to the IPC socket and the session
+  // is ready for exec() calls. Rejects on spawn error or listen error.
+  private ready: Promise<void>;
   readonly trustedUids: Set<number>;
   readonly sudo: true | string;
 
@@ -796,129 +803,161 @@ export class SudoWorkerSession {
     const { nodeExec, resolvedWorkerPath, tmpDir } = prepareWorkerExec(sudo);
     if (tmpDir) this.tmpDir = tmpDir;
 
-    // Open /dev/tty so that sudo can look up cached credentials via
-    // ttyname(STDIN_FILENO). When stdin is a pipe (stdio: ['pipe',…]), macOS
-    // sudo's ttyname() returns NULL and ignores the credential cache, forcing
-    // a password re-prompt every time. Fall back to 'inherit' (the caller's
-    // own stdin) when no controlling TTY is available (CI, containers, etc.).
-    let ttyFd: number | undefined;
-    try {
-      ttyFd = fs.openSync('/dev/tty', 'r+');
-    } catch {
-      /* no controlling TTY */
-    }
-
-    this.proc = spawn(
-      'sudo',
-      // -C 4: sudo's default closefrom is 3, which closes fd 3 before exec'ing
-      // the worker (sudo uses close_range/closefrom to sanitise the fd table).
-      // -C 4 raises the floor to 4, keeping fd 3 (the data pipe) open so the
-      // worker's net.Socket({ fd: 3 }) does not throw ERR_INVALID_FD_TYPE.
-      [
-        ...sudoUserArgs(sudo),
-        '-C',
-        '4',
-        nodeExec,
-        resolvedWorkerPath,
-        '--data-fd=3',
-      ],
-      {
-        // stdio[0]: /dev/tty (or inherited stdin) so sudo's ttyname() succeeds
-        // stdio[1]: pipe for JSON response lines from the worker
-        // stdio[2]: inherited stderr for sudo prompts and error messages
-        // stdio[3]: pipe for JSON request lines to the worker (the data channel)
-        stdio: [ttyFd ?? 'inherit', 'pipe', 'inherit', 'pipe'],
-      },
+    // Use a Unix domain socket for IPC so that sudo's fd table is unaffected.
+    // The previous approach passed fd 3 via a pipe and used `sudo -C 4` to
+    // prevent sudo's closefrom from closing that fd. But `sudo -C` requires
+    // `closefrom_override` in sudoers, which is disabled by default on Linux
+    // and macOS — making the session fail with "not permitted to use the -C
+    // option" on virtually all real installations. A Unix socket has no fd
+    // that needs to survive sudo's closefrom, so no sudoers changes are needed.
+    //
+    // The socket is placed in the staged worker directory which is already
+    // world-traversable (mode 0755). The socket itself is set mode 0600 so
+    // only the invoking user can connect for root sudo. For named-user sudo
+    // the mode is 0660 so the target user can also connect.
+    const ipcSocketPath = path.join(
+      tmpDir ?? WORLD_TMP,
+      `ipc-${crypto.randomBytes(4).toString('hex')}.sock`,
     );
-    if (ttyFd !== undefined) fs.closeSync(ttyFd);
 
-    // fd 3 is the write end of the data pipe (stdio[3]).
-    this.dataIn = (
-      this.proc as unknown as { stdio: Array<NodeJS.WritableStream | null> }
-    ).stdio[3]!;
+    let readyResolve: () => void;
+    let readyReject: (e: Error) => void;
+    this.ready = new Promise<void>((res, rej) => {
+      readyResolve = res;
+      readyReject = rej;
+    });
 
-    // readline handles line buffering internally, avoiding the O(n²) cost of
-    // Buffer.concat on every data event for large responses.
-    this.rl = readline.createInterface({
-      input: this.proc.stdout!,
-      crlfDelay: Infinity,
-    });
-    // readline only attaches 'data'/'end' listeners — it does NOT add an
-    // 'error' handler. Without one, a broken-pipe I/O error on proc.stdout
-    // is re-thrown as an unhandled exception and crashes the CLI process.
-    this.proc.stdout!.on('error', (err) => {
-      const p = this.pending;
-      this.pending = null;
-      this.closed = true;
-      p?.reject(err);
-    });
-    this.rl.on('line', (line: string) => {
-      const trimmed = line.trim();
-      if (!trimmed) return;
-      try {
-        const response = JSON.parse(trimmed) as WorkerResponse;
+    this.server = net.createServer({ allowHalfOpen: true });
+    this.server.once('connection', (socket) => {
+      this.ipcSocket = socket;
+      this.dataIn = socket;
+      this.server!.close();
+
+      socket.on('error', (err) => {
         const p = this.pending;
         this.pending = null;
-        p?.resolve(response.results);
-      } catch (e) {
+        this.closed = true;
+        this.rl?.close();
+        try {
+          this.proc?.kill('SIGKILL');
+        } catch {
+          // already dead
+        }
+        p?.reject(err);
+      });
+
+      this.rl = readline.createInterface({
+        input: socket,
+        crlfDelay: Infinity,
+      });
+      this.rl.on('line', (line: string) => {
+        const trimmed = line.trim();
+        if (!trimmed) return;
+        try {
+          const response = JSON.parse(trimmed) as WorkerResponse;
+          const p = this.pending;
+          this.pending = null;
+          p?.resolve(response.results);
+        } catch (e) {
+          this.closed = true;
+          const p = this.pending;
+          this.pending = null;
+          p?.reject(
+            new Error(
+              `failed to parse worker response: ${(e as Error).message}`,
+            ),
+          );
+        }
+      });
+
+      readyResolve();
+    });
+
+    this.server.once('error', (err) => {
+      this.closed = true;
+      readyReject(err);
+    });
+
+    this.server.listen(ipcSocketPath, () => {
+      // Server is listening — now safe to spawn the worker so it cannot miss
+      // the listening socket. Set socket permissions: root sudo needs 0600
+      // (only invoking user); named-user sudo needs 0660 (invoking + target).
+      try {
+        fs.chmodSync(ipcSocketPath, typeof sudo === 'string' ? 0o660 : 0o600);
+      } catch {
+        // best-effort; connection-refused is a cleaner failure than a race
+      }
+
+      // Open /dev/tty so that sudo can look up cached credentials via
+      // ttyname(STDIN_FILENO). When stdin is a pipe, macOS sudo's ttyname()
+      // returns NULL and ignores the credential cache, forcing a re-prompt.
+      // Fall back to 'inherit' when no controlling TTY is available (CI, containers).
+      let ttyFd: number | undefined;
+      try {
+        ttyFd = fs.openSync('/dev/tty', 'r+');
+      } catch {
+        /* no controlling TTY */
+      }
+
+      this.proc = spawn(
+        'sudo',
+        [
+          ...sudoUserArgs(sudo),
+          nodeExec,
+          resolvedWorkerPath,
+          `--socket-path=${ipcSocketPath}`,
+        ],
+        {
+          // stdin: /dev/tty (or inherited) so sudo's ttyname() succeeds
+          // stdout/stderr: ignored — all IPC goes through the Unix socket
+          stdio: [ttyFd ?? 'inherit', 'ignore', 'inherit'],
+        },
+      );
+      if (ttyFd !== undefined) fs.closeSync(ttyFd);
+
+      this.proc.on('error', (err) => {
         this.closed = true;
         const p = this.pending;
         this.pending = null;
-        p?.reject(
-          new Error(`failed to parse worker response: ${(e as Error).message}`),
-        );
-      }
-    });
+        p?.reject(err);
+        readyReject(err);
+      });
 
-    this.proc.on('error', (err) => {
-      this.closed = true;
-      const p = this.pending;
-      this.pending = null;
-      p?.reject(err);
-    });
-
-    // EPIPE is emitted on the data channel when the child exits while we are
-    // writing to it. Without a listener Node.js would throw an unhandled
-    // exception and crash the CLI process. Reject the in-flight request instead.
-    this.dataIn.on('error', (err) => {
-      const p = this.pending;
-      this.pending = null;
-      this.closed = true;
-      this.rl.close();
-      try {
-        this.proc.kill('SIGKILL');
-      } catch {
-        // already dead
-      }
-      p?.reject(err as Error);
-    });
-
-    this.proc.on('close', (code, signal) => {
-      this.closed = true;
-      // Clean up the staged worker directory immediately on crash or unexpected
-      // exit so it does not leak until process.exit(). The close() guard
-      // ("if (this.closed) return") would otherwise skip this cleanup when close()
-      // is called after the process has already exited.
-      if (this.tmpDir) {
-        cleanupWorkerDir(this.tmpDir);
-        this.tmpDir = undefined;
-      }
-      const p = this.pending;
-      this.pending = null;
-      if (p) {
-        // Reject whether exit was clean (0) or not — a clean exit with an
-        // in-flight request means the worker died without sending a response,
-        // and leaving the promise pending would cause a 30s timeout hang.
-        p.reject(
+      this.proc.on('close', (code, signal) => {
+        this.closed = true;
+        // If the worker exited before a socket connection was made, close the
+        // server so its listening socket fd does not leak.
+        if (!this.ipcSocket) {
+          this.server?.close();
+        }
+        if (this.tmpDir) {
+          cleanupWorkerDir(this.tmpDir);
+          this.tmpDir = undefined;
+        }
+        const p = this.pending;
+        this.pending = null;
+        if (p) {
+          p.reject(
+            new Error(
+              code === 0
+                ? 'privileged worker exited unexpectedly with no response'
+                : code !== null
+                  ? `privileged worker failed (exit ${code})`
+                  : `privileged worker killed (signal ${signal ?? 'unknown'})`,
+            ),
+          );
+        }
+        // If no connection was established yet, reject the ready promise so
+        // that exec() does not hang waiting for a worker that will never connect.
+        // readyReject is a no-op if the promise already resolved (normal path).
+        readyReject(
           new Error(
-            code === 0
-              ? 'privileged worker exited unexpectedly with no response'
-              : code !== null
-                ? `privileged worker failed (exit ${code})`
-                : `privileged worker killed (signal ${signal ?? 'unknown'})`,
+            code !== null
+              ? `privileged worker failed before connecting (exit ${code})`
+              : `privileged worker killed before connecting (signal ${signal ?? 'unknown'})`,
           ),
         );
-      }
+      });
     });
   }
 
@@ -932,18 +971,18 @@ export class SudoWorkerSession {
       throw new Error(
         'SudoWorkerSession: concurrent exec() calls are not supported',
       );
+
+    // Wait for the worker to connect (no-op after first call once ready resolves).
+    await this.ready;
+
     return new Promise<WorkerResult[]>((resolve, reject) => {
       const timer = setTimeout(() => {
         if (!this.pending) return;
-        // Use setImmediate so the poll-phase (I/O) runs first: if a readline
-        // 'line' event was already buffered when the timer fired, it resolves
-        // this.pending before this callback executes, and the guard above exits
-        // early — preventing a spurious timeout rejection.
         setImmediate(() => {
           if (!this.pending) return;
           this.pending = null;
-          this.proc.kill('SIGTERM');
-          this.close(); // sets this.closed=true and cleans up tmpDir
+          this.proc?.kill('SIGTERM');
+          this.close();
           reject(new Error('SudoWorkerSession: exec() timed out'));
         });
       }, timeoutMs);
@@ -971,7 +1010,7 @@ export class SudoWorkerSession {
         trustedUids: [...this.trustedUids],
         continueOnError,
       };
-      this.dataIn.write(JSON.stringify(request) + '\n', (err) => {
+      this.dataIn!.write(JSON.stringify(request) + '\n', (err) => {
         if (err) {
           clearTimeout(timer);
           this.pending = null;
@@ -988,11 +1027,14 @@ export class SudoWorkerSession {
     this.pending = null;
     this.closed = true;
     p?.reject(new Error('SudoWorkerSession: session closed'));
-    this.rl.close();
-    this.dataIn.end();
-    const t = setTimeout(() => this.proc.kill('SIGKILL'), 5_000);
-    t.unref();
-    this.proc.once('close', () => clearTimeout(t));
+    this.rl?.close();
+    this.server?.close();
+    this.ipcSocket?.destroy();
+    if (this.proc) {
+      const t = setTimeout(() => this.proc!.kill('SIGKILL'), 5_000);
+      t.unref();
+      this.proc.once('close', () => clearTimeout(t));
+    }
     if (this.tmpDir) {
       cleanupWorkerDir(this.tmpDir);
       this.tmpDir = undefined;

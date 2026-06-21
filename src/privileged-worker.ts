@@ -294,19 +294,22 @@ function backupRegularFile(
       } catch {
         // best-effort close
       }
+      // Only unlink backupTmp when WE created it (bfd was opened successfully
+      // with O_EXCL). If openSync threw EEXIST before bfd was assigned, the
+      // file at backupTmp belongs to another process and must not be deleted.
+      if (backupTmp !== undefined) {
+        try {
+          fs.unlinkSync(backupTmp);
+        } catch {
+          // best-effort cleanup
+        }
+      }
     }
     if (sfd !== undefined) {
       try {
         fs.closeSync(sfd);
       } catch {
         // best-effort close
-      }
-    }
-    if (backupTmp !== undefined) {
-      try {
-        fs.unlinkSync(backupTmp);
-      } catch {
-        // best-effort cleanup
       }
     }
     throw err;
@@ -1094,42 +1097,34 @@ export function dispatch(
 // Entry point: only run when this file is the main module, not when imported.
 if (require.main === module) {
   // Determine the input source from command-line flags:
-  //   --data-fd=N  : read from fd N (SudoWorkerSession passes this so stdin can
-  //                  be /dev/tty, allowing macOS sudo to find cached credentials
-  //                  via ttyname(STDIN_FILENO) instead of returning NULL)
-  //   --req-file=P : read a single request from file P then exit (runPrivilegedWorker
-  //                  keeps stdin as 'inherit' for the same ttyname() reason)
-  //   (default)    : read from stdin (tests, manual invocation, backward compat)
-  const dataFdArg = process.argv.find((a) => a.startsWith('--data-fd='));
+  //   --socket-path=P : connect to the Unix domain socket at P for bidirectional
+  //                     JSON IPC (SudoWorkerSession passes this so stdin can be
+  //                     /dev/tty, allowing macOS sudo to find cached credentials
+  //                     via ttyname(STDIN_FILENO) instead of returning NULL).
+  //                     Replaced the old --data-fd=N approach which required
+  //                     `sudo -C 4` to keep fd 3 open — but `sudo -C` needs
+  //                     `closefrom_override` in sudoers (disabled by default).
+  //   --req-file=P    : read a single request from file P then exit
+  //   (default)       : read from stdin (tests, manual invocation, backward compat)
+  const socketPathArg = process.argv.find((a) =>
+    a.startsWith('--socket-path='),
+  );
   const reqFileArg = process.argv.find((a) => a.startsWith('--req-file='));
 
   let inputStream: NodeJS.ReadableStream;
-  if (dataFdArg) {
-    const dataFd = Number(dataFdArg.slice('--data-fd='.length));
-    if (!Number.isInteger(dataFd) || dataFd < 0) {
-      process.stderr.write(
-        `invalid --data-fd value: ${dataFdArg.slice('--data-fd='.length)}\n`,
-      );
-      process.exit(1);
-    }
-    // net.Socket wraps a file descriptor as a stream; used here for the IPC
-    // data channel (fd 3) when stdin is reserved for sudo's TTY lookup.
-    // readable: true, writable: true, allowHalfOpen: true — all three are
-    // required: setting writable: false causes Node.js to force-set
-    // allowHalfOpen: false, which makes the socket auto-destroy when the peer
-    // half-closes (e.g. on write-side constraints), causing ECONNRESET on the
-    // parent before the first request is processed. The worker never writes to
-    // this socket (readline only reads), so writable: true is harmless.
-    inputStream = new net.Socket({
-      fd: dataFd,
-      readable: true,
-      writable: true,
-      allowHalfOpen: true,
-    });
+  let outputStream: NodeJS.WritableStream;
+  if (socketPathArg) {
+    const socketPath = socketPathArg.slice('--socket-path='.length);
+    const ipcSocket = net.createConnection(socketPath);
+    ipcSocket.setNoDelay(true);
+    inputStream = ipcSocket;
+    outputStream = ipcSocket;
   } else if (reqFileArg) {
     inputStream = fs.createReadStream(reqFileArg.slice('--req-file='.length));
+    outputStream = process.stdout;
   } else {
     inputStream = process.stdin;
+    outputStream = process.stdout;
   }
 
   // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -1139,6 +1134,10 @@ if (require.main === module) {
       crlfDelay: Infinity,
     },
   );
+
+  const writeResponse = (obj: unknown): void => {
+    outputStream.write(JSON.stringify(obj) + '\n');
+  };
 
   // Shut down immediately on any unexpected error so subsequent ops are not
   // dispatched while the worker is in an unknown state.
@@ -1174,29 +1173,25 @@ if (require.main === module) {
     try {
       request = JSON.parse(trimmed) as WorkerRequest;
     } catch (e) {
-      process.stdout.write(
-        JSON.stringify({
-          results: [
-            {
-              ok: false,
-              error: `failed to parse request: ${(e as Error).message}`,
-            },
-          ],
-        }) + '\n',
-      );
+      writeResponse({
+        results: [
+          {
+            ok: false,
+            error: `failed to parse request: ${(e as Error).message}`,
+          },
+        ],
+      });
       process.exitCode = 1;
       rl.close();
       return;
     }
 
     if (!request || !Array.isArray(request.ops)) {
-      process.stdout.write(
-        JSON.stringify({
-          results: [
-            { ok: false, error: 'invalid request: ops must be an array' },
-          ],
-        }) + '\n',
-      );
+      writeResponse({
+        results: [
+          { ok: false, error: 'invalid request: ops must be an array' },
+        ],
+      });
       process.exitCode = 1;
       rl.close();
       return;
@@ -1313,10 +1308,10 @@ if (require.main === module) {
         if (!continueOnError) aborted = true;
       }
     }
-    process.stdout.write(JSON.stringify({ results }) + '\n');
+    writeResponse({ results });
   });
 
   rl.on('close', () => {
-    // stdin closed — session ended naturally
+    // input stream closed — session ended naturally
   });
 }

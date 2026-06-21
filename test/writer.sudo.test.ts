@@ -1,5 +1,4 @@
 import * as fs from 'fs';
-import * as path from 'path';
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import {
   sudoAtomicDelete,
@@ -60,9 +59,16 @@ function failResult(status = 1): SpawnSyncReturns<Buffer> {
 beforeEach(() => {
   mockSpawnSync.mockReset();
   mockSpawn.mockReset();
+  // resolveNodeExec looks for a root-owned node binary in SAFE_DIRS for
+  // named-user sudo. On developer machines (Apple Silicon, mise/nvm installs),
+  // there may be no root-owned system node. Set AVANTI_NODE_EXEC so
+  // resolveNodeExec returns early without scanning SAFE_DIRS, keeping the
+  // mock-based tests self-contained and environment-independent.
+  process.env.AVANTI_NODE_EXEC = process.execPath;
 });
 
 afterEach(() => {
+  delete process.env.AVANTI_NODE_EXEC;
   vi.clearAllMocks();
 });
 
@@ -389,88 +395,44 @@ describe.skipIf(isWindows)('sudoAtomicDelete', () => {
 
 describe.skipIf(isWindows)('SudoWorkerSession via sudoAtomicWrite', () => {
   it('uses session exec instead of spawnSync when a session is provided', async () => {
-    // Simulate a SudoWorkerSession by mocking spawn to produce a process
-    // that responds to JSON line requests with a single ok:true result.
-    const { EventEmitter } = await import('events');
+    // Verify that sudoAtomicWrite dispatches through session.exec() rather
+    // than spawning a new sudo process when a pre-built session map is given.
+    // Use a duck-typed mock session so the test does not depend on the session's
+    // internal IPC mechanism (Unix socket, fd pipe, etc.).
+    const execMock = vi.fn((ops: unknown[]) =>
+      Promise.resolve(ops.map(() => ({ ok: true }))),
+    );
+    const fakeSession = {
+      exec: execMock,
+      close: vi.fn(),
+      trustedUids: new Set([0]),
+      sudo: true as const,
+    } as unknown as SudoWorkerSession;
 
-    // SudoWorkerSession now sends JSON requests over fd 3 (not stdin) so that
-    // stdin can be /dev/tty for macOS credential-cache lookup. The mock must
-    // expose stdio[3] as the data channel the session writes to.
-    const fakeDataIn = {
-      write: vi.fn((_data: string, cb?: (err?: Error) => void) => {
-        if (cb) cb();
-        return true;
-      }),
-      end: vi.fn(),
-      on: vi.fn(),
-    };
-    const fakeStdout = Object.assign(new EventEmitter(), {
-      resume: () => {},
-      pause: () => {},
-    });
-    const fakeProc = Object.assign(new EventEmitter(), {
-      stdin: null, // stdin is now /dev/tty (or inherited), not a pipe
-      stdout: fakeStdout,
-      stdio: [null, fakeStdout, null, fakeDataIn], // index 3 is the data channel
-      kill: vi.fn(),
-    }) as unknown as ReturnType<typeof spawn>;
-
-    mockSpawn.mockReturnValue(fakeProc);
-
-    // Build a session — constructor calls spawn internally.
-    // We need to point it at an existing worker file. Use a trick:
-    // patch __filename detection by mocking fs.existsSync for the worker path.
-    // Actually SudoWorkerSession reads __filename at module load time.
-    // The simpler approach: mock the worker path check.
-    // For this unit test, we just verify that session.exec is invoked instead
-    // of spawnSync by checking mockSpawnSync is not called.
-
-    // Trigger the stdout data event when exec writes to the data channel (fd 3)
-    fakeDataIn.write = vi.fn((data: string, cb?: (err?: Error) => void) => {
-      // Simulate the worker responding with ok:true for every op
-      const req = JSON.parse(data.trimEnd()) as { ops: unknown[] };
-      const results = req.ops.map(() => ({ ok: true }));
-      setImmediate(() => {
-        fakeStdout.emit(
-          'data',
-          Buffer.from(JSON.stringify({ results }) + '\n'),
-        );
-      });
-      if (cb) cb();
-      return true;
-    });
-
-    // We need fs.existsSync to return true for the worker path.
-    // Since we cannot easily control the worker path in tests, skip if the
-    // dist file does not exist (same guard as the IPC tests).
-    const workerPath = path.resolve(__dirname, '../dist/privileged-worker.js');
-    const fs = await import('fs');
-    if (!fs.existsSync(workerPath)) {
-      // Worker not built — skip gracefully.
-      return;
-    }
-
-    const session = new SudoWorkerSession(true);
-    // Override the internal proc with our fake
-    (session as unknown as { proc: unknown }).proc = fakeProc;
-
-    const results = await session.exec([
-      { type: 'delete', targetPath: '/tmp/test-delete' },
+    const sessions = new Map<true | string, SudoWorkerSession>([
+      [true, fakeSession],
     ]);
-    expect(results).toHaveLength(1);
-    expect(results[0].ok).toBe(true);
 
-    // spawnSync should NOT have been called for the exec op
-    const sudoCalls = mockSpawnSync.mock.calls.filter(
-      ([cmd]) => cmd === 'sudo',
-    );
-    // sudoAtomicWrite calls through session, not spawnSync
-    // (spawnSync may have been called for `id -u` in buildTrustedUids but not for the write)
-    const workerCalls = sudoCalls.filter((call) =>
-      (call[1] as string[]).some((a) => a.includes('privileged-worker')),
-    );
-    expect(workerCalls).toHaveLength(0);
+    const target: SudoWriteTarget = {
+      targetPath: '/etc/test.conf',
+      content: Buffer.from('data'),
+      sudo: true,
+    };
+    mockSpawnSync.mockReturnValue(workerOkResult(1));
+    await sudoAtomicWrite([target], [], sessions);
 
-    session.close();
+    // spawnSync must NOT have been used for a privileged-worker invocation
+    const workerSpawnSyncCalls = mockSpawnSync.mock.calls.filter(
+      ([, args]) =>
+        Array.isArray(args) &&
+        (args as string[]).some((a) => a.includes('privileged-worker')),
+    );
+    expect(workerSpawnSyncCalls).toHaveLength(0);
+
+    // session.exec() must have been called once with the expected op
+    expect(execMock).toHaveBeenCalledTimes(1);
+    const [ops] = execMock.mock.calls[0] as [Array<{ type: string }>];
+    expect(ops).toHaveLength(1);
+    expect(ops[0].type).toBe('write-mv');
   });
 });
