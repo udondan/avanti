@@ -1037,7 +1037,11 @@ export class SudoWorkerSession {
           // (net.Server.listen creates the socket at 0777&~umask, typically
           // 0755, so leaving it at that mode means any local user can connect
           // and become the trusted IPC peer of the root-privileged worker.)
-          throw e;
+          // Reject ready rather than throwing so this async callback does not
+          // propagate an uncaughtException that would crash the parent process.
+          readyReject(e instanceof Error ? e : new Error(String(e)));
+          this.close();
+          return;
         }
         // Named-user sudo: best-effort. The 0711 parent dir still limits
         // enumeration, so a chmod failure is bad but bounded in impact.

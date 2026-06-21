@@ -1159,8 +1159,8 @@ if (require.main === module) {
     },
   );
 
-  const writeResponse = (obj: unknown): void => {
-    outputStream.write(JSON.stringify(obj) + '\n');
+  const writeResponse = (obj: unknown, cb?: () => void): void => {
+    outputStream.write(JSON.stringify(obj) + '\n', cb);
   };
 
   // Shut down immediately on any unexpected error so subsequent ops are not
@@ -1178,11 +1178,13 @@ if (require.main === module) {
     // structured rejection with the actual error message rather than the generic
     // "IPC stream closed without a response" from the rl.on('close') fallback.
     try {
-      writeResponse({ results: [{ ok: false, error: msg }] });
+      writeResponse({ results: [{ ok: false, error: msg }] }, () => {
+        process.exit(1);
+      });
+      setTimeout(() => process.exit(1), 100).unref();
     } catch {
-      // best-effort; if the output stream is broken we can't do anything
+      process.exit(1);
     }
-    process.exit(1);
   });
   process.once('unhandledRejection', (reason) => {
     const msg = reason instanceof Error ? reason.message : String(reason);
@@ -1190,17 +1192,18 @@ if (require.main === module) {
       `avanti privileged-worker: unhandled rejection: ${msg}\n`,
     );
     try {
-      writeResponse({ results: [{ ok: false, error: msg }] });
+      writeResponse({ results: [{ ok: false, error: msg }] }, () => {
+        process.exit(1);
+      });
+      setTimeout(() => process.exit(1), 100).unref();
     } catch {
-      // best-effort
+      process.exit(1);
     }
-    process.exit(1);
   });
 
   (inputStream as NodeJS.EventEmitter).on('error', (err: Error) => {
     process.stderr.write(`data channel error: ${err.message}\n`);
-    process.exitCode = 1;
-    rl.close();
+    process.exit(1);
   });
 
   rl.on('line', (line: string) => {
@@ -1214,27 +1217,35 @@ if (require.main === module) {
     try {
       request = JSON.parse(trimmed) as WorkerRequest;
     } catch (e) {
-      writeResponse({
-        results: [
-          {
-            ok: false,
-            error: `failed to parse request: ${(e as Error).message}`,
-          },
-        ],
-      });
-      process.exitCode = 1;
-      rl.close();
+      writeResponse(
+        {
+          results: [
+            {
+              ok: false,
+              error: `failed to parse request: ${(e as Error).message}`,
+            },
+          ],
+        },
+        () => {
+          process.exit(1);
+        },
+      );
+      setTimeout(() => process.exit(1), 100).unref();
       return;
     }
 
     if (!request || !Array.isArray(request.ops)) {
-      writeResponse({
-        results: [
-          { ok: false, error: 'invalid request: ops must be an array' },
-        ],
-      });
-      process.exitCode = 1;
-      rl.close();
+      writeResponse(
+        {
+          results: [
+            { ok: false, error: 'invalid request: ops must be an array' },
+          ],
+        },
+        () => {
+          process.exit(1);
+        },
+      );
+      setTimeout(() => process.exit(1), 100).unref();
       return;
     }
 
@@ -1246,17 +1257,21 @@ if (require.main === module) {
       !Array.isArray(request.trustedUids) ||
       request.trustedUids.length === 0
     ) {
-      writeResponse({
-        results: [
-          {
-            ok: false,
-            error:
-              'invalid request: trustedUids must be a non-empty array of UIDs',
-          },
-        ],
-      });
-      process.exitCode = 1;
-      rl.close();
+      writeResponse(
+        {
+          results: [
+            {
+              ok: false,
+              error:
+                'invalid request: trustedUids must be a non-empty array of UIDs',
+            },
+          ],
+        },
+        () => {
+          process.exit(1);
+        },
+      );
+      setTimeout(() => process.exit(1), 100).unref();
       return;
     }
     const trustedUids = new Set(request.trustedUids.map(Number));
