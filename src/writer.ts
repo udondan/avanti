@@ -1166,27 +1166,31 @@ export class SudoWorkerSession {
     if (this.closed) throw new Error('SudoWorkerSession: session is closed');
 
     return new Promise<WorkerResult[]>((resolve, reject) => {
+      // `settled` is per-exec: once true, neither the timeout nor the response
+      // handler can act. This prevents a rapid second exec() from being wrongly
+      // timed out: the first timer sees settled=true (set by the response) and
+      // exits without touching this.pending or closing the session.
+      let settled = false;
       const timer = setTimeout(() => {
-        setImmediate(() => {
-          const didTimeout = !!this.pending;
-          if (didTimeout) {
-            this.pending = null;
-            if (!this.closed) this.close();
-            reject(new Error('SudoWorkerSession: exec() timed out'));
-          }
-        });
+        if (settled) return;
+        settled = true;
+        this.pending = null;
+        if (!this.closed) this.close();
+        reject(new Error('SudoWorkerSession: exec() timed out'));
       }, timeoutMs);
       this.pending = {
         resolve: (r) => {
+          if (settled) return;
+          settled = true;
           clearTimeout(timer);
+          // Clear pending before close() so close() does not reject with the
+          // generic "session closed" message and swallow the detail error.
+          this.pending = null;
           if (r.length !== ops.length) {
             const firstFailed = r.find((x) => !x.ok);
             const detail =
               firstFailed?.error ??
               `privileged worker returned ${r.length} results, expected ${ops.length}`;
-            // Clear pending before close() so close() does not reject with the
-            // generic "session closed" message and swallow the detail error.
-            this.pending = null;
             this.close();
             reject(new Error(detail));
           } else {
@@ -1194,7 +1198,10 @@ export class SudoWorkerSession {
           }
         },
         reject: (e) => {
+          if (settled) return;
+          settled = true;
           clearTimeout(timer);
+          this.pending = null;
           reject(e);
         },
       };
