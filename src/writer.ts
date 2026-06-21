@@ -297,7 +297,15 @@ function runPrivilegedWorker(
           results: WorkerResult[];
         };
         if (Array.isArray(partial.results) && partial.results.length > 0) {
-          return partial.results;
+          // Pad to ops.length so callers never silently miss unprocessed tail ops.
+          const padded: WorkerResult[] = [...partial.results];
+          while (padded.length < ops.length) {
+            padded.push({
+              ok: false,
+              error: 'worker exited before processing this op',
+            });
+          }
+          return padded;
         }
       } catch {
         // fall through to throw
@@ -785,6 +793,7 @@ export class SudoWorkerSession {
   private ipcSocket?: net.Socket;
   private dataIn?: net.Socket;
   private tmpDir?: string;
+  private ipcSocketPath?: string;
   private rl?: readline.Interface;
   private pending: {
     resolve: (results: WorkerResult[]) => void;
@@ -814,11 +823,13 @@ export class SudoWorkerSession {
     // option" on virtually all real installations. A Unix socket has no fd
     // that needs to survive sudo's closefrom, so no sudoers changes are needed.
     //
-    // The socket is placed in the staged worker directory which is already
-    // world-traversable (mode 0755). The socket itself is set mode 0600 so
-    // only the invoking user can connect for root sudo. For named-user sudo
-    // the mode is 0660 so the target user can also connect.
-    const ipcSocketPath = path.join(
+    // For root sudo the socket lands directly in WORLD_TMP (/tmp) with mode
+    // 0600 — only the invoking user can connect. For named-user sudo the socket
+    // lands inside tmpDir (mode 0711: world-traversable but NOT world-listable)
+    // with mode 0666 so the target user can connect regardless of group
+    // membership. The non-listable parent prevents other users from enumerating
+    // the socket filename even though the file itself is world-accessible.
+    this.ipcSocketPath = path.join(
       tmpDir ?? WORLD_TMP,
       `ipc-${crypto.randomBytes(4).toString('hex')}.sock`,
     );
@@ -829,6 +840,9 @@ export class SudoWorkerSession {
       readyResolve = res;
       readyReject = rej;
     });
+    // Suppress unhandledRejection if the worker fails before exec() attaches
+    // a .catch() via await this.ready. exec() will re-reject via its own promise.
+    this.ready.catch(() => {});
 
     this.server = net.createServer({ allowHalfOpen: true });
     this.server.once('connection', (socket) => {
@@ -881,7 +895,7 @@ export class SudoWorkerSession {
       readyReject(err);
     });
 
-    this.server.listen(ipcSocketPath, () => {
+    this.server.listen(this.ipcSocketPath, () => {
       // Server is listening — now safe to spawn the worker so it cannot miss
       // the listening socket. Set socket permissions: root sudo needs 0600
       // (only invoking user can connect); named-user sudo needs 0666 so the
@@ -890,7 +904,10 @@ export class SudoWorkerSession {
       // but NOT world-listable), so other users cannot enumerate the socket
       // filename to connect even though the file itself is world-writable.
       try {
-        fs.chmodSync(ipcSocketPath, typeof sudo === 'string' ? 0o666 : 0o600);
+        fs.chmodSync(
+          this.ipcSocketPath!,
+          typeof sudo === 'string' ? 0o666 : 0o600,
+        );
       } catch {
         // best-effort; connection-refused is a cleaner failure than a race
       }
@@ -912,7 +929,7 @@ export class SudoWorkerSession {
           ...sudoUserArgs(sudo),
           nodeExec,
           resolvedWorkerPath,
-          `--socket-path=${ipcSocketPath}`,
+          `--socket-path=${this.ipcSocketPath!}`,
         ],
         {
           // stdin: /dev/tty (or inherited) so sudo's ttyname() succeeds
@@ -1001,6 +1018,9 @@ export class SudoWorkerSession {
             const detail =
               firstFailed?.error ??
               `privileged worker returned ${r.length} results, expected ${ops.length}`;
+            // Clear pending before close() so close() does not reject with the
+            // generic "session closed" message and swallow the detail error.
+            this.pending = null;
             this.close();
             reject(new Error(detail));
           } else {
@@ -1037,6 +1057,14 @@ export class SudoWorkerSession {
     this.rl?.close();
     this.server?.close();
     this.ipcSocket?.destroy();
+    if (this.ipcSocketPath) {
+      try {
+        fs.unlinkSync(this.ipcSocketPath);
+      } catch {
+        // best-effort; already removed by tmpDir cleanup or never created
+      }
+      this.ipcSocketPath = undefined;
+    }
     if (this.proc) {
       // SIGTERM first: sudo forwards it to the child node process, allowing a
       // graceful shutdown. SIGKILL is the backstop if the child ignores SIGTERM

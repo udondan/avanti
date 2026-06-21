@@ -198,10 +198,12 @@ function parseMode(modeStr: string): number {
 // silently corrupt content if contentB64 is truncated (e.g. by a short-write
 // on the stdin pipe). Validate before decoding so the op fails loudly.
 function validateBase64(s: string, field: string): void {
-  if (
-    s.length % 4 !== 0 ||
-    (s.length > 0 && !/^[A-Za-z0-9+/]+={0,2}$/.test(s))
-  ) {
+  // Do NOT short-circuit the regex with `s.length > 0`: an empty string passes
+  // the length check (0 % 4 === 0) and the regex must catch it — the `+`
+  // quantifier requires at least one character, so "" fails correctly.
+  // Silently accepting "" would let a missing contentB64 field write a zero-byte
+  // file (e.g. to /etc/sudoers or /etc/shadow) instead of surfacing the error.
+  if (s.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(s)) {
     throw new Error(`${field}: invalid base64 string (length ${s.length})`);
   }
 }
@@ -238,6 +240,7 @@ function backupRegularFile(
 
   let bfd: number | undefined;
   let backupTmp: string | undefined;
+  let backupTmpCreated = false;
   try {
     const srcStat = fs.fstatSync(sfd);
     if (!srcStat.isFile()) {
@@ -276,6 +279,7 @@ function backupRegularFile(
     // the fd open and write through it so no path-based TOCTOU window opens
     // between open and write.
     bfd = fs.openSync(backupTmp, 'wx', 0o600);
+    backupTmpCreated = true;
     const buf = Buffer.alloc(65536);
     let bytesRead: number;
     while ((bytesRead = fs.readSync(sfd, buf, 0, buf.length, null)) > 0) {
@@ -294,15 +298,15 @@ function backupRegularFile(
       } catch {
         // best-effort close
       }
-      // Only unlink backupTmp when WE created it (bfd was opened successfully
-      // with O_EXCL). If openSync threw EEXIST before bfd was assigned, the
-      // file at backupTmp belongs to another process and must not be deleted.
-      if (backupTmp !== undefined) {
-        try {
-          fs.unlinkSync(backupTmp);
-        } catch {
-          // best-effort cleanup
-        }
+    }
+    // Only unlink backupTmp when WE created it. bfd tracks the open fd, but
+    // it is set to undefined before renameSync — if rename fails, bfd is already
+    // undefined even though we own the temp file. Use a dedicated boolean flag.
+    if (backupTmpCreated && backupTmp !== undefined) {
+      try {
+        fs.unlinkSync(backupTmp);
+      } catch {
+        // best-effort cleanup
       }
     }
     if (sfd !== undefined) {
@@ -409,19 +413,30 @@ export function handleWriteInPlace(
     checkAncestorsSafeAsRoot(resolvedTarget, trustedUids, 'destination');
 
   let backupTmpPath: string | undefined;
-  if (op.backupPath) {
-    const resolvedBackup = path.resolve(op.backupPath);
-    const backupDir = path.dirname(resolvedBackup);
-    backupTmpPath = path.join(backupDir, `.avanti-backup-${randomHex()}`);
-    backupRegularFile(resolvedTarget, backupTmpPath, trustedUids);
-    // Commit the backup to its final path BEFORE truncating the target.
-    // If SIGTERM kills the worker mid-write, the backup exists at a known,
-    // user-discoverable location rather than an opaque temp path. Committing
-    // after the write would leave the backup at backupTmpPath — the finally
-    // block would not delete it (backupTmpPath is in the user's filesystem, not
-    // the worker tmpDir), but the user would not know where to find it.
-    fs.renameSync(backupTmpPath, resolvedBackup);
-    backupTmpPath = undefined;
+  try {
+    if (op.backupPath) {
+      const resolvedBackup = path.resolve(op.backupPath);
+      const backupDir = path.dirname(resolvedBackup);
+      backupTmpPath = path.join(backupDir, `.avanti-backup-${randomHex()}`);
+      backupRegularFile(resolvedTarget, backupTmpPath, trustedUids);
+      // Commit the backup to its final path BEFORE truncating the target.
+      // If SIGTERM kills the worker mid-write, the backup exists at a known,
+      // user-discoverable location rather than an opaque temp path. Committing
+      // after the write would leave the backup at backupTmpPath — the finally
+      // block would not delete it (backupTmpPath is in the user's filesystem, not
+      // the worker tmpDir), but the user would not know where to find it.
+      fs.renameSync(backupTmpPath, resolvedBackup);
+      backupTmpPath = undefined;
+    }
+  } catch (err) {
+    if (backupTmpPath !== undefined) {
+      try {
+        fs.unlinkSync(backupTmpPath);
+      } catch {
+        // best-effort cleanup
+      }
+    }
+    throw err;
   }
 
   // Refuse symlinks (would follow to unintended target).
@@ -812,7 +827,7 @@ export function handleWriteSymlink(
   }
 }
 
-export function handleDelete(op: DeleteOp): void {
+export function handleDelete(op: DeleteOp): DispatchResult {
   const resolved = path.resolve(op.targetPath);
   try {
     const lst = fs.lstatSync(resolved);
@@ -823,10 +838,14 @@ export function handleDelete(op: DeleteOp): void {
     }
     fs.unlinkSync(resolved);
   } catch (e) {
-    if ((e as NodeJS.ErrnoException).code !== 'ENOENT') {
-      throw e;
+    if ((e as NodeJS.ErrnoException).code === 'ENOENT') {
+      // File was already absent — signal skipped so callers can distinguish
+      // "deleted now" from "already gone" for history cleanup purposes.
+      return { kind: 'skipped' };
     }
+    throw e;
   }
+  return { kind: 'ok' };
 }
 
 // Verifies that a directory is safe to use as a mktemp staging location.
@@ -947,8 +966,7 @@ export function dispatch(
       handleWriteSymlink(op, trustedUids);
       return { kind: 'ok' };
     case 'delete':
-      handleDelete(op);
-      return { kind: 'ok' };
+      return handleDelete(op);
     case 'chmod': {
       const resolvedPath = path.resolve(op.targetPath);
       let fd: number | undefined;
@@ -990,10 +1008,15 @@ export function dispatch(
                   try {
                     safeFchmodSync(pathFd, parseMode(op.mode));
                     chmodApplied = true;
+                  } catch {
+                    // On Linux, fchmod(2) on an O_PATH fd always fails with
+                    // EBADF — the fd has no open-file-description and cannot
+                    // receive fchmod. Fall through to the path-based chmod below.
                   } finally {
                     fs.closeSync(pathFd);
                   }
-                } else {
+                }
+                if (!chmodApplied) {
                   // Narrow the TOCTOU window: verify it is still a regular file
                   // immediately before the path-based chmod.
                   const lst = fs.lstatSync(resolvedPath);
