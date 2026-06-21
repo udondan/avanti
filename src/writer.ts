@@ -105,7 +105,13 @@ function cleanupWorkerDir(dir: string): void {
 // Guard against duplicate registration: Vitest can re-evaluate modules between
 // test files, which would accumulate listeners and trigger MaxListenersExceededWarning.
 const stagedWorkerDirs = new Set<string>();
-if (!process.listenerCount('exit')) {
+// Module-level flag prevents duplicate handler registration when Vitest
+// re-evaluates this module between test files without being affected by
+// other modules that may have already registered their own 'exit' listeners.
+let _exitHandlersRegistered = false;
+if (!_exitHandlersRegistered) {
+  // eslint-disable-next-line no-useless-assignment
+  _exitHandlersRegistered = true;
   process.on('exit', () => {
     for (const d of [...stagedWorkerDirs]) {
       cleanupWorkerDir(d);
@@ -187,8 +193,12 @@ function runPrivilegedWorker(
       trustedUids: [...(trustedUids ?? buildTrustedUids(sudo))],
       continueOnError,
     }),
-    // Named-user tmpDir is world-executable (0755); write mode 0644 so the
-    // named user can read it. For root sudo, 0600 is sufficient.
+    // Named-user tmpDir is world-executable (0755) so the worker binary is
+    // reachable; the req file uses 0644 so the named user's process can read
+    // it. Achieving tighter isolation (e.g. 0600 + chown to the named user)
+    // would require a privilege-escalation step before the worker spawn and is
+    // deferred. The path includes 16 random hex chars and exists only for the
+    // duration of the spawnSync call, limiting practical exposure.
     { mode: typeof sudo === 'string' ? 0o644 : 0o600 },
   );
 
