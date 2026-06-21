@@ -936,19 +936,32 @@ export class SudoWorkerSession {
     this.ready.catch(() => {});
 
     this.server = net.createServer({ allowHalfOpen: true });
-    this.server.once('connection', (socket) => {
-      this.ipcSocket = socket;
-      this.dataIn = socket;
-      this.server!.close();
+    // Use server.on (not server.once) so a rogue process that connects before
+    // the worker cannot take the single slot, close the server, and prevent the
+    // real worker from connecting. ipcSocket is only assigned after the nonce
+    // handshake succeeds; any connection that fails the nonce check is destroyed
+    // and the server keeps listening. Once the real worker connects and verifies
+    // its nonce, subsequent connections are rejected immediately.
+    this.server.on('connection', (socket) => {
+      if (this.ipcSocket) {
+        // A verified IPC connection already exists — reject any late arrivals.
+        socket.destroy();
+        return;
+      }
 
       socket.on('error', (err) => {
-        const p = this.pending;
-        this.pending = null;
-        this.close();
-        p?.reject(err);
+        if (this.ipcSocket === socket) {
+          const p = this.pending;
+          this.pending = null;
+          this.close();
+          p?.reject(err);
+        } else {
+          // Pre-nonce socket errored; just destroy it.
+          socket.destroy();
+        }
       });
 
-      this.rl = readline.createInterface({
+      const rl = readline.createInterface({
         input: socket,
         crlfDelay: Infinity,
       });
@@ -957,26 +970,21 @@ export class SudoWorkerSession {
       // the worker we spawned (not a rogue process that won the race to connect
       // to the named-user sudo socket before the worker did).
       let nonceVerified = false;
-      this.rl.on('line', (line: string) => {
+      rl.on('line', (line: string) => {
         const trimmed = line.trim();
         if (!trimmed) return;
         if (!nonceVerified) {
           nonceVerified = true;
           if (trimmed !== ipcNonce) {
-            this.closed = true;
-            this.rl?.close();
-            try {
-              socket.destroy();
-            } catch {
-              // best-effort
-            }
-            readyReject(
-              new Error(
-                'SudoWorkerSession: IPC nonce mismatch; rejecting connection',
-              ),
-            );
+            rl.close();
+            socket.destroy();
             return;
           }
+          // Nonce verified — promote this socket to the active IPC channel.
+          this.ipcSocket = socket;
+          this.dataIn = socket;
+          this.rl = rl;
+          this.server!.close();
           readyResolve();
           return;
         }
@@ -1002,7 +1010,8 @@ export class SudoWorkerSession {
       // exits). proc.on('close') handles the normal crash path, but if the
       // socket EOF arrives first and no 'close' handler is registered here,
       // this.pending is never settled and exec() hangs for the full timeout.
-      this.rl.on('close', () => {
+      rl.on('close', () => {
+        if (this.ipcSocket !== socket) return;
         const p = this.pending;
         if (!p) return;
         this.pending = null;
@@ -1176,7 +1185,6 @@ export class SudoWorkerSession {
       };
       const request: WorkerRequest = {
         ops,
-        trustedUids: [...this.trustedUids],
         continueOnError,
       };
       this.dataIn!.write(JSON.stringify(request) + '\n', (err) => {

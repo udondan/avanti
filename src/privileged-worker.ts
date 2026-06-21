@@ -74,7 +74,6 @@ export type WriteOp =
 
 export interface WorkerRequest {
   ops: WriteOp[];
-  trustedUids?: number[];
   continueOnError?: boolean;
 }
 
@@ -1000,12 +999,16 @@ export function dispatch(
                 }
                 if (pathFd !== undefined) {
                   try {
-                    safeFchmodSync(pathFd, parseMode(op.mode));
+                    // /proc/self/fd/<fd> dereferences the file-description directly
+                    // in the kernel without re-traversing the filesystem path, giving
+                    // a TOCTOU-free chmod even when fchmod(O_PATH_fd) fails with
+                    // EBADF on Linux. Falls back to the path-based chmod below if
+                    // procfs is unavailable (containers, non-Linux platforms).
+                    fs.chmodSync(`/proc/self/fd/${pathFd}`, parseMode(op.mode));
                     chmodApplied = true;
                   } catch {
-                    // On Linux, fchmod(2) on an O_PATH fd always fails with
-                    // EBADF — the fd has no open-file-description and cannot
-                    // receive fchmod. Fall through to the path-based chmod below.
+                    // procfs unavailable or not Linux — fall through to path-based
+                    // chmod with lstat pre-flight below.
                   } finally {
                     fs.closeSync(pathFd);
                   }
@@ -1249,32 +1252,17 @@ if (require.main === module) {
       return;
     }
 
-    // Require trustedUids in every request so ancestor-ownership checks are
-    // never silently skipped. An absent or null trustedUids field would cause
-    // every checkAncestorsSafeAsRoot call to be skipped entirely, allowing
-    // writes to any path without TOCTOU protection.
-    if (
-      !Array.isArray(request.trustedUids) ||
-      request.trustedUids.length === 0
-    ) {
-      writeResponse(
-        {
-          results: [
-            {
-              ok: false,
-              error:
-                'invalid request: trustedUids must be a non-empty array of UIDs',
-            },
-          ],
-        },
-        () => {
-          process.exit(1);
-        },
-      );
-      setTimeout(() => process.exit(1), 100).unref();
-      return;
+    // Compute trusted UIDs on the worker side from sudo environment variables
+    // so the unprivileged parent cannot forge the list. sudo sets SUDO_UID to
+    // the invoking user's real UID before elevating. The worker's own getuid()
+    // returns the target user's UID (0 for root-sudo, target uid for -u sudo).
+    const trustedUids = new Set<number>([0]);
+    if (process.env.SUDO_UID) {
+      trustedUids.add(parseInt(process.env.SUDO_UID, 10));
     }
-    const trustedUids = new Set(request.trustedUids.map(Number));
+    if (typeof process.getuid === 'function') {
+      trustedUids.add(process.getuid());
+    }
     const continueOnError = request.continueOnError ?? false;
 
     const results: WorkerResult[] = [];
