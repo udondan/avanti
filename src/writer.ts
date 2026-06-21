@@ -201,30 +201,33 @@ function runPrivilegedWorker(
   const { nodeExec, resolvedWorkerPath, tmpDir } = prepareWorkerExec(sudo);
   const cleanup = tmpDir ? () => cleanupWorkerDir(tmpDir) : undefined;
 
-  // Write the JSON request to a temp file and pass its path as --req-file so
-  // stdin can be left as 'inherit'. When stdin is a pipe, macOS sudo calls
-  // ttyname(STDIN_FILENO) which returns NULL and skips the credential cache,
-  // forcing a password prompt even when the user just authenticated.
-  const reqDir = tmpDir ?? os.tmpdir();
-  const reqPath = path.join(
-    reqDir,
-    `avanti-req-${crypto.randomBytes(8).toString('hex')}.json`,
-  );
-  fs.writeFileSync(
-    reqPath,
-    JSON.stringify({
-      ops,
-      trustedUids: [...(trustedUids ?? buildTrustedUids(sudo))],
-      continueOnError,
-    }),
-    // Named-user tmpDir is world-executable (0755) so the worker binary is
-    // reachable; the req file uses 0644 so the named user's process can read
-    // it. Achieving tighter isolation (e.g. 0600 + chown to the named user)
-    // would require a privilege-escalation step before the worker spawn and is
-    // deferred. The path includes 16 random hex chars and exists only for the
-    // duration of the spawnSync call, limiting practical exposure.
-    { mode: typeof sudo === 'string' ? 0o644 : 0o600 },
-  );
+  const reqPayload = JSON.stringify({
+    ops,
+    trustedUids: [...(trustedUids ?? buildTrustedUids(sudo))],
+    continueOnError,
+  });
+
+  // For root sudo, stdin must be 'inherit' so macOS sudo's ttyname() succeeds
+  // and the credential cache is consulted (piped stdin causes ttyname to return
+  // NULL, bypassing the cache and forcing a re-prompt). Write the request to a
+  // temp file (mode 0o600, readable only by root) so stdin stays free.
+  //
+  // For named-user sudo, pass the request via stdin pipe instead. This avoids
+  // writing file contents to a world-readable temp file in WORLD_TMP — the
+  // named sudo user reads the JSON directly from the pipe and the data never
+  // touches disk. The macOS credential-cache regression (ttyname returns NULL)
+  // is acceptable: named-user sudo is rarer than root sudo, and the security
+  // gain outweighs the UX cost.
+  const isNamedUser = typeof sudo === 'string';
+  let reqPath: string | undefined;
+  if (!isNamedUser) {
+    const reqDir = tmpDir ?? os.tmpdir();
+    reqPath = path.join(
+      reqDir,
+      `avanti-req-${crypto.randomBytes(8).toString('hex')}.json`,
+    );
+    fs.writeFileSync(reqPath, reqPayload, { mode: 0o600 });
+  }
 
   let result;
   try {
@@ -234,19 +237,28 @@ function runPrivilegedWorker(
         ...sudoUserArgs(sudo),
         nodeExec,
         resolvedWorkerPath,
-        `--req-file=${reqPath}`,
+        ...(reqPath ? [`--req-file=${reqPath}`] : []),
       ],
-      {
-        stdio: ['inherit', 'pipe', 'inherit'],
-        encoding: 'utf8',
-        maxBuffer: 150 * 1024 * 1024,
-      },
+      reqPath
+        ? {
+            stdio: ['inherit', 'pipe', 'inherit'],
+            encoding: 'utf8',
+            maxBuffer: 150 * 1024 * 1024,
+          }
+        : {
+            input: reqPayload,
+            stdio: ['pipe', 'pipe', 'inherit'],
+            encoding: 'utf8',
+            maxBuffer: 150 * 1024 * 1024,
+          },
     );
   } finally {
-    try {
-      fs.unlinkSync(reqPath);
-    } catch {
-      // best-effort; tmpDir cleanup covers named-user case
+    if (reqPath) {
+      try {
+        fs.unlinkSync(reqPath);
+      } catch {
+        // best-effort
+      }
     }
     cleanup?.();
   }
@@ -792,7 +804,18 @@ export class SudoWorkerSession {
 
     this.proc = spawn(
       'sudo',
-      [...sudoUserArgs(sudo), nodeExec, resolvedWorkerPath, '--data-fd=3'],
+      // -C 4: sudo's default closefrom is 3, which closes fd 3 before exec'ing
+      // the worker (sudo uses close_range/closefrom to sanitise the fd table).
+      // -C 4 raises the floor to 4, keeping fd 3 (the data pipe) open so the
+      // worker's net.Socket({ fd: 3 }) does not throw ERR_INVALID_FD_TYPE.
+      [
+        ...sudoUserArgs(sudo),
+        '-C',
+        '4',
+        nodeExec,
+        resolvedWorkerPath,
+        '--data-fd=3',
+      ],
       {
         // stdio[0]: /dev/tty (or inherited stdin) so sudo's ttyname() succeeds
         // stdio[1]: pipe for JSON response lines from the worker
