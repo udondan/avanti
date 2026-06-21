@@ -324,6 +324,59 @@ function backupRegularFile(
   }
 }
 
+// Backs up whatever currently lives at targetPath (regular file or symlink).
+// No-op if targetPath does not exist or is a directory (directories are refused
+// upstream before we reach the backup step).
+function backupTarget(
+  targetPath: string,
+  backupPath: string,
+  lst: fs.Stats | undefined,
+  trustedUids?: Set<number>,
+): void {
+  if (lst === undefined) return;
+
+  if (lst.isSymbolicLink()) {
+    const resolvedBackup = path.resolve(backupPath);
+    const backupDir = path.dirname(resolvedBackup);
+
+    try {
+      if (fs.lstatSync(resolvedBackup).isDirectory()) {
+        throw new Error(`backup path is a directory: ${backupPath}`);
+      }
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
+    }
+
+    if (trustedUids)
+      checkAncestorsSafeAsRoot(resolvedBackup, trustedUids, 'backup');
+    fs.mkdirSync(backupDir, { recursive: true, mode: 0o755 });
+    if (trustedUids)
+      checkAncestorsSafeAsRoot(resolvedBackup, trustedUids, 'backup');
+
+    const backupTmp = path.join(
+      path.resolve(backupDir),
+      `.avanti-backup-${randomHex()}`,
+    );
+    try {
+      const rawTarget = fs.readlinkSync(targetPath);
+      const absTarget = path.isAbsolute(rawTarget)
+        ? rawTarget
+        : path.resolve(path.dirname(targetPath), rawTarget);
+      fs.symlinkSync(absTarget, backupTmp);
+      fs.renameSync(backupTmp, resolvedBackup);
+    } catch (err) {
+      try {
+        fs.unlinkSync(backupTmp);
+      } catch {
+        // best-effort cleanup
+      }
+      throw err;
+    }
+  } else if (lst.isFile()) {
+    backupRegularFile(targetPath, backupPath, trustedUids);
+  }
+}
+
 export function handleWriteMv(op: WriteMvOp, trustedUids?: Set<number>): void {
   const resolvedTarget = path.resolve(op.targetPath);
   const dir = path.dirname(resolvedTarget);
@@ -360,8 +413,10 @@ export function handleWriteMv(op: WriteMvOp, trustedUids?: Set<number>): void {
     // Refuse real directories (rename(2) would fail with EISDIR anyway, but
     // this gives a cleaner error message). Symlinks-to-directories are fine —
     // rename(2) replaces the symlink itself, not its target.
+    // Capture lst here for reuse in the backup step below.
+    let lst: fs.Stats | undefined;
     try {
-      const lst = fs.lstatSync(resolvedTarget);
+      lst = fs.lstatSync(resolvedTarget);
       if (!lst.isSymbolicLink() && lst.isDirectory()) {
         throw new Error(`target path is a directory: ${op.targetPath}`);
       }
@@ -371,8 +426,10 @@ export function handleWriteMv(op: WriteMvOp, trustedUids?: Set<number>): void {
 
     // Backup AFTER staging succeeds: a staging failure no longer leaves a
     // backup behind without the new file being committed.
+    // Use backupTarget (not backupRegularFile) so that a symlink at the target
+    // is backed up as a symlink rather than silently skipped.
     if (op.backupPath) {
-      backupRegularFile(resolvedTarget, op.backupPath, trustedUids);
+      backupTarget(resolvedTarget, op.backupPath, lst, trustedUids);
       backupCommitted = true;
     }
 
@@ -755,53 +812,8 @@ export function handleWriteSymlink(
     if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
   }
 
-  if (op.backupPath && lst !== undefined) {
-    if (lst.isSymbolicLink()) {
-      const resolvedBackup = path.resolve(op.backupPath);
-      const backupDir = path.dirname(resolvedBackup);
-
-      try {
-        if (fs.lstatSync(resolvedBackup).isDirectory()) {
-          throw new Error(`backup path is a directory: ${op.backupPath}`);
-        }
-      } catch (e) {
-        if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
-      }
-
-      if (trustedUids)
-        checkAncestorsSafeAsRoot(resolvedBackup, trustedUids, 'backup');
-      fs.mkdirSync(backupDir, { recursive: true, mode: 0o755 });
-      if (trustedUids)
-        checkAncestorsSafeAsRoot(resolvedBackup, trustedUids, 'backup');
-      const backupTmp = path.join(
-        path.resolve(backupDir),
-        `.avanti-backup-${randomHex()}`,
-      );
-
-      try {
-        // Store the symlink as absolute target so backup resolves correctly
-        // from backupDir regardless of whether the original was relative.
-        // Known limitation: there is a narrow TOCTOU window between the
-        // lstatSync that confirmed the target is a symlink (above) and this
-        // readlinkSync. Node does not expose readlinkat, so we accept this on
-        // macOS. On Linux, /proc/self/fd/<n> could tighten the bind.
-        const rawTarget = fs.readlinkSync(resolvedTarget);
-        const absTarget = path.isAbsolute(rawTarget)
-          ? rawTarget
-          : path.resolve(path.dirname(resolvedTarget), rawTarget);
-        fs.symlinkSync(absTarget, backupTmp);
-        fs.renameSync(backupTmp, resolvedBackup);
-      } catch (err) {
-        try {
-          fs.unlinkSync(backupTmp);
-        } catch {
-          // best-effort cleanup
-        }
-        throw err;
-      }
-    } else if (lst.isFile()) {
-      backupRegularFile(resolvedTarget, op.backupPath, trustedUids);
-    }
+  if (op.backupPath) {
+    backupTarget(resolvedTarget, op.backupPath, lst, trustedUids);
   }
 
   // Stage the new symlink at a temp path, then rename atomically.
