@@ -557,11 +557,50 @@ export function handleWriteInPlace(
                 throw firstOpenErr;
               }
             } else {
-              // Path-based fallback: only works if the named user owns the file.
+              // rfd is undefined: O_RDONLY|O_NOFOLLOW failed with EACCES (write-only
+              // or no-permission file). Try to acquire a write-only fd without following
+              // symlinks so fchmod can go through the fd (no TOCTOU window).
+              let wfd: number | undefined;
               try {
-                fs.chmodSync(resolvedTarget, mode | 0o200);
-              } catch {
-                throw firstOpenErr;
+                wfd = fs.openSync(
+                  resolvedTarget,
+                  fs.constants.O_WRONLY | O_NOFOLLOW | O_NONBLOCK,
+                );
+              } catch (e2) {
+                const c2 = (e2 as NodeJS.ErrnoException).code;
+                if (c2 === 'ELOOP') {
+                  // A symlink was raced in after lstatSync confirmed a regular file.
+                  throw new Error(
+                    `writeInPlace: ${op.targetPath} is a symlink; refusing to follow`,
+                    { cause: e2 },
+                  );
+                }
+                // EACCES: mode 0000 or no write bit — fd-based fchmod not possible;
+                // fall through to path-based chmodSync (residual TOCTOU window).
+              }
+              if (wfd !== undefined) {
+                try {
+                  safeFchmodSync(wfd, mode | 0o200);
+                } catch {
+                  throw firstOpenErr;
+                } finally {
+                  try {
+                    fs.closeSync(wfd);
+                  } catch {
+                    // best-effort
+                  }
+                }
+              } else {
+                // Path-based fallback: only works if the named user owns the file.
+                // Residual TOCTOU: an attacker controlling a trusted-UID ancestor
+                // could race a symlink between lstatSync and chmodSync. This window
+                // only applies to mode-0000 (or no-write) files where O_WRONLY also
+                // fails; tracked in https://github.com/udondan/avanti/issues/295.
+                try {
+                  fs.chmodSync(resolvedTarget, mode | 0o200);
+                } catch {
+                  throw firstOpenErr;
+                }
               }
             }
             try {

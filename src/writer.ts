@@ -82,15 +82,21 @@ function resolveNodeExec(sudo: true | string): string {
       const candidate = path.join(dir, name);
       try {
         const st = fs.statSync(candidate);
-        if (st.isFile() && (st.mode & 0o111) !== 0) return candidate;
+        // Require root ownership: on Apple Silicon, /opt/homebrew is user-owned
+        // so a Homebrew-installed node binary is writable by the calling user.
+        // Accepting such a binary would allow the calling user to replace it with
+        // malicious code that executes as the named sudo target.
+        if (st.isFile() && (st.mode & 0o111) !== 0 && st.uid === 0)
+          return candidate;
       } catch {
         // ignore EACCES, ENOENT, and any other stat error
       }
     }
   }
   throw new Error(
-    `No Node.js binary found in ${SAFE_DIRS.join(', ')} for named-user sudo ('${sudo}'). ` +
-      `Install Node.js system-wide (e.g. apt install nodejs) or set AVANTI_NODE_EXEC to the full path of a compatible Node.js binary.`,
+    `No root-owned Node.js binary found in ${SAFE_DIRS.join(', ')} for named-user sudo ('${sudo}'). ` +
+      `Install Node.js system-wide (e.g. apt install nodejs) or set AVANTI_NODE_EXEC to the full path ` +
+      `of a root-owned, compatible Node.js binary.`,
   );
 }
 
@@ -837,6 +843,15 @@ export class SudoWorkerSession {
       input: this.proc.stdout!,
       crlfDelay: Infinity,
     });
+    // readline only attaches 'data'/'end' listeners — it does NOT add an
+    // 'error' handler. Without one, a broken-pipe I/O error on proc.stdout
+    // is re-thrown as an unhandled exception and crashes the CLI process.
+    this.proc.stdout!.on('error', (err) => {
+      const p = this.pending;
+      this.pending = null;
+      this.closed = true;
+      p?.reject(err);
+    });
     this.rl.on('line', (line: string) => {
       const trimmed = line.trim();
       if (!trimmed) return;
@@ -880,6 +895,14 @@ export class SudoWorkerSession {
 
     this.proc.on('close', (code, signal) => {
       this.closed = true;
+      // Clean up the staged worker directory immediately on crash or unexpected
+      // exit so it does not leak until process.exit(). The close() guard
+      // ("if (this.closed) return") would otherwise skip this cleanup when close()
+      // is called after the process has already exited.
+      if (this.tmpDir) {
+        cleanupWorkerDir(this.tmpDir);
+        this.tmpDir = undefined;
+      }
       const p = this.pending;
       this.pending = null;
       if (p) {
@@ -972,6 +995,7 @@ export class SudoWorkerSession {
     this.proc.once('close', () => clearTimeout(t));
     if (this.tmpDir) {
       cleanupWorkerDir(this.tmpDir);
+      this.tmpDir = undefined;
     }
   }
 }
