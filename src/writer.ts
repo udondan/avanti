@@ -165,8 +165,11 @@ function stageWorkerForSudo(workerPath: string): {
   stagedWorkerDirs.add(tmpDir); // tracked for cleanup on abnormal exit
   // mkdtempSync mode is masked by the caller's umask (e.g. 077 → 0700), which
   // would prevent the named sudo user from traversing this directory. Chmod
-  // explicitly to ensure the directory is always world-executable.
-  fs.chmodSync(tmpDir, 0o755);
+  // explicitly to ensure the directory is always world-executable. Use 0o711
+  // (not 0o755): the named user needs to traverse and exec the script but must
+  // not be able to list the directory — hiding the socket filename prevents
+  // other users from enumerating the IPC socket path.
+  fs.chmodSync(tmpDir, 0o711);
   const stagedPath = path.join(tmpDir, 'privileged-worker.js');
   fs.copyFileSync(workerPath, stagedPath);
   fs.chmodSync(stagedPath, 0o444);
@@ -881,9 +884,13 @@ export class SudoWorkerSession {
     this.server.listen(ipcSocketPath, () => {
       // Server is listening — now safe to spawn the worker so it cannot miss
       // the listening socket. Set socket permissions: root sudo needs 0600
-      // (only invoking user); named-user sudo needs 0660 (invoking + target).
+      // (only invoking user can connect); named-user sudo needs 0666 so the
+      // target user can connect regardless of group membership. Security:
+      // the socket lives inside tmpDir which has mode 0o711 (world-traversable
+      // but NOT world-listable), so other users cannot enumerate the socket
+      // filename to connect even though the file itself is world-writable.
       try {
-        fs.chmodSync(ipcSocketPath, typeof sudo === 'string' ? 0o660 : 0o600);
+        fs.chmodSync(ipcSocketPath, typeof sudo === 'string' ? 0o666 : 0o600);
       } catch {
         // best-effort; connection-refused is a cleaner failure than a race
       }
@@ -1031,6 +1038,11 @@ export class SudoWorkerSession {
     this.server?.close();
     this.ipcSocket?.destroy();
     if (this.proc) {
+      // SIGTERM first: sudo forwards it to the child node process, allowing a
+      // graceful shutdown. SIGKILL is the backstop if the child ignores SIGTERM
+      // — sent directly to sudo which is still alive at that point. Unlike
+      // SIGKILL, SIGTERM cannot orphan the child because sudo forwards it.
+      this.proc.kill('SIGTERM');
       const t = setTimeout(() => this.proc!.kill('SIGKILL'), 5_000);
       t.unref();
       this.proc.once('close', () => clearTimeout(t));
