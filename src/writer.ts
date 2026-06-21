@@ -1003,9 +1003,9 @@ export class SudoWorkerSession {
           this.pending = null;
           p?.resolve(response.results);
         } catch (e) {
-          this.closed = true;
           const p = this.pending;
           this.pending = null;
+          this.close();
           p?.reject(
             new Error(
               `failed to parse worker response: ${(e as Error).message}`,
@@ -1024,7 +1024,7 @@ export class SudoWorkerSession {
         const p = this.pending;
         if (!p) return;
         this.pending = null;
-        this.closed = true;
+        this.close();
         p.reject(
           new Error('SudoWorkerSession: IPC stream closed without a response'),
         );
@@ -1032,7 +1032,7 @@ export class SudoWorkerSession {
     });
 
     this.server.once('error', (err) => {
-      this.closed = true;
+      this.close();
       readyReject(err);
     });
 
