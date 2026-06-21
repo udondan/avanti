@@ -847,9 +847,11 @@ export function handleDelete(op: DeleteOp): DispatchResult {
     }
     fs.unlinkSync(resolved);
   } catch (e) {
-    if ((e as NodeJS.ErrnoException).code === 'ENOENT') {
-      // File was already absent — signal skipped so callers can distinguish
-      // "deleted now" from "already gone" for history cleanup purposes.
+    const ec = (e as NodeJS.ErrnoException).code;
+    if (ec === 'ENOENT' || ec === 'EISDIR') {
+      // ENOENT: file already absent.
+      // EISDIR: a concurrent process replaced the path with a directory between
+      // lstatSync and unlinkSync; treat as "already gone" rather than aborting.
       return { kind: 'skipped' };
     }
     throw e;

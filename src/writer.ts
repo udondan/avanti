@@ -85,8 +85,20 @@ function resolveNodeExec(sudo: true | string): string {
       st.uid === 0 &&
       !realPath.startsWith(os.homedir() + path.sep)
     ) {
-      resolvedNodeExecCached = realPath;
-      return realPath;
+      // Apply the same version floor as the SAFE_DIRS scan below so that a
+      // stale root-owned binary (e.g. v16) does not silently produce an opaque
+      // SyntaxError inside the worker.
+      const WORKER_MIN_NODE_MAJOR_FAST = 18;
+      const vr = spawnSync(realPath, ['--version'], {
+        encoding: 'utf8',
+        timeout: 5000,
+      });
+      const m = vr.stdout?.trim().match(/^v(\d+)\./);
+      if (m && parseInt(m[1], 10) >= WORKER_MIN_NODE_MAJOR_FAST) {
+        resolvedNodeExecCached = realPath;
+        return realPath;
+      }
+      // Version too old — fall through to SAFE_DIRS scan.
     }
   } catch {
     // ignore and fall through to SAFE_DIRS search
@@ -215,7 +227,9 @@ if (!_proc[_HANDLERS_KEY]) {
         // best-effort
       }
     }
-    process.exit(1);
+    // Defer exit by one tick so microtasks (Promise rejections from s.close())
+    // can propagate to catch/finally handlers in callers before the process ends.
+    setImmediate(() => process.exit(1));
   };
   process.on('SIGTERM', teardown);
   process.on('SIGINT', teardown);
@@ -562,8 +576,6 @@ export async function sudoAtomicWrite(
   }
 
   // Append chmod ops after write ops so they share the same per-identity worker.
-  // Track the index range for chmod ops so we can correlate results for counting.
-  const chmodStartIndex = new Map<true | string, number>();
   for (const t of chmodTargets) {
     const op: WriteOp = {
       type: 'chmod',
@@ -574,19 +586,20 @@ export async function sudoAtomicWrite(
   }
 
   // Group ops by sudo identity; one worker invocation per group.
-  // Track the index of the first chmod op per identity while building the
-  // groups — avoids a redundant findIndex scan afterward.
+  // Track write op count per identity separately so the chmod result range
+  // can be derived structurally (writeOpsPerSudo.get(sudo)) rather than by
+  // relying on chmod ops always appearing after write ops in targetOps.
   const groups = new Map<true | string, WriteOp[]>();
+  const writeOpsPerSudo = new Map<true | string, number>();
   for (const { sudo, op } of targetOps) {
     const existing = groups.get(sudo);
     if (existing) {
-      if (op.type === 'chmod' && !chmodStartIndex.has(sudo)) {
-        chmodStartIndex.set(sudo, existing.length);
-      }
       existing.push(op);
     } else {
-      if (op.type === 'chmod') chmodStartIndex.set(sudo, 0);
       groups.set(sudo, [op]);
+    }
+    if (op.type !== 'chmod') {
+      writeOpsPerSudo.set(sudo, (writeOpsPerSudo.get(sudo) ?? 0) + 1);
     }
   }
 
@@ -604,7 +617,7 @@ export async function sudoAtomicWrite(
       results = runPrivilegedWorker(sudo, ops, false);
     }
     // Count chmod results that weren't silently skipped (ENOENT/ELOOP).
-    const start = chmodStartIndex.get(sudo) ?? ops.length;
+    const start = writeOpsPerSudo.get(sudo) ?? ops.length;
     for (let i = start; i < results.length; i++) {
       if (results[i].ok && !results[i].skipped) chmodApplied++;
     }
@@ -1053,7 +1066,10 @@ export class SudoWorkerSession {
       // socket EOF arrives first and no 'close' handler is registered here,
       // this.pending is never settled and exec() hangs for the full timeout.
       rl.on('close', () => {
-        if (this.ipcSocket !== socket) return;
+        // Skip teardown for connections that closed before nonce verification
+        // (this.ipcSocket is undefined until nonce is verified, so
+        // this.ipcSocket !== socket would be true and incorrectly fall through).
+        if (!nonceVerified || this.ipcSocket !== socket) return;
         const p = this.pending;
         this.pending = null;
         this.close();
@@ -1206,6 +1222,13 @@ export class SudoWorkerSession {
     // Re-check after awaiting: the connection timeout or an external close()
     // may have fired while this call was suspended, leaving this.dataIn undefined.
     if (this.closed) throw new Error('SudoWorkerSession: session is closed');
+    // Re-check pending after the await: two concurrent exec() calls both see
+    // pending===null before the await, both yield here, then both resume. The
+    // second to resume finds pending already set by the first.
+    if (this.pending)
+      throw new Error(
+        'SudoWorkerSession: concurrent exec() calls are not supported',
+      );
 
     return new Promise<WorkerResult[]>((resolve, reject) => {
       // `settled` is per-exec: once true, neither the timeout nor the response
