@@ -78,17 +78,12 @@ function resolveNodeExec(sudo: true | string): string {
   } catch {
     // ignore and fall through to SAFE_DIRS search
   }
-  // Known limitation: this search accepts the first node/nodejs binary outside
-  // $HOME without checking its version. If the system Node (e.g. /usr/bin/node)
-  // is older than the version that compiled the worker, the worker will fail
-  // with a SyntaxError surfaced as "privileged worker failed (exit 1)". Ensure
-  // a compatible Node.js is installed system-wide when using named-user sudo
-  // with an nvm/fnm/mise-managed Node.
   // Scan only known-safe system directories, not all of PATH. PATH may contain
   // world-writable directories under an attacker's control; returning a binary
   // from one of those would cause sudo -u <user> to execute attacker code.
   // sudo's secure_path would normally sanitise PATH, but spawnSync passes the
   // resolved binary as argv[0], bypassing secure_path entirely.
+  const currentMajor = parseInt(process.versions.node.split('.')[0], 10);
   const SAFE_DIRS =
     process.platform === 'darwin'
       ? ['/usr/bin', '/usr/local/bin', '/opt/homebrew/bin', '/bin']
@@ -103,15 +98,28 @@ function resolveNodeExec(sudo: true | string): string {
         // so a Homebrew-installed node binary is writable by the calling user.
         // Accepting such a binary would allow the calling user to replace it with
         // malicious code that executes as the named sudo target.
-        if (st.isFile() && (st.mode & 0o111) !== 0 && st.uid === 0)
-          return candidate;
+        if (!st.isFile() || (st.mode & 0o111) === 0 || st.uid !== 0) continue;
+        // Version check: the system node must be at least the same major version
+        // as the running process. An older binary would fail with a SyntaxError
+        // when loading the compiled worker, producing an opaque "exit 1" error.
+        const versionResult = spawnSync(candidate, ['--version'], {
+          encoding: 'utf8',
+          timeout: 5000,
+        });
+        const match = versionResult.stdout?.trim().match(/^v(\d+)\./);
+        if (!match) continue;
+        const candidateMajor = parseInt(match[1], 10);
+        if (candidateMajor < currentMajor) {
+          continue;
+        }
+        return candidate;
       } catch {
-        // ignore EACCES, ENOENT, and any other stat error
+        // ignore EACCES, ENOENT, and any other stat/spawn error
       }
     }
   }
   throw new Error(
-    `No root-owned Node.js binary found in ${SAFE_DIRS.join(', ')} for named-user sudo ('${sudo}'). ` +
+    `No root-owned Node.js binary (v${currentMajor}+) found in ${SAFE_DIRS.join(', ')} for named-user sudo ('${sudo}'). ` +
       `Install Node.js system-wide (e.g. apt install nodejs) or set AVANTI_NODE_EXEC to the full path ` +
       `of a root-owned, compatible Node.js binary.`,
   );
@@ -852,6 +860,11 @@ export class SudoWorkerSession {
 
     const { nodeExec, resolvedWorkerPath, tmpDir } = prepareWorkerExec(sudo);
 
+    // Random nonce: passed to the worker via --nonce= and echoed back as its
+    // first IPC line. Verifies the connecting process is the worker we spawned
+    // (defense-in-depth for the named-user case where the socket is 0666).
+    const ipcNonce = crypto.randomBytes(32).toString('hex');
+
     // Use a Unix domain socket for IPC so that sudo's fd table is unaffected.
     // The previous approach passed fd 3 via a pipe and used `sudo -C 4` to
     // prevent sudo's closefrom from closing that fd. But `sudo -C` requires
@@ -914,9 +927,34 @@ export class SudoWorkerSession {
         input: socket,
         crlfDelay: Infinity,
       });
+      // The first line from the worker must be the nonce that was passed via
+      // --nonce= on the command line. This verifies the connecting process is
+      // the worker we spawned (not a rogue process that won the race to connect
+      // to the named-user sudo socket before the worker did).
+      let nonceVerified = false;
       this.rl.on('line', (line: string) => {
         const trimmed = line.trim();
         if (!trimmed) return;
+        if (!nonceVerified) {
+          nonceVerified = true;
+          if (trimmed !== ipcNonce) {
+            this.closed = true;
+            this.rl?.close();
+            try {
+              socket.destroy();
+            } catch {
+              // best-effort
+            }
+            readyReject(
+              new Error(
+                'SudoWorkerSession: IPC nonce mismatch; rejecting connection',
+              ),
+            );
+            return;
+          }
+          readyResolve();
+          return;
+        }
         try {
           const response = JSON.parse(trimmed) as WorkerResponse;
           const p = this.pending;
@@ -948,8 +986,6 @@ export class SudoWorkerSession {
           new Error('SudoWorkerSession: IPC stream closed without a response'),
         );
       });
-
-      readyResolve();
     });
 
     this.server.once('error', (err) => {
@@ -1000,6 +1036,7 @@ export class SudoWorkerSession {
           nodeExec,
           resolvedWorkerPath,
           `--socket-path=${this.ipcSocketPath!}`,
+          `--nonce=${ipcNonce}`,
         ],
         {
           // stdin: /dev/tty (or inherited) so sudo's ttyname() succeeds
@@ -1307,13 +1344,17 @@ function checkDirSafe(
     // An unreadable (EACCES/EPERM) ancestor: we cannot lstat it without an
     // extra sudo call, which would add a password prompt for every unreadable
     // ancestor before the worker prompt and break the single-prompt guarantee
-    // on machines with timestamp_timeout=0. We skip the owner check here and
-    // rely on the privileged worker's checkAncestorsSafeAsRoot — which runs as
-    // root and has no EACCES early-return — to re-validate all ancestors at
-    // write time before touching any file. Note: a caller-side skip followed
-    // by a world-writable restore in the window before the worker check is a
-    // residual race; the worker's check catches it if the directory is still
-    // world-writable when the worker runs.
+    // on machines with timestamp_timeout=0. Skip here; the privileged worker's
+    // checkAncestorsSafeAsRoot (runs as root, no EACCES constraint) re-validates
+    // ALL ancestors at write time before touching any file.
+    //
+    // Accepted residual race: an attacker who owns the EACCES ancestor (trusted
+    // UID) could make it world-writable, plant a malicious rename target inside,
+    // then remove the world-writable bit — all in the window between this skip
+    // and the worker's re-check. The worker's check catches the world-writable
+    // bit only if it is still set when the check runs. Exploiting this requires
+    // owning a trusted-UID ancestor AND winning a sub-millisecond timing race
+    // against both the parent and the worker; accepted as a residual risk.
     if (code === 'EACCES' || code === 'EPERM') return;
     throw e;
   }

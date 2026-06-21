@@ -593,14 +593,33 @@ export function handleWriteInPlace(
               }
             } else {
               // Path-based fallback: only works if the named user owns the file.
-              // Residual TOCTOU: an attacker controlling a trusted-UID ancestor
-              // could race a symlink between lstatSync and chmodSync. This window
-              // only applies to mode-0000 (or no-write) files where O_WRONLY also
-              // fails; tracked in https://github.com/udondan/avanti/issues/295.
+              // Residual TOCTOU: an attacker who controls a trusted-UID ancestor
+              // could race a symlink between the lstatSync above and this
+              // chmodSync, causing chmodSync to follow the symlink and make an
+              // unintended file writable. Mitigated below with a post-chmod
+              // re-check; the subsequent openSync uses O_NOFOLLOW so no write
+              // to the unintended path can occur.
               try {
                 fs.chmodSync(resolvedTarget, mode | 0o200);
               } catch {
                 throw firstOpenErr;
+              }
+              // Re-check: if chmodSync followed a symlink, abort immediately and
+              // attempt to undo the permission grant (best-effort).
+              try {
+                if (!fs.lstatSync(resolvedTarget).isFile()) {
+                  try {
+                    fs.chmodSync(resolvedTarget, mode);
+                  } catch {
+                    // best-effort restore
+                  }
+                  throw new Error(
+                    `writeInPlace: ${op.targetPath} changed to a non-file during chmod; possible symlink race`,
+                  );
+                }
+              } catch (recheckErr) {
+                if ((recheckErr as NodeJS.ErrnoException).code !== 'ENOENT')
+                  throw recheckErr;
               }
             }
           }
@@ -1104,6 +1123,7 @@ if (require.main === module) {
   const socketPathArg = process.argv.find((a) =>
     a.startsWith('--socket-path='),
   );
+  const nonceArg = process.argv.find((a) => a.startsWith('--nonce='));
   const reqFileArg = process.argv.find((a) => a.startsWith('--req-file='));
 
   let inputStream: NodeJS.ReadableStream;
@@ -1112,6 +1132,12 @@ if (require.main === module) {
     const socketPath = socketPathArg.slice('--socket-path='.length);
     const ipcSocket = net.createConnection(socketPath);
     ipcSocket.setNoDelay(true);
+    // Send the nonce back as the very first line so the parent can verify this
+    // is the worker it spawned (not a rogue process that connected to the socket
+    // before us). Must be sent before any request is processed.
+    if (nonceArg) {
+      ipcSocket.write(nonceArg.slice('--nonce='.length) + '\n');
+    }
     inputStream = ipcSocket;
     outputStream = ipcSocket;
   } else if (reqFileArg) {

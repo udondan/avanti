@@ -1447,18 +1447,14 @@ export function pullCommand(): Command {
       // record the original content before it is overwritten).
       // Also include isNew entries: a new file with empty content produces
       // hasChanges=false ('' !== '' is false) but still needs to be created.
-      // Exclude mode-only sudo targets: they have hasChanges=true (due to the
-      // mode drift) but contentChanged=false. These flow through modeOnlySudoTargets
-      // and sudoAtomicWrite — including them here would cause a redundant full-file
+      // Exclude mode-only targets (sudo or not): they have hasChanges=true (due
+      // to the mode drift) but contentChanged=false. These flow through the
+      // chmod paths — including them here would cause a redundant full-file
       // rewrite and double-count them in the final "Wrote N file(s)." tally.
       const changedTargets = writeTargets.filter(
         (t, i) =>
           (allDiffs[i].hasChanges || allDiffs[i].isNew) &&
-          !(
-            allDiffs[i].contentChanged === false &&
-            !!allDiffs[i].modeChange &&
-            !!t.sudo
-          ),
+          !(allDiffs[i].contentChanged === false && !!allDiffs[i].modeChange),
       );
       // Only include stale restore targets whose diff still has changes (not
       // suppressed by the idempotency check above). Also include diffs where
@@ -1474,28 +1470,6 @@ export function pullCommand(): Command {
         (i) => staleToRestore[i],
       );
 
-      const sudoValues = new Set<true | string>(
-        [...changedTargets, ...activeStaleRestore]
-          .map((t) => t.sudo)
-          .filter(Boolean) as (true | string)[],
-      );
-      // Only include stale delete sudo identities when the delete diff still
-      // has changes (file wasn't already absent at diff time).
-      for (const [p, sv] of staleDeleteSudo) {
-        const idx = staleDeleteDiffIndex.get(p);
-        if (idx !== undefined && staleDiffs[idx].hasChanges) {
-          sudoValues.add(sv);
-        }
-      }
-      for (let i = 0; i < writeTargets.length; i++) {
-        if (
-          allDiffs[i].modeChange &&
-          !allDiffs[i].contentChanged &&
-          writeTargets[i].sudo
-        ) {
-          sudoValues.add(writeTargets[i].sudo!);
-        }
-      }
       // Stage history versions before atomicWrite so v0 is captured before overwrite
       const stagedFileRefs: PullLogFileRef[] = [];
       if (pullId) {
@@ -1582,8 +1556,6 @@ export function pullCommand(): Command {
       // from history so stale cleanup does not repeat on subsequent pulls.
       const effectivelyCleaned = new Set<string>();
       try {
-        // changedTargets and sudoValues already computed above; auth already done.
-
         // Content writes go first so that if atomicWrite throws, no permissions
         // have been changed yet (minimises partial-apply surface).
         const isSudoTarget = (t: WriteTarget): t is SudoWriteTarget => !!t.sudo;
