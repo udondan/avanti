@@ -118,7 +118,10 @@ function readFileToBase64(
 ): { contentB64: string; mode: string } {
   let fd: number | undefined;
   try {
-    fd = fs.openSync(resolvedPath, fs.constants.O_RDONLY | O_NOFOLLOW);
+    fd = fs.openSync(
+      resolvedPath,
+      fs.constants.O_RDONLY | O_NOFOLLOW | O_NONBLOCK,
+    );
     const st = fs.fstatSync(fd);
     if (!st.isFile()) {
       // Attach a recognisable code so callers can distinguish directory
@@ -1166,14 +1169,16 @@ if (require.main === module) {
   // already delivered results for the current batch does not push a stale error
   // line onto the socket, which would corrupt the NEXT exec() call's readline.
   process.once('uncaughtException', (err) => {
+    const msg = err instanceof Error ? err.message : String(err);
+    const stack = err instanceof Error ? err.stack : undefined;
     process.stderr.write(
-      `avanti privileged-worker: uncaught exception: ${err.stack ?? String(err)}\n`,
+      `avanti privileged-worker: uncaught exception: ${stack ?? msg}\n`,
     );
     // Write a JSON error line before closing so the parent's exec() receives a
     // structured rejection with the actual error message rather than the generic
     // "IPC stream closed without a response" from the rl.on('close') fallback.
     try {
-      writeResponse({ results: [{ ok: false, error: err.message }] });
+      writeResponse({ results: [{ ok: false, error: msg }] });
     } catch {
       // best-effort; if the output stream is broken we can't do anything
     }

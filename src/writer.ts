@@ -280,7 +280,12 @@ function runPrivilegedWorker(
       reqDir,
       `avanti-req-${crypto.randomBytes(8).toString('hex')}.json`,
     );
-    fs.writeFileSync(reqPath, reqPayload, { mode: 0o600 });
+    const reqFd = fs.openSync(reqPath, 'wx', 0o600);
+    try {
+      fs.writeFileSync(reqFd, reqPayload);
+    } finally {
+      fs.closeSync(reqFd);
+    }
   }
 
   let result;
