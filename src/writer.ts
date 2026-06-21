@@ -57,13 +57,11 @@ function resolveNodeExec(sudo: true | string): string {
   // home-dir check) so that tests and users who set it do not need to worry
   // about which branch applies to their system layout.
   if (process.env.AVANTI_NODE_EXEC) return process.env.AVANTI_NODE_EXEC;
-  if (typeof sudo !== 'string') {
-    return process.execPath;
-  }
-  // For named-user sudo, require the binary to be root-owned before trusting it.
-  // If process.execPath is user-owned (e.g. a Homebrew or nvm/fnm/mise install),
-  // the calling user could replace it with malicious code that runs as the target
-  // user. Fall through to the SAFE_DIRS scan if the ownership check fails or if
+  // Require the binary to be root-owned before trusting it when running via
+  // sudo — whether elevating to root or to a named user. If process.execPath
+  // is user-owned (e.g. a Homebrew or nvm/fnm/mise install), the calling user
+  // could replace it with malicious code that runs with elevated privileges.
+  // Fall through to the SAFE_DIRS scan if the ownership check fails or if
   // process.execPath is inside $HOME.
   try {
     const st = fs.statSync(process.execPath);
@@ -80,7 +78,7 @@ function resolveNodeExec(sudo: true | string): string {
   }
   // Scan only known-safe system directories, not all of PATH. PATH may contain
   // world-writable directories under an attacker's control; returning a binary
-  // from one of those would cause sudo -u <user> to execute attacker code.
+  // from one of those would cause sudo to execute attacker code.
   // sudo's secure_path would normally sanitise PATH, but spawnSync passes the
   // resolved binary as argv[0], bypassing secure_path entirely.
   // Minimum Node.js major version that can run the compiled worker.
@@ -103,7 +101,7 @@ function resolveNodeExec(sudo: true | string): string {
         // Require root ownership: on Apple Silicon, /opt/homebrew is user-owned
         // so a Homebrew-installed node binary is writable by the calling user.
         // Accepting such a binary would allow the calling user to replace it with
-        // malicious code that executes as the named sudo target.
+        // malicious code that executes as the sudo target.
         if (!st.isFile() || (st.mode & 0o111) === 0 || st.uid !== 0) continue;
         // Version check: reject binaries older than the compiled worker requires.
         // This turns an opaque "privileged worker failed (exit 1)" SyntaxError
@@ -124,8 +122,10 @@ function resolveNodeExec(sudo: true | string): string {
       }
     }
   }
+  const sudoDesc =
+    typeof sudo === 'string' ? `named-user sudo ('${sudo}')` : 'root sudo';
   throw new Error(
-    `No root-owned Node.js binary (v${WORKER_MIN_NODE_MAJOR}+) found in ${SAFE_DIRS.join(', ')} for named-user sudo ('${sudo}'). ` +
+    `No root-owned Node.js binary (v${WORKER_MIN_NODE_MAJOR}+) found in ${SAFE_DIRS.join(', ')} for ${sudoDesc}. ` +
       `Install Node.js system-wide (e.g. apt install nodejs) or set AVANTI_NODE_EXEC to the full path ` +
       `of a root-owned, compatible Node.js binary.`,
   );
@@ -867,9 +867,9 @@ export class SudoWorkerSession {
       throw new Error('sudo is not supported on Windows');
     this.sudo = sudo;
     this.trustedUids = buildTrustedUids(sudo);
-    activeSudoSessions.add(this);
 
     const { nodeExec, resolvedWorkerPath, tmpDir } = prepareWorkerExec(sudo);
+    activeSudoSessions.add(this);
 
     // Random nonce: passed to the worker via --nonce= and echoed back as its
     // first IPC line. Verifies the connecting process is the worker we spawned

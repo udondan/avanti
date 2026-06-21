@@ -258,7 +258,7 @@ export function revertCommand(): Command {
         // prompt total, regardless of timestamp_timeout).
         const sudoIds = new Set<true | string>([
           ...sudoTargets.map((t) => t.sudo),
-          ...[...sudoDeletions.values()],
+          ...sudoDeletions.values(),
         ]);
         let sudoSessions: Map<true | string, SudoWorkerSession> = new Map();
         try {
