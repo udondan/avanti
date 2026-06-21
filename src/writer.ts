@@ -902,7 +902,7 @@ export class SudoWorkerSession {
     }
     this.ipcSocketPath = path.join(
       this.tmpDir,
-      `ipc-${crypto.randomBytes(4).toString('hex')}.sock`,
+      `ipc-${crypto.randomBytes(8).toString('hex')}.sock`,
     );
 
     let readyResolve: () => void;
