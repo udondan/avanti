@@ -118,10 +118,7 @@ function readFileToBase64(
 ): { contentB64: string; mode: string } {
   let fd: number | undefined;
   try {
-    fd = fs.openSync(
-      resolvedPath,
-      fs.constants.O_RDONLY | O_NOFOLLOW | O_NONBLOCK,
-    );
+    fd = fs.openSync(resolvedPath, fs.constants.O_RDONLY | O_NOFOLLOW);
     const st = fs.fstatSync(fd);
     if (!st.isFile()) {
       // Attach a recognisable code so callers can distinguish directory
@@ -482,8 +479,10 @@ export function handleWriteInPlace(
     // Then open for writing. If the write-open fails with EACCES (named-user
     // sudo running as a non-root uid), fchmod via the read fd to temporarily
     // add a write bit, retry, then always restore the original mode.
-    const openFlags =
-      fs.constants.O_WRONLY | fs.constants.O_TRUNC | O_NOFOLLOW | O_NONBLOCK;
+    // O_NONBLOCK omitted: rfd + fstatSync below already verified the target is
+    // a regular file. O_NONBLOCK on a regular-file write fd can return EAGAIN
+    // on NFS/FUSE, which fs.writeFileSync does not handle.
+    const openFlags = fs.constants.O_WRONLY | fs.constants.O_TRUNC | O_NOFOLLOW;
     let fd: number | undefined;
     let rfd: number | undefined;
     let savedMode: number | undefined;
@@ -1137,7 +1136,10 @@ if (require.main === module) {
 
   // Shut down immediately on any unexpected error so subsequent ops are not
   // dispatched while the worker is in an unknown state.
-  process.on('uncaughtException', (err) => {
+  // Use process.once so that a second uncaught exception after writeResponse has
+  // already delivered results for the current batch does not push a stale error
+  // line onto the socket, which would corrupt the NEXT exec() call's readline.
+  process.once('uncaughtException', (err) => {
     process.stderr.write(
       `avanti privileged-worker: uncaught exception: ${err.stack ?? String(err)}\n`,
     );
@@ -1152,7 +1154,7 @@ if (require.main === module) {
     process.exitCode = 1;
     rl.close();
   });
-  process.on('unhandledRejection', (reason) => {
+  process.once('unhandledRejection', (reason) => {
     const msg = reason instanceof Error ? reason.message : String(reason);
     process.stderr.write(
       `avanti privileged-worker: unhandled rejection: ${msg}\n`,
@@ -1207,9 +1209,28 @@ if (require.main === module) {
       return;
     }
 
-    const trustedUids = request.trustedUids
-      ? new Set(request.trustedUids.map(Number))
-      : undefined;
+    // Require trustedUids in every request so ancestor-ownership checks are
+    // never silently skipped. An absent or null trustedUids field would cause
+    // every checkAncestorsSafeAsRoot call to be skipped entirely, allowing
+    // writes to any path without TOCTOU protection.
+    if (
+      !Array.isArray(request.trustedUids) ||
+      request.trustedUids.length === 0
+    ) {
+      writeResponse({
+        results: [
+          {
+            ok: false,
+            error:
+              'invalid request: trustedUids must be a non-empty array of UIDs',
+          },
+        ],
+      });
+      process.exitCode = 1;
+      rl.close();
+      return;
+    }
+    const trustedUids = new Set(request.trustedUids.map(Number));
     const continueOnError = request.continueOnError ?? false;
 
     const results: WorkerResult[] = [];

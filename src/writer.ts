@@ -970,8 +970,16 @@ export class SudoWorkerSession {
           this.ipcSocketPath!,
           typeof sudo === 'string' ? 0o666 : 0o600,
         );
-      } catch {
-        // best-effort; connection-refused is a cleaner failure than a race
+      } catch (e) {
+        if (typeof sudo !== 'string') {
+          // Root sudo: a world-connectable socket is a security hole — abort.
+          // (net.Server.listen creates the socket at 0777&~umask, typically
+          // 0755, so leaving it at that mode means any local user can connect
+          // and become the trusted IPC peer of the root-privileged worker.)
+          throw e;
+        }
+        // Named-user sudo: best-effort. The 0711 parent dir still limits
+        // enumeration, so a chmod failure is bad but bounded in impact.
       }
 
       // Open /dev/tty so that sudo can look up cached credentials via
@@ -1063,13 +1071,16 @@ export class SudoWorkerSession {
 
     return new Promise<WorkerResult[]>((resolve, reject) => {
       const timer = setTimeout(() => {
-        if (!this.pending) return;
         setImmediate(() => {
-          if (!this.pending) return;
-          this.pending = null;
-          this.proc?.kill('SIGTERM');
-          this.close();
-          reject(new Error('SudoWorkerSession: exec() timed out'));
+          // Always close the session on timeout, even if a late response already
+          // settled this.pending between setTimeout and setImmediate. Without this,
+          // the late-response path leaves closed=false and the session leaks in
+          // activeSudoSessions with the worker process still alive.
+          const didTimeout = !!this.pending;
+          if (didTimeout) this.pending = null;
+          if (!this.closed) this.close();
+          if (didTimeout)
+            reject(new Error('SudoWorkerSession: exec() timed out'));
         });
       }, timeoutMs);
       this.pending = {
@@ -1102,8 +1113,10 @@ export class SudoWorkerSession {
       this.dataIn!.write(JSON.stringify(request) + '\n', (err) => {
         if (err) {
           clearTimeout(timer);
+          // Null pending first so close() does not double-reject with
+          // "session closed" and swallow the real write error.
           this.pending = null;
-          this.closed = true;
+          this.close();
           reject(err);
         }
       });

@@ -1041,7 +1041,7 @@ export function pullCommand(): Command {
               !isNew &&
               writeTargets[i].symlinkTarget === undefined
             ) {
-              const desired = parseInt(desiredMode, 8);
+              const desired = parseInt(desiredMode.replace(/^0[oO]/, ''), 8);
               const current = parseInt(actualModeStr, 8);
               if (!isNaN(desired) && !isNaN(current) && desired !== current) {
                 return { from: current, to: desired };
@@ -1101,9 +1101,11 @@ export function pullCommand(): Command {
       // Second hasDirConflict pass: the lstatFailed loop above may have set
       // isDirectory:true on diffs that previously appeared clean (lstat failed
       // so isDirectory was false before the stat-read). Re-check and abort if
-      // any newly-discovered directory conflicts exist.
-      for (const d of allDiffs) {
-        if (d.isDirectory && d.isSymlink) {
+      // any newly-discovered directory conflicts exist. Also check staleDiffs:
+      // a stale-restore symlink target may have been replaced by a directory
+      // since the last pull.
+      for (const d of [...allDiffs, ...staleDiffs]) {
+        if (d?.isDirectory && d?.isSymlink) {
           console.error(
             `symlink: ${d.targetPath} is a directory; cannot replace with a symlink`,
           );
@@ -1445,8 +1447,18 @@ export function pullCommand(): Command {
       // record the original content before it is overwritten).
       // Also include isNew entries: a new file with empty content produces
       // hasChanges=false ('' !== '' is false) but still needs to be created.
+      // Exclude mode-only sudo targets: they have hasChanges=true (due to the
+      // mode drift) but contentChanged=false. These flow through modeOnlySudoTargets
+      // and sudoAtomicWrite — including them here would cause a redundant full-file
+      // rewrite and double-count them in the final "Wrote N file(s)." tally.
       const changedTargets = writeTargets.filter(
-        (_, i) => allDiffs[i].hasChanges || allDiffs[i].isNew,
+        (t, i) =>
+          (allDiffs[i].hasChanges || allDiffs[i].isNew) &&
+          !(
+            allDiffs[i].contentChanged === false &&
+            !!allDiffs[i].modeChange &&
+            !!t.sudo
+          ),
       );
       // Only include stale restore targets whose diff still has changes (not
       // suppressed by the idempotency check above). Also include diffs where
