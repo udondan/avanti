@@ -1224,8 +1224,15 @@ export class SudoWorkerSession {
     p?.reject(new Error('SudoWorkerSession: session closed'));
     this.rl?.close();
     this.rl = undefined;
-    this.server?.close();
-    this.server = undefined;
+    if (this.server) {
+      try {
+        this.server.close();
+      } catch {
+        // server.close() throws ERR_SERVER_NOT_RUNNING if already closed
+        // (e.g. called after the connection handler already stopped it)
+      }
+      this.server = undefined;
+    }
     this.ipcSocket?.destroy();
     this.ipcSocket = undefined;
     this.dataIn = undefined;
