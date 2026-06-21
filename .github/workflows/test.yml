@@ -74,10 +74,10 @@ jobs:
         if: runner.os == 'Linux'
         env:
           SUDO_TEST_DIR: /usr/local/avanti-sudo-test
-          SUDO_BIN_DIR: /tmp/sudo-bin
-          SUDO_CALL_LOG_PATH: /tmp/sudo-call-log.txt
+          SUDO_BIN_DIR: ${{ runner.temp }}/sudo-bin
+          SUDO_CALL_LOG_PATH: ${{ runner.temp }}/sudo-call-log.txt
           SUDO_NAMED_USER: testwriter
-          SUDO_NAMED_USER_DIR: /tmp/avanti-named-test
+          SUDO_NAMED_USER_DIR: ${{ runner.temp }}/avanti-named-test
         run: |
           sudo rm -rf "$SUDO_TEST_DIR"
           sudo mkdir -p "$SUDO_TEST_DIR"

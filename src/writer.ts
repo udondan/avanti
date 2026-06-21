@@ -15,6 +15,9 @@ import type {
 // whose ancestor directories are not world-traversable, so a named sudo user
 // cannot reach files placed there. /tmp is always world-executable on Unix
 // (sticky 01777). Fall back to os.tmpdir() only on Windows.
+// Known limitation: on hardened systems where /tmp is mounted noexec, the
+// worker exec will fail with ENOEXEC. In that case, set $TMPDIR (or use a
+// root sudo path) to a world-executable directory before running avanti.
 const WORLD_TMP = process.platform === 'win32' ? os.tmpdir() : '/tmp';
 
 export interface SudoChmodTarget {
@@ -52,6 +55,12 @@ function resolveNodeExec(sudo: true | string): string {
   ) {
     return process.execPath;
   }
+  // Known limitation: this search accepts the first node/nodejs binary outside
+  // $HOME without checking its version. If the system Node (e.g. /usr/bin/node)
+  // is older than the version that compiled the worker, the worker will fail
+  // with a SyntaxError surfaced as "privileged worker failed (exit 1)". Ensure
+  // a compatible Node.js is installed system-wide when using named-user sudo
+  // with an nvm/fnm/mise-managed Node.
   const home = os.homedir() + path.sep;
   for (const dir of (process.env.PATH ?? '').split(path.delimiter)) {
     if (dir.startsWith(home)) continue;
@@ -108,10 +117,12 @@ const stagedWorkerDirs = new Set<string>();
 // Module-level flag prevents duplicate handler registration when Vitest
 // re-evaluates this module between test files without being affected by
 // other modules that may have already registered their own 'exit' listeners.
-let _exitHandlersRegistered = false;
-if (!_exitHandlersRegistered) {
-  // eslint-disable-next-line no-useless-assignment
-  _exitHandlersRegistered = true;
+// Use a process-level Symbol so the flag persists across Vitest module
+// re-evaluations: a module-level boolean resets to false on each re-import,
+// causing duplicate handler accumulation and MaxListenersExceededWarning.
+const _HANDLERS_KEY = Symbol.for('avanti.writer.exitHandlersRegistered');
+if (!(process as unknown as Record<symbol, unknown>)[_HANDLERS_KEY]) {
+  (process as unknown as Record<symbol, unknown>)[_HANDLERS_KEY] = true;
   process.on('exit', () => {
     for (const d of [...stagedWorkerDirs]) {
       cleanupWorkerDir(d);
@@ -926,20 +937,26 @@ export class SudoWorkerSession {
     return new Promise<WorkerResult[]>((resolve, reject) => {
       const timer = setTimeout(() => {
         if (!this.pending) return;
-        this.pending = null;
-        this.proc.kill('SIGTERM');
-        this.close(); // sets this.closed=true and cleans up tmpDir
-        reject(new Error('SudoWorkerSession: exec() timed out'));
+        // Use setImmediate so the poll-phase (I/O) runs first: if a readline
+        // 'line' event was already buffered when the timer fired, it resolves
+        // this.pending before this callback executes, and the guard above exits
+        // early — preventing a spurious timeout rejection.
+        setImmediate(() => {
+          if (!this.pending) return;
+          this.pending = null;
+          this.proc.kill('SIGTERM');
+          this.close(); // sets this.closed=true and cleans up tmpDir
+          reject(new Error('SudoWorkerSession: exec() timed out'));
+        });
       }, timeoutMs);
       this.pending = {
         resolve: (r) => {
           clearTimeout(timer);
           if (r.length !== ops.length) {
-            const lastFailed = r.length > 0 ? r[r.length - 1] : undefined;
+            const firstFailed = r.find((x) => !x.ok);
             const detail =
-              lastFailed && !lastFailed.ok && lastFailed.error
-                ? lastFailed.error
-                : `privileged worker returned ${r.length} results, expected ${ops.length}`;
+              firstFailed?.error ??
+              `privileged worker returned ${r.length} results, expected ${ops.length}`;
             this.close();
             reject(new Error(detail));
           } else {

@@ -314,8 +314,10 @@ export function handleWriteMv(op: WriteMvOp, trustedUids?: Set<number>): void {
   const resolvedTarget = path.resolve(op.targetPath);
   const dir = path.dirname(resolvedTarget);
 
-  // Pre-validate before mkdirSync so we catch world-writable ancestors that
-  // the caller could not lstat (EACCES); re-validate after to cover any
+  // The dispatch loop already ran checkAncestorsSafeAsRoot before calling this
+  // handler; the pre-mkdirSync call below is intentionally redundant (belt-and-
+  // suspenders) for callers that invoke handlers directly in tests or future
+  // code paths. The post-mkdirSync call is essential to validate any new
   // intermediate directories that mkdirSync itself creates.
   if (trustedUids)
     checkAncestorsSafeAsRoot(resolvedTarget, trustedUids, 'destination');
