@@ -4,7 +4,6 @@ import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import {
   sudoAtomicDelete,
   sudoAtomicWrite,
-  sudoFileExists,
   sudoUserArgs,
   SudoWorkerSession,
   SudoWriteTarget,
@@ -102,18 +101,6 @@ function mockSpawnSyncCapturingReq(resultCount: number): {
   });
   return { getReq: () => JSON.parse(captured ?? 'null') as { ops: unknown[] } };
 }
-
-describe('sudoFileExists', () => {
-  it('returns true when test -e exits 0', () => {
-    mockSpawnSync.mockReturnValue(okResult());
-    expect(sudoFileExists(true, '/etc/hosts')).toBe(true);
-  });
-
-  it('returns false when test -e exits non-zero', () => {
-    mockSpawnSync.mockReturnValue(failResult());
-    expect(sudoFileExists(true, '/no/such/file')).toBe(false);
-  });
-});
 
 // Helper that produces a fake privileged-worker success response.
 function workerOkResult(opCount = 1): SpawnSyncReturns<Buffer> {

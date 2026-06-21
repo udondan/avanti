@@ -146,8 +146,8 @@ export function computeDiff(
     const code = (err as NodeJS.ErrnoException).code;
     if (code !== 'EACCES' && code !== 'EPERM') throw err;
     // lstatSync failed — parent directory not searchable. Existence is unknown;
-    // treat as existing (conservative). pull.ts uses sudoFileExists to verify
-    // the true state after authenticating.
+    // treat as existing (conservative). pull.ts uses sudoAtomicRead to verify
+    // the true state through the privileged worker after sessions are opened.
     lstatFailed = true;
     isUnreadable = true;
     isNew = false;

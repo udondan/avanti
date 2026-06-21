@@ -15,10 +15,12 @@ import type {
 // whose ancestor directories are not world-traversable, so a named sudo user
 // cannot reach files placed there. /tmp is always world-executable on Unix
 // (sticky 01777). Fall back to os.tmpdir() only on Windows.
-// Known limitation: on hardened systems where /tmp is mounted noexec, the
-// worker exec will fail with ENOEXEC. In that case, set $TMPDIR (or use a
-// root sudo path) to a world-executable directory before running avanti.
-const WORLD_TMP = process.platform === 'win32' ? os.tmpdir() : '/tmp';
+// Override via AVANTI_WORLD_TMP for hardened systems where /tmp is mounted
+// noexec (the worker exec fails with ENOEXEC in that case). The override path
+// must be world-executable (all ancestor directories mode >=0711).
+const WORLD_TMP =
+  process.env.AVANTI_WORLD_TMP ??
+  (process.platform === 'win32' ? os.tmpdir() : '/tmp');
 
 export interface SudoChmodTarget {
   targetPath: string;
@@ -61,9 +63,16 @@ function resolveNodeExec(sudo: true | string): string {
   // with a SyntaxError surfaced as "privileged worker failed (exit 1)". Ensure
   // a compatible Node.js is installed system-wide when using named-user sudo
   // with an nvm/fnm/mise-managed Node.
-  const home = os.homedir() + path.sep;
-  for (const dir of (process.env.PATH ?? '').split(path.delimiter)) {
-    if (dir.startsWith(home)) continue;
+  // Scan only known-safe system directories, not all of PATH. PATH may contain
+  // world-writable directories under an attacker's control; returning a binary
+  // from one of those would cause sudo -u <user> to execute attacker code.
+  // sudo's secure_path would normally sanitise PATH, but spawnSync passes the
+  // resolved binary as argv[0], bypassing secure_path entirely.
+  const SAFE_DIRS =
+    process.platform === 'darwin'
+      ? ['/usr/bin', '/usr/local/bin', '/opt/homebrew/bin', '/bin']
+      : ['/usr/bin', '/usr/local/bin', '/bin'];
+  for (const dir of SAFE_DIRS) {
     // Try both 'node' and 'nodejs': Debian/Ubuntu ship the binary as 'nodejs'.
     for (const name of ['node', 'nodejs']) {
       const candidate = path.join(dir, name);
@@ -76,7 +85,7 @@ function resolveNodeExec(sudo: true | string): string {
     }
   }
   throw new Error(
-    `No Node.js binary found outside $HOME for named-user sudo ('${sudo}'). ` +
+    `No Node.js binary found in ${SAFE_DIRS.join(', ')} for named-user sudo ('${sudo}'). ` +
       `Install Node.js system-wide (e.g. apt install nodejs) so sudo can resolve it.`,
   );
 }
@@ -546,45 +555,6 @@ export async function sudoAtomicDelete(
   return succeeded;
 }
 
-export function sudoFileExists(
-  sudo: true | string,
-  targetPath: string,
-): boolean {
-  const r = spawnSync(
-    'sudo',
-    [...sudoUserArgs(sudo), 'test', '-e', path.resolve(targetPath)],
-    { stdio: ['inherit', 'ignore', 'ignore'] },
-  );
-  if (r.error) throw new Error(`sudo test -e failed: ${r.error.message}`);
-  return r.status === 0;
-}
-
-export function sudoIsSymlink(
-  sudo: true | string,
-  targetPath: string,
-): boolean {
-  const r = spawnSync(
-    'sudo',
-    [...sudoUserArgs(sudo), 'test', '-L', path.resolve(targetPath)],
-    { stdio: ['inherit', 'ignore', 'ignore'] },
-  );
-  if (r.error) throw new Error(`sudo test -L failed: ${r.error.message}`);
-  return r.status === 0;
-}
-
-export function sudoIsDirectory(
-  sudo: true | string,
-  targetPath: string,
-): boolean {
-  const r = spawnSync(
-    'sudo',
-    [...sudoUserArgs(sudo), 'test', '-d', path.resolve(targetPath)],
-    { stdio: ['inherit', 'ignore', 'ignore'] },
-  );
-  if (r.error) throw new Error(`sudo test -d failed: ${r.error.message}`);
-  return r.status === 0;
-}
-
 // Batches multiple privileged reads into a single worker invocation per
 // sudo identity, so pre-write idempotency checks and v0 history captures
 // for unreadable files all share one sudo prompt with the subsequent writes.
@@ -734,51 +704,6 @@ export async function sudoStatBatch(
 // mv refuses to move src *inside* dst when dst is a directory — preventing a
 // TOCTOU race where dst is swapped for a directory after the precheck. BSD mv
 // (macOS) does not support -T, so the flag is omitted on non-Linux platforms.
-
-// Returns the UID of the file/directory owner via sudo stat, trying GNU stat
-// (-c %u) then BSD/macOS stat (-f %u). Returns undefined when the path does
-// not exist or the UID cannot be determined.
-function getSudoOwnerUid(
-  sudo: true | string,
-  targetPath: string,
-  followSymlink = false,
-): number | undefined {
-  const absPath = path.resolve(targetPath);
-  // By default do NOT use -L: the caller may need the symlink's own UID, not
-  // its target's UID (the symlink owner can rename the link regardless of the
-  // parent's sticky bit, so checking the target UID would create a security
-  // bypass). Pass followSymlink=true when the caller specifically needs the
-  // target directory's owner (e.g. when stat failed with EACCES and we need
-  // to verify the target dir owner via sudo).
-  const gnuArgs = followSymlink
-    ? [...sudoUserArgs(sudo), 'stat', '-L', '-c', '%u', '--', absPath]
-    : [...sudoUserArgs(sudo), 'stat', '-c', '%u', '--', absPath];
-  // stdin: 'inherit' passes the parent's fd 0 to the child. stat(1) never
-  // reads stdin, so this is safe. On macOS, sudo locates cached credentials by
-  // TTY name from fd 0; 'ignore' (non-TTY /dev/null) breaks that lookup and
-  // causes a re-prompt. 'inherit' preserves the TTY in interactive sessions and
-  // degrades gracefully (non-TTY) in CI/daemon contexts.
-  const gnu = spawnSync('sudo', gnuArgs, {
-    stdio: ['inherit', 'pipe', 'ignore'],
-  });
-  if (gnu.status === 0) {
-    const uid = parseInt(gnu.stdout.toString().trim(), 10);
-    if (!isNaN(uid)) return uid;
-  }
-  // BSD stat follows symlinks by default (without any flag). Use -h to lstat
-  // the symlink itself when followSymlink is false; -L to explicitly follow.
-  const bsdArgs = followSymlink
-    ? [...sudoUserArgs(sudo), 'stat', '-L', '-f', '%u', absPath]
-    : [...sudoUserArgs(sudo), 'stat', '-h', '-f', '%u', absPath];
-  const bsd = spawnSync('sudo', bsdArgs, {
-    stdio: ['inherit', 'pipe', 'ignore'],
-  });
-  if (bsd.status === 0) {
-    const uid = parseInt(bsd.stdout.toString().trim(), 10);
-    if (!isNaN(uid)) return uid;
-  }
-  return undefined;
-}
 
 // Returns the UID of the named OS user using `id -u`. Returns undefined when
 // the user does not exist or the UID cannot be determined.
@@ -1037,7 +962,9 @@ export function getSudoFileMode(
   targetPath: string,
 ): string | undefined {
   const absPath = path.resolve(targetPath); // ensure never starts with '-'
-  // stdin: 'inherit' — see getSudoOwnerUid for rationale; same applies here.
+  // stdin: 'inherit' passes the parent's fd 0 so sudo can locate cached
+  // credentials by TTY name; 'ignore' (non-TTY /dev/null) would break that
+  // lookup and cause a re-prompt in interactive sessions.
   const gnu = spawnSync(
     'sudo',
     [...sudoUserArgs(sudo), 'stat', '-L', '-c', '%a', '--', absPath],
@@ -1109,14 +1036,16 @@ function checkDirSafe(
           // below. Without this check, an attacker can race between mkdir -p
           // (symlink pointing at a real dir) and mktemp/mv (dangling) to bypass
           // the trusted-UID guard entirely.
-        } else if (code2 !== 'EACCES' && code2 !== 'EPERM') {
-          throw e2;
+        } else if (code2 === 'EACCES' || code2 === 'EPERM') {
+          // Symlink target is unreadable without root. Skip the owner/mode check
+          // here and rely on checkAncestorsSafeAsRoot inside the worker, which
+          // runs as root and has no EACCES constraint. A pre-worker check via
+          // getSudoFileMode/getSudoOwnerUid would fire a separate password prompt
+          // on machines with timestamp_timeout=0, breaking the single-prompt
+          // guarantee that is the core of this PR.
+          return;
         } else {
-          // Symlink target is unreadable; fall back to sudo for mode and owner.
-          // followSymlink=true so sudo stat follows the link to the target dir.
-          const modeStr = getSudoFileMode(sudo, absDir);
-          if (modeStr) mode = parseInt(modeStr, 8);
-          targetOwnerUid = getSudoOwnerUid(sudo, absDir, true);
+          throw e2;
         }
       }
       // Validate the target directory's owner separately from the symlink owner.

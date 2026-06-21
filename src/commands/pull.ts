@@ -36,6 +36,7 @@ import {
 import {
   atomicWrite,
   closeAllSessions,
+  openPrivilegedSessions,
   sudoAtomicRead,
   sudoAtomicWrite,
   sudoStatBatch,
@@ -980,8 +981,8 @@ export function pullCommand(): Command {
           }
         }
         try {
-          for (const id of earlyIds)
-            sudoSessions.set(id, new SudoWorkerSession(id));
+          for (const [id, session] of openPrivilegedSessions(earlyIds))
+            sudoSessions.set(id, session);
         } catch (err) {
           closeAllSessions(sudoSessions);
           console.error(err instanceof Error ? err.message : String(err));
@@ -1349,8 +1350,8 @@ export function pullCommand(): Command {
           }
         }
         try {
-          for (const id of deferredIds)
-            sudoSessions.set(id, new SudoWorkerSession(id));
+          for (const [id, session] of openPrivilegedSessions(deferredIds))
+            sudoSessions.set(id, session);
         } catch (err) {
           closeAllSessions(sudoSessions);
           console.error(err instanceof Error ? err.message : String(err));
@@ -1435,8 +1436,10 @@ export function pullCommand(): Command {
       // Compute write batches and authenticate before staging so that sudo is
       // available for v0 capture of unreadable first-seen files (history must
       // record the original content before it is overwritten).
+      // Also include isNew entries: a new file with empty content produces
+      // hasChanges=false ('' !== '' is false) but still needs to be created.
       const changedTargets = writeTargets.filter(
-        (_, i) => allDiffs[i].hasChanges && allDiffs[i].contentChanged,
+        (_, i) => allDiffs[i].hasChanges || allDiffs[i].isNew,
       );
       // Only include stale restore targets whose diff still has changes (not
       // suppressed by the idempotency check above). Also include diffs where
