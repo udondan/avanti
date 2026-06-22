@@ -623,6 +623,11 @@ export async function sudoAtomicWrite(
         if (!r.ok) throw new Error(r.error ?? 'privileged worker op failed');
       }
     } else {
+      // No session: fall back to a one-shot spawnSync call. This bypasses the
+      // single-sudo-prompt guarantee (one spawnSync per identity per call) and
+      // silently re-prompts if sudo credential caching is disabled. All production
+      // callers (pull, reset, revert) open sessions via openPrivilegedSessions;
+      // this branch exists for callers that skip session management (e.g. tests).
       results = runPrivilegedWorker(sudo, ops, false);
     }
     // Count chmod results that weren't silently skipped (ENOENT/ELOOP).
@@ -672,6 +677,8 @@ export async function sudoAtomicDelete(
     }));
     try {
       const session = sessions?.get(sudo);
+      // No-session fallback: see the note in sudoAtomicWrite — bypasses the
+      // single-prompt guarantee; only used by callers that skip openPrivilegedSessions.
       const results: WorkerResult[] = session
         ? await session.exec(ops, true)
         : runPrivilegedWorker(sudo, ops, true);
@@ -748,6 +755,8 @@ export async function sudoAtomicRead(
     // for every file in the batch, permanently breaking revert/reset without
     // any user-visible error.
     const session = sessions?.get(sudo);
+    // No-session fallback: see the note in sudoAtomicWrite — bypasses the
+    // single-prompt guarantee; only used by callers that skip openPrivilegedSessions.
     const results: Array<{
       ok: boolean;
       contentB64?: string;
@@ -830,6 +839,8 @@ export async function sudoStatBatch(
     if (session) {
       results = await session.exec(ops, true);
     } else {
+      // No-session fallback: see the note in sudoAtomicWrite — bypasses the
+      // single-prompt guarantee; only used by callers that skip openPrivilegedSessions.
       results = runPrivilegedWorker(sudo, ops, true);
     }
     items.forEach((item, j) => {
@@ -1582,17 +1593,13 @@ function checkDirSafe(
   }
 }
 
-// Walks every ancestor of targetPath (from the filesystem root down to its
-// parent directory) and calls checkDirSafe on each. A single writable or
-// untrusted-owned ancestor anywhere in the path is sufficient for a race:
-// an attacker can swap that component to a symlink between the sudo preflight
-// checks and the sudo mktemp/tee/mv, redirecting the privileged write.
-function checkAncestorsSafe(
-  sudo: true | string,
+// Collects ancestor directories of targetPath from filesystem root down to the
+// immediate parent, then calls callback for each. Mirrors the equivalent helper
+// in privileged-worker.ts; both must use the same root-detection idiom
+// (`anc === path.dirname(anc)`) so that any edge-case fixes stay consistent.
+function walkAncestors(
   targetPath: string,
-  trustedUids: Set<number>,
-  label: string,
-  checkedDirs?: Set<string>,
+  callback: (anc: string) => void,
 ): void {
   const ancestors: string[] = [];
   let anc = path.resolve(targetPath);
@@ -1602,10 +1609,31 @@ function checkAncestorsSafe(
     if (anc === path.dirname(anc)) break; // reached filesystem root
   }
   for (const ancestor of ancestors) {
-    if (checkedDirs?.has(ancestor)) continue;
+    callback(ancestor);
+  }
+}
+
+// Walks every ancestor of targetPath (from the filesystem root down to its
+// parent directory) and calls checkDirSafe on each. A single writable or
+// untrusted-owned ancestor anywhere in the path is sufficient for a race:
+// an attacker can swap that component to a symlink between the sudo preflight
+// checks and the sudo mktemp/tee/mv, redirecting the privileged write.
+//
+// EACCES on an ancestor causes a silent pass here (see checkDirSafe for
+// rationale). The worker's checkAncestorsSafeAsRoot is the authoritative check
+// and re-validates every ancestor as root before touching any file.
+function checkAncestorsSafe(
+  sudo: true | string,
+  targetPath: string,
+  trustedUids: Set<number>,
+  label: string,
+  checkedDirs?: Set<string>,
+): void {
+  walkAncestors(targetPath, (ancestor) => {
+    if (checkedDirs?.has(ancestor)) return;
     checkDirSafe(sudo, ancestor, trustedUids, `${label} ancestor`);
     checkedDirs?.add(ancestor);
-  }
+  });
 }
 
 export function atomicWrite(

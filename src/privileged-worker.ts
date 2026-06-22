@@ -203,6 +203,12 @@ function parseMode(modeStr: string): number {
 // Buffer.from(str, 'base64') silently drops invalid characters, which can
 // silently corrupt content if contentB64 is truncated (e.g. by a short-write
 // on the stdin pipe). Validate before decoding so the op fails loudly.
+// Performance note: the regex is O(n) in the string length. For a 100 MiB file
+// the base64 representation is ~133 MiB — scanning every character adds a CPU-
+// bound pass before decoding. This is acceptable as a belt-and-suspenders check
+// because (a) the max file size is capped at 100 MiB, (b) the data comes from
+// an authenticated pipe controlled by the parent process, and (c) the cost is
+// incurred once per op, not per byte of the write.
 function validateBase64(s: string, field: string): void {
   // Empty string is valid: it encodes an empty file (.gitkeep, empty __init__.py, etc.).
   // Only non-empty strings need the length/character check.
@@ -786,6 +792,19 @@ export function handleWriteInPlace(
         rfd = undefined;
       }
     } catch (err) {
+      // The write failed. If the O_TRUNC open succeeded (fd !== undefined), the
+      // target file has already been truncated to 0 bytes. Restore from backup
+      // so the user is not left with an empty file. The original content remains
+      // in op.backupPath regardless; copyFileSync here avoids a manual recovery
+      // step. If the restore itself fails, the error is suppressed — the user can
+      // still recover from the backup at op.backupPath.
+      if (fd !== undefined && op.backupPath) {
+        try {
+          fs.copyFileSync(path.resolve(op.backupPath), resolvedTarget);
+        } catch {
+          // best-effort restore; original content is at op.backupPath
+        }
+      }
       // If we temporarily boosted the mode, restore it before closing.
       if (rfd !== undefined && savedMode !== undefined) {
         try {
@@ -980,11 +999,13 @@ function checkDirSafeAsRoot(
 
 // Walks every ancestor of targetPath (from the filesystem root down to its
 // parent directory) and calls checkDirSafeAsRoot on each.
-function checkAncestorsSafeAsRoot(
+// Collects ancestor directories of targetPath from filesystem root down to the
+// immediate parent, then calls callback for each. Shared by checkAncestorsSafeAsRoot
+// and the equivalent function in writer.ts; centralising the while-loop prevents
+// the root-detection idiom (`anc === path.dirname(anc)`) from diverging.
+function walkAncestors(
   targetPath: string,
-  trustedUids: Set<number>,
-  label: string,
-  checkedDirs?: Set<string>,
+  callback: (anc: string) => void,
 ): void {
   const ancestors: string[] = [];
   let anc = path.resolve(targetPath);
@@ -994,10 +1015,21 @@ function checkAncestorsSafeAsRoot(
     if (anc === path.dirname(anc)) break;
   }
   for (const ancestor of ancestors) {
-    if (checkedDirs?.has(ancestor)) continue;
+    callback(ancestor);
+  }
+}
+
+function checkAncestorsSafeAsRoot(
+  targetPath: string,
+  trustedUids: Set<number>,
+  label: string,
+  checkedDirs?: Set<string>,
+): void {
+  walkAncestors(targetPath, (ancestor) => {
+    if (checkedDirs?.has(ancestor)) return;
     checkDirSafeAsRoot(ancestor, trustedUids, label);
     checkedDirs?.add(ancestor);
-  }
+  });
 }
 
 // Base64 encoding inflates raw bytes by ~33%, so a 100 MiB file produces
@@ -1321,6 +1353,22 @@ if (require.main === module) {
   // sudo sets SUDO_UID to the invoking user's real UID before elevating. The
   // worker's own getuid() returns the target user's UID (0 for root-sudo).
   const trustedUids = new Set<number>([0]);
+  // Emit an actionable error when sudo's env_reset has stripped SUDO_UID and the
+  // worker is running as root. Without SUDO_UID, the trusted set only contains 0
+  // and the worker's own uid; any user-owned ancestor directory (e.g. /home/alice)
+  // triggers a cryptic "not trusted (TOCTOU risk)" error. Gate on getuid()==0 so
+  // the check is a no-op in the test suite (which runs as a non-root user).
+  if (
+    typeof process.getuid === 'function' &&
+    process.getuid() === 0 &&
+    !process.env.SUDO_UID
+  ) {
+    process.stderr.write(
+      'avanti privileged-worker: SUDO_UID is not set — sudo env_reset may have stripped it.\n' +
+        'Add `Defaults env_keep += "SUDO_UID"` to /etc/sudoers to allow ancestor ownership checks.\n',
+    );
+    process.exit(1);
+  }
   if (process.env.SUDO_UID) {
     const parsedUid = parseInt(process.env.SUDO_UID, 10);
     if (!isNaN(parsedUid)) {
