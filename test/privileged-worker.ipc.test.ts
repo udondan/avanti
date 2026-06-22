@@ -1,8 +1,10 @@
 import * as crypto from 'crypto';
 import * as fs from 'fs';
+import * as net from 'net';
 import * as os from 'os';
 import * as path from 'path';
-import { spawnSync } from 'child_process';
+import * as readline from 'readline';
+import { spawn, spawnSync } from 'child_process';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import type { WorkerRequest, WorkerResponse } from '../src/privileged-worker';
 
@@ -247,6 +249,187 @@ describe.skipIf(isWindows || !workerExists)(
       const resp = JSON.parse(r.stdout) as WorkerResponse;
       expect(resp.results[0].ok).toBe(false);
       expect(resp.results[0].error).toMatch(/parse/i);
+    });
+  },
+);
+
+// ---------------------------------------------------------------------------
+// Socket IPC mode — exercises the --socket-path / nonce / persistent-session
+// path used by SudoWorkerSession (the production path for all avanti pulls).
+// ---------------------------------------------------------------------------
+
+/**
+ * Spawn the worker in socket mode, complete the nonce handshake, send one or
+ * more JSON requests, and return all responses.  The server is closed and the
+ * worker process is killed in the afterEach cleanup tracked by the caller.
+ */
+function runWorkerOverSocket(
+  socketPath: string,
+  nonce: string,
+  requests: WorkerRequest[],
+  // workerNonce lets callers inject a *different* nonce into the worker to
+  // test the mismatch rejection path. Defaults to nonce (the happy path).
+  workerNonce?: string,
+): Promise<WorkerResponse[]> {
+  return new Promise((resolve, reject) => {
+    const responses: WorkerResponse[] = [];
+    let nonceVerified = false;
+    let pendingIdx = 0;
+
+    const server = net.createServer({ allowHalfOpen: true });
+    server.listen(socketPath, () => {
+      const proc = spawn('node', [WORKER, `--socket-path=${socketPath}`], {
+        env: { ...process.env, AVANTI_WORKER_NONCE: workerNonce ?? nonce },
+        stdio: ['ignore', 'ignore', 'inherit'],
+      });
+      proc.on('error', reject);
+      proc.on('close', (code) => {
+        if (code !== 0 && pendingIdx < requests.length) {
+          reject(new Error(`worker exited ${code} before all responses`));
+        }
+      });
+    });
+    server.on('error', reject);
+
+    server.on('connection', (socket) => {
+      server.close(); // accept only one connection
+      const rl = readline.createInterface({
+        input: socket,
+        crlfDelay: Infinity,
+      });
+
+      rl.on('line', (line) => {
+        const trimmed = line.trim();
+        if (!trimmed) return;
+        if (!nonceVerified) {
+          nonceVerified = true;
+          if (trimmed !== nonce) {
+            socket.destroy();
+            reject(new Error(`nonce mismatch: got ${trimmed}`));
+            return;
+          }
+          // Nonce OK — send the first request.
+          socket.write(JSON.stringify(requests[pendingIdx++]) + '\n');
+          return;
+        }
+        const resp = JSON.parse(trimmed) as WorkerResponse;
+        responses.push(resp);
+        if (pendingIdx < requests.length) {
+          socket.write(JSON.stringify(requests[pendingIdx++]) + '\n');
+        } else {
+          socket.destroy();
+          resolve(responses);
+        }
+      });
+
+      rl.on('close', () => {
+        if (
+          responses.length < requests.length &&
+          pendingIdx >= requests.length
+        ) {
+          resolve(responses); // all sent, some may have been received
+        }
+      });
+
+      socket.on('error', (err) => {
+        if (
+          !err.message.includes('ECONNRESET') &&
+          !err.message.includes('ERR_STREAM_DESTROYED')
+        ) {
+          reject(err);
+        }
+      });
+    });
+  });
+}
+
+describe.skipIf(isWindows || !workerExists)(
+  'socket IPC mode — nonce handshake and persistent session',
+  () => {
+    let socketPath: string;
+    let socketNonce: string;
+
+    beforeEach(() => {
+      socketPath = path.join(
+        tmpDir,
+        `test-${crypto.randomBytes(4).toString('hex')}.sock`,
+      );
+      socketNonce = crypto.randomBytes(32).toString('hex');
+    });
+
+    it('completes nonce handshake and processes a write-mv request', async () => {
+      const targetPath = path.join(tmpDir, 'socket-out.txt');
+      const [resp] = await runWorkerOverSocket(socketPath, socketNonce, [
+        {
+          ops: [
+            {
+              type: 'write-mv',
+              targetPath,
+              contentB64: b64('socket hello'),
+              defaultMode: '0644',
+            },
+          ],
+        },
+      ]);
+      expect(resp.results).toHaveLength(1);
+      expect(resp.results[0].ok).toBe(true);
+      expect(fs.readFileSync(targetPath, 'utf8')).toBe('socket hello');
+    });
+
+    it('rejects a connection that sends the wrong nonce', async () => {
+      // The helper expects `socketNonce` but the worker is given a different
+      // nonce — simulating a rogue process connecting with a forged nonce.
+      const wrongNonce = 'deadbeef'.repeat(8);
+      await expect(
+        runWorkerOverSocket(
+          socketPath,
+          socketNonce, // helper expects this
+          [
+            {
+              ops: [
+                {
+                  type: 'write-mv',
+                  targetPath: path.join(tmpDir, 'x.txt'),
+                  contentB64: b64('x'),
+                  defaultMode: '0644',
+                },
+              ],
+            },
+          ],
+          wrongNonce, // worker sends this — mismatch
+        ),
+      ).rejects.toThrow(/nonce mismatch/);
+    });
+
+    it('processes multiple sequential requests on one socket connection', async () => {
+      const paths = [path.join(tmpDir, 'a.txt'), path.join(tmpDir, 'b.txt')];
+      const responses = await runWorkerOverSocket(socketPath, socketNonce, [
+        {
+          ops: [
+            {
+              type: 'write-mv',
+              targetPath: paths[0],
+              contentB64: b64('aaa'),
+              defaultMode: '0644',
+            },
+          ],
+        },
+        {
+          ops: [
+            {
+              type: 'write-mv',
+              targetPath: paths[1],
+              contentB64: b64('bbb'),
+              defaultMode: '0644',
+            },
+          ],
+        },
+      ]);
+      expect(responses).toHaveLength(2);
+      expect(responses[0].results[0].ok).toBe(true);
+      expect(responses[1].results[0].ok).toBe(true);
+      expect(fs.readFileSync(paths[0], 'utf8')).toBe('aaa');
+      expect(fs.readFileSync(paths[1], 'utf8')).toBe('bbb');
     });
   },
 );

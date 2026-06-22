@@ -59,17 +59,17 @@ export function sudoUserArgs(sudo: true | string): string[] {
 const resolvedNodeExecCache = new Map<string, string>();
 
 function resolveNodeExec(sudo: true | string): string {
+  // AVANTI_NODE_EXEC bypasses ALL ownership and version checks — the caller is
+  // responsible for supplying a trustworthy root-owned binary. Checked before
+  // the cache so the env var takes effect immediately on every call without
+  // requiring a process restart (e.g. per-test overrides in test suites).
+  // Not cached: the env var can legitimately change between calls in tests.
+  if (process.env.AVANTI_NODE_EXEC) {
+    return process.env.AVANTI_NODE_EXEC;
+  }
   const cacheKey = sudo === true ? '__root__' : sudo;
   const cached = resolvedNodeExecCache.get(cacheKey);
   if (cached !== undefined) return cached;
-  // AVANTI_NODE_EXEC is an explicit override for root-owned binary checks. It
-  // is checked unconditionally (before the SAFE_DIRS scan and before the
-  // home-dir check) so that tests and users who set it do not need to worry
-  // about which branch applies to their system layout.
-  if (process.env.AVANTI_NODE_EXEC) {
-    resolvedNodeExecCache.set(cacheKey, process.env.AVANTI_NODE_EXEC);
-    return process.env.AVANTI_NODE_EXEC;
-  }
   // Minimum Node.js major version that can run the compiled worker.
   // The worker is compiled to ES2022 (tsconfig.build.json target), which
   // Node.js 18+ supports fully. Using the current process's major version
@@ -1046,7 +1046,16 @@ export class SudoWorkerSession {
       let nonceVerified = false;
       rl.on('line', (line: string) => {
         const trimmed = line.trim();
-        if (!trimmed) return;
+        if (!trimmed) {
+          // Blank line before nonce verification: rogue connection probing for
+          // FD exhaustion. Disconnect immediately rather than waiting for authTimeout.
+          if (!nonceVerified) {
+            clearTimeout(authTimeout);
+            rl.close();
+            socket.destroy();
+          }
+          return;
+        }
         if (!nonceVerified) {
           nonceVerified = true;
           if (trimmed !== ipcNonce) {
@@ -1193,11 +1202,12 @@ export class SudoWorkerSession {
       this.proc.on('error', (err) => {
         // Null proc before close() so close() does not SIGTERM a process that
         // has already reported a spawn error — mirrors the 'close' handler.
+        // Note: this.pending is always null here — spawn errors fire before the
+        // process starts, so exec() is still suspended at `await this.ready`
+        // and has not yet assigned this.pending. Only readyReject reaches the
+        // exec() caller; close() handles the session cleanup.
         this.proc = undefined;
-        const p = this.pending;
-        this.pending = null;
         this.close();
-        p?.reject(err);
         readyReject(err);
       });
 
@@ -1279,12 +1289,27 @@ export class SudoWorkerSession {
           // generic "session closed" message and swallow the detail error.
           this.pending = null;
           if (r.length !== ops.length) {
-            const firstFailed = r.find((x) => !x.ok);
-            const detail =
-              firstFailed?.error ??
-              `privileged worker returned ${r.length} results, expected ${ops.length}`;
-            this.close();
-            reject(new Error(detail));
+            if (continueOnError) {
+              // Mirror the spawnSync path: pad unprocessed tail ops so callers
+              // (e.g. sudoAtomicDelete in best-effort mode) can distinguish
+              // which ops succeeded rather than losing all partial state.
+              const padded: WorkerResult[] = [...r];
+              while (padded.length < ops.length) {
+                padded.push({
+                  ok: false,
+                  error: 'worker exited before processing this op',
+                });
+              }
+              this.close();
+              resolve(padded);
+            } else {
+              const firstFailed = r.find((x) => !x.ok);
+              const detail =
+                firstFailed?.error ??
+                `privileged worker returned ${r.length} results, expected ${ops.length}`;
+              this.close();
+              reject(new Error(detail));
+            }
           } else {
             resolve(r);
           }
@@ -1456,12 +1481,19 @@ function checkDirSafe(
           // (symlink pointing at a real dir) and mktemp/mv (dangling) to bypass
           // the trusted-UID guard entirely.
         } else if (code2 === 'EACCES' || code2 === 'EPERM') {
-          // Symlink target is unreadable without root. Skip the owner/mode check
-          // here and rely on checkAncestorsSafeAsRoot inside the worker, which
-          // runs as root and has no EACCES constraint. A pre-worker check via
-          // getSudoFileMode/getSudoOwnerUid would fire a separate password prompt
-          // on machines with timestamp_timeout=0, breaking the single-prompt
-          // guarantee that is the core of this PR.
+          // Symlink target is unreadable without root. We cannot check the target
+          // directory's mode or owner, but we CAN (and must) validate the symlink
+          // owner before returning. An untrusted UID owns the symlink and can
+          // atomically swap it between our preflight and the worker's write,
+          // redirecting privileged writes. ownerUid was already captured from
+          // lstatSync above — validate it now before returning early.
+          if (trustedUids !== undefined && !trustedUids.has(ownerUid)) {
+            throw new Error(
+              `sudo write: ${label} directory ${absDir} symlink is owned by UID ${ownerUid}, ` +
+                `not a trusted identity; cannot safely create a temp file here (TOCTOU risk).`,
+              { cause: e2 },
+            );
+          }
           return;
         } else {
           throw e2;

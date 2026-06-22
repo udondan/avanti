@@ -246,6 +246,9 @@ describe.skipIf(isWindows)('sudoAtomicWrite', () => {
     expect(sudoCalls).toHaveLength(1);
     expect(sudoCalls[0][1]).toContain('-u');
     expect(sudoCalls[0][1]).toContain('nobody');
+    expect(sudoCalls[0][2]).toMatchObject({
+      stdio: ['pipe', 'pipe', 'inherit'],
+    });
   });
 
   it('throws when worker reports a failed op', async () => {
@@ -341,7 +344,10 @@ describe.skipIf(isWindows)('sudoAtomicDelete', () => {
   });
 
   it('makes separate worker calls for different sudo identities', async () => {
-    mockSpawnSync.mockReturnValue(workerOkResult(1));
+    mockSpawnSync.mockImplementation((cmd: unknown) => {
+      if (cmd === 'id') return okResult('33'); // www-data uid
+      return workerOkResult(1);
+    });
 
     await sudoAtomicDelete([
       ['/etc/a.conf', true],
