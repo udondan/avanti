@@ -244,12 +244,6 @@ function backupRegularFile(
   } catch (e) {
     const code = (e as NodeJS.ErrnoException).code;
     if (code === 'ENOENT' || code === 'ELOOP' || code === 'ENOTDIR') return;
-    // EACCES: named-user sudo managing a write-only file (e.g. mode 0200 owned
-    // by root). The named user has write but not read access, so O_RDONLY fails.
-    // Skipping the backup lets the write proceed — the caller already recorded
-    // a v0 snapshot or has other means of recovery. The alternative (throwing)
-    // would make write-only files completely unmanageable via named-user sudo.
-    if (code === 'EACCES') return;
     throw e;
   }
 
@@ -696,47 +690,17 @@ export function handleWriteInPlace(
                 }
               }
             } else {
-              // Path-based fallback: only works if the named user owns the file.
-              // Residual TOCTOU: an attacker who controls a trusted-UID ancestor
-              // could race a symlink between the lstatSync above and this
-              // chmodSync, causing chmodSync to follow the symlink and make an
-              // unintended file writable. Mitigated below with a post-chmod
-              // re-check; the subsequent openSync uses O_NOFOLLOW so no write
-              // to the unintended path can occur.
-              try {
-                fs.chmodSync(resolvedTarget, mode | 0o200);
-              } catch {
-                throw firstOpenErr;
-              }
-              // Re-check: if chmodSync followed a symlink, abort immediately and
-              // attempt to undo the permission grant (best-effort).
-              //
-              // Residual TOCTOU: the restore chmodSync below also follows symlinks.
-              // If an attacker races a SECOND symlink between the lstatSync re-check
-              // and the restore chmodSync, the restore lands on a different inode.
-              // The ORIGINAL file remains at mode|0o200 (e.g. world-writable if
-              // mode was 0644) PERMANENTLY — no further chmod restores it, because
-              // avanti has already moved on and no cleanup mechanism revisits it.
-              // This is an inherent limitation of path-based chmod on POSIX: without
-              // an fd-based approach (fchmodat + O_PATH, Linux-only via native code),
-              // a racing attacker with a trusted-UID ancestor can widen permissions.
-              // The subsequent openSync uses O_NOFOLLOW so no write goes through the
-              // raced symlink — the blast radius is limited to the chmod side effect.
-              try {
-                if (!fs.lstatSync(resolvedTarget).isFile()) {
-                  try {
-                    fs.chmodSync(resolvedTarget, mode);
-                  } catch {
-                    // best-effort restore (may follow a second symlink — see above)
-                  }
-                  throw new Error(
-                    `writeInPlace: ${op.targetPath} changed to a non-file during chmod; possible symlink race`,
-                  );
-                }
-              } catch (recheckErr) {
-                if ((recheckErr as NodeJS.ErrnoException).code !== 'ENOENT')
-                  throw recheckErr;
-              }
+              // Neither fd-based nor path-based chmod is safe here: O_RDONLY and
+              // O_WRONLY both failed with EACCES (mode-0000 or SELinux/AppArmor MAC
+              // policy). Path-based chmodSync would require two sequential path
+              // traversals (add write bit, then restore) with a TOCTOU window between
+              // them that a racing attacker can exploit to permanently widen permissions
+              // on an unintended root-owned file. Refuse rather than proceed with a
+              // known-racy operation.
+              throw new Error(
+                `writeInPlace: ${op.targetPath} is not writable (mode ${(savedMode ?? 0).toString(8)}) and no fd-based chmod path is available; ` +
+                  `chmod the file to at least 0200 first or use write-mv instead`,
+              );
             }
           }
           try {
@@ -817,9 +781,20 @@ export function handleWriteInPlace(
       // have the correct content with potentially wrong permissions; the next
       // avanti pull will re-detect and re-apply the mode change.
       if (!writeSucceeded && fd !== undefined && op.backupPath) {
+        // Rename-based restore to avoid following symlinks: stage backup content
+        // to a temp file in the same dir as the target, then rename atomically.
+        // copyFileSync alone would follow a symlink placed at resolvedTarget
+        // between the truncation and the restore.
+        const restoreTmp = path.join(dir, `.avanti-restore-${randomHex()}`);
         try {
-          fs.copyFileSync(path.resolve(op.backupPath), resolvedTarget);
+          fs.copyFileSync(path.resolve(op.backupPath), restoreTmp);
+          fs.renameSync(restoreTmp, resolvedTarget);
         } catch {
+          try {
+            fs.unlinkSync(restoreTmp);
+          } catch {
+            // best-effort cleanup
+          }
           // best-effort restore; original content is at op.backupPath
         }
       }
@@ -1308,15 +1283,15 @@ if (require.main === module) {
     inputStream = fs.createReadStream(reqFileArg.slice('--req-file='.length));
     outputStream = process.stdout;
   } else {
-    // stdin fallback: used by the test suite (spawnSync with stdio:['pipe',...])
-    // and for backward-compatibility. No nonce is sent or verified in this mode.
-    // Security requirement: stdin MUST be a private pipe (e.g. spawnSync with
-    // stdio:['pipe',...]) so only the parent process can write to it. Do NOT
-    // invoke the worker with an inherited or shared stdin — any process that
-    // can write to stdin can issue privileged ops without authentication.
+    // stdin fallback: used by runPrivilegedWorker (named-user path, spawnSync
+    // with stdio:['pipe',...]) and for backward-compatibility. The nonce IS
+    // verified in this mode: the parent prefixes the payload with the nonce line
+    // and passes AVANTI_WORKER_NONCE via env. Security requirement: stdin MUST
+    // be a private pipe so only the parent process can write to it.
     inputStream = process.stdin;
     outputStream = process.stdout;
   }
+  let stdinNonceVerified = false;
 
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const rl = (require('readline') as typeof import('readline')).createInterface(
@@ -1445,6 +1420,29 @@ if (require.main === module) {
   }
 
   rl.on('line', (line: string) => {
+    // Nonce verification for the stdin path: the first line is the nonce, not a
+    // JSON request. Consume it here and return; subsequent lines are JSON ops.
+    if (inputStream === process.stdin) {
+      if (!stdinNonceVerified) {
+        const stdinNonce = process.env.AVANTI_WORKER_NONCE;
+        if (!stdinNonce) {
+          emitErrorAndExit('stdin mode requires AVANTI_WORKER_NONCE to be set');
+          return;
+        }
+        const lineBuf = Buffer.from(line.trim());
+        const nonceBuf = Buffer.from(stdinNonce);
+        if (
+          lineBuf.length !== nonceBuf.length ||
+          !crypto.timingSafeEqual(lineBuf, nonceBuf)
+        ) {
+          emitErrorAndExit('stdin nonce mismatch');
+          return;
+        }
+        stdinNonceVerified = true;
+        return; // consume this line as the nonce; wait for the next line with JSON
+      }
+    }
+
     // Fresh per-batch: ancestor checks are not carried over across requests so
     // that a malicious interleaved rename cannot poison a future batch's checks.
     const checkedDirs = new Set<string>();

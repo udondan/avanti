@@ -30,8 +30,12 @@ function runWorker(request: WorkerRequest): WorkerResponse {
   // The worker computes trustedUids itself from SUDO_UID and process.getuid().
   // In test context (no sudo), SUDO_UID is unset so trustedUids = {0, current_uid},
   // which covers /tmp (root-owned) and the test tmpDir (current-user-owned).
+  // stdin mode now requires a nonce: prepend it as the first line so the worker
+  // can verify the caller before accepting any ops.
+  const nonce = crypto.randomBytes(32).toString('hex');
   const r = spawnSync('node', [WORKER], {
-    input: JSON.stringify(request),
+    input: nonce + '\n' + JSON.stringify(request),
+    env: { ...process.env, AVANTI_WORKER_NONCE: nonce },
     stdio: ['pipe', 'pipe', 'inherit'],
     encoding: 'utf8',
     maxBuffer: 10 * 1024 * 1024,
@@ -239,8 +243,12 @@ describe.skipIf(isWindows || !workerExists)(
   'IPC protocol — malformed input',
   () => {
     it('returns ok:false and exits non-zero on invalid JSON', () => {
+      const nonce = crypto.randomBytes(32).toString('hex');
       const r = spawnSync('node', [WORKER], {
-        input: 'not json at all',
+        // Prepend the nonce line so the worker proceeds past nonce verification,
+        // then receives invalid JSON for the op — triggering the parse error.
+        input: nonce + '\nnot json at all',
+        env: { ...process.env, AVANTI_WORKER_NONCE: nonce },
         stdio: ['pipe', 'pipe', 'inherit'],
         encoding: 'utf8',
       });

@@ -99,9 +99,12 @@ function resolveNodeExec(sudo: true | string): string {
       // Apply the same version floor as the SAFE_DIRS scan so that a stale
       // root-owned binary (e.g. v16) does not silently produce an opaque
       // SyntaxError inside the worker.
+      // Short timeout: `node --version` is instantaneous; 2s is generous enough
+      // for any working install while avoiding a 5s stall per candidate on slow
+      // systems (e.g. cold NFS mounts or heavily loaded CI boxes).
       const vr = spawnSync(realPath, ['--version'], {
         encoding: 'utf8',
-        timeout: 5000,
+        timeout: 2000,
       });
       const m = vr.stdout?.trim().match(/^v(\d+)\./);
       if (m && parseInt(m[1], 10) >= WORKER_MIN_NODE_MAJOR) {
@@ -137,9 +140,10 @@ function resolveNodeExec(sudo: true | string): string {
         // Version check: reject binaries older than the compiled worker requires.
         // This turns an opaque "privileged worker failed (exit 1)" SyntaxError
         // into an actionable "no compatible binary found" message.
+        // Short timeout: `node --version` is instantaneous; 2s per candidate.
         const versionResult = spawnSync(realPath, ['--version'], {
           encoding: 'utf8',
-          timeout: 5000,
+          timeout: 2000,
         });
         const match = versionResult.stdout?.trim().match(/^v(\d+)\./);
         if (!match) continue;
@@ -332,6 +336,13 @@ function runPrivilegedWorker(
   // is acceptable: named-user sudo is rarer than root sudo, and the security
   // gain outweighs the UX cost.
   const isNamedUser = typeof sudo === 'string';
+  // For named-user sudo (stdin pipe path), generate a per-invocation nonce and
+  // prepend it as the first line of stdin. The worker verifies it against
+  // AVANTI_WORKER_NONCE before processing any ops. This authenticates the pipe
+  // input so a rogue process that gains access to the pipe cannot issue ops.
+  const stdinNonce = isNamedUser
+    ? crypto.randomBytes(32).toString('hex')
+    : undefined;
   let reqPath: string | undefined;
   let result;
   try {
@@ -363,7 +374,10 @@ function runPrivilegedWorker(
             maxBuffer: 150 * 1024 * 1024,
           }
         : {
-            input: reqPayload,
+            // Prepend the nonce as the first line; the worker consumes it before
+            // processing JSON ops (see stdinNonceVerified in privileged-worker.ts).
+            input: stdinNonce + '\n' + reqPayload,
+            env: { ...process.env, AVANTI_WORKER_NONCE: stdinNonce },
             stdio: ['pipe', 'pipe', 'inherit'],
             encoding: 'utf8',
             maxBuffer: 150 * 1024 * 1024,
@@ -1354,7 +1368,14 @@ export class SudoWorkerSession {
       );
 
     // Wait for the worker to connect (no-op after first call once ready resolves).
-    await this.ready;
+    // If ready rejects (spawn failure, connection timeout, listen error), close()
+    // here so the session is not left in the activeSudoSessions set as a zombie.
+    try {
+      await this.ready;
+    } catch (e) {
+      this.close();
+      throw e;
+    }
     // Re-check after awaiting: the connection timeout or an external close()
     // may have fired while this call was suspended, leaving this.dataIn undefined.
     if (this.closed) throw new Error('SudoWorkerSession: session is closed');
