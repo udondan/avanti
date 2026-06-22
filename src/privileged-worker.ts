@@ -1270,7 +1270,10 @@ if (require.main === module) {
   // worker's own getuid() returns the target user's UID (0 for root-sudo).
   const trustedUids = new Set<number>([0]);
   if (process.env.SUDO_UID) {
-    trustedUids.add(parseInt(process.env.SUDO_UID, 10));
+    const parsedUid = parseInt(process.env.SUDO_UID, 10);
+    if (!isNaN(parsedUid)) {
+      trustedUids.add(parsedUid);
+    }
   }
   if (typeof process.getuid === 'function') {
     trustedUids.add(process.getuid());

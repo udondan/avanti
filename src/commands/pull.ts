@@ -1032,8 +1032,10 @@ export function pullCommand(): Command {
         }
       }
       for (let i = 0; i < writeTargets.length; i++) {
-        if (allDiffs[i].lstatFailed && writeTargets[i].sudo) {
-          const stat = lstatFailedStats.get(writeTargets[i].targetPath);
+        const target = writeTargets[i];
+        const diff = allDiffs[i];
+        if (diff.lstatFailed && target.sudo) {
+          const stat = lstatFailedStats.get(target.targetPath);
           const exists = stat ? stat.exists : false;
           const isNew = !exists;
           // modeChange: getSudoFileMode also spawns a separate sudo process per
@@ -1045,13 +1047,13 @@ export function pullCommand(): Command {
           // detection for files in non-searchable directories, which the initial
           // lstatSync could not cover.
           const modeChange = (() => {
-            const desiredMode = writeTargets[i].mode;
+            const desiredMode = target.mode;
             const actualModeStr = stat?.mode;
             if (
               desiredMode &&
               actualModeStr &&
               !isNew &&
-              writeTargets[i].symlinkTarget === undefined
+              target.symlinkTarget === undefined
             ) {
               const desired = parseInt(desiredMode.replace(/^0[oO]/, ''), 8);
               const current = parseInt(actualModeStr, 8);
@@ -1060,7 +1062,7 @@ export function pullCommand(): Command {
               }
               return undefined;
             }
-            return allDiffs[i].modeChange;
+            return diff.modeChange;
           })();
           if (isNew) {
             // File confirmed absent — rebuild as a proper new diff so
@@ -1068,30 +1070,30 @@ export function pullCommand(): Command {
             // Clear backupPath: it was set assuming the file existed (conservative
             // lstatFailed default). Since the file is actually new, there is
             // nothing to back up and the backup should not be created.
-            if (writeTargets[i].symlinkTarget !== undefined) {
+            if (target.symlinkTarget !== undefined) {
               // Symlink entry — use buildNewSymlinkDiff instead of
               // computeSymlinkDiff: the parent dir is still not searchable
               // (EACCES), so calling computeSymlinkDiff would lstatSync-fail
               // again and return isUnreadable rather than isNew:true.
               allDiffs[i] = buildNewSymlinkDiff(
-                allDiffs[i].targetPath,
-                writeTargets[i].symlinkTarget!,
+                diff.targetPath,
+                target.symlinkTarget,
               );
             } else {
               allDiffs[i] = buildNewFileDiff(
-                allDiffs[i].targetPath,
-                writeTargets[i].content,
+                diff.targetPath,
+                target.content,
                 modeChange,
               );
             }
-            writeTargets[i] = { ...writeTargets[i], backupPath: undefined };
+            writeTargets[i] = { ...target, backupPath: undefined };
           } else {
-            let updatedDiff: FileDiff = { ...allDiffs[i], isNew, modeChange };
+            let updatedDiff: FileDiff = { ...diff, isNew, modeChange };
             // For symlink entries, check whether the existing path is a real
             // directory — ln -sf would place the symlink inside it rather than
             // replacing it, so detect this now and surface an error before the
             // write batch is attempted.
-            if (writeTargets[i].symlinkTarget !== undefined) {
+            if (target.symlinkTarget !== undefined) {
               const isSymlinkAtTarget = stat ? stat.isSymlink : false;
               if (!isSymlinkAtTarget && (stat ? stat.isDirectory : false)) {
                 updatedDiff = { ...updatedDiff, isDirectory: true };
@@ -1102,7 +1104,7 @@ export function pullCommand(): Command {
           // Propagate corrected isNew to the hook context so lifecycle hooks
           // receive the correct AVANTI_IS_NEW value.
           const hookIdx = fileHookContexts.findIndex(
-            (ctx) => ctx.targetPath === writeTargets[i].targetPath,
+            (ctx) => ctx.targetPath === target.targetPath,
           );
           if (hookIdx >= 0) {
             fileHookContexts[hookIdx] = { ...fileHookContexts[hookIdx], isNew };
@@ -1609,19 +1611,18 @@ export function pullCommand(): Command {
         // run and the working tree remains in a consistent state.
         const modeOnlySudoTargets: SudoChmodTarget[] =
           process.platform !== 'win32'
-            ? writeTargets.flatMap((t, i) =>
-                allDiffs[i].modeChange && !allDiffs[i].contentChanged && t.sudo
+            ? writeTargets.flatMap((t, i) => {
+                const d = allDiffs[i];
+                return d.modeChange && !d.contentChanged && t.sudo
                   ? [
                       {
                         targetPath: t.targetPath,
-                        mode: allDiffs[i].modeChange.to
-                          .toString(8)
-                          .padStart(4, '0'),
+                        mode: d.modeChange.to.toString(8).padStart(4, '0'),
                         sudo: t.sudo,
                       },
                     ]
-                  : [],
-              )
+                  : [];
+              })
             : [];
 
         // Privileged writes first: if sudo fails, unprivileged files have not

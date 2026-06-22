@@ -252,16 +252,18 @@ function stageWorkerForSudo(workerPath: string): {
   stagedPath: string;
   tmpDir: string;
 } {
-  const tmpDir = fs.mkdtempSync(path.join(WORLD_TMP, 'avanti-worker-'));
+  // Create the staging directory with umask 0o077 so it starts at 0o700 from
+  // the first syscall — no window where a looser umask leaves it world-readable.
+  const savedUmask = process.umask(0o077);
+  let tmpDir: string;
+  try {
+    tmpDir = fs.mkdtempSync(path.join(WORLD_TMP, 'avanti-worker-'));
+  } finally {
+    process.umask(savedUmask);
+  }
   stagedWorkerDirs.add(tmpDir); // tracked for cleanup on abnormal exit
-  // mkdtempSync mode is masked by the caller's umask (e.g. 077 → 0700), which
-  // would prevent the named sudo user from traversing this directory. Chmod
-  // explicitly to ensure the directory is always world-executable. Use 0o711
-  // (not 0o755): the named user needs to traverse and exec the script but must
-  // not be able to list the directory. Note: /proc/net/unix on Linux can still
-  // reveal the full socket path to any local user; the nonce handshake
-  // (256-bit random, verified before the connection is promoted) is the primary
-  // defense against a rogue process connecting to the socket.
+  // Chmod to 0o711: the named sudo user needs to traverse and exec the script
+  // but must not be able to list the directory contents.
   fs.chmodSync(tmpDir, 0o711);
   const stagedPath = path.join(tmpDir, 'privileged-worker.js');
   fs.copyFileSync(workerPath, stagedPath);
@@ -958,9 +960,16 @@ export class SudoWorkerSession {
     if (tmpDir) {
       this.tmpDir = tmpDir;
     } else {
-      const ipcDir = fs.mkdtempSync(path.join(WORLD_TMP, 'avanti-ipc-'));
+      // Create the IPC directory with umask 0o077 so it starts at 0o700 from
+      // the first syscall — no window where a looser umask exposes the dir.
+      const savedUmask = process.umask(0o077);
+      let ipcDir: string;
+      try {
+        ipcDir = fs.mkdtempSync(path.join(WORLD_TMP, 'avanti-ipc-'));
+      } finally {
+        process.umask(savedUmask);
+      }
       stagedWorkerDirs.add(ipcDir);
-      fs.chmodSync(ipcDir, 0o700);
       this.tmpDir = ipcDir;
     }
     this.ipcSocketPath = path.join(
