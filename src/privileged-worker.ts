@@ -1329,6 +1329,14 @@ if (require.main === module) {
       const completed = batchResults ?? [];
       const total = batchExpectedOps;
       const remaining = Math.max(0, total - completed.length);
+      // Always emit at least one {ok:false} crash entry. When remaining>0 the
+      // crash entries cover unprocessed ops. When remaining===0 all ops already
+      // completed (batchResults is full) but the exception fires before
+      // writeResponse() — without an extra entry the parent would receive an
+      // all-ok response and silently miss the crash. The sentinel is one extra
+      // result beyond ops.length; the parent's continueOnError handler trims to
+      // ops.length AFTER checking for non-zero exit, so the sentinel is visible.
+      const padCount = Math.max(remaining, 1);
       const allResults: WorkerResult[] =
         completed.length > 0 || remaining > 0
           ? [
@@ -1337,7 +1345,7 @@ if (require.main === module) {
               // parent can surface it to the user. Subsequent padding uses the
               // generic "not yet processed" message to distinguish the crash op
               // from ops that simply never ran.
-              ...Array.from({ length: remaining }, (_, i) => ({
+              ...Array.from({ length: padCount }, (_, i) => ({
                 ok: false as const,
                 error:
                   i === 0 ? msg : 'worker exited before processing this op',

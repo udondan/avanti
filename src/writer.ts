@@ -429,6 +429,16 @@ function runPrivilegedWorker(
               error: 'worker exited before processing this op',
             });
           }
+          // Non-zero exit always signals a crash, even when the partial results
+          // look complete (all ops done but exception fired before writeResponse).
+          // Append a sentinel so callers are not fooled into treating a crashed
+          // batch as a successful one. The caller's continueOnError loop uses the
+          // first ok:false entry's error field — this sentinel is last, so it
+          // is only surfaced when all ops appeared to succeed.
+          padded.push({
+            ok: false,
+            error: `privileged worker exited non-zero (${result.status ?? `signal ${result.signal}`}) after completing all ops`,
+          });
           return padded;
         }
       } catch {

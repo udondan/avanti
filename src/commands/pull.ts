@@ -1289,8 +1289,8 @@ export function pullCommand(): Command {
       }
 
       const hasChanges =
-        allDiffs.some((d) => d.hasChanges) ||
-        staleDiffs.some((d) => d.hasChanges);
+        allDiffs.some((d) => d.hasChanges || d.isNew) ||
+        staleDiffs.some((d) => d.hasChanges || d.isNew);
       printDiffs([...allDiffs, ...staleDiffs]);
 
       if (staleHasError) {
