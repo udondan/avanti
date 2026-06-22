@@ -617,7 +617,9 @@ export async function sudoAtomicWrite(
       results = runPrivilegedWorker(sudo, ops, false);
     }
     // Count chmod results that weren't silently skipped (ENOENT/ELOOP).
-    const start = writeOpsPerSudo.get(sudo) ?? ops.length;
+    // Fallback to 0: a chmod-only identity has no entry in writeOpsPerSudo,
+    // meaning all ops in the group are chmod ops and all results must be checked.
+    const start = writeOpsPerSudo.get(sudo) ?? 0;
     for (let i = start; i < results.length; i++) {
       if (results[i].ok && !results[i].skipped) chmodApplied++;
     }
