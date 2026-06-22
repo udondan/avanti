@@ -506,15 +506,12 @@ export function handleWriteInPlace(
   if (trustedUids)
     checkAncestorsSafeAsRoot(resolvedTarget, trustedUids, 'destination');
 
-  // Commit the backup to its final path BEFORE truncating the target.
-  // backupRegularFile internally stages to an O_EXCL temp and renames atomically,
-  // so no outer try/catch wrapper or intermediate backupTmpPath is needed here.
-  if (op.backupPath) {
-    backupRegularFile(resolvedTarget, path.resolve(op.backupPath), trustedUids);
-  }
-
   // Refuse symlinks (would follow to unintended target).
   // Refuse non-regular files (FIFOs, devices, sockets).
+  // Check BEFORE the backup so that a race turning the target into a symlink
+  // between these checks does not leave an orphaned backup without a write.
+  // backupRegularFile also uses O_NOFOLLOW and handles ELOOP internally, so
+  // the residual window between here and the backup call is self-contained.
   let isNewFile = false;
   try {
     const lst = fs.lstatSync(resolvedTarget);
@@ -534,6 +531,13 @@ export function handleWriteInPlace(
     } else {
       throw e;
     }
+  }
+
+  // Commit the backup AFTER confirming the target is still a regular file.
+  // backupRegularFile internally stages to an O_EXCL temp and renames atomically,
+  // so no outer try/catch wrapper or intermediate backupTmpPath is needed here.
+  if (op.backupPath && !isNewFile) {
+    backupRegularFile(resolvedTarget, path.resolve(op.backupPath), trustedUids);
   }
 
   validateBase64(op.contentB64, 'contentB64');
@@ -1122,8 +1126,39 @@ export function dispatch(
                       resolvedPath,
                       O_PATH_FLAG | O_NOFOLLOW,
                     );
-                  } catch {
-                    /* fall through to path-based */
+                  } catch (e) {
+                    const c = (e as NodeJS.ErrnoException).code;
+                    // Fall through to path-based chmod only when O_PATH is
+                    // genuinely unavailable (ENOTSUP/ENOSYS on older kernels)
+                    // or permission was denied (EACCES/EPERM). Rethrow resource
+                    // errors such as EMFILE or ENOMEM — those indicate a system
+                    // problem unrelated to the TOCTOU concern and must not
+                    // silently take the racy path-based fallback.
+                    if (
+                      c !== 'ENOTSUP' &&
+                      c !== 'ENOSYS' &&
+                      c !== 'EACCES' &&
+                      c !== 'EPERM'
+                    ) {
+                      throw e;
+                    }
+                  }
+                }
+                // On Linux, O_PATH | O_NOFOLLOW opens the symlink inode itself
+                // instead of returning ELOOP. If the target was raced from a
+                // regular file to a symlink between the earlier lstatSync and
+                // this O_PATH open, pathFd refers to the symlink — and
+                // chmodSync('/proc/self/fd/<n>') would follow it to an
+                // unintended target. Verify via fstat before using the fd.
+                if (pathFd !== undefined) {
+                  const pathSt = fs.fstatSync(pathFd);
+                  if (!pathSt.isFile()) {
+                    fs.closeSync(pathFd);
+                    pathFd = undefined;
+                    throw new Error(
+                      `chmod: ${op.targetPath} is not a regular file`,
+                      { cause: e2 },
+                    );
                   }
                 }
                 if (pathFd !== undefined) {

@@ -1206,6 +1206,7 @@ export function pullCommand(): Command {
         if (allDiffs[i].isUnreadable && writeTargets[i].sudo) {
           const preRead = preReads.get(writeTargets[i].targetPath);
           if (preRead === undefined) {
+            closeAllSessions(sudoSessions);
             throw new Error(
               `internal: missing pre-read result for sudo target ${writeTargets[i].targetPath}`,
             );
@@ -1270,6 +1271,7 @@ export function pullCommand(): Command {
         if (staleDiffs[diffIdx]?.isUnreadable && staleToRestore[i].sudo) {
           const preRead = preReads.get(staleToRestore[i].targetPath);
           if (preRead === undefined) {
+            closeAllSessions(sudoSessions);
             throw new Error(
               `internal: missing pre-read result for sudo stale-restore target ${staleToRestore[i].targetPath}`,
             );

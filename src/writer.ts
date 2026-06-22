@@ -749,15 +749,19 @@ export async function sudoAtomicDelete(
         ? await session.exec(ops, true)
         : runPrivilegedWorker(sudo, ops, true);
       const failed: string[] = [];
-      results.forEach((r, i) => {
-        if (r.ok) {
-          succeeded.add(paths[i]);
+      // Iterate paths (not results) to avoid an off-by-one when continueOnError
+      // appends a crash sentinel (N+1 results for N ops). paths[i] is always
+      // defined; results[i] may be the sentinel and must be bounds-checked.
+      paths.forEach((p, i) => {
+        const r = results[i];
+        if (r?.ok) {
+          succeeded.add(p);
         } else if (bestEffort) {
           console.warn(
-            `Warning: privileged operation failed: ${r.error ?? 'unknown error'}`,
+            `Warning: privileged operation failed: ${r?.error ?? 'unknown error'}`,
           );
         } else {
-          failed.push(`${paths[i]}: ${r.error ?? 'unknown error'}`);
+          failed.push(`${p}: ${r?.error ?? 'unknown error'}`);
         }
       });
       if (failed.length > 0) {
@@ -863,6 +867,19 @@ export async function sudoAtomicRead(
         resultMap.set(item.filePath, null);
       }
     });
+    // When continueOnError is true, runPrivilegedWorker appends a crash sentinel
+    // (N+1 results for N ops) when the worker exits non-zero after completing all
+    // ops. The forEach above iterates items (length N), so the sentinel at index N
+    // is never visited. Detect and surface it so callers are not left with a
+    // complete-looking result map that silently followed an abnormal worker exit.
+    if (results.length > items.length) {
+      const sentinel = results[items.length];
+      if (sentinel && !sentinel.ok) {
+        throw new Error(
+          `privileged reader crashed after completing all ops: ${sentinel.error ?? 'unknown'}`,
+        );
+      }
+    }
   }
 
   return resultMap;
@@ -1444,7 +1461,12 @@ export class SudoWorkerSession {
                   error: 'worker exited before processing this op',
                 });
               }
-              this.close();
+              // Do NOT call this.close() here: the caller (e.g. sudoAtomicWrite)
+              // may have a subsequent exec() call (e.g. chmod ops after write ops)
+              // that must be able to detect the session state via its own error
+              // rather than an abrupt "session is closed" from a preemptive close.
+              // The worker exiting will close the socket naturally, causing the
+              // readline 'close' event to fire and reject any pending exec().
               resolve(padded);
             } else {
               const firstFailed = r.find((x) => !x.ok);
