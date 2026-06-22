@@ -88,7 +88,7 @@ export interface WorkerResult {
   contentB64?: string;
   /** true when stat-read resolved a symlink (contentB64 is the link target) */
   isSymlink?: boolean;
-  /** octal mode string (e.g. '0644'), set by stat-read for regular files only */
+  /** octal mode string (e.g. '0644'), set by stat-read for regular files and symlinks */
   mode?: string;
 }
 
@@ -1159,10 +1159,23 @@ export function dispatch(
         // throws EINVAL — retry readFileToBase64 so the caller sees a regular file.
         try {
           const target = fs.readlinkSync(resolvedPath);
+          // Capture the symlink's own mode bits for permission-drift detection.
+          // lstatSync shares the same TOCTOU window as readlinkSync (both are
+          // path-based). A failure here is mode-unknown, not an error.
+          let symlinkMode: string | undefined;
+          try {
+            const slst = fs.lstatSync(resolvedPath);
+            if (slst.isSymbolicLink()) {
+              symlinkMode = (slst.mode & 0o7777).toString(8).padStart(4, '0');
+            }
+          } catch {
+            // best-effort
+          }
           return {
             kind: 'read',
             contentB64: Buffer.from(target).toString('base64'),
             isSymlink: true,
+            mode: symlinkMode,
           };
         } catch (e2) {
           if ((e2 as NodeJS.ErrnoException).code !== 'EINVAL') throw e2;
@@ -1243,66 +1256,57 @@ if (require.main === module) {
     outputStream.write(JSON.stringify(obj) + '\n', cb);
   };
 
+  // Shared flush-then-exit helper used by the uncaughtException and
+  // unhandledRejection handlers below. Writes one JSON error result so the
+  // parent's exec() receives a structured rejection rather than the generic
+  // "IPC stream closed without a response" from the rl.on('close') fallback.
+  // end() flushes buffered data and sends FIN before the process exits,
+  // ensuring the parent's readline sees the JSON line before the 'close' event
+  // fires. process.stdout cannot be end()ed (throws ERR_STDOUT_CLOSE); only
+  // call end() on the IPC socket path. The 100ms fallback timer fires if the
+  // write callback is never called (e.g. the socket was already torn down).
+  const emitErrorAndExit = (msg: string): void => {
+    try {
+      writeResponse({ results: [{ ok: false, error: msg }] }, () => {
+        if (outputStream !== process.stdout) {
+          outputStream.end(() => process.exit(1));
+        } else {
+          process.exit(1);
+        }
+      });
+      setTimeout(() => process.exit(1), 100).unref();
+    } catch {
+      process.exit(1);
+    }
+  };
+
   // Shut down immediately on any unexpected error so subsequent ops are not
   // dispatched while the worker is in an unknown state.
   // Use process.once so that a second uncaught exception after writeResponse has
   // already delivered results for the current batch does not push a stale error
   // line onto the socket, which would corrupt the NEXT exec() call's readline.
+  // NOTE: we always emit exactly 1 result regardless of batch size, because a
+  // crash loses track of which ops completed. Both the spawnSync path
+  // (padding in runPrivilegedWorker) and the IPC session path (padding in
+  // SudoWorkerSession.exec) fill the remaining slots with "worker exited
+  // before processing this op" — ops that completed before the crash are
+  // also incorrectly reported as failed in both modes. The real advantage of
+  // SudoWorkerSession is that it survives across batches (one sudo spawn for
+  // the whole pull), not per-op crash accuracy.
   process.once('uncaughtException', (err) => {
     const msg = err instanceof Error ? err.message : String(err);
     const stack = err instanceof Error ? err.stack : undefined;
     process.stderr.write(
       `avanti privileged-worker: uncaught exception: ${stack ?? msg}\n`,
     );
-    // Write a JSON error line before closing so the parent's exec() receives a
-    // structured rejection with the actual error message rather than the generic
-    // "IPC stream closed without a response" from the rl.on('close') fallback.
-    // NOTE: we always emit exactly 1 result regardless of batch size, because a
-    // crash loses track of which ops completed. Both the spawnSync path
-    // (padding in runPrivilegedWorker) and the IPC session path (padding in
-    // SudoWorkerSession.exec) fill the remaining slots with "worker exited
-    // before processing this op" — ops that completed before the crash are
-    // also incorrectly reported as failed in both modes. The real advantage of
-    // SudoWorkerSession is that it survives across batches (one sudo spawn for
-    // the whole pull), not per-op crash accuracy.
-    try {
-      writeResponse({ results: [{ ok: false, error: msg }] }, () => {
-        // end() flushes buffered data and sends FIN before the process exits,
-        // ensuring the parent's readline sees the JSON line before the 'close'
-        // event fires. process.exit() alone can terminate before the OS delivers
-        // the write buffer to the reader on the other end of the socket.
-        // process.stdout cannot be end()ed (throws ERR_STDOUT_CLOSE); only
-        // call end() on the IPC socket path where it is needed to flush.
-        if (outputStream !== process.stdout) {
-          outputStream.end(() => process.exit(1));
-        } else {
-          process.exit(1);
-        }
-      });
-      setTimeout(() => process.exit(1), 100).unref();
-    } catch {
-      process.exit(1);
-    }
+    emitErrorAndExit(msg);
   });
   process.once('unhandledRejection', (reason) => {
     const msg = reason instanceof Error ? reason.message : String(reason);
     process.stderr.write(
       `avanti privileged-worker: unhandled rejection: ${msg}\n`,
     );
-    try {
-      writeResponse({ results: [{ ok: false, error: msg }] }, () => {
-        // process.stdout cannot be end()ed (throws ERR_STDOUT_CLOSE); only
-        // call end() on the IPC socket path where it is needed to flush.
-        if (outputStream !== process.stdout) {
-          outputStream.end(() => process.exit(1));
-        } else {
-          process.exit(1);
-        }
-      });
-      setTimeout(() => process.exit(1), 100).unref();
-    } catch {
-      process.exit(1);
-    }
+    emitErrorAndExit(msg);
   });
 
   (inputStream as NodeJS.EventEmitter).on('error', (err: Error) => {

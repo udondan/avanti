@@ -1043,18 +1043,13 @@ export function pullCommand(): Command {
           // lstatFailed targets had their parent dir as non-searchable so there
           // is no safe non-sudo path to retrieve the mode anyway.
           // Compute modeChange from the stat-read result when the worker
-          // returned a mode (regular files only). This restores permission-drift
-          // detection for files in non-searchable directories, which the initial
-          // lstatSync could not cover.
+          // returned a mode (regular files and symlinks). This restores
+          // permission-drift detection for files in non-searchable directories,
+          // which the initial lstatSync could not cover.
           const modeChange = (() => {
             const desiredMode = target.mode;
             const actualModeStr = stat?.mode;
-            if (
-              desiredMode &&
-              actualModeStr &&
-              !isNew &&
-              target.symlinkTarget === undefined
-            ) {
+            if (desiredMode && actualModeStr && !isNew) {
               const desired = parseInt(desiredMode.replace(/^0[oO]/, ''), 8);
               const current = parseInt(actualModeStr, 8);
               if (!isNaN(desired) && !isNaN(current) && desired !== current) {
@@ -1562,7 +1557,12 @@ export function pullCommand(): Command {
               !history.getFileMeta(targetPath)
             ) {
               const preRead = preReads.get(targetPath);
-              if (preRead != null) {
+              if (preRead === undefined) {
+                throw new Error(
+                  `internal: missing pre-read result for sudo v0 target ${targetPath}`,
+                );
+              }
+              if (preRead !== null) {
                 const preReadBuf = Buffer.from(preRead.contentB64, 'base64');
                 if (preRead.isSymlink) {
                   if (writeTargets[i].symlinkTarget !== undefined) {
@@ -1577,6 +1577,16 @@ export function pullCommand(): Command {
                 } else {
                   v0Override = preReadBuf;
                 }
+              } else {
+                // null = the sudo worker could not read the file (e.g. EACCES on
+                // a root-owned parent directory). v0 cannot be captured, so
+                // "avanti revert" will not restore this file to its pre-avanti
+                // state. Warn so the user is aware.
+                console.warn(
+                  `avanti: cannot capture original content of ${targetPath} — ` +
+                    `the file was unreadable by the privileged worker. ` +
+                    `"avanti revert" will not be able to restore it to its pre-avanti state.`,
+                );
               }
             }
             const { fileRef } = history.stageFileVersion(
