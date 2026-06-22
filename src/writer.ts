@@ -368,6 +368,10 @@ function runPrivilegedWorker(
     result = spawnSync(
       'sudo',
       [
+        // -E: forward AVANTI_WORKER_NONCE to the worker so it can verify the
+        // nonce embedded in the first stdin line. Required only for the stdin
+        // (named-user) path; the req-file (root) path does not use a nonce.
+        ...(reqPath ? [] : ['-E']),
         ...sudoUserArgs(sudo),
         nodeExec,
         resolvedWorkerPath,
