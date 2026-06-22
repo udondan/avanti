@@ -223,6 +223,7 @@ if (!_proc[_HANDLERS_KEY]) {
     }
   });
   const teardown = (): void => {
+    const hadSessions = activeSudoSessions.size > 0;
     for (const s of [...activeSudoSessions]) {
       try {
         s.close();
@@ -230,9 +231,14 @@ if (!_proc[_HANDLERS_KEY]) {
         // best-effort
       }
     }
-    // Defer exit by one tick so microtasks (Promise rejections from s.close())
-    // can propagate to catch/finally handlers in callers before the process ends.
-    setImmediate(() => process.exit(1));
+    if (hadSessions) {
+      // Defer exit by one tick so microtasks (Promise rejections from s.close())
+      // can propagate to catch/finally handlers in callers before the process ends.
+      // Only force exit(1) when worker sessions were active — if no sudo sessions
+      // existed, let the process exit naturally with the expected signal code (e.g.
+      // 130 for SIGINT) so shells can distinguish user-cancellation from errors.
+      setImmediate(() => process.exit(1));
+    }
   };
   process.on('SIGTERM', teardown);
   process.on('SIGINT', teardown);

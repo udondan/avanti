@@ -1262,6 +1262,20 @@ if (require.main === module) {
     process.exit(1);
   });
 
+  // Compute trusted UIDs once at startup from sudo environment variables so the
+  // unprivileged parent cannot forge the list. Capturing here (before the line
+  // handler is registered) means process.env cannot be mutated between batches
+  // to silently expand or shrink the trusted set for subsequent requests.
+  // sudo sets SUDO_UID to the invoking user's real UID before elevating. The
+  // worker's own getuid() returns the target user's UID (0 for root-sudo).
+  const trustedUids = new Set<number>([0]);
+  if (process.env.SUDO_UID) {
+    trustedUids.add(parseInt(process.env.SUDO_UID, 10));
+  }
+  if (typeof process.getuid === 'function') {
+    trustedUids.add(process.getuid());
+  }
+
   rl.on('line', (line: string) => {
     // Fresh per-batch: ancestor checks are not carried over across requests so
     // that a malicious interleaved rename cannot poison a future batch's checks.
@@ -1305,17 +1319,6 @@ if (require.main === module) {
       return;
     }
 
-    // Compute trusted UIDs on the worker side from sudo environment variables
-    // so the unprivileged parent cannot forge the list. sudo sets SUDO_UID to
-    // the invoking user's real UID before elevating. The worker's own getuid()
-    // returns the target user's UID (0 for root-sudo, target uid for -u sudo).
-    const trustedUids = new Set<number>([0]);
-    if (process.env.SUDO_UID) {
-      trustedUids.add(parseInt(process.env.SUDO_UID, 10));
-    }
-    if (typeof process.getuid === 'function') {
-      trustedUids.add(process.getuid());
-    }
     const continueOnError = request.continueOnError ?? false;
 
     const results: WorkerResult[] = [];

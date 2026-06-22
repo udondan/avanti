@@ -993,9 +993,21 @@ export function pullCommand(): Command {
       // For entries where lstatSync failed (parent directory not searchable),
       // batch one stat-read op per sudo identity through the existing session to
       // determine existence and type without spawning separate sudo processes.
-      const lstatFailedBatch = writeTargets
-        .filter((t, i) => allDiffs[i].lstatFailed && t.sudo)
-        .map((t) => ({ filePath: t.targetPath, sudo: t.sudo! }));
+      // Include stale-restore entries: without them, staleDiffs[diffIdx].isDirectory
+      // is never updated from the stat-read result and the directory-conflict
+      // check below silently misses them.
+      const lstatFailedBatch: Array<{ filePath: string; sudo: true | string }> =
+        [
+          ...writeTargets
+            .filter((t, i) => allDiffs[i].lstatFailed && t.sudo)
+            .map((t) => ({ filePath: t.targetPath, sudo: t.sudo! })),
+          ...staleToRestore
+            .filter((t, i) => {
+              const diffIdx = staleRestoreDiffIndices[i];
+              return staleDiffs[diffIdx]?.lstatFailed && t.sudo;
+            })
+            .map((t) => ({ filePath: t.targetPath, sudo: t.sudo! })),
+        ];
       let lstatFailedStats = new Map<
         string,
         {
@@ -1094,6 +1106,27 @@ export function pullCommand(): Command {
           );
           if (hookIdx >= 0) {
             fileHookContexts[hookIdx] = { ...fileHookContexts[hookIdx], isNew };
+          }
+        }
+      }
+
+      // Mirror the writeTargets lstatFailed loop for stale-restore entries.
+      // Without this, staleDiffs[diffIdx].isDirectory is never set from the
+      // stat-read result and the hasDirConflict check below misses directory
+      // conflicts on stale-restore symlink targets in non-searchable directories.
+      for (let i = 0; i < staleToRestore.length; i++) {
+        const diffIdx = staleRestoreDiffIndices[i];
+        if (staleDiffs[diffIdx]?.lstatFailed && staleToRestore[i].sudo) {
+          const stat = lstatFailedStats.get(staleToRestore[i].targetPath);
+          if (!stat) continue;
+          if (staleToRestore[i].symlinkTarget !== undefined) {
+            const isDirectory = !stat.isSymlink && stat.isDirectory;
+            if (isDirectory) {
+              staleDiffs[diffIdx] = {
+                ...staleDiffs[diffIdx],
+                isDirectory: true,
+              };
+            }
           }
         }
       }
@@ -1710,7 +1743,7 @@ export function pullCommand(): Command {
               // A missing session means Phase 2 has a bug — surface it loudly
               // rather than masking it with a silent fallback invocation.
               throw new Error(
-                `internal: no privileged session for sudo identity "${String(sv)}" during stale-file cleanup`,
+                `no privileged session for sudo identity "${String(sv)}" during stale-file cleanup`,
               );
             }
           }
