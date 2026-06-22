@@ -156,10 +156,15 @@ function resolveNodeExec(sudo: true | string): string {
   }
   const sudoDesc =
     typeof sudo === 'string' ? `named-user sudo ('${sudo}')` : 'root sudo';
+  // SAFE_DIRS covers Debian/Ubuntu, macOS, and Alpine. Non-standard distros
+  // (NixOS: /nix/store/…/bin/node, Guix, custom builds) may not have any
+  // root-owned binary in these paths. Set AVANTI_NODE_EXEC to the absolute
+  // path of any root-owned, compatible Node.js binary to bypass this scan.
   throw new Error(
     `No root-owned Node.js binary (v${WORKER_MIN_NODE_MAJOR}+) found in ${SAFE_DIRS.join(', ')} for ${sudoDesc}. ` +
-      `Install Node.js system-wide (e.g. apt install nodejs) or set AVANTI_NODE_EXEC to the full path ` +
-      `of a root-owned, compatible Node.js binary.`,
+      `On NixOS or other non-standard distros, set the AVANTI_NODE_EXEC environment variable to the absolute ` +
+      `path of a root-owned, compatible Node.js binary (e.g. AVANTI_NODE_EXEC=$(readlink -f $(which node))). ` +
+      `On standard distros, install Node.js system-wide (e.g. apt install nodejs, brew install node).`,
   );
 }
 
@@ -614,28 +619,50 @@ export async function sudoAtomicWrite(
 
   let chmodApplied = 0;
   for (const [sudo, ops] of groups) {
-    let results: Array<{ ok: boolean; error?: string; skipped?: boolean }>;
+    // Split write ops from chmod ops and dispatch them as two separate exec()
+    // calls. A chmod failure after successful writes must not surface as a
+    // write failure: the files are already on disk with the correct content;
+    // only the permissions are wrong. Separating the calls ensures write
+    // failures (fatal) and chmod failures (survivable — next pull re-detects
+    // the drift) are reported and handled independently.
+    const writeCount = writeOpsPerSudo.get(sudo) ?? 0;
+    const writeOps = ops.slice(0, writeCount);
+    const chmodOps = ops.slice(writeCount);
+
     const session = sessions?.get(sudo);
-    if (session) {
-      results = await session.exec(ops);
-      // Check for failures
-      for (const r of results) {
+    if (writeOps.length > 0) {
+      let writeResults: WorkerResult[];
+      if (session) {
+        writeResults = await session.exec(writeOps);
+      } else {
+        // No session: fall back to a one-shot spawnSync call. This bypasses the
+        // single-sudo-prompt guarantee (one spawnSync per identity per call) and
+        // silently re-prompts if sudo credential caching is disabled. All production
+        // callers (pull, reset, revert) open sessions via openPrivilegedSessions;
+        // this branch exists for callers that skip session management (e.g. tests).
+        writeResults = runPrivilegedWorker(sudo, writeOps, false);
+      }
+      for (const r of writeResults) {
         if (!r.ok) throw new Error(r.error ?? 'privileged worker op failed');
       }
-    } else {
-      // No session: fall back to a one-shot spawnSync call. This bypasses the
-      // single-sudo-prompt guarantee (one spawnSync per identity per call) and
-      // silently re-prompts if sudo credential caching is disabled. All production
-      // callers (pull, reset, revert) open sessions via openPrivilegedSessions;
-      // this branch exists for callers that skip session management (e.g. tests).
-      results = runPrivilegedWorker(sudo, ops, false);
     }
-    // Count chmod results that weren't silently skipped (ENOENT/ELOOP).
-    // Fallback to 0: a chmod-only identity has no entry in writeOpsPerSudo,
-    // meaning all ops in the group are chmod ops and all results must be checked.
-    const start = writeOpsPerSudo.get(sudo) ?? 0;
-    for (let i = start; i < results.length; i++) {
-      if (results[i].ok && !results[i].skipped) chmodApplied++;
+    if (chmodOps.length > 0) {
+      let chmodResults: WorkerResult[];
+      if (session) {
+        // continueOnError=true: a chmod failure must not abort subsequent
+        // chmod ops in the same batch (e.g. when multiple files have mode drift).
+        chmodResults = await session.exec(chmodOps, true);
+      } else {
+        // No session: fall back to a one-shot spawnSync call. This bypasses the
+        // single-sudo-prompt guarantee (one spawnSync per identity per call) and
+        // silently re-prompts if sudo credential caching is disabled. All production
+        // callers (pull, reset, revert) open sessions via openPrivilegedSessions;
+        // this branch exists for callers that skip session management (e.g. tests).
+        chmodResults = runPrivilegedWorker(sudo, chmodOps, true);
+      }
+      for (const r of chmodResults) {
+        if (r.ok && !r.skipped) chmodApplied++;
+      }
     }
   }
   return chmodApplied;
@@ -814,12 +841,25 @@ export async function sudoStatBatch(
 ): Promise<
   Map<
     string,
-    { exists: boolean; isSymlink: boolean; isDirectory: boolean; mode?: string }
+    {
+      exists: boolean;
+      isSymlink: boolean;
+      isDirectory: boolean;
+      mode?: string;
+      /** base64-encoded file or symlink-target content from the stat-read op */
+      contentB64?: string;
+    }
   >
 > {
   const result = new Map<
     string,
-    { exists: boolean; isSymlink: boolean; isDirectory: boolean; mode?: string }
+    {
+      exists: boolean;
+      isSymlink: boolean;
+      isDirectory: boolean;
+      mode?: string;
+      contentB64?: string;
+    }
   >();
   if (targets.length === 0) return result;
 
@@ -849,19 +889,36 @@ export async function sudoStatBatch(
       const isDirectory = !!(r && !r.ok && r.code === 'EISDIR');
       const isSpecialFile = !!(r && !r.ok && r.code === 'ENOTREGFILE');
       const exists = !!(r?.ok || isDirectory || isSpecialFile);
+      // EACCES/EPERM: named-user worker cannot traverse a parent directory.
+      // Treat as non-existent (exists=false) so the pull proceeds — same
+      // behaviour as sudoAtomicRead which maps these to null. The worker's
+      // checkAncestorsSafeAsRoot re-validates ancestry at write time.
       // Unexpected error codes (EIO, ESTALE, EREMOTE, …) must not be silently
       // mapped to exists=false: that would treat the target as a new file and
       // skip v0 capture, permanently breaking `avanti revert` with no warning.
-      if (r && !r.ok && !isDirectory && !isSpecialFile && r.code !== 'ENOENT') {
+      const isPermDenied = !!(
+        r &&
+        !r.ok &&
+        (r.code === 'EACCES' || r.code === 'EPERM')
+      );
+      if (
+        r &&
+        !r.ok &&
+        !isDirectory &&
+        !isSpecialFile &&
+        !isPermDenied &&
+        r.code !== 'ENOENT'
+      ) {
         throw new Error(
           `stat-read failed for ${item.filePath}: ${r.error ?? r.code ?? 'unknown error'}`,
         );
       }
       result.set(item.filePath, {
-        exists,
-        isSymlink,
-        isDirectory,
+        exists: isPermDenied ? false : exists,
+        isSymlink: isPermDenied ? false : isSymlink,
+        isDirectory: isPermDenied ? false : isDirectory,
         mode: r?.mode,
+        contentB64: isPermDenied ? undefined : r?.contentB64,
       });
     });
   }
@@ -1233,29 +1290,45 @@ export class SudoWorkerSession {
         // kill a process that has already exited.
         this.proc = undefined;
         const p = this.pending;
-        this.pending = null;
-        this.close();
-        if (p) {
-          p.reject(
-            new Error(
-              code === 0
-                ? 'privileged worker exited unexpectedly with no response'
-                : code !== null
-                  ? `privileged worker failed (exit ${code})`
-                  : `privileged worker killed (signal ${signal ?? 'unknown'})`,
-            ),
-          );
-        }
-        // If no connection was established yet, reject the ready promise so
-        // that exec() does not hang waiting for a worker that will never connect.
-        // readyReject is a no-op if the promise already resolved (normal path).
-        readyReject(
-          new Error(
+        // Do NOT null this.pending yet. The readline 'line' event for the
+        // worker's JSON response may be queued in the same event-loop iteration
+        // as this SIGCHLD-triggered close event. Nulling this.pending here
+        // would prevent the line handler from resolving the promise even though
+        // the response data is already buffered. setImmediate defers the reject
+        // until after all I/O callbacks in the current iteration have run,
+        // giving readline one tick to fire the 'line' event first.
+        setImmediate(() => {
+          // If readline processed the response in the current tick, it set
+          // this.pending to null (or to a new promise for a concurrent exec —
+          // but concurrent exec is guarded against). Only reject if the promise
+          // object is still the one we captured.
+          const readyErr = new Error(
             code !== null
               ? `privileged worker failed before connecting (exit ${code})`
               : `privileged worker killed before connecting (signal ${signal ?? 'unknown'})`,
-          ),
-        );
+          );
+          if (this.pending === p) {
+            this.pending = null;
+            this.close();
+            if (p) {
+              p.reject(
+                new Error(
+                  code === 0
+                    ? 'privileged worker exited unexpectedly with no response'
+                    : code !== null
+                      ? `privileged worker failed (exit ${code})`
+                      : `privileged worker killed (signal ${signal ?? 'unknown'})`,
+                ),
+              );
+            }
+          } else if (!this.closed) {
+            this.close();
+          }
+          // If no connection was established yet, reject the ready promise so
+          // that exec() does not hang waiting for a worker that will never
+          // connect. readyReject is a no-op if the promise already resolved.
+          readyReject(readyErr);
+        });
       });
     });
   }

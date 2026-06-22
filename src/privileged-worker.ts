@@ -203,17 +203,16 @@ function parseMode(modeStr: string): number {
 // Buffer.from(str, 'base64') silently drops invalid characters, which can
 // silently corrupt content if contentB64 is truncated (e.g. by a short-write
 // on the stdin pipe). Validate before decoding so the op fails loudly.
-// Performance note: the regex is O(n) in the string length. For a 100 MiB file
-// the base64 representation is ~133 MiB — scanning every character adds a CPU-
-// bound pass before decoding. This is acceptable as a belt-and-suspenders check
-// because (a) the max file size is capped at 100 MiB, (b) the data comes from
-// an authenticated pipe controlled by the parent process, and (c) the cost is
-// incurred once per op, not per byte of the write.
+// Regex-based validation is both incorrect (does not enforce standard padding
+// rules — e.g. accepts 1 or 3 padding chars) and O(n). Round-tripping through
+// Buffer is the correct approach: Buffer.from(s, 'base64').toString('base64')
+// re-encodes the decoded bytes; if the result differs from the input, the input
+// was not canonical standard base64 (truncated, wrong padding, stray chars).
+// This is also O(n) but gives correct results for all edge cases.
 function validateBase64(s: string, field: string): void {
   // Empty string is valid: it encodes an empty file (.gitkeep, empty __init__.py, etc.).
-  // Only non-empty strings need the length/character check.
   if (s === '') return;
-  if (s.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(s)) {
+  if (Buffer.from(s, 'base64').toString('base64') !== s) {
     throw new Error(`${field}: invalid base64 string (length ${s.length})`);
   }
 }

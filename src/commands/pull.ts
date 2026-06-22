@@ -975,7 +975,10 @@ export function pullCommand(): Command {
           const t = staleToRestore[i];
           if (t.sudo) {
             const diffIdx = staleRestoreDiffIndices[i];
-            if (staleDiffs[diffIdx]?.isUnreadable) {
+            if (
+              staleDiffs[diffIdx]?.isUnreadable ||
+              staleDiffs[diffIdx]?.lstatFailed
+            ) {
               earlyIds.add(t.sudo);
             }
           }
@@ -1015,6 +1018,7 @@ export function pullCommand(): Command {
           isSymlink: boolean;
           isDirectory: boolean;
           mode?: string;
+          contentB64?: string;
         }
       >();
       if (lstatFailedBatch.length > 0) {
@@ -1391,6 +1395,23 @@ export function pullCommand(): Command {
             }
           }
         }
+        // Mode-only sudo targets (content already matches, only permissions
+        // drifted): hasChanges=true but isNew=false, so neither write-targets
+        // loop above adds their identity to deferredIds. Without this loop,
+        // sudoAtomicWrite falls back to a one-shot runPrivilegedWorker call
+        // (potentially prompting for the password again). Add them here so the
+        // session is opened once, before the user confirms.
+        for (let i = 0; i < writeTargets.length; i++) {
+          const t = writeTargets[i];
+          if (
+            t.sudo &&
+            allDiffs[i].modeChange &&
+            !allDiffs[i].contentChanged &&
+            !sudoSessions.has(t.sudo)
+          ) {
+            deferredIds.add(t.sudo);
+          }
+        }
         // Only add delete-only identities when the stale file still exists
         // (hasChanges). Identities for already-absent files are skipped to
         // avoid spurious password prompts on no-op runs.
@@ -1544,49 +1565,82 @@ export function pullCommand(): Command {
                       acceptedShaLabels.has(r.sourceLabel),
                   }))
                 : undefined;
-            // For a first-seen unreadable sudo file, capture v0 so
-            // revert-to-original works even when the invoking user cannot read
-            // the file directly. The stat-read result from the pre-read batch
+            // For a first-seen unreadable or lstatFailed sudo file, capture v0
+            // so revert-to-original works even when the invoking user cannot
+            // read the file directly. The stat-read result from the pre-read
+            // batch (isUnreadable path) or lstatFailedStats (lstatFailed path)
             // is used here — no additional sudo calls needed.
             let v0Override: Buffer | undefined;
             let v0IsSymlinkOverride = false;
-            if (
-              allDiffs[i].isUnreadable &&
+            const needsV0Capture =
+              (allDiffs[i].isUnreadable || allDiffs[i].lstatFailed) &&
               !allDiffs[i].isNew &&
               writeTargets[i].sudo &&
-              !history.getFileMeta(targetPath)
-            ) {
-              const preRead = preReads.get(targetPath);
-              if (preRead === undefined) {
-                throw new Error(
-                  `internal: missing pre-read result for sudo v0 target ${targetPath}`,
-                );
-              }
-              if (preRead !== null) {
-                const preReadBuf = Buffer.from(preRead.contentB64, 'base64');
-                if (preRead.isSymlink) {
-                  if (writeTargets[i].symlinkTarget !== undefined) {
-                    // Destination is a symlink and so is the write target — record
-                    // the existing link target as v0 for faithful revert/reset.
+              !history.getFileMeta(targetPath);
+            if (needsV0Capture) {
+              // lstatFailed targets: content comes from lstatFailedStats (the
+              // stat-read op ran earlier to determine existence). isUnreadable
+              // targets: content comes from the preReads batch.
+              const preRead = allDiffs[i].isUnreadable
+                ? preReads.get(targetPath)
+                : undefined;
+
+              if (allDiffs[i].isUnreadable) {
+                if (preRead === undefined) {
+                  throw new Error(
+                    `internal: missing pre-read result for sudo v0 target ${targetPath}`,
+                  );
+                }
+                if (preRead !== null) {
+                  const preReadBuf = Buffer.from(preRead.contentB64, 'base64');
+                  if (preRead.isSymlink) {
+                    if (writeTargets[i].symlinkTarget !== undefined) {
+                      // Destination is a symlink and so is the write target — record
+                      // the existing link target as v0 for faithful revert/reset.
+                      v0Override = preReadBuf;
+                      v0IsSymlinkOverride = true;
+                    }
+                    // If the write target is a regular file but the destination is a
+                    // symlink, skip v0: reading through the symlink could capture
+                    // an unintended privileged file before write-path checks run.
+                  } else {
+                    v0Override = preReadBuf;
+                  }
+                } else {
+                  // null = the sudo worker could not read the file (e.g. EACCES on
+                  // a root-owned parent directory). v0 cannot be captured, so
+                  // "avanti revert" will not restore this file to its pre-avanti
+                  // state. Warn so the user is aware.
+                  console.warn(
+                    `avanti: cannot capture original content of ${targetPath} — ` +
+                      `the file was unreadable by the privileged worker. ` +
+                      `"avanti revert" will not be able to restore it to its pre-avanti state.`,
+                  );
+                }
+              } else if (allDiffs[i].lstatFailed) {
+                // lstatFailed: parent dir is not searchable for the invoking
+                // user but the sudo worker could still read the file. Use the
+                // content from the stat-read batch for v0 capture.
+                const stat = lstatFailedStats.get(targetPath);
+                if (stat?.contentB64 !== undefined) {
+                  const preReadBuf = Buffer.from(stat.contentB64, 'base64');
+                  if (
+                    stat.isSymlink &&
+                    writeTargets[i].symlinkTarget !== undefined
+                  ) {
                     v0Override = preReadBuf;
                     v0IsSymlinkOverride = true;
+                  } else if (!stat.isSymlink) {
+                    v0Override = preReadBuf;
                   }
-                  // If the write target is a regular file but the destination is a
-                  // symlink, skip v0: reading through the symlink could capture
-                  // an unintended privileged file before write-path checks run.
                 } else {
-                  v0Override = preReadBuf;
+                  console.warn(
+                    `avanti: cannot capture original content of ${targetPath} — ` +
+                      `the file was in a non-searchable directory and its content ` +
+                      `could not be read by the privileged worker. ` +
+                      `"avanti revert" will not be able to restore it to its pre-avanti state.`,
+                  );
                 }
-              } else {
-                // null = the sudo worker could not read the file (e.g. EACCES on
-                // a root-owned parent directory). v0 cannot be captured, so
-                // "avanti revert" will not restore this file to its pre-avanti
-                // state. Warn so the user is aware.
-                console.warn(
-                  `avanti: cannot capture original content of ${targetPath} — ` +
-                    `the file was unreadable by the privileged worker. ` +
-                    `"avanti revert" will not be able to restore it to its pre-avanti state.`,
-                );
               }
             }
             const { fileRef } = history.stageFileVersion(
