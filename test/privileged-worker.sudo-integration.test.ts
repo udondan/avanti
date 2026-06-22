@@ -60,11 +60,16 @@ describe.skipIf(!sudoTestDir || process.platform === 'win32')(
       // The key assertion: sudo was called exactly once for all 3 files.
       // Checked immediately after the write, before any read operations below
       // that would add their own sudo calls to the log.
-      if (sudoCallLog) {
-        const log = fs.readFileSync(sudoCallLog, 'utf8');
-        const calls = log.split('\n').filter(Boolean);
-        expect(calls).toHaveLength(1);
+      if (!sudoCallLog) {
+        throw new Error(
+          'AVANTI_SUDO_CALL_LOG must be set when running sudo integration tests',
+        );
       }
+      const calls = fs
+        .readFileSync(sudoCallLog, 'utf8')
+        .split('\n')
+        .filter(Boolean);
+      expect(calls).toHaveLength(1);
 
       // Verify all files landed with correct content. Batch all 3 reads into a
       // single sudoAtomicRead call so the privileged reader itself adds at most
@@ -115,10 +120,14 @@ describe.skipIf(!sudoTestDir || process.platform === 'win32')(
 
       // The session is opened with one sudo spawn; subsequent exec() calls reuse
       // the same process. Exactly 1 sudo invocation total for 3 files.
-      if (sudoCallLog) {
-        const log = fs.readFileSync(sudoCallLog, 'utf8');
-        expect(log.split('\n').filter(Boolean)).toHaveLength(1);
+      if (!sudoCallLog) {
+        throw new Error(
+          'AVANTI_SUDO_CALL_LOG must be set when running sudo integration tests',
+        );
       }
+      expect(
+        fs.readFileSync(sudoCallLog, 'utf8').split('\n').filter(Boolean),
+      ).toHaveLength(1);
 
       // Verify all files landed with correct content.
       const allReads = await sudoAtomicRead(
