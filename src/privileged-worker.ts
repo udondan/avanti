@@ -244,6 +244,12 @@ function backupRegularFile(
   } catch (e) {
     const code = (e as NodeJS.ErrnoException).code;
     if (code === 'ENOENT' || code === 'ELOOP' || code === 'ENOTDIR') return;
+    // EACCES: named-user sudo managing a write-only file (e.g. mode 0200 owned
+    // by root). The named user has write but not read access, so O_RDONLY fails.
+    // Skipping the backup lets the write proceed — the caller already recorded
+    // a v0 snapshot or has other means of recovery. The alternative (throwing)
+    // would make write-only files completely unmanageable via named-user sudo.
+    if (code === 'EACCES') return;
     throw e;
   }
 
@@ -825,6 +831,16 @@ export function handleWriteInPlace(
           // best-effort restore
         }
       } else if (rfd === undefined && savedMode !== undefined) {
+        // rfd is undefined when O_RDONLY failed with EACCES (write-only or
+        // mode-0000 file owned by root; named-user has write but not read
+        // access). Path-based chmodSync re-traverses the path string and
+        // follows symlinks, so it has a narrow TOCTOU window: an attacker
+        // controlling the parent directory could race a symlink between the
+        // lstatSync check above and this call, causing chmodSync to affect an
+        // unintended file. In the named-user scenario the invoking user already
+        // controls the directory entry (it wrote there), so the window is
+        // bounded in practice. A full fix would require fchmodat(2) with
+        // AT_EMPTY_PATH on Linux — not exposed by Node.js without native code.
         try {
           fs.chmodSync(resolvedTarget, savedMode);
         } catch {
@@ -1155,7 +1171,10 @@ export function dispatch(
         if (!chmodApplied) {
           safeFchmodSync(fd!, parseMode(op.mode));
         }
-        if (fd !== undefined) fs.closeSync(fd);
+        if (fd !== undefined) {
+          fs.closeSync(fd);
+          fd = undefined;
+        }
       } catch (e) {
         if (fd !== undefined) {
           try {
@@ -1339,9 +1358,14 @@ if (require.main === module) {
         completed.length > 0 || remaining > 0
           ? [
               ...completed,
-              ...Array.from({ length: remaining }, () => ({
+              // Include the real crash message in the first padded slot so the
+              // parent can surface it to the user. Subsequent padding uses the
+              // generic "not yet processed" message to distinguish the crash op
+              // from ops that simply never ran.
+              ...Array.from({ length: remaining }, (_, i) => ({
                 ok: false as const,
-                error: 'worker exited before processing this op',
+                error:
+                  i === 0 ? msg : 'worker exited before processing this op',
               })),
             ]
           : [{ ok: false, error: msg }];
