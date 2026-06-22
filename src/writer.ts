@@ -222,7 +222,10 @@ if (!_proc[_HANDLERS_KEY]) {
       cleanupWorkerDir(d);
     }
   });
-  const teardown = (): void => {
+  // process.on() suppresses Node's default signal termination, so the handler
+  // must always call process.exit() — otherwise the process silently absorbs
+  // SIGINT/SIGTERM when no sessions are active and hangs instead of exiting.
+  const teardown = (signal: string): void => {
     const hadSessions = activeSudoSessions.size > 0;
     for (const s of [...activeSudoSessions]) {
       try {
@@ -234,10 +237,11 @@ if (!_proc[_HANDLERS_KEY]) {
     if (hadSessions) {
       // Defer exit by one tick so microtasks (Promise rejections from s.close())
       // can propagate to catch/finally handlers in callers before the process ends.
-      // Only force exit(1) when worker sessions were active — if no sudo sessions
-      // existed, let the process exit naturally with the expected signal code (e.g.
-      // 130 for SIGINT) so shells can distinguish user-cancellation from errors.
       setImmediate(() => process.exit(1));
+    } else {
+      // No sessions open — exit with the standard signal exit code so shells
+      // see the expected value (130 for SIGINT, 143 for SIGTERM).
+      process.exit(128 + (signal === 'SIGINT' ? 2 : 15));
     }
   };
   process.on('SIGTERM', teardown);
