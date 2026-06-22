@@ -73,7 +73,7 @@ jobs:
       - name: Set up sudo integration test environment
         if: runner.os == 'Linux'
         env:
-          SUDO_TEST_DIR: /usr/local/avanti-sudo-test
+          SUDO_TEST_DIR: ${{ runner.temp }}/avanti-sudo-test
           SUDO_BIN_DIR: ${{ runner.temp }}/sudo-bin
           SUDO_CALL_LOG_PATH: ${{ runner.temp }}/sudo-call-log.txt
           SUDO_NAMED_USER: testwriter

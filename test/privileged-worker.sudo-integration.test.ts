@@ -141,9 +141,8 @@ describe.skipIf(!sudoTestDir || process.platform === 'win32')(
           const r = allReads.get(t.targetPath);
           if (r) body = Buffer.from(r.contentB64, 'base64').toString('utf8');
         }
-        if (body !== null) {
-          expect(body).toBe(t.content.toString('utf8'));
-        }
+        expect(body).not.toBeNull();
+        expect(body).toBe(t.content.toString('utf8'));
       }
     });
   },
@@ -180,11 +179,14 @@ describe.skipIf(
 
     // Assert count before the sudoAtomicRead fallback below, which would add a
     // second sudo invocation to the log and make the assertion fail.
-    if (sudoCallLog) {
-      const log = fs.readFileSync(sudoCallLog, 'utf8');
-      const calls = log.split('\n').filter(Boolean);
-      expect(calls).toHaveLength(1);
+    if (!sudoCallLog) {
+      throw new Error(
+        'AVANTI_SUDO_CALL_LOG must be set when running sudo integration tests',
+      );
     }
+    expect(
+      fs.readFileSync(sudoCallLog, 'utf8').split('\n').filter(Boolean),
+    ).toHaveLength(1);
 
     // The file must exist and contain the expected content.
     // Read via the named user's sudo if the test runner can't read it directly.

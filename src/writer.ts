@@ -359,6 +359,12 @@ function runPrivilegedWorker(
         fs.closeSync(reqFd);
       }
     }
+    // spawnSync is intentionally synchronous: sudo on macOS reads the TTY
+    // credential cache via ttyname(3), which only works when stdin is a real
+    // TTY (not a pipe). Keeping this call synchronous avoids sending it to a
+    // worker thread or turning it into an async operation that would require
+    // complex backpressure handling. Callers that want non-blocking sudo should
+    // use SudoWorkerSession (spawn-based) rather than this one-shot path.
     result = spawnSync(
       'sudo',
       [
@@ -1137,6 +1143,14 @@ export class SudoWorkerSession {
         }
       });
 
+      // readline buffers each newline-delimited response entirely in memory
+      // before emitting the 'line' event. There is no per-response size cap:
+      // a batch of many large read ops can produce a single JSON line of
+      // several GiB, which readline accumulates across many 'data' events and
+      // may OOM the parent. Callers should limit the total size of read batches
+      // (e.g. split large reads across multiple exec() calls) rather than
+      // relying on a built-in backpressure mechanism here. The runPrivilegedWorker
+      // (spawnSync) path enforces a 150 MiB maxBuffer for comparison.
       const rl = readline.createInterface({
         input: socket,
         crlfDelay: Infinity,

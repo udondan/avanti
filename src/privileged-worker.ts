@@ -203,16 +203,21 @@ function parseMode(modeStr: string): number {
 // Buffer.from(str, 'base64') silently drops invalid characters, which can
 // silently corrupt content if contentB64 is truncated (e.g. by a short-write
 // on the stdin pipe). Validate before decoding so the op fails loudly.
-// Regex-based validation is both incorrect (does not enforce standard padding
-// rules — e.g. accepts 1 or 3 padding chars) and O(n). Round-tripping through
-// Buffer is the correct approach: Buffer.from(s, 'base64').toString('base64')
-// re-encodes the decoded bytes; if the result differs from the input, the input
-// was not canonical standard base64 (truncated, wrong padding, stray chars).
-// This is also O(n) but gives correct results for all edge cases.
+// Use a regex + length check rather than the round-trip Buffer approach: the
+// round-trip (decode then re-encode) allocates two extra buffers the size of
+// the input, which for a 10 MiB file means ~27 MiB of garbage per call. For a
+// batch of 20 large files this peaks at ~540 MiB before any write starts.
+// The regex + length check is O(n) with zero extra allocation:
+//   - `^[A-Za-z0-9+/]*={0,2}$` ensures only valid base64 chars and at most 2
+//     trailing `=` signs (so "A===" and "AAAA====" are correctly rejected).
+//   - `s.length % 4 !== 0` rejects strings that aren't padded to a 4-char
+//     boundary (so bare "AA" and "AAA" are correctly rejected).
+// Together these two checks accept exactly canonical standard base64, which is
+// also what Buffer.from(s,'base64').toString('base64') round-trips correctly.
 function validateBase64(s: string, field: string): void {
   // Empty string is valid: it encodes an empty file (.gitkeep, empty __init__.py, etc.).
   if (s === '') return;
-  if (Buffer.from(s, 'base64').toString('base64') !== s) {
+  if (!/^[A-Za-z0-9+/]*={0,2}$/.test(s) || s.length % 4 !== 0) {
     throw new Error(`${field}: invalid base64 string (length ${s.length})`);
   }
 }
@@ -724,8 +729,20 @@ export function handleWriteInPlace(
           // covers the case where neither applies (e.g. a plain 0o400 file).
           try {
             if (rfd !== undefined) {
+              // fd-based fchmod is safe: operates on the already-open inode,
+              // not on the path string, so no TOCTOU window.
               safeFchmodSync(rfd, mode);
             } else {
+              // Path-based fallback: rfd is undefined when O_RDONLY failed with
+              // EACCES (write-only file owned by root; the invoking user has
+              // write but not read access). This chmodSync re-traverses the path
+              // string and follows symlinks, so it has a narrow TOCTOU window:
+              // an attacker controlling the parent directory could race a symlink
+              // between the earlier lstatSync and this call, causing chmodSync to
+              // operate on an unintended file. A full fix would require
+              // fchmodat(2) with AT_EMPTY_PATH on Linux — not exposed by Node.js
+              // without native code. The same window exists in the catch-block
+              // restore below (where rfd is also undefined).
               fs.chmodSync(resolvedTarget, mode);
             }
           } catch (restoreErr) {
@@ -1013,10 +1030,13 @@ function checkDirSafeAsRoot(
 
 // Collects ancestor directories of targetPath from filesystem root down to the
 // immediate parent, then calls callback for each. Mirrored (not shared) by an
-// identical function in writer.ts — privileged-worker.ts is a standalone script
-// that cannot import from the main source tree. Both copies must use the same
-// root-detection idiom (`anc === path.dirname(anc)`) so that any edge-case fix
-// (e.g. bind-mount or Windows UNC paths) is applied to both consistently.
+// Mirrored verbatim in writer.ts — privileged-worker.ts is a standalone script
+// compiled to dist/privileged-worker.js and cannot import from the main source
+// tree at runtime. Both copies must remain identical: any edge-case fix (e.g.
+// bind-mount, Windows UNC paths, or loop-termination changes) must be applied
+// to both. If you change this function, search for its twin in writer.ts and
+// update it too. Extracting to a shared module was considered but rejected
+// because it changes the compiled output layout for the standalone worker.
 function walkAncestors(
   targetPath: string,
   callback: (anc: string) => void,
@@ -1359,7 +1379,11 @@ if (require.main === module) {
           process.exit(1);
         }
       });
-      setTimeout(() => process.exit(1), 100).unref();
+      // Do NOT .unref() this timer: if outputStream is a destroyed socket the
+      // write callback may never fire, leaving the event loop empty. Without a
+      // ref'd timer the process would exit 0 before this fires and the crash
+      // result would never reach the parent. 100 ms is negligible.
+      setTimeout(() => process.exit(1), 100);
     } catch {
       process.exit(1);
     }
@@ -1474,7 +1498,11 @@ if (require.main === module) {
           process.exit(1);
         },
       );
-      setTimeout(() => process.exit(1), 100).unref();
+      // Do NOT .unref() this timer: if outputStream is a destroyed socket the
+      // write callback may never fire, leaving the event loop empty. Without a
+      // ref'd timer the process would exit 0 before this fires and the crash
+      // result would never reach the parent. 100 ms is negligible.
+      setTimeout(() => process.exit(1), 100);
       return;
     }
 
@@ -1489,7 +1517,11 @@ if (require.main === module) {
           process.exit(1);
         },
       );
-      setTimeout(() => process.exit(1), 100).unref();
+      // Do NOT .unref() this timer: if outputStream is a destroyed socket the
+      // write callback may never fire, leaving the event loop empty. Without a
+      // ref'd timer the process would exit 0 before this fires and the crash
+      // result would never reach the parent. 100 ms is negligible.
+      setTimeout(() => process.exit(1), 100);
       return;
     }
 
