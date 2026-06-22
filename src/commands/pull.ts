@@ -1344,7 +1344,13 @@ export function pullCommand(): Command {
           opts.acceptChanges && firstPass.shaErrors.length > 0
             ? 'Accept new SHA values and apply changes? [y/N] '
             : 'Apply changes? [y/N] ';
-        const ok = await confirm(promptMsg);
+        let ok: boolean;
+        try {
+          ok = await confirm(promptMsg);
+        } catch (err) {
+          closeAllSessions(sudoSessions);
+          throw err;
+        }
         if (!ok) {
           closeAllSessions(sudoSessions);
           console.log('Aborted.');
