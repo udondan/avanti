@@ -667,18 +667,25 @@ export function handleWriteInPlace(
                 throw firstOpenErr;
               }
               // Re-check: if chmodSync followed a symlink, abort immediately and
-              // attempt to undo the permission grant (best-effort). Note: if
-              // resolvedTarget is now a symlink, this chmodSync follows it too
-              // and may chmod the symlink target rather than the original file —
-              // the original file's permissions remain at mode|0o200 until some
-              // future chmod restores them. The subsequent openSync uses
-              // O_NOFOLLOW so no write to the unintended path can occur.
+              // attempt to undo the permission grant (best-effort).
+              //
+              // Residual TOCTOU: the restore chmodSync below also follows symlinks.
+              // If an attacker races a SECOND symlink between the lstatSync re-check
+              // and the restore chmodSync, the restore lands on a different inode.
+              // The ORIGINAL file remains at mode|0o200 (e.g. world-writable if
+              // mode was 0644) PERMANENTLY — no further chmod restores it, because
+              // avanti has already moved on and no cleanup mechanism revisits it.
+              // This is an inherent limitation of path-based chmod on POSIX: without
+              // an fd-based approach (fchmodat + O_PATH, Linux-only via native code),
+              // a racing attacker with a trusted-UID ancestor can widen permissions.
+              // The subsequent openSync uses O_NOFOLLOW so no write goes through the
+              // raced symlink — the blast radius is limited to the chmod side effect.
               try {
                 if (!fs.lstatSync(resolvedTarget).isFile()) {
                   try {
                     fs.chmodSync(resolvedTarget, mode);
                   } catch {
-                    // best-effort restore (may operate on wrong inode — see above)
+                    // best-effort restore (may follow a second symlink — see above)
                   }
                   throw new Error(
                     `writeInPlace: ${op.targetPath} changed to a non-file during chmod; possible symlink race`,
@@ -852,12 +859,14 @@ export function handleDelete(op: DeleteOp): DispatchResult {
     fs.unlinkSync(resolved);
   } catch (e) {
     const ec = (e as NodeJS.ErrnoException).code;
-    if (ec === 'ENOENT' || ec === 'EISDIR') {
-      // ENOENT: file already absent.
-      // EISDIR: a concurrent process replaced the path with a directory between
-      // lstatSync and unlinkSync; treat as "already gone" rather than aborting.
+    if (ec === 'ENOENT') {
+      // File already absent — treat as a successful no-op.
       return { kind: 'skipped' };
     }
+    // EISDIR means a concurrent process replaced the file with a directory
+    // between lstatSync and unlinkSync. This is NOT "already gone" — the
+    // directory artifact remains on disk. Re-throw so the caller can surface
+    // it instead of silently skipping future cleanup attempts for this path.
     throw e;
   }
   return { kind: 'ok' };
@@ -1180,6 +1189,12 @@ if (require.main === module) {
     inputStream = fs.createReadStream(reqFileArg.slice('--req-file='.length));
     outputStream = process.stdout;
   } else {
+    // stdin fallback: used by the test suite (spawnSync with stdio:['pipe',...])
+    // and for backward-compatibility. No nonce is sent or verified in this mode.
+    // Security requirement: stdin MUST be a private pipe (e.g. spawnSync with
+    // stdio:['pipe',...]) so only the parent process can write to it. Do NOT
+    // invoke the worker with an inherited or shared stdin — any process that
+    // can write to stdin can issue privileged ops without authentication.
     inputStream = process.stdin;
     outputStream = process.stdout;
   }

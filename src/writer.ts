@@ -234,14 +234,15 @@ if (!_proc[_HANDLERS_KEY]) {
         // best-effort
       }
     }
+    // Always use the POSIX signal exit code (128+signum) so shells can
+    // distinguish user-abort from a generic error regardless of whether
+    // sessions were active. Deferred one tick when sessions were open so
+    // Promise rejections from s.close() propagate before the process ends.
+    const exitCode = 128 + (signal === 'SIGINT' ? 2 : 15);
     if (hadSessions) {
-      // Defer exit by one tick so microtasks (Promise rejections from s.close())
-      // can propagate to catch/finally handlers in callers before the process ends.
-      setImmediate(() => process.exit(1));
+      setImmediate(() => process.exit(exitCode));
     } else {
-      // No sessions open — exit with the standard signal exit code so shells
-      // see the expected value (130 for SIGINT, 143 for SIGTERM).
-      process.exit(128 + (signal === 'SIGINT' ? 2 : 15));
+      process.exit(exitCode);
     }
   };
   process.on('SIGTERM', teardown);
@@ -327,22 +328,21 @@ function runPrivilegedWorker(
   // gain outweighs the UX cost.
   const isNamedUser = typeof sudo === 'string';
   let reqPath: string | undefined;
-  if (!isNamedUser) {
-    const reqDir = tmpDir ?? os.tmpdir();
-    reqPath = path.join(
-      reqDir,
-      `avanti-req-${crypto.randomBytes(8).toString('hex')}.json`,
-    );
-    const reqFd = fs.openSync(reqPath, 'wx', 0o600);
-    try {
-      fs.writeFileSync(reqFd, reqPayload);
-    } finally {
-      fs.closeSync(reqFd);
-    }
-  }
-
   let result;
   try {
+    if (!isNamedUser) {
+      const reqDir = tmpDir ?? os.tmpdir();
+      reqPath = path.join(
+        reqDir,
+        `avanti-req-${crypto.randomBytes(8).toString('hex')}.json`,
+      );
+      const reqFd = fs.openSync(reqPath, 'wx', 0o600);
+      try {
+        fs.writeFileSync(reqFd, reqPayload);
+      } finally {
+        fs.closeSync(reqFd);
+      }
+    }
     result = spawnSync(
       'sudo',
       [
@@ -867,6 +867,7 @@ export async function sudoStatBatch(
 function getUserUid(username: string): number | undefined {
   const r = spawnSync('id', ['-u', username], {
     stdio: ['ignore', 'pipe', 'ignore'],
+    timeout: 5000,
   });
   if (r.status === 0) {
     const uid = parseInt(r.stdout.toString().trim(), 10);
