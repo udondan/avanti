@@ -1020,6 +1020,7 @@ export class SudoWorkerSession {
         socket.destroy();
       }, 5000);
       authTimeout.unref();
+      socket.once('close', () => clearTimeout(authTimeout));
 
       socket.on('error', (err) => {
         clearTimeout(authTimeout);
