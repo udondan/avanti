@@ -332,6 +332,11 @@ function backupTarget(
   backupPath: string,
   lst: fs.Stats | undefined,
   trustedUids?: Set<number>,
+  // Pre-read link target: callers should pass the readlinkSync result obtained
+  // immediately after their lstatSync to avoid a TOCTOU window between the
+  // isSymbolicLink() check and a second readlinkSync here. Required when
+  // lst.isSymbolicLink() is true.
+  preobtainedLinkTarget?: string,
 ): void {
   if (lst === undefined) return;
 
@@ -358,7 +363,10 @@ function backupTarget(
       `.avanti-backup-${randomHex()}`,
     );
     try {
-      const rawTarget = fs.readlinkSync(targetPath);
+      // Use the pre-obtained link target to avoid a TOCTOU window. Callers
+      // read this immediately after lstatSync; a second readlinkSync here
+      // would re-stat the path and be vulnerable to a concurrent symlink swap.
+      const rawTarget = preobtainedLinkTarget ?? fs.readlinkSync(targetPath);
       // Convert relative targets to absolute so the backup is self-contained at
       // its storage location (user-defined via `backup:`, not necessarily the same
       // directory as the original file). Matches the unprivileged path in writer.ts.
@@ -418,10 +426,16 @@ export function handleWriteMv(op: WriteMvOp, trustedUids?: Set<number>): void {
     // rename(2) replaces the symlink itself, not its target.
     // Capture lst here for reuse in the backup step below.
     let lst: fs.Stats | undefined;
+    let existingLinkTarget: string | undefined;
     try {
       lst = fs.lstatSync(resolvedTarget);
       if (!lst.isSymbolicLink() && lst.isDirectory()) {
         throw new Error(`target path is a directory: ${op.targetPath}`);
+      }
+      // Read the symlink target immediately alongside lstat to minimise the
+      // TOCTOU window before passing it to backupTarget.
+      if (lst.isSymbolicLink()) {
+        existingLinkTarget = fs.readlinkSync(resolvedTarget);
       }
     } catch (e) {
       if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
@@ -432,7 +446,13 @@ export function handleWriteMv(op: WriteMvOp, trustedUids?: Set<number>): void {
     // Use backupTarget (not backupRegularFile) so that a symlink at the target
     // is backed up as a symlink rather than silently skipped.
     if (op.backupPath) {
-      backupTarget(resolvedTarget, op.backupPath, lst, trustedUids);
+      backupTarget(
+        resolvedTarget,
+        op.backupPath,
+        lst,
+        trustedUids,
+        existingLinkTarget,
+      );
       backupCommitted = true;
     }
 
@@ -816,6 +836,7 @@ export function handleWriteSymlink(
   // result for reuse in the backup check below — eliminating a second syscall
   // and the TOCTOU window between the two stats.
   let lst: fs.Stats | undefined;
+  let existingLinkTarget: string | undefined;
   try {
     lst = fs.lstatSync(resolvedTarget);
     if (!lst.isSymbolicLink() && lst.isDirectory()) {
@@ -823,12 +844,23 @@ export function handleWriteSymlink(
         `symlink: ${op.targetPath} is a directory; refusing to replace it with a symlink`,
       );
     }
+    // Read the symlink target immediately alongside lstat to minimise the
+    // TOCTOU window before passing it to backupTarget.
+    if (lst.isSymbolicLink()) {
+      existingLinkTarget = fs.readlinkSync(resolvedTarget);
+    }
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
   }
 
   if (op.backupPath) {
-    backupTarget(resolvedTarget, op.backupPath, lst, trustedUids);
+    backupTarget(
+      resolvedTarget,
+      op.backupPath,
+      lst,
+      trustedUids,
+      existingLinkTarget,
+    );
   }
 
   // Stage the new symlink at a temp path, then rename atomically.
@@ -1226,12 +1258,13 @@ if (require.main === module) {
     // structured rejection with the actual error message rather than the generic
     // "IPC stream closed without a response" from the rl.on('close') fallback.
     // NOTE: we always emit exactly 1 result regardless of batch size, because a
-    // crash loses track of which ops completed. In the spawnSync path with
-    // continueOnError=true, the caller's padding fills the remaining slots with
-    // "worker exited before processing this op" — ops that completed before the
-    // crash are also incorrectly reported as failed. This is an inherent
-    // limitation of a single-response protocol: use SudoWorkerSession (IPC mode)
-    // for workloads where per-op accuracy in crash scenarios matters.
+    // crash loses track of which ops completed. Both the spawnSync path
+    // (padding in runPrivilegedWorker) and the IPC session path (padding in
+    // SudoWorkerSession.exec) fill the remaining slots with "worker exited
+    // before processing this op" — ops that completed before the crash are
+    // also incorrectly reported as failed in both modes. The real advantage of
+    // SudoWorkerSession is that it survives across batches (one sudo spawn for
+    // the whole pull), not per-op crash accuracy.
     try {
       writeResponse({ results: [{ ok: false, error: msg }] }, () => {
         // end() flushes buffered data and sends FIN before the process exits,

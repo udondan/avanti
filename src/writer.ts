@@ -1059,7 +1059,12 @@ export class SudoWorkerSession {
         }
         if (!nonceVerified) {
           nonceVerified = true;
-          if (trimmed !== ipcNonce) {
+          const trimmedBuf = Buffer.from(trimmed);
+          const nonceBuf = Buffer.from(ipcNonce);
+          const nonceMatch =
+            trimmedBuf.length === nonceBuf.length &&
+            crypto.timingSafeEqual(trimmedBuf, nonceBuf);
+          if (!nonceMatch) {
             clearTimeout(authTimeout);
             rl.close();
             socket.destroy();

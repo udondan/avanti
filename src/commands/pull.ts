@@ -1206,7 +1206,12 @@ export function pullCommand(): Command {
       for (let i = 0; i < writeTargets.length; i++) {
         if (allDiffs[i].isUnreadable && writeTargets[i].sudo) {
           const preRead = preReads.get(writeTargets[i].targetPath);
-          if (preRead === null || preRead === undefined) continue;
+          if (preRead === undefined) {
+            throw new Error(
+              `internal: missing pre-read result for sudo target ${writeTargets[i].targetPath}`,
+            );
+          }
+          if (preRead === null) continue;
           const preReadBuf = Buffer.from(preRead.contentB64, 'base64');
 
           if (writeTargets[i].symlinkTarget !== undefined) {
@@ -1265,7 +1270,12 @@ export function pullCommand(): Command {
         const diffIdx = staleRestoreDiffIndices[i];
         if (staleDiffs[diffIdx]?.isUnreadable && staleToRestore[i].sudo) {
           const preRead = preReads.get(staleToRestore[i].targetPath);
-          if (preRead === null || preRead === undefined) continue;
+          if (preRead === undefined) {
+            throw new Error(
+              `internal: missing pre-read result for sudo stale-restore target ${staleToRestore[i].targetPath}`,
+            );
+          }
+          if (preRead === null) continue;
           // Skip comparison when existing path is a symlink.
           if (preRead.isSymlink) continue;
           const current = Buffer.from(preRead.contentB64, 'base64');
