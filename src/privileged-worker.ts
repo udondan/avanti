@@ -359,9 +359,13 @@ function backupTarget(
     );
     try {
       const rawTarget = fs.readlinkSync(targetPath);
-      // Preserve the original target verbatim — relative symlinks must stay
-      // relative so that backup/restore does not silently change semantics.
-      fs.symlinkSync(rawTarget, backupTmp);
+      // Convert relative targets to absolute so the backup is self-contained at
+      // its storage location (user-defined via `backup:`, not necessarily the same
+      // directory as the original file). Matches the unprivileged path in writer.ts.
+      const linkTarget = path.isAbsolute(rawTarget)
+        ? rawTarget
+        : path.resolve(path.dirname(targetPath), rawTarget);
+      fs.symlinkSync(linkTarget, backupTmp);
       fs.renameSync(backupTmp, resolvedBackup);
     } catch (err) {
       try {
@@ -1162,9 +1166,14 @@ if (require.main === module) {
     // Send the nonce back as the very first line so the parent can verify this
     // is the worker it spawned (not a rogue process that connected to the socket
     // before us). Must be sent before any request is processed.
-    if (nonce) {
-      ipcSocket.write(nonce + '\n');
+    if (!nonce) {
+      process.stderr.write(
+        'avanti-worker: AVANTI_WORKER_NONCE is not set — sudo env_reset may have stripped it.\n' +
+          'Add `Defaults env_keep += "AVANTI_WORKER_NONCE"` to /etc/sudoers or use NOPASSWD with -E.\n',
+      );
+      process.exit(1);
     }
+    ipcSocket.write(nonce + '\n');
     inputStream = ipcSocket;
     outputStream = ipcSocket;
   } else if (reqFileArg) {
@@ -1210,7 +1219,11 @@ if (require.main === module) {
     // for workloads where per-op accuracy in crash scenarios matters.
     try {
       writeResponse({ results: [{ ok: false, error: msg }] }, () => {
-        process.exit(1);
+        // end() flushes buffered data and sends FIN before the process exits,
+        // ensuring the parent's readline sees the JSON line before the 'close'
+        // event fires. process.exit() alone can terminate before the OS delivers
+        // the write buffer to the reader on the other end of the socket.
+        outputStream.end(() => process.exit(1));
       });
       setTimeout(() => process.exit(1), 100).unref();
     } catch {
@@ -1224,7 +1237,7 @@ if (require.main === module) {
     );
     try {
       writeResponse({ results: [{ ok: false, error: msg }] }, () => {
-        process.exit(1);
+        outputStream.end(() => process.exit(1));
       });
       setTimeout(() => process.exit(1), 100).unref();
     } catch {

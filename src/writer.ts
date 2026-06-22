@@ -51,21 +51,32 @@ export function sudoUserArgs(sudo: true | string): string[] {
 // traverse $HOME and would get EACCES. In that case, search PATH for the first
 // node binary outside $HOME; throws if none is found (a system-wide Node.js
 // install is required for named-user sudo).
-// Cache the resolved node binary path. The path is stable for the lifetime of
-// the process — no need to re-scan SAFE_DIRS and re-spawn `node --version` on
-// every new SudoWorkerSession.
-let resolvedNodeExecCached: string | undefined;
+// Cache the resolved node binary path per sudo identity. The path is stable for
+// the lifetime of the process — no need to re-scan SAFE_DIRS and re-spawn
+// `node --version` on every new SudoWorkerSession. Keyed by identity so that a
+// root session (which may cache a root-owned binary inaccessible to other users)
+// does not pollute the cache for a subsequent named-user session.
+const resolvedNodeExecCache = new Map<string, string>();
 
 function resolveNodeExec(sudo: true | string): string {
-  if (resolvedNodeExecCached !== undefined) return resolvedNodeExecCached;
+  const cacheKey = sudo === true ? '__root__' : sudo;
+  const cached = resolvedNodeExecCache.get(cacheKey);
+  if (cached !== undefined) return cached;
   // AVANTI_NODE_EXEC is an explicit override for root-owned binary checks. It
   // is checked unconditionally (before the SAFE_DIRS scan and before the
   // home-dir check) so that tests and users who set it do not need to worry
   // about which branch applies to their system layout.
   if (process.env.AVANTI_NODE_EXEC) {
-    resolvedNodeExecCached = process.env.AVANTI_NODE_EXEC;
-    return resolvedNodeExecCached;
+    resolvedNodeExecCache.set(cacheKey, process.env.AVANTI_NODE_EXEC);
+    return process.env.AVANTI_NODE_EXEC;
   }
+  // Minimum Node.js major version that can run the compiled worker.
+  // The worker is compiled to ES2022 (tsconfig.build.json target), which
+  // Node.js 18+ supports fully. Using the current process's major version
+  // as the threshold is wrong: when the caller runs under nvm/mise (e.g.
+  // v24), a system node v18 is perfectly capable of running the ES2022
+  // compiled output and would be rejected without cause.
+  const WORKER_MIN_NODE_MAJOR = 18;
   // Require the binary to be root-owned before trusting it when running via
   // sudo — whether elevating to root or to a named user. If process.execPath
   // is user-owned (e.g. a Homebrew or nvm/fnm/mise install), the calling user
@@ -85,17 +96,16 @@ function resolveNodeExec(sudo: true | string): string {
       st.uid === 0 &&
       !realPath.startsWith(os.homedir() + path.sep)
     ) {
-      // Apply the same version floor as the SAFE_DIRS scan below so that a
-      // stale root-owned binary (e.g. v16) does not silently produce an opaque
+      // Apply the same version floor as the SAFE_DIRS scan so that a stale
+      // root-owned binary (e.g. v16) does not silently produce an opaque
       // SyntaxError inside the worker.
-      const WORKER_MIN_NODE_MAJOR_FAST = 18;
       const vr = spawnSync(realPath, ['--version'], {
         encoding: 'utf8',
         timeout: 5000,
       });
       const m = vr.stdout?.trim().match(/^v(\d+)\./);
-      if (m && parseInt(m[1], 10) >= WORKER_MIN_NODE_MAJOR_FAST) {
-        resolvedNodeExecCached = realPath;
+      if (m && parseInt(m[1], 10) >= WORKER_MIN_NODE_MAJOR) {
+        resolvedNodeExecCache.set(cacheKey, realPath);
         return realPath;
       }
       // Version too old — fall through to SAFE_DIRS scan.
@@ -108,13 +118,6 @@ function resolveNodeExec(sudo: true | string): string {
   // from one of those would cause sudo to execute attacker code.
   // sudo's secure_path would normally sanitise PATH, but spawnSync passes the
   // resolved binary as argv[0], bypassing secure_path entirely.
-  // Minimum Node.js major version that can run the compiled worker.
-  // The worker is compiled to ES2022 (tsconfig.build.json target), which
-  // Node.js 18+ supports fully. Using the current process's major version
-  // as the threshold is wrong: when the caller runs under nvm/mise (e.g.
-  // v24), a system node v18 is perfectly capable of running the ES2022
-  // compiled output and would be rejected without cause.
-  const WORKER_MIN_NODE_MAJOR = 18;
   const SAFE_DIRS =
     process.platform === 'darwin'
       ? ['/usr/bin', '/usr/local/bin', '/opt/homebrew/bin', '/bin']
@@ -144,7 +147,7 @@ function resolveNodeExec(sudo: true | string): string {
         if (candidateMajor < WORKER_MIN_NODE_MAJOR) {
           continue;
         }
-        resolvedNodeExecCached = realPath;
+        resolvedNodeExecCache.set(cacheKey, realPath);
         return realPath;
       } catch {
         // ignore EACCES, ENOENT, and any other stat/spawn error
@@ -1169,6 +1172,9 @@ export class SudoWorkerSession {
       }
 
       this.proc.on('error', (err) => {
+        // Null proc before close() so close() does not SIGTERM a process that
+        // has already reported a spawn error — mirrors the 'close' handler.
+        this.proc = undefined;
         const p = this.pending;
         this.pending = null;
         this.close();
@@ -1376,38 +1382,6 @@ export function openPrivilegedSessions(
     throw err;
   }
   return sessions;
-}
-
-// Returns the existing file's permission bits as an octal string via sudo stat,
-// trying GNU stat (-L -c %a) then BSD/macOS stat (-L -f %Lp). Both use -L to
-// follow symlinks — the caller wants the target directory's mode, not the
-// symlink's own permissions. Returns undefined when the file does not exist or
-// the mode cannot be determined.
-export function getSudoFileMode(
-  sudo: true | string,
-  targetPath: string,
-): string | undefined {
-  const absPath = path.resolve(targetPath); // ensure never starts with '-'
-  // stdin: 'inherit' passes the parent's fd 0 so sudo can locate cached
-  // credentials by TTY name; 'ignore' (non-TTY /dev/null) would break that
-  // lookup and cause a re-prompt in interactive sessions.
-  const gnu = spawnSync(
-    'sudo',
-    [...sudoUserArgs(sudo), 'stat', '-L', '-c', '%a', '--', absPath],
-    { stdio: ['inherit', 'pipe', 'ignore'] },
-  );
-  if (gnu.status === 0) return gnu.stdout.toString().trim() || undefined;
-  // BSD stat (macOS) does not support '--'; path.resolve() ensures no leading '-'.
-  // Use -L so that symlink ancestors are followed — without -L, stat returns the
-  // symlink's own permissions (typically 0777) which would cause a false-positive
-  // world-writable rejection.
-  const bsd = spawnSync(
-    'sudo',
-    [...sudoUserArgs(sudo), 'stat', '-L', '-f', '%Lp', absPath],
-    { stdio: ['inherit', 'pipe', 'ignore'] },
-  );
-  if (bsd.status === 0) return bsd.stdout.toString().trim() || undefined;
-  return undefined;
 }
 
 // Verifies that a directory is safe to use as a mktemp staging location.

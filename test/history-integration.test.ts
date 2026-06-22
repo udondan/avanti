@@ -534,7 +534,13 @@ describe('history integration', () => {
         );
         chmodSync(fakeSudoBin, 0o755);
 
-        const sudoEnv = { PATH: `${fakeSudoDir}:${process.env.PATH ?? ''}` };
+        const sudoEnv = {
+          PATH: `${fakeSudoDir}:${process.env.PATH ?? ''}`,
+          // resolveNodeExec requires a root-owned node binary; on macOS/nvm
+          // machines there is none. Override so the test works without a
+          // system-wide node install.
+          AVANTI_NODE_EXEC: process.execPath,
+        };
 
         // Pull with sudo: true — the file is tracked with its sudo identity.
         const src = writeSource('src.txt', 'privileged content');

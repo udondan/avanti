@@ -358,12 +358,14 @@ describe('handleWriteSymlink', () => {
   );
 
   it.skipIf(isWindows)(
-    'creates a backup of an existing symlink preserving the original target verbatim',
+    'creates a backup of an existing symlink converting a relative target to absolute',
     () => {
       const realFile = path.join(tmpDir, 'real.txt');
       fs.writeFileSync(realFile, 'real');
       const targetPath = path.join(tmpDir, 'existing-link');
-      // Use a relative symlink to verify the raw target is preserved (not resolved to absolute).
+      // Use a relative symlink to verify it is resolved to absolute in the backup
+      // (the backup lives at a user-defined path, not the original file's directory,
+      // so a relative target stored verbatim would point to the wrong location).
       fs.symlinkSync('real.txt', targetPath);
 
       const backupPath = path.join(tmpDir, 'backups', 'existing-link.bak');
@@ -375,9 +377,10 @@ describe('handleWriteSymlink', () => {
         backupPath,
       });
 
-      // Backup should be a symlink with the same raw target as the original.
+      // Backup must be a symlink whose target is the absolute path of the original,
+      // matching the unprivileged writer.ts behaviour.
       expect(fs.lstatSync(backupPath).isSymbolicLink()).toBe(true);
-      expect(fs.readlinkSync(backupPath)).toBe('real.txt');
+      expect(fs.readlinkSync(backupPath)).toBe(path.join(tmpDir, 'real.txt'));
     },
   );
 });
