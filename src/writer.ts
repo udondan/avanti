@@ -252,15 +252,9 @@ function stageWorkerForSudo(workerPath: string): {
   stagedPath: string;
   tmpDir: string;
 } {
-  // Create the staging directory with umask 0o077 so it starts at 0o700 from
-  // the first syscall — no window where a looser umask leaves it world-readable.
-  const savedUmask = process.umask(0o077);
-  let tmpDir: string;
-  try {
-    tmpDir = fs.mkdtempSync(path.join(WORLD_TMP, 'avanti-worker-'));
-  } finally {
-    process.umask(savedUmask);
-  }
+  // mkdtemp(2) is POSIX-specified to create with mode S_IRWXU (0700) regardless
+  // of the caller's umask, so no umask manipulation is required here.
+  const tmpDir = fs.mkdtempSync(path.join(WORLD_TMP, 'avanti-worker-'));
   stagedWorkerDirs.add(tmpDir); // tracked for cleanup on abnormal exit
   // Chmod to 0o711: the named sudo user needs to traverse and exec the script
   // but must not be able to list the directory contents.
@@ -960,15 +954,8 @@ export class SudoWorkerSession {
     if (tmpDir) {
       this.tmpDir = tmpDir;
     } else {
-      // Create the IPC directory with umask 0o077 so it starts at 0o700 from
-      // the first syscall — no window where a looser umask exposes the dir.
-      const savedUmask = process.umask(0o077);
-      let ipcDir: string;
-      try {
-        ipcDir = fs.mkdtempSync(path.join(WORLD_TMP, 'avanti-ipc-'));
-      } finally {
-        process.umask(savedUmask);
-      }
+      // mkdtemp(2) creates with mode 0700 by POSIX spec, no umask guard needed.
+      const ipcDir = fs.mkdtempSync(path.join(WORLD_TMP, 'avanti-ipc-'));
       stagedWorkerDirs.add(ipcDir);
       this.tmpDir = ipcDir;
     }
@@ -1021,7 +1008,17 @@ export class SudoWorkerSession {
         return;
       }
 
+      // Destroy any connection that does not complete the nonce handshake within
+      // 5 seconds. Without this, a rogue local process could connect to the
+      // named-user socket (mode 0666) and hold it open indefinitely, exhausting
+      // file descriptors or blocking the real worker from the verified slot.
+      const authTimeout = setTimeout(() => {
+        socket.destroy();
+      }, 5000);
+      authTimeout.unref();
+
       socket.on('error', (err) => {
+        clearTimeout(authTimeout);
         if (this.ipcSocket === socket) {
           const p = this.pending;
           this.pending = null;
@@ -1048,11 +1045,13 @@ export class SudoWorkerSession {
         if (!nonceVerified) {
           nonceVerified = true;
           if (trimmed !== ipcNonce) {
+            clearTimeout(authTimeout);
             rl.close();
             socket.destroy();
             return;
           }
           // Nonce verified — promote this socket to the active IPC channel.
+          clearTimeout(authTimeout);
           this.ipcSocket = socket;
           this.dataIn = socket;
           this.rl = rl;
