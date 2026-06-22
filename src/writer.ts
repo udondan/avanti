@@ -403,8 +403,12 @@ function runPrivilegedWorker(
           results: WorkerResult[];
         };
         if (Array.isArray(partial.results) && partial.results.length > 0) {
-          // Pad to ops.length so callers never silently miss unprocessed tail ops.
-          const padded: WorkerResult[] = [...partial.results];
+          // Clamp to ops.length: trim oversized responses (worker bug) and pad
+          // undersized ones so callers always receive exactly ops.length results.
+          const padded: WorkerResult[] = [...partial.results].slice(
+            0,
+            ops.length,
+          );
           while (padded.length < ops.length) {
             padded.push({
               ok: false,
@@ -438,6 +442,11 @@ function runPrivilegedWorker(
   }
   let results: Array<{ ok: boolean; error?: string }>;
   try {
+    if (!result.stdout) {
+      throw new Error(
+        'privileged worker exited 0 but wrote no output (called process.exit(0) without writeResponse)',
+      );
+    }
     const parsed = JSON.parse(result.stdout) as {
       results: Array<{ ok: boolean; error?: string }>;
     };
@@ -1380,10 +1389,10 @@ export class SudoWorkerSession {
           this.pending = null;
           if (r.length !== ops.length) {
             if (continueOnError) {
-              // Mirror the spawnSync path: pad unprocessed tail ops so callers
-              // (e.g. sudoAtomicDelete in best-effort mode) can distinguish
-              // which ops succeeded rather than losing all partial state.
-              const padded: WorkerResult[] = [...r];
+              // Mirror the spawnSync path: clamp to ops.length and pad
+              // unprocessed tail ops so callers always receive exactly ops.length
+              // results and can distinguish completed ops from those that never ran.
+              const padded: WorkerResult[] = [...r].slice(0, ops.length);
               while (padded.length < ops.length) {
                 padded.push({
                   ok: false,

@@ -556,6 +556,15 @@ export function handleWriteInPlace(
           // best-effort close
         }
       }
+      // The file was created (O_EXCL) but the write or chmod failed, leaving
+      // a 0-byte stub. Remove it so the path does not appear to exist on the
+      // next avanti pull (where it would be treated as an existing file and
+      // take the write-in-place path instead of the new-file path).
+      try {
+        fs.unlinkSync(resolvedTarget);
+      } catch {
+        // best-effort; the empty file is benign but avanti pull will overwrite it
+      }
       throw err;
     }
   } else {
@@ -573,6 +582,8 @@ export function handleWriteInPlace(
     let fd: number | undefined;
     let rfd: number | undefined;
     let savedMode: number | undefined;
+    // Declared here (not inside try) so the catch block can read it.
+    let writeSucceeded = false;
     // Capture the initial write-open error so we can do EACCES recovery
     // outside the catch block, avoiding the preserve-caught-error lint constraint.
     let firstOpenErr: NodeJS.ErrnoException | undefined;
@@ -769,6 +780,7 @@ export function handleWriteInPlace(
         );
       }
       fs.writeFileSync(fd, content);
+      writeSucceeded = true;
       // fchmod only when needed: apply explicit mode, or restore setuid/setgid
       // bits that Linux strips on O_TRUNC. Skip when neither applies — a named
       // user writing via group permission may not own the file and fchmod would
@@ -791,13 +803,14 @@ export function handleWriteInPlace(
         rfd = undefined;
       }
     } catch (err) {
-      // The write failed. If the O_TRUNC open succeeded (fd !== undefined), the
-      // target file has already been truncated to 0 bytes. Restore from backup
-      // so the user is not left with an empty file. The original content remains
-      // in op.backupPath regardless; copyFileSync here avoids a manual recovery
-      // step. If the restore itself fails, the error is suppressed — the user can
-      // still recover from the backup at op.backupPath.
-      if (fd !== undefined && op.backupPath) {
+      // Restore from backup ONLY when the content write itself failed (i.e.
+      // O_TRUNC truncated the file but writeFileSync threw before finishing).
+      // If writeSucceeded=true, only the subsequent fchmod failed — the new
+      // content is already on disk and must NOT be overwritten with the old
+      // backup (that would silently revert a successful write). The file will
+      // have the correct content with potentially wrong permissions; the next
+      // avanti pull will re-detect and re-apply the mode change.
+      if (!writeSucceeded && fd !== undefined && op.backupPath) {
         try {
           fs.copyFileSync(path.resolve(op.backupPath), resolvedTarget);
         } catch {
@@ -871,6 +884,7 @@ export function handleWriteSymlink(
     if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
   }
 
+  let backupCommitted = false;
   if (op.backupPath) {
     backupTarget(
       resolvedTarget,
@@ -879,6 +893,7 @@ export function handleWriteSymlink(
       trustedUids,
       existingLinkTarget,
     );
+    backupCommitted = true;
   }
 
   // Stage the new symlink at a temp path, then rename atomically.
@@ -892,6 +907,15 @@ export function handleWriteSymlink(
       fs.unlinkSync(tmpPath);
     } catch {
       // best-effort cleanup
+    }
+    // renameSync failed — the target was never modified. Remove the backup so
+    // history does not record a change that never committed (mirrors handleWriteMv).
+    if (backupCommitted && op.backupPath) {
+      try {
+        fs.unlinkSync(path.resolve(op.backupPath));
+      } catch {
+        // best-effort; orphaned backup is preferable to masking the real error
+      }
     }
     throw err;
   }
@@ -996,12 +1020,12 @@ function checkDirSafeAsRoot(
   }
 }
 
-// Walks every ancestor of targetPath (from the filesystem root down to its
-// parent directory) and calls checkDirSafeAsRoot on each.
 // Collects ancestor directories of targetPath from filesystem root down to the
-// immediate parent, then calls callback for each. Shared by checkAncestorsSafeAsRoot
-// and the equivalent function in writer.ts; centralising the while-loop prevents
-// the root-detection idiom (`anc === path.dirname(anc)`) from diverging.
+// immediate parent, then calls callback for each. Mirrored (not shared) by an
+// identical function in writer.ts — privileged-worker.ts is a standalone script
+// that cannot import from the main source tree. Both copies must use the same
+// root-detection idiom (`anc === path.dirname(anc)`) so that any edge-case fix
+// (e.g. bind-mount or Windows UNC paths) is applied to both consistently.
 function walkAncestors(
   targetPath: string,
   callback: (anc: string) => void,
@@ -1287,10 +1311,20 @@ if (require.main === module) {
     outputStream.write(JSON.stringify(obj) + '\n', cb);
   };
 
-  // Shared flush-then-exit helper used by the uncaughtException and
-  // unhandledRejection handlers below. Writes one JSON error result so the
-  // parent's exec() receives a structured rejection rather than the generic
-  // "IPC stream closed without a response" from the rl.on('close') fallback.
+  // In-progress batch state: updated by the rl.on('line') handler as ops
+  // complete. emitErrorAndExit reads these to include completed results in the
+  // crash response, so callers can distinguish ops that finished OK from those
+  // that never ran (rather than reporting all as "exited before processing").
+  let batchResults: WorkerResult[] | null = null;
+  let batchExpectedOps = 0;
+
+  // Shared flush-then-exit helper used by the uncaughtException,
+  // unhandledRejection, and input-stream error handlers below. Emits any
+  // already-completed results for the current batch so the parent's exec()
+  // receives accurate partial state rather than losing all completed ops.
+  // Pads the remainder with the crash error so callers always receive exactly
+  // batchExpectedOps results when a batch was in flight. Falls back to a
+  // single error result when no batch is active (e.g. crash during init).
   // end() flushes buffered data and sends FIN before the process exits,
   // ensuring the parent's readline sees the JSON line before the 'close' event
   // fires. process.stdout cannot be end()ed (throws ERR_STDOUT_CLOSE); only
@@ -1298,7 +1332,20 @@ if (require.main === module) {
   // write callback is never called (e.g. the socket was already torn down).
   const emitErrorAndExit = (msg: string): void => {
     try {
-      writeResponse({ results: [{ ok: false, error: msg }] }, () => {
+      const completed = batchResults ?? [];
+      const total = batchExpectedOps;
+      const remaining = Math.max(0, total - completed.length);
+      const allResults: WorkerResult[] =
+        completed.length > 0 || remaining > 0
+          ? [
+              ...completed,
+              ...Array.from({ length: remaining }, () => ({
+                ok: false as const,
+                error: 'worker exited before processing this op',
+              })),
+            ]
+          : [{ ok: false, error: msg }];
+      writeResponse({ results: allResults }, () => {
         if (outputStream !== process.stdout) {
           outputStream.end(() => process.exit(1));
         } else {
@@ -1316,14 +1363,9 @@ if (require.main === module) {
   // Use process.once so that a second uncaught exception after writeResponse has
   // already delivered results for the current batch does not push a stale error
   // line onto the socket, which would corrupt the NEXT exec() call's readline.
-  // NOTE: we always emit exactly 1 result regardless of batch size, because a
-  // crash loses track of which ops completed. Both the spawnSync path
-  // (padding in runPrivilegedWorker) and the IPC session path (padding in
-  // SudoWorkerSession.exec) fill the remaining slots with "worker exited
-  // before processing this op" — ops that completed before the crash are
-  // also incorrectly reported as failed in both modes. The real advantage of
-  // SudoWorkerSession is that it survives across batches (one sudo spawn for
-  // the whole pull), not per-op crash accuracy.
+  // emitErrorAndExit includes already-completed results (batchResults) so the
+  // parent receives accurate partial state. Ops that had not yet started are
+  // padded with "worker exited before processing this op".
   process.once('uncaughtException', (err) => {
     const msg = err instanceof Error ? err.message : String(err);
     const stack = err instanceof Error ? err.stack : undefined;
@@ -1342,7 +1384,7 @@ if (require.main === module) {
 
   (inputStream as NodeJS.EventEmitter).on('error', (err: Error) => {
     process.stderr.write(`data channel error: ${err.message}\n`);
-    process.exit(1);
+    emitErrorAndExit(err.message);
   });
 
   // Compute trusted UIDs once at startup from sudo environment variables so the
@@ -1424,6 +1466,11 @@ if (require.main === module) {
     const continueOnError = request.continueOnError ?? false;
 
     const results: WorkerResult[] = [];
+    // Expose the in-progress results array so emitErrorAndExit can include
+    // completed results in crash responses. batchResults is the same array
+    // reference as results — pushes are visible via the reference immediately.
+    batchResults = results;
+    batchExpectedOps = request.ops.length;
     let aborted = false;
     for (const op of request.ops) {
       if (aborted) {
@@ -1530,6 +1577,10 @@ if (require.main === module) {
       }
     }
     writeResponse({ results });
+    // Batch complete — clear in-progress state so a subsequent crash (before
+    // the next batch starts) does not re-emit stale results.
+    batchResults = null;
+    batchExpectedOps = 0;
   });
 
   rl.on('close', () => {

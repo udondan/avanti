@@ -469,4 +469,89 @@ describe('dispatch', () => {
 
     expect(fs.existsSync(targetPath)).toBe(false);
   });
+
+  it.skipIf(isWindows)('routes read op and returns base64 content', () => {
+    const targetPath = path.join(tmpDir, 'dispatch-read.txt');
+    fs.writeFileSync(targetPath, 'read me');
+
+    const result = dispatch({ type: 'read', targetPath });
+
+    expect(result.kind).toBe('read');
+    if (result.kind === 'read') {
+      expect(Buffer.from(result.contentB64, 'base64').toString()).toBe(
+        'read me',
+      );
+      expect(result.isSymlink).toBe(false);
+      // read op does not return mode (only stat-read does)
+      expect(result.mode).toBeUndefined();
+    }
+  });
+
+  it.skipIf(isWindows)('routes readlink op and returns symlink target', () => {
+    const linkPath = path.join(tmpDir, 'dispatch-link');
+    const targetPath = path.join(tmpDir, 'dispatch-link-target.txt');
+    fs.writeFileSync(targetPath, 'target');
+    fs.symlinkSync(targetPath, linkPath);
+
+    const result = dispatch({ type: 'readlink', targetPath: linkPath });
+
+    expect(result.kind).toBe('read');
+    if (result.kind === 'read') {
+      expect(Buffer.from(result.contentB64, 'base64').toString()).toBe(
+        targetPath,
+      );
+      expect(result.isSymlink).toBe(true);
+    }
+  });
+
+  it.skipIf(isWindows)(
+    'routes stat-read op for a regular file and returns content and mode',
+    () => {
+      const targetPath = path.join(tmpDir, 'dispatch-stat-read.txt');
+      fs.writeFileSync(targetPath, 'stat me');
+      fs.chmodSync(targetPath, 0o644);
+
+      const result = dispatch({ type: 'stat-read', targetPath });
+
+      expect(result.kind).toBe('read');
+      if (result.kind === 'read') {
+        expect(Buffer.from(result.contentB64, 'base64').toString()).toBe(
+          'stat me',
+        );
+        expect(result.isSymlink).toBe(false);
+        expect(result.mode).toBe('0644');
+      }
+    },
+  );
+
+  it.skipIf(isWindows)(
+    'routes stat-read op for a symlink and returns link target with isSymlink=true',
+    () => {
+      const linkPath = path.join(tmpDir, 'dispatch-stat-link');
+      const targetPath = path.join(tmpDir, 'dispatch-stat-link-target.txt');
+      fs.writeFileSync(targetPath, 'target');
+      fs.symlinkSync(targetPath, linkPath);
+
+      const result = dispatch({ type: 'stat-read', targetPath: linkPath });
+
+      expect(result.kind).toBe('read');
+      if (result.kind === 'read') {
+        expect(Buffer.from(result.contentB64, 'base64').toString()).toBe(
+          targetPath,
+        );
+        expect(result.isSymlink).toBe(true);
+      }
+    },
+  );
+
+  it.skipIf(isWindows)('routes chmod op and changes file permissions', () => {
+    const targetPath = path.join(tmpDir, 'dispatch-chmod.txt');
+    fs.writeFileSync(targetPath, 'chmod me');
+    fs.chmodSync(targetPath, 0o644);
+
+    dispatch({ type: 'chmod', targetPath, mode: '0600' });
+
+    const mode = fs.lstatSync(targetPath).mode & 0o7777;
+    expect(mode).toBe(0o600);
+  });
 });
