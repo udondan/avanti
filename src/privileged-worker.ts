@@ -1223,7 +1223,13 @@ if (require.main === module) {
         // ensuring the parent's readline sees the JSON line before the 'close'
         // event fires. process.exit() alone can terminate before the OS delivers
         // the write buffer to the reader on the other end of the socket.
-        outputStream.end(() => process.exit(1));
+        // process.stdout cannot be end()ed (throws ERR_STDOUT_CLOSE); only
+        // call end() on the IPC socket path where it is needed to flush.
+        if (outputStream !== process.stdout) {
+          outputStream.end(() => process.exit(1));
+        } else {
+          process.exit(1);
+        }
       });
       setTimeout(() => process.exit(1), 100).unref();
     } catch {
@@ -1237,7 +1243,13 @@ if (require.main === module) {
     );
     try {
       writeResponse({ results: [{ ok: false, error: msg }] }, () => {
-        outputStream.end(() => process.exit(1));
+        // process.stdout cannot be end()ed (throws ERR_STDOUT_CLOSE); only
+        // call end() on the IPC socket path where it is needed to flush.
+        if (outputStream !== process.stdout) {
+          outputStream.end(() => process.exit(1));
+        } else {
+          process.exit(1);
+        }
       });
       setTimeout(() => process.exit(1), 100).unref();
     } catch {
