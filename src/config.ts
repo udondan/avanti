@@ -804,7 +804,7 @@ export async function loadConfig(
 }
 
 // Recursively assert that a value is a valid JsonValue — no class instances
-// (e.g. Date from js-yaml timestamp parsing) anywhere in the tree.
+// (e.g. Set from a !!set YAML tag) anywhere in the tree.
 function assertPlainJsonValue(val: unknown, path: string): void {
   if (val === null || typeof val !== 'object') return;
   if (Array.isArray(val)) {
@@ -819,7 +819,7 @@ function assertPlainJsonValue(val: unknown, path: string): void {
       (val as { constructor?: { name?: string } }).constructor?.name ??
       'unknown';
     throw new Error(
-      `${path}: expected a plain object but got ${name} — quote YAML timestamps and other special values`,
+      `${path}: expected a plain object but got ${name} — variable values must be strings, numbers, booleans, lists, or plain objects`,
     );
   }
   for (const [k, v] of Object.entries(val as Record<string, unknown>)) {

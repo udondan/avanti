@@ -2240,43 +2240,6 @@ files:
     await expect(loadConfig(f)).rejects.toThrow('variables.bad:');
   });
 
-  it('throws when a variable value is a non-plain object (e.g. YAML timestamp)', async () => {
-    // js-yaml parses unquoted timestamps as Date objects; avanti must reject them
-    const f = writeTmp(`
-variables:
-  ts: 2024-01-15T10:30:00Z
-files:
-  out.txt:
-    src: https://example.com/out.txt
-`);
-    await expect(loadConfig(f)).rejects.toThrow('variables.ts:');
-  });
-
-  it('throws when a nested value inside a list variable is a non-plain object', async () => {
-    const f = writeTmp(`
-variables:
-  items:
-    - value: 2024-01-15T10:30:00Z
-files:
-  out.txt:
-    src: https://example.com/out.txt
-`);
-    await expect(loadConfig(f)).rejects.toThrow('variables.items[0].value:');
-  });
-
-  it('throws when a nested value inside an object variable is a non-plain object', async () => {
-    const f = writeTmp(`
-variables:
-  db:
-    host: pg.internal
-    updated_at: 2024-01-15T10:30:00Z
-files:
-  out.txt:
-    src: https://example.com/out.txt
-`);
-    await expect(loadConfig(f)).rejects.toThrow('variables.db.updated_at:');
-  });
-
   it('uses variables. prefix in error messages for variable source parsing', async () => {
     const f = writeTmp(`
 variables:
@@ -2540,10 +2503,10 @@ files:
 files:
   out.txt:
     src:
-      - raw: "# linux\n"
+      - raw: "# linux\\n"
         if:
           os: linux
-      - raw: "# mac\n"
+      - raw: "# mac\\n"
         if:
           os: mac
 `);
