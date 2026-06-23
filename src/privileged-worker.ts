@@ -603,8 +603,12 @@ export function handleWriteInPlace(
     let fd: number | undefined;
     let rfd: number | undefined;
     let savedMode: number | undefined;
+    let savedSize: number | undefined;
     // Declared here (not inside try) so the catch block can read it.
     let writeSucceeded = false;
+    // Declared here so both the pre-truncation read (inside try) and the
+    // catch block can access it.
+    let originalContentForRestore: Buffer | undefined;
     // Capture the initial write-open error so we can do EACCES recovery
     // outside the catch block, avoiding the preserve-caught-error lint constraint.
     let firstOpenErr: NodeJS.ErrnoException | undefined;
@@ -621,6 +625,7 @@ export function handleWriteInPlace(
           );
         }
         savedMode = rst.mode & 0o7777;
+        savedSize = rst.size;
       } catch (e) {
         const code = (e as NodeJS.ErrnoException).code;
         if (code === 'ELOOP') {
@@ -646,6 +651,24 @@ export function handleWriteInPlace(
         }
         savedMode = rst.mode & 0o7777;
         // rfd stays undefined — no EACCES recovery fchmod needed.
+      }
+
+      // Read original content for in-memory restore when no backup: is configured.
+      // Must happen before the O_TRUNC write-open below (which zeroes the file).
+      // Only when rfd is available (EACCES path has no rfd) and within MAX_READ.
+      // If the file is larger than MAX_READ without a backup path, there is no
+      // safe restore on write failure — that scenario is documented below in the
+      // catch block.
+      if (
+        !op.backupPath &&
+        rfd !== undefined &&
+        savedSize !== undefined &&
+        savedSize <= MAX_READ
+      ) {
+        originalContentForRestore = Buffer.alloc(savedSize);
+        if (savedSize > 0) {
+          fs.readSync(rfd, originalContentForRestore, 0, savedSize, 0);
+        }
       }
 
       try {
@@ -813,44 +836,74 @@ export function handleWriteInPlace(
       // backup (that would silently revert a successful write). The file will
       // have the correct content with potentially wrong permissions; the next
       // avanti pull will re-detect and re-apply the mode change.
-      if (!writeSucceeded && fd !== undefined && op.backupPath) {
-        // Rename-based restore to avoid following symlinks: stage backup content
-        // to a temp file in the same dir as the target, then rename atomically.
-        // copyFileSync alone would follow a symlink placed at resolvedTarget
-        // between the truncation and the restore.
+      if (!writeSucceeded && fd !== undefined) {
         const restoreTmp = path.join(dir, `.avanti-restore-${randomHex()}`);
-        try {
-          // COPYFILE_EXCL uses O_CREAT|O_EXCL for the destination, so it fails
-          // with EEXIST if a symlink was raced to restoreTmp before we write —
-          // preventing the restore from following an attacker-controlled symlink
-          // to overwrite an unrelated file.
-          fs.copyFileSync(
-            path.resolve(op.backupPath),
-            restoreTmp,
-            fs.constants.COPYFILE_EXCL,
-          );
-          fs.renameSync(restoreTmp, resolvedTarget);
-        } catch (restoreErr) {
+        if (op.backupPath) {
+          // Rename-based restore to avoid following symlinks: stage backup content
+          // to a temp file in the same dir as the target, then rename atomically.
+          // copyFileSync alone would follow a symlink placed at resolvedTarget
+          // between the truncation and the restore.
           try {
-            fs.unlinkSync(restoreTmp);
-          } catch {
-            // best-effort cleanup
-          }
-          if ((restoreErr as NodeJS.ErrnoException).code === 'EISDIR') {
-            // The parent directory was swapped for a symlink→directory between
-            // the O_TRUNC and this restore rename. The file content is already
-            // lost (truncated). Report clearly; backup copy is at op.backupPath.
-            console.error(
-              `avanti: write-in-place restore failed — ${op.targetPath} was replaced by a directory; file is truncated. Backup: ${op.backupPath}`,
+            // COPYFILE_EXCL uses O_CREAT|O_EXCL for the destination, so it fails
+            // with EEXIST if a symlink was raced to restoreTmp before we write —
+            // preventing the restore from following an attacker-controlled symlink
+            // to overwrite an unrelated file.
+            fs.copyFileSync(
+              path.resolve(op.backupPath),
+              restoreTmp,
+              fs.constants.COPYFILE_EXCL,
             );
-          } else {
-            // Any other restore failure (ENOSPC, EACCES, etc.): surface it so
-            // the user knows the file was left truncated.
+            fs.renameSync(restoreTmp, resolvedTarget);
+          } catch (restoreErr) {
+            try {
+              fs.unlinkSync(restoreTmp);
+            } catch {
+              // best-effort cleanup
+            }
+            if ((restoreErr as NodeJS.ErrnoException).code === 'EISDIR') {
+              // The parent directory was swapped for a symlink→directory between
+              // the O_TRUNC and this restore rename. The file content is already
+              // lost (truncated). Report clearly; backup copy is at op.backupPath.
+              console.error(
+                `avanti: write-in-place restore failed — ${op.targetPath} was replaced by a directory; file is truncated. Backup: ${op.backupPath}`,
+              );
+            } else {
+              // Any other restore failure (ENOSPC, EACCES, etc.): surface it so
+              // the user knows the file was left truncated.
+              process.stderr.write(
+                `avanti-worker: writeInPlace: restore of ${op.targetPath} from backup failed: ${(restoreErr as Error).message}\n`,
+              );
+            }
+            // best-effort restore; original write error is re-thrown below
+          }
+        } else if (originalContentForRestore !== undefined) {
+          // No backup: path configured. Use the pre-truncation in-memory snapshot
+          // read via rfd before O_TRUNC zeroed the file. Uses the same
+          // rename-based pattern as the backup restore above to avoid following
+          // a symlink placed at resolvedTarget between the truncation and here.
+          try {
+            fs.writeFileSync(restoreTmp, originalContentForRestore, {
+              flag: 'wx',
+            });
+            fs.renameSync(restoreTmp, resolvedTarget);
+          } catch (restoreErr) {
+            try {
+              fs.unlinkSync(restoreTmp);
+            } catch {
+              // best-effort cleanup
+            }
             process.stderr.write(
-              `avanti-worker: writeInPlace: restore of ${op.targetPath} from backup failed: ${(restoreErr as Error).message}\n`,
+              `avanti-worker: writeInPlace: in-memory restore of ${op.targetPath} failed: ${(restoreErr as Error).message}. File may be truncated.\n`,
             );
           }
-          // best-effort restore; original write error is re-thrown below
+        } else {
+          // No backup path and no in-memory snapshot available (rfd was absent
+          // because the read-open failed with EACCES, or the file exceeded
+          // MAX_READ). The file was already truncated by O_TRUNC before the write
+          // failed. No automatic recovery is possible.
+          process.stderr.write(
+            `avanti-worker: writeInPlace: ${op.targetPath} was truncated and no restore is possible (no backup: configured, no pre-read available). File may be permanently empty.\n`,
+          );
         }
       }
       // Restore temporarily-boosted mode only when writeSucceeded is false.
