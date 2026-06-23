@@ -1528,6 +1528,13 @@ export class SudoWorkerSession {
         }
       }
 
+      // Unref the child so it does not prevent the Node event loop from
+      // draining after all sessions are closed (important in test environments
+      // where the process should exit as soon as all work is done). close()
+      // still sends SIGTERM + SIGKILL to ensure the worker exits; unref() only
+      // removes the event-loop reference, not the ability to kill the process.
+      this.proc.unref();
+
       this.proc.on('error', (err) => {
         // Null proc before close() so close() does not SIGTERM a process that
         // has already reported a spawn error — mirrors the 'close' handler.
