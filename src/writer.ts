@@ -19,9 +19,32 @@ import type {
 // Override via AVANTI_WORLD_TMP for hardened systems where /tmp is mounted
 // noexec (the worker exec fails with ENOEXEC in that case). The override path
 // must be world-executable (all ancestor directories mode >=0711).
+const WORLD_TMP_OVERRIDE = process.env.AVANTI_WORLD_TMP;
+if (WORLD_TMP_OVERRIDE && process.platform !== 'win32') {
+  // Validate the override: it must not be world-writable without the sticky bit
+  // (1000). Without sticky, any local user can rename/unlink files in the
+  // directory, enabling a race to replace the staged worker or IPC socket dir.
+  try {
+    const st = fs.statSync(WORLD_TMP_OVERRIDE);
+    const isWorldWritable = (st.mode & 0o002) !== 0;
+    const hasSticky = (st.mode & 0o1000) !== 0;
+    if (isWorldWritable && !hasSticky) {
+      throw new Error(
+        `AVANTI_WORLD_TMP=${WORLD_TMP_OVERRIDE} is world-writable without the sticky bit — ` +
+          'any local user could race the temp directory. Set the sticky bit or use a private directory.',
+      );
+    }
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === 'ENOENT') {
+      throw new Error(`AVANTI_WORLD_TMP=${WORLD_TMP_OVERRIDE} does not exist`, {
+        cause: e,
+      });
+    }
+    throw e;
+  }
+}
 const WORLD_TMP =
-  process.env.AVANTI_WORLD_TMP ??
-  (process.platform === 'win32' ? os.tmpdir() : '/tmp');
+  WORLD_TMP_OVERRIDE ?? (process.platform === 'win32' ? os.tmpdir() : '/tmp');
 
 export interface SudoChmodTarget {
   targetPath: string;
@@ -65,6 +88,10 @@ function resolveNodeExec(sudo: true | string): string {
   // Only set this in controlled environments (tests, NixOS/Guix with a system-
   // managed node) where the supplied path is known trustworthy. Never set it
   // from untrusted input. Tests must clear it in afterEach.
+  // Note: shell commands run by the `exec:` source type are subprocesses of
+  // avanti; environment variables set inside them do NOT propagate back to the
+  // parent avanti process. A remote config using `exec:` cannot inject this
+  // variable into avanti's environment.
   // Not cached: the env var can legitimately change between calls in tests.
   if (process.env.AVANTI_NODE_EXEC) {
     return process.env.AVANTI_NODE_EXEC;
@@ -271,14 +298,25 @@ function stageWorkerForSudo(workerPath: string): {
   // mkdtemp(2) is POSIX-specified to create with mode S_IRWXU (0700) regardless
   // of the caller's umask, so no umask manipulation is required here.
   const tmpDir = fs.mkdtempSync(path.join(WORLD_TMP, 'avanti-worker-'));
-  stagedWorkerDirs.add(tmpDir); // tracked for cleanup on abnormal exit
-  // Chmod to 0o711: the named sudo user needs to traverse and exec the script
-  // but must not be able to list the directory contents.
-  fs.chmodSync(tmpDir, 0o711);
-  const stagedPath = path.join(tmpDir, 'privileged-worker.js');
-  fs.copyFileSync(workerPath, stagedPath);
-  fs.chmodSync(stagedPath, 0o444);
-  return { stagedPath, tmpDir };
+  try {
+    // Chmod to 0o711: the named sudo user needs to traverse and exec the script
+    // but must not be able to list the directory contents.
+    fs.chmodSync(tmpDir, 0o711);
+    const stagedPath = path.join(tmpDir, 'privileged-worker.js');
+    fs.copyFileSync(workerPath, stagedPath);
+    fs.chmodSync(stagedPath, 0o444);
+    stagedWorkerDirs.add(tmpDir); // tracked for cleanup on abnormal exit
+    return { stagedPath, tmpDir };
+  } catch (e) {
+    // Clean up immediately on staging failure; do not rely solely on process-
+    // exit cleanup since a retry loop would accumulate orphaned directories.
+    try {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    } catch {
+      // best-effort cleanup
+    }
+    throw e;
+  }
 }
 
 // Shared setup for both runPrivilegedWorker (one-shot spawnSync) and
@@ -634,45 +672,34 @@ export async function sudoAtomicWrite(
     );
   }
 
-  // Append chmod ops after write ops so they share the same per-identity worker.
+  // Group ops into separate per-identity write and chmod maps so the dispatch
+  // loop never slices by count. Using two maps eliminates the implicit ordering
+  // invariant (write ops must precede chmod ops in a shared array) that a future
+  // refactor could silently violate.
+  const writeGroups = new Map<true | string, WriteOp[]>();
+  const chmodGroups = new Map<true | string, WriteOp[]>();
+  for (const { sudo, op } of targetOps) {
+    addToGroup(writeGroups, sudo, op);
+  }
   for (const t of chmodTargets) {
     const op: WriteOp = {
       type: 'chmod',
       targetPath: t.targetPath,
       mode: t.mode,
     };
-    targetOps.push({ sudo: t.sudo, op });
+    addToGroup(chmodGroups, t.sudo, op);
   }
 
-  // Group ops by sudo identity; one worker invocation per group.
-  // Track write op count per identity separately so the chmod result range
-  // can be derived structurally (writeOpsPerSudo.get(sudo)) rather than by
-  // relying on chmod ops always appearing after write ops in targetOps.
-  const groups = new Map<true | string, WriteOp[]>();
-  const writeOpsPerSudo = new Map<true | string, number>();
-  for (const { sudo, op } of targetOps) {
-    const existing = groups.get(sudo);
-    if (existing) {
-      existing.push(op);
-    } else {
-      groups.set(sudo, [op]);
-    }
-    if (op.type !== 'chmod') {
-      writeOpsPerSudo.set(sudo, (writeOpsPerSudo.get(sudo) ?? 0) + 1);
-    }
-  }
+  // Collect all sudo identities that have either write or chmod ops.
+  const sudoIds = new Set<true | string>([
+    ...writeGroups.keys(),
+    ...chmodGroups.keys(),
+  ]);
 
   let chmodApplied = 0;
-  for (const [sudo, ops] of groups) {
-    // Split write ops from chmod ops and dispatch them as two separate exec()
-    // calls. A chmod failure after successful writes must not surface as a
-    // write failure: the files are already on disk with the correct content;
-    // only the permissions are wrong. Separating the calls ensures write
-    // failures (fatal) and chmod failures (survivable — next pull re-detects
-    // the drift) are reported and handled independently.
-    const writeCount = writeOpsPerSudo.get(sudo) ?? 0;
-    const writeOps = ops.slice(0, writeCount);
-    const chmodOps = ops.slice(writeCount);
+  for (const sudo of sudoIds) {
+    const writeOps = writeGroups.get(sudo) ?? [];
+    const chmodOps = chmodGroups.get(sudo) ?? [];
 
     const session = sessions?.get(sudo);
     if (writeOps.length > 0) {
@@ -721,12 +748,25 @@ export async function sudoAtomicWrite(
         // this branch exists for callers that skip session management (e.g. tests).
         chmodResults = runPrivilegedWorker(sudo, chmodOps, true);
       }
-      for (let ci = 0; ci < chmodResults.length; ci++) {
+      // Detect crash sentinel: when continueOnError=true and the worker exits
+      // non-zero after completing all N ops, it appends a (N+1)th result with
+      // ok:false. Surface it explicitly rather than masking it as a spurious
+      // "chmod failed for undefined" warning.
+      if (chmodResults.length > chmodOps.length) {
+        const sentinel = chmodResults[chmodOps.length];
+        if (sentinel && !sentinel.ok) {
+          throw new Error(
+            `privileged chmod worker crashed after completing all ops: ${sentinel.error ?? 'unknown'}`,
+          );
+        }
+      }
+      for (let ci = 0; ci < chmodOps.length; ci++) {
         const r = chmodResults[ci];
+        if (!r) break;
         if (r.ok && !r.skipped) chmodApplied++;
         else if (!r.ok)
           console.warn(
-            `Warning: chmod failed for ${chmodOps[ci]?.targetPath}: ${r.error ?? 'unknown error'}`,
+            `Warning: chmod failed for ${chmodOps[ci].targetPath}: ${r.error ?? 'unknown error'}`,
           );
       }
     }
@@ -965,9 +1005,14 @@ export async function sudoStatBatch(
       targetPath: path.resolve(item.filePath),
     }));
     const session = sessions?.get(sudo);
+    // Scale timeout with batch size: 2 s per stat-read op keeps large batches
+    // (e.g. 20+ lstatFailed paths on slow/encrypted filesystems) from timing out
+    // while sudoAtomicRead with identical logic would succeed. The 30 s minimum
+    // covers small batches and one-off stat checks.
+    const statTimeoutMs = Math.max(30_000, ops.length * 2_000);
     let results: WorkerResult[];
     if (session) {
-      results = await session.exec(ops, true);
+      results = await session.exec(ops, true, statTimeoutMs);
     } else {
       // No-session fallback: see the note in sudoAtomicWrite — bypasses the
       // single-prompt guarantee; only used by callers that skip openPrivilegedSessions.
@@ -1092,7 +1137,6 @@ export class SudoWorkerSession {
     this.trustedUids = buildTrustedUids(sudo);
 
     const { nodeExec, resolvedWorkerPath, tmpDir } = prepareWorkerExec(sudo);
-    activeSudoSessions.add(this);
 
     // Random nonce: passed to the worker via --nonce= and echoed back as its
     // first IPC line. Verifies the connecting process is the worker we spawned
@@ -1141,9 +1185,18 @@ export class SudoWorkerSession {
       this.tmpDir,
       `ipc-${crypto.randomBytes(8).toString('hex')}.sock`,
     );
+    // Add to the active-sessions set only after all synchronous setup succeeds
+    // (prepareWorkerExec + mkdtempSync). If either throws (e.g. ENOSPC), the
+    // session is never added and the SIGTERM handler never sees a half-constructed
+    // object whose this.ready / this.proc are undefined.
+    activeSudoSessions.add(this);
 
     let readyResolve: () => void;
     let readyReject: (e: Error) => void;
+    // Set to true once the worker has completed the nonce handshake and
+    // readyResolve() has been called. Used to produce accurate error messages
+    // in proc.on('close') — "before connecting" is wrong for post-connection crashes.
+    let connected = false;
     this.ready = new Promise<void>((res, rej) => {
       // Connection timeout: if the worker never connects to the IPC socket
       // (e.g. sudo hangs on a password prompt that has no TTY, PAM deadlock,
@@ -1257,6 +1310,7 @@ export class SudoWorkerSession {
           this.dataIn = socket;
           this.rl = rl;
           this.server!.close();
+          connected = true;
           readyResolve();
           return;
         }
@@ -1419,9 +1473,13 @@ export class SudoWorkerSession {
           // but concurrent exec is guarded against). Only reject if the promise
           // object is still the one we captured.
           const readyErr = new Error(
-            code !== null
-              ? `privileged worker failed before connecting (exit ${code})`
-              : `privileged worker killed before connecting (signal ${signal ?? 'unknown'})`,
+            connected
+              ? code !== null
+                ? `privileged worker crashed after connecting (exit ${code})`
+                : `privileged worker killed after connecting (signal ${signal ?? 'unknown'})`
+              : code !== null
+                ? `privileged worker failed before connecting (exit ${code})`
+                : `privileged worker killed before connecting (signal ${signal ?? 'unknown'})`,
           );
           if (this.pending === p) {
             this.pending = null;

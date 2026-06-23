@@ -542,15 +542,20 @@ export function handleWriteInPlace(
     }
   }
 
-  // Commit the backup AFTER confirming the target is still a regular file.
-  // backupRegularFile internally stages to an O_EXCL temp and renames atomically,
-  // so no outer try/catch wrapper or intermediate backupTmpPath is needed here.
+  // Validate and decode content before committing the backup. If contentB64 is
+  // invalid, the write would fail anyway — but without this ordering the backup
+  // would already be committed, leaving an orphaned copy at backupPath with no
+  // new file written. Validating first means a bad base64 payload is caught
+  // before any filesystem state changes (matching handleWriteMv's ordering).
+  validateBase64(op.contentB64, 'contentB64');
+  const content = Buffer.from(op.contentB64, 'base64');
+
+  // Commit the backup AFTER confirming the target is still a regular file and
+  // validating contentB64. backupRegularFile internally stages to an O_EXCL temp
+  // and renames atomically, so no outer try/catch wrapper is needed here.
   if (op.backupPath && !isNewFile) {
     backupRegularFile(resolvedTarget, path.resolve(op.backupPath), trustedUids);
   }
-
-  validateBase64(op.contentB64, 'contentB64');
-  const content = Buffer.from(op.contentB64, 'base64');
   const effectiveMode = op.mode ?? (isNewFile ? op.defaultMode : undefined);
 
   if (isNewFile) {
@@ -1259,6 +1264,14 @@ export function dispatch(
     case 'readlink': {
       const resolvedPath = path.resolve(op.targetPath);
       const target = fs.readlinkSync(resolvedPath);
+      // PATH_MAX caps symlink targets at 4096 bytes on Linux/macOS, but NFS/CIFS
+      // servers and crafted filesystems can exceed this. Guard consistently with
+      // the read/stat-read paths so the parent cannot be OOM'd by a runaway target.
+      if (target.length > MAX_READ) {
+        throw new Error(
+          `readlink: ${resolvedPath} target exceeds the 100 MiB read limit`,
+        );
+      }
       return {
         kind: 'read',
         contentB64: Buffer.from(target).toString('base64'),

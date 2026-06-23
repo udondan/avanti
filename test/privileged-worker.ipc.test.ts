@@ -268,8 +268,12 @@ describe.skipIf(isWindows || !workerExists)(
 
 /**
  * Spawn the worker in socket mode, complete the nonce handshake, send one or
- * more JSON requests, and return all responses.  The server is closed and the
- * worker process is killed in the afterEach cleanup tracked by the caller.
+ * more JSON requests, and return all responses.
+ *
+ * @param trackedProcs - optional array to register the spawned ChildProcess in
+ *   so the caller's afterEach can kill it. Required when the test expects the
+ *   promise to reject (e.g. nonce mismatch) — in that case the proc may not
+ *   exit on its own before the next test's tmpDir cleanup runs.
  */
 function runWorkerOverSocket(
   socketPath: string,
@@ -278,6 +282,7 @@ function runWorkerOverSocket(
   // workerNonce lets callers inject a *different* nonce into the worker to
   // test the mismatch rejection path. Defaults to nonce (the happy path).
   workerNonce?: string,
+  trackedProcs?: Array<ReturnType<typeof spawn>>,
 ): Promise<WorkerResponse[]> {
   return new Promise((resolve, reject) => {
     const responses: WorkerResponse[] = [];
@@ -290,6 +295,7 @@ function runWorkerOverSocket(
         env: { ...process.env, AVANTI_WORKER_NONCE: workerNonce ?? nonce },
         stdio: ['ignore', 'ignore', 'inherit'],
       });
+      if (trackedProcs) trackedProcs.push(proc);
       proc.on('error', reject);
       proc.on('close', (code) => {
         if (code !== 0 && pendingIdx < requests.length) {
@@ -335,7 +341,14 @@ function runWorkerOverSocket(
           responses.length < requests.length &&
           pendingIdx >= requests.length
         ) {
-          resolve(responses); // all sent, some may have been received
+          // All requests were sent but fewer responses arrived — worker crashed
+          // mid-batch. Reject so tests that don't check response length still
+          // detect partial failures rather than silently passing.
+          reject(
+            new Error(
+              `worker closed after ${responses.length}/${requests.length} responses`,
+            ),
+          );
         }
       });
 
@@ -356,6 +369,10 @@ describe.skipIf(isWindows || !workerExists)(
   () => {
     let socketPath: string;
     let socketNonce: string;
+    // Procs registered here are killed in afterEach so the process doesn't
+    // outlive the test's tmpDir (relevant when a test expects the promise to reject
+    // and proc may not exit on its own before the next test's fs.rmSync).
+    const trackedProcs: Array<ReturnType<typeof spawn>> = [];
 
     beforeEach(() => {
       socketPath = path.join(
@@ -363,6 +380,17 @@ describe.skipIf(isWindows || !workerExists)(
         `test-${crypto.randomBytes(4).toString('hex')}.sock`,
       );
       socketNonce = crypto.randomBytes(32).toString('hex');
+    });
+
+    afterEach(() => {
+      for (const p of trackedProcs) {
+        try {
+          p.kill('SIGTERM');
+        } catch {
+          // already exited
+        }
+      }
+      trackedProcs.length = 0;
     });
 
     it('completes nonce handshake and processes a write-mv request', async () => {
@@ -405,6 +433,7 @@ describe.skipIf(isWindows || !workerExists)(
             },
           ],
           wrongNonce, // worker sends this — mismatch
+          trackedProcs,
         ),
       ).rejects.toThrow(/nonce mismatch/);
     });
@@ -438,6 +467,126 @@ describe.skipIf(isWindows || !workerExists)(
       expect(responses[1].results[0].ok).toBe(true);
       expect(fs.readFileSync(paths[0], 'utf8')).toBe('aaa');
       expect(fs.readFileSync(paths[1], 'utf8')).toBe('bbb');
+    });
+  },
+);
+
+describe.skipIf(isWindows || !workerExists)('IPC protocol — read op', () => {
+  it('reads a regular file and returns its base64 content', () => {
+    const targetPath = path.join(tmpDir, 'readable.txt');
+    fs.writeFileSync(targetPath, 'read me');
+
+    const resp = runWorker({
+      ops: [{ type: 'read', targetPath }],
+    });
+
+    expect(resp.results[0].ok).toBe(true);
+    expect(resp.results[0].isSymlink).toBe(false);
+    expect(
+      Buffer.from(resp.results[0].contentB64 ?? '', 'base64').toString('utf8'),
+    ).toBe('read me');
+  });
+
+  it('returns ok:false with ENOENT when the file does not exist', () => {
+    const resp = runWorker({
+      ops: [{ type: 'read', targetPath: path.join(tmpDir, 'no-such.txt') }],
+    });
+
+    expect(resp.results[0].ok).toBe(false);
+    expect(resp.results[0].code).toBe('ENOENT');
+  });
+});
+
+describe.skipIf(isWindows || !workerExists)(
+  'IPC protocol — readlink op',
+  () => {
+    it('reads a symlink target and returns it as base64', () => {
+      const linkPath = path.join(tmpDir, 'link.txt');
+      const targetPath = path.join(tmpDir, 'real.txt');
+      fs.writeFileSync(targetPath, 'real');
+      fs.symlinkSync(targetPath, linkPath);
+
+      const resp = runWorker({
+        ops: [{ type: 'readlink', targetPath: linkPath }],
+      });
+
+      expect(resp.results[0].ok).toBe(true);
+      expect(resp.results[0].isSymlink).toBe(true);
+      expect(
+        Buffer.from(resp.results[0].contentB64 ?? '', 'base64').toString(
+          'utf8',
+        ),
+      ).toBe(targetPath);
+    });
+
+    it('returns ok:false when the path is not a symlink', () => {
+      const targetPath = path.join(tmpDir, 'regular.txt');
+      fs.writeFileSync(targetPath, 'text');
+
+      const resp = runWorker({
+        ops: [{ type: 'readlink', targetPath }],
+      });
+
+      expect(resp.results[0].ok).toBe(false);
+    });
+  },
+);
+
+describe.skipIf(isWindows || !workerExists)(
+  'IPC protocol — stat-read op',
+  () => {
+    it('reads a regular file and returns content and mode', () => {
+      const targetPath = path.join(tmpDir, 'stat-regular.txt');
+      fs.writeFileSync(targetPath, 'stat content');
+      fs.chmodSync(targetPath, 0o644);
+
+      const resp = runWorker({
+        ops: [{ type: 'stat-read', targetPath }],
+      });
+
+      expect(resp.results[0].ok).toBe(true);
+      expect(resp.results[0].isSymlink).toBe(false);
+      expect(resp.results[0].mode).toBe('0644');
+      expect(
+        Buffer.from(resp.results[0].contentB64 ?? '', 'base64').toString(
+          'utf8',
+        ),
+      ).toBe('stat content');
+    });
+
+    it('follows a symlink (ELOOP → readlink fallback) and returns isSymlink:true with the link target', () => {
+      // stat-read uses O_NOFOLLOW: a symlink at the path triggers ELOOP, which
+      // causes the worker to fall back to readlinkSync and return the link target
+      // as contentB64 with isSymlink:true. This is the critical path for pre-write
+      // history capture of symlink targets used by `avanti revert`.
+      const realPath = path.join(tmpDir, 'real.txt');
+      const linkPath = path.join(tmpDir, 'sym.txt');
+      fs.writeFileSync(realPath, 'real content');
+      fs.symlinkSync(realPath, linkPath);
+
+      const resp = runWorker({
+        ops: [{ type: 'stat-read', targetPath: linkPath }],
+      });
+
+      expect(resp.results[0].ok).toBe(true);
+      expect(resp.results[0].isSymlink).toBe(true);
+      // contentB64 should be the link target path, not the file content
+      expect(
+        Buffer.from(resp.results[0].contentB64 ?? '', 'base64').toString(
+          'utf8',
+        ),
+      ).toBe(realPath);
+    });
+
+    it('returns ok:false with ENOENT when the path does not exist', () => {
+      const resp = runWorker({
+        ops: [
+          { type: 'stat-read', targetPath: path.join(tmpDir, 'ghost.txt') },
+        ],
+      });
+
+      expect(resp.results[0].ok).toBe(false);
+      expect(resp.results[0].code).toBe('ENOENT');
     });
   },
 );
