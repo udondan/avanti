@@ -1474,7 +1474,11 @@ export function pullCommand(): Command {
       const changedTargets = writeTargets.filter(
         (t, i) =>
           (allDiffs[i].hasChanges || allDiffs[i].isNew) &&
-          !(allDiffs[i].contentChanged === false && !!allDiffs[i].modeChange),
+          !(
+            allDiffs[i].contentChanged === false &&
+            !!allDiffs[i].modeChange &&
+            !allDiffs[i].isNew
+          ),
       );
       // Only include stale restore targets whose diff still has changes (not
       // suppressed by the idempotency check above). Also include diffs where
@@ -1647,7 +1651,7 @@ export function pullCommand(): Command {
           process.platform !== 'win32'
             ? writeTargets.flatMap((t, i) => {
                 const d = allDiffs[i];
-                return d.modeChange && !d.contentChanged && t.sudo
+                return d.modeChange && !d.contentChanged && !d.isNew && t.sudo
                   ? [
                       {
                         targetPath: t.targetPath,
@@ -1805,7 +1809,12 @@ export function pullCommand(): Command {
         if (process.platform !== 'win32') {
           for (let i = 0; i < writeTargets.length; i++) {
             const d = allDiffs[i];
-            if (d.modeChange && !d.contentChanged && !writeTargets[i].sudo) {
+            if (
+              d.modeChange &&
+              !d.contentChanged &&
+              !d.isNew &&
+              !writeTargets[i].sudo
+            ) {
               const lst = fs.lstatSync(writeTargets[i].targetPath, {
                 throwIfNoEntry: false,
               });
