@@ -570,12 +570,20 @@ function runPrivilegedWorker(
       { cause: e },
     );
   }
-  if (!continueOnError) {
-    for (const r of results) {
-      if (!r.ok) throw new Error(r.error ?? 'privileged worker op failed');
-    }
-  }
   return results;
+}
+
+// Thrown by sudoAtomicWrite when a write op fails mid-batch. writtenPaths holds
+// the target paths that were successfully written before the failure — callers
+// that track history can record a partial pull session for those files.
+export class PartialWriteError extends Error {
+  constructor(
+    message: string,
+    public readonly writtenPaths: string[],
+  ) {
+    super(message);
+    this.name = 'PartialWriteError';
+  }
 }
 
 // Each target is written atomically inside the privileged worker process, but
@@ -721,6 +729,9 @@ export async function sudoAtomicWrite(
   ]);
 
   let chmodApplied = 0;
+  // Tracks paths written successfully so far — populated as each write result
+  // is confirmed ok. Used to construct PartialWriteError on mid-batch failure.
+  const writtenPaths: string[] = [];
   for (const sudo of sudoIds) {
     const writeOps = writeGroups.get(sudo) ?? [];
     const chmodOps = chmodGroups.get(sudo) ?? [];
@@ -735,19 +746,38 @@ export async function sudoAtomicWrite(
       );
     }
     if (writeOps.length > 0) {
-      let writeResults: WorkerResult[];
-      if (session) {
-        writeResults = await session.exec(writeOps);
-      } else {
-        // No session: fall back to a one-shot spawnSync call. This bypasses the
-        // single-sudo-prompt guarantee (one spawnSync per identity per call) and
-        // silently re-prompts if sudo credential caching is disabled. All production
-        // callers (pull, reset, revert) open sessions via openPrivilegedSessions;
-        // this branch exists for callers that skip session management (e.g. tests).
-        writeResults = runPrivilegedWorker(sudo, writeOps, false);
-      }
-      for (const r of writeResults) {
-        if (!r.ok) throw new Error(r.error ?? 'privileged worker op failed');
+      // Wrap both the worker call and the per-result check in one try-catch so
+      // that any error (session crash, worker early-exit, or a failed op) is
+      // surfaced as PartialWriteError with the paths written so far. This lets
+      // pull.ts record partial history for the files that actually landed.
+      try {
+        let writeResults: WorkerResult[];
+        if (session) {
+          writeResults = await session.exec(writeOps);
+        } else {
+          // No session: fall back to a one-shot spawnSync call. This bypasses the
+          // single-sudo-prompt guarantee (one spawnSync per identity per call) and
+          // silently re-prompts if sudo credential caching is disabled. All
+          // production callers (pull, reset, revert) open sessions via
+          // openPrivilegedSessions; this branch exists for callers that skip
+          // session management (e.g. tests).
+          writeResults = runPrivilegedWorker(sudo, writeOps, false);
+        }
+        for (let ri = 0; ri < writeResults.length; ri++) {
+          const r = writeResults[ri];
+          if (!r.ok)
+            throw new PartialWriteError(
+              r.error ?? 'privileged worker op failed',
+              writtenPaths,
+            );
+          writtenPaths.push(writeOps[ri].targetPath);
+        }
+      } catch (e) {
+        if (e instanceof PartialWriteError) throw e;
+        throw new PartialWriteError(
+          e instanceof Error ? e.message : String(e),
+          writtenPaths,
+        );
       }
     }
     if (chmodOps.length > 0) {

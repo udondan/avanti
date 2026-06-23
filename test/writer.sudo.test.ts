@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import {
+  PartialWriteError,
   sudoAtomicDelete,
   sudoAtomicWrite,
   sudoUserArgs,
@@ -297,6 +298,51 @@ describe.skipIf(isWindows)('sudoAtomicWrite', () => {
 
     const { ops } = getReq() as { ops: Array<{ backupPath?: string }> };
     expect(ops[0].backupPath).toBe('/etc/test.conf.bak');
+  });
+
+  it('throws PartialWriteError with empty writtenPaths when the first op fails', async () => {
+    // Worker returns all N results even when the first fails (op-level failure,
+    // not a crash), so results.length === ops.length.
+    const body = JSON.stringify({
+      results: [
+        { ok: false, error: 'permission denied' },
+        { ok: false, error: 'not reached' },
+      ],
+    });
+    mockSpawnSync.mockReturnValue({
+      ...workerOkResult(0),
+      stdout: Buffer.from(body),
+      output: [null, Buffer.from(body), null],
+    });
+
+    const targets: SudoWriteTarget[] = [
+      { targetPath: '/etc/a.conf', content: Buffer.from('a'), sudo: true },
+      { targetPath: '/etc/b.conf', content: Buffer.from('b'), sudo: true },
+    ];
+    const err = await sudoAtomicWrite(targets).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(PartialWriteError);
+    expect((err as PartialWriteError).writtenPaths).toEqual([]);
+    expect((err as PartialWriteError).message).toBe('permission denied');
+  });
+
+  it('throws PartialWriteError with first path in writtenPaths when the second op fails', async () => {
+    const body = JSON.stringify({
+      results: [{ ok: true }, { ok: false, error: 'disk full' }],
+    });
+    mockSpawnSync.mockReturnValue({
+      ...workerOkResult(0),
+      stdout: Buffer.from(body),
+      output: [null, Buffer.from(body), null],
+    });
+
+    const targets: SudoWriteTarget[] = [
+      { targetPath: '/etc/a.conf', content: Buffer.from('a'), sudo: true },
+      { targetPath: '/etc/b.conf', content: Buffer.from('b'), sudo: true },
+    ];
+    const err = await sudoAtomicWrite(targets).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(PartialWriteError);
+    expect((err as PartialWriteError).writtenPaths).toEqual(['/etc/a.conf']);
+    expect((err as PartialWriteError).message).toBe('disk full');
   });
 });
 

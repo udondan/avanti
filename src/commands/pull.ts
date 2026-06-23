@@ -37,6 +37,7 @@ import {
   atomicWrite,
   closeAllSessions,
   openPrivilegedSessions,
+  PartialWriteError,
   sudoAtomicRead,
   sudoAtomicWrite,
   sudoStatBatch,
@@ -1848,6 +1849,27 @@ export function pullCommand(): Command {
             runNamedPostHook('update', ctx.hooks.update);
         }
       } catch (err: unknown) {
+        if (
+          err instanceof PartialWriteError &&
+          pullId &&
+          err.writtenPaths.length > 0
+        ) {
+          const writtenSet = new Set(err.writtenPaths);
+          const partialRefs = stagedFileRefs.filter((r) =>
+            writtenSet.has(r.absolutePath),
+          );
+          if (partialRefs.length > 0) {
+            try {
+              history.closePullSession(
+                pullId,
+                normalizeConfigKey(configPath),
+                partialRefs,
+              );
+            } catch {
+              console.warn('Warning: could not save partial pull history.');
+            }
+          }
+        }
         closeAllSessions(sudoSessions);
         console.error(
           `Write failed: ${err instanceof Error ? err.message : String(err)}`,
