@@ -954,361 +954,33 @@ export function pullCommand(): Command {
         }
       }
       if (hasDirConflict) process.exit(2);
-      // Create one persistent sudo worker session per distinct sudo identity.
-      // Sessions are split into two phases so the password prompt does not
-      // appear before the user has seen or accepted the diff:
-      //
-      //  Phase 1 (early, before pre-reads): only identities with unreadable
-      //    targets that need a stat-read for idempotency / v0 capture.
-      //  Phase 2 (deferred, after confirmation): identities that only have
-      //    readable changed targets or delete-only targets.
+      // Sudo sessions are opened after the user confirms, not before the diff
+      // is shown. Pre-reads and idempotency checks run post-confirm too, so the
+      // diff may show "unreadable" for sudo targets whose parent directories are
+      // non-searchable or whose content cannot be read by the invoking user.
+      // This is the conservative, correct order: the password prompt never
+      // appears before the user has reviewed the intended changes.
       const sudoSessions = new Map<true | string, SudoWorkerSession>();
-      if (process.platform !== 'win32') {
-        const earlyIds = new Set<true | string>();
-        for (let i = 0; i < writeTargets.length; i++) {
-          const t = writeTargets[i];
-          if (t.sudo && (allDiffs[i].isUnreadable || allDiffs[i].lstatFailed)) {
-            earlyIds.add(t.sudo);
-          }
-        }
-        for (let i = 0; i < staleToRestore.length; i++) {
-          const t = staleToRestore[i];
-          if (t.sudo) {
-            const diffIdx = staleRestoreDiffIndices[i];
-            if (
-              staleDiffs[diffIdx]?.isUnreadable ||
-              staleDiffs[diffIdx]?.lstatFailed
-            ) {
-              earlyIds.add(t.sudo);
-            }
-          }
-        }
-        try {
-          for (const [id, session] of openPrivilegedSessions(earlyIds))
-            sudoSessions.set(id, session);
-        } catch (err) {
-          closeAllSessions(sudoSessions);
-          console.error(err instanceof Error ? err.message : String(err));
-          process.exit(2);
-        }
-      }
 
-      // For entries where lstatSync failed (parent directory not searchable),
-      // batch one stat-read op per sudo identity through the existing session to
-      // determine existence and type without spawning separate sudo processes.
-      // Include stale-restore entries: without them, staleDiffs[diffIdx].isDirectory
-      // is never updated from the stat-read result and the directory-conflict
-      // check below silently misses them.
-      const lstatFailedBatch: Array<{ filePath: string; sudo: true | string }> =
-        [
-          ...writeTargets
-            .filter((t, i) => allDiffs[i].lstatFailed && t.sudo)
-            .map((t) => ({ filePath: t.targetPath, sudo: t.sudo! })),
-          ...staleToRestore
-            .filter((t, i) => {
-              const diffIdx = staleRestoreDiffIndices[i];
-              return staleDiffs[diffIdx]?.lstatFailed && t.sudo;
-            })
-            .map((t) => ({ filePath: t.targetPath, sudo: t.sudo! })),
-        ];
+      // Declare preReads here so it is in scope for the post-confirm block and
+      // the v0 capture below (both reference preReads.get(targetPath)).
+      let preReads: Map<
+        string,
+        { contentB64: string; isSymlink?: boolean } | null
+      > = new Map();
+      // lstatFailedStats is declared at top scope so the v0-capture block below
+      // can reference lstatFailedStats.get(targetPath) after the post-confirm block.
       let lstatFailedStats = new Map<
         string,
         {
           exists: boolean;
           isSymlink: boolean;
           isDirectory: boolean;
+          isSpecialFile: boolean;
           mode?: string;
           contentB64?: string;
         }
       >();
-      if (lstatFailedBatch.length > 0) {
-        try {
-          lstatFailedStats = await sudoStatBatch(
-            lstatFailedBatch,
-            sudoSessions,
-          );
-        } catch (err) {
-          closeAllSessions(sudoSessions);
-          console.error(
-            `stat-read failed: ${err instanceof Error ? err.message : String(err)}`,
-          );
-          process.exit(2);
-        }
-      }
-      for (let i = 0; i < writeTargets.length; i++) {
-        const target = writeTargets[i];
-        const diff = allDiffs[i];
-        if (diff.lstatFailed && target.sudo) {
-          const stat = lstatFailedStats.get(target.targetPath);
-          const exists = stat ? stat.exists : false;
-          const isNew = !exists;
-          // modeChange: getSudoFileMode also spawns a separate sudo process per
-          // file. Skip it here — stat-read does not surface the file mode, and
-          // lstatFailed targets had their parent dir as non-searchable so there
-          // is no safe non-sudo path to retrieve the mode anyway.
-          // Compute modeChange from the stat-read result when the worker
-          // returned a mode (regular files and symlinks). This restores
-          // permission-drift detection for files in non-searchable directories,
-          // which the initial lstatSync could not cover.
-          const modeChange = (() => {
-            const desiredMode = target.mode;
-            const actualModeStr = stat?.mode;
-            if (desiredMode && actualModeStr && !isNew) {
-              const desired = parseInt(desiredMode.replace(/^0[oO]/, ''), 8);
-              const current = parseInt(actualModeStr, 8);
-              if (!isNaN(desired) && !isNaN(current) && desired !== current) {
-                return { from: current, to: desired };
-              }
-              return undefined;
-            }
-            return diff.modeChange;
-          })();
-          if (isNew) {
-            // File confirmed absent — rebuild as a proper new diff so
-            // formatDiff shows the actual content instead of "unreadable".
-            // Clear backupPath: it was set assuming the file existed (conservative
-            // lstatFailed default). Since the file is actually new, there is
-            // nothing to back up and the backup should not be created.
-            if (target.symlinkTarget !== undefined) {
-              // Symlink entry — use buildNewSymlinkDiff instead of
-              // computeSymlinkDiff: the parent dir is still not searchable
-              // (EACCES), so calling computeSymlinkDiff would lstatSync-fail
-              // again and return isUnreadable rather than isNew:true.
-              allDiffs[i] = buildNewSymlinkDiff(
-                diff.targetPath,
-                target.symlinkTarget,
-              );
-            } else {
-              allDiffs[i] = buildNewFileDiff(
-                diff.targetPath,
-                target.content,
-                modeChange,
-              );
-            }
-            writeTargets[i] = { ...target, backupPath: undefined };
-          } else {
-            let updatedDiff: FileDiff = { ...diff, isNew, modeChange };
-            // For symlink entries, check whether the existing path is a real
-            // directory — ln -sf would place the symlink inside it rather than
-            // replacing it, so detect this now and surface an error before the
-            // write batch is attempted.
-            if (target.symlinkTarget !== undefined) {
-              const isSymlinkAtTarget = stat ? stat.isSymlink : false;
-              if (!isSymlinkAtTarget && (stat ? stat.isDirectory : false)) {
-                updatedDiff = { ...updatedDiff, isDirectory: true };
-              }
-            }
-            allDiffs[i] = updatedDiff;
-          }
-          // Propagate corrected isNew to the hook context so lifecycle hooks
-          // receive the correct AVANTI_IS_NEW value.
-          const hookIdx = fileHookContexts.findIndex(
-            (ctx) => ctx.targetPath === target.targetPath,
-          );
-          if (hookIdx >= 0) {
-            fileHookContexts[hookIdx] = { ...fileHookContexts[hookIdx], isNew };
-          }
-        }
-      }
-
-      // Mirror the writeTargets lstatFailed loop for stale-restore entries.
-      // Without this, staleDiffs[diffIdx].isDirectory is never set from the
-      // stat-read result and the hasDirConflict check below misses directory
-      // conflicts on stale-restore symlink targets in non-searchable directories.
-      for (let i = 0; i < staleToRestore.length; i++) {
-        const diffIdx = staleRestoreDiffIndices[i];
-        if (staleDiffs[diffIdx]?.lstatFailed && staleToRestore[i].sudo) {
-          const stat = lstatFailedStats.get(staleToRestore[i].targetPath);
-          if (!stat) continue;
-          const entry = staleToRestore[i];
-          if (!stat.exists) {
-            // File confirmed absent — rebuild as a proper new diff so
-            // formatDiff shows the actual content instead of "unreadable".
-            // Clear backupPath: it was set assuming the file existed (conservative
-            // lstatFailed default). Since the file is actually new, there is
-            // nothing to back up and the backup should not be created.
-            if (entry.symlinkTarget !== undefined) {
-              staleDiffs[diffIdx] = buildNewSymlinkDiff(
-                entry.targetPath,
-                entry.symlinkTarget,
-              );
-            } else {
-              staleDiffs[diffIdx] = buildNewFileDiff(
-                entry.targetPath,
-                entry.content,
-                staleDiffs[diffIdx]?.modeChange,
-              );
-            }
-            staleToRestore[i] = { ...entry, backupPath: undefined };
-          } else if (entry.symlinkTarget !== undefined) {
-            const isDirectory = !stat.isSymlink && stat.isDirectory;
-            if (isDirectory) {
-              staleDiffs[diffIdx] = {
-                ...staleDiffs[diffIdx],
-                isDirectory: true,
-              };
-            }
-          }
-        }
-      }
-
-      // Second hasDirConflict pass: the lstatFailed loop above may have set
-      // isDirectory:true on diffs that previously appeared clean (lstat failed
-      // so isDirectory was false before the stat-read). Re-check and abort if
-      // any newly-discovered directory conflicts exist. Also check staleDiffs:
-      // a stale-restore symlink target may have been replaced by a directory
-      // since the last pull.
-      for (const d of [...allDiffs, ...staleDiffs]) {
-        if (d?.isDirectory && d?.isSymlink) {
-          console.error(
-            `symlink: ${d.targetPath} is a directory; cannot replace with a symlink`,
-          );
-          hasDirConflict = true;
-        }
-      }
-      if (hasDirConflict) {
-        closeAllSessions(sudoSessions);
-        process.exit(2);
-      }
-
-      // Batch all pre-write reads for unreadable sudo targets into one
-      // worker exec per identity using stat-read ops. A stat-read returns
-      // the file content (regular files) or the link target (symlinks) and
-      // signals isSymlink so callers can branch without a separate sudo call.
-      const preReadRequests: Array<{
-        filePath: string;
-        sudo: true | string;
-        type: 'stat-read';
-      }> = [];
-      for (let i = 0; i < writeTargets.length; i++) {
-        if (allDiffs[i].isUnreadable && writeTargets[i].sudo) {
-          preReadRequests.push({
-            filePath: writeTargets[i].targetPath,
-            sudo: writeTargets[i].sudo!,
-            type: 'stat-read',
-          });
-        }
-      }
-      for (let i = 0; i < staleToRestore.length; i++) {
-        const diffIdx = staleRestoreDiffIndices[i];
-        if (staleDiffs[diffIdx]?.isUnreadable && staleToRestore[i].sudo) {
-          preReadRequests.push({
-            filePath: staleToRestore[i].targetPath,
-            sudo: staleToRestore[i].sudo!,
-            type: 'stat-read',
-          });
-        }
-      }
-      let preReads: Map<
-        string,
-        { contentB64: string; isSymlink?: boolean } | null
-      >;
-      if (preReadRequests.length > 0) {
-        try {
-          preReads = await sudoAtomicRead(preReadRequests, sudoSessions);
-        } catch (err) {
-          closeAllSessions(sudoSessions);
-          console.error(
-            `Read failed: ${err instanceof Error ? err.message : String(err)}`,
-          );
-          process.exit(2);
-        }
-      } else {
-        preReads = new Map<
-          string,
-          { contentB64: string; isSymlink?: boolean } | null
-        >();
-      }
-
-      // Post-auth idempotency: compare current file content via sudo against the
-      // desired content. If they match, suppress the write for this entry.
-      for (let i = 0; i < writeTargets.length; i++) {
-        if (allDiffs[i].isUnreadable && writeTargets[i].sudo) {
-          const preRead = preReads.get(writeTargets[i].targetPath);
-          if (preRead === undefined) {
-            closeAllSessions(sudoSessions);
-            throw new Error(
-              `internal: missing pre-read result for sudo target ${writeTargets[i].targetPath}`,
-            );
-          }
-          if (preRead === null) continue;
-          const preReadBuf = Buffer.from(preRead.contentB64, 'base64');
-
-          if (writeTargets[i].symlinkTarget !== undefined) {
-            // Symlink entry: stat-read returns the link target when existing
-            // path is a symlink. If it matches the desired target, no-op.
-            if (
-              preRead.isSymlink &&
-              preReadBuf.toString() === writeTargets[i].symlinkTarget
-            ) {
-              const updatedHasChanges = allDiffs[i].modeChange !== undefined;
-              allDiffs[i] = {
-                ...allDiffs[i],
-                contentChanged: false,
-                hasChanges: updatedHasChanges,
-              };
-              if (!updatedHasChanges) {
-                const hookIdx = fileHookContexts.findIndex(
-                  (ctx) => ctx.targetPath === writeTargets[i].targetPath,
-                );
-                if (hookIdx >= 0) {
-                  fileHookContexts.splice(hookIdx, 1);
-                }
-              }
-            }
-            continue;
-          }
-          // For regular file entries: stat-read signals isSymlink=true when the
-          // existing path is a symlink — skip comparison to avoid reading through
-          // the symlink rather than the symlink itself.
-          if (preRead.isSymlink) continue;
-
-          const current = preReadBuf;
-          if (current.equals(writeTargets[i].content)) {
-            const updatedHasChanges = allDiffs[i].modeChange !== undefined;
-            allDiffs[i] = {
-              ...allDiffs[i],
-              contentChanged: false,
-              hasChanges: updatedHasChanges,
-            };
-            // Only remove hook context when the diff is a true no-op (no mode
-            // change either). A mode-only change still triggers before/afterUpdate
-            // hooks, so the context must remain for those cases.
-            if (!updatedHasChanges) {
-              const hookIdx = fileHookContexts.findIndex(
-                (ctx) => ctx.targetPath === writeTargets[i].targetPath,
-              );
-              if (hookIdx >= 0) {
-                fileHookContexts.splice(hookIdx, 1);
-              }
-            }
-          }
-        }
-      }
-      // Same idempotency check for stale restore targets.
-      for (let i = 0; i < staleToRestore.length; i++) {
-        const diffIdx = staleRestoreDiffIndices[i];
-        if (staleDiffs[diffIdx]?.isUnreadable && staleToRestore[i].sudo) {
-          const preRead = preReads.get(staleToRestore[i].targetPath);
-          if (preRead === undefined) {
-            closeAllSessions(sudoSessions);
-            throw new Error(
-              `internal: missing pre-read result for sudo stale-restore target ${staleToRestore[i].targetPath}`,
-            );
-          }
-          if (preRead === null) continue;
-          // Skip comparison when existing path is a symlink.
-          if (preRead.isSymlink) continue;
-          const current = Buffer.from(preRead.contentB64, 'base64');
-          if (current.equals(staleToRestore[i].content)) {
-            staleDiffs[diffIdx] = {
-              ...staleDiffs[diffIdx],
-              contentChanged: false,
-              hasChanges: staleDiffs[diffIdx].modeChange !== undefined,
-            };
-          }
-        }
-      }
 
       const hasChanges =
         allDiffs.some((d) => d.hasChanges || d.isNew) ||
@@ -1389,20 +1061,22 @@ export function pullCommand(): Command {
         }
       }
 
-      // Phase 2: deferred sudo sessions — identities with readable changed
-      // targets and stale-delete-only identities. These don't need pre-reads,
-      // so they are opened here (after the user confirmed) rather than before
-      // the diff is shown, avoiding an early password prompt.
+      // Open one persistent sudo worker session per distinct sudo identity,
+      // after the user has confirmed. All sudo operations (stat-reads, pre-reads,
+      // idempotency checks, and writes) share these sessions so the password
+      // prompt appears at most once per identity, after the diff is reviewed.
       if (process.platform !== 'win32') {
-        const deferredIds = new Set<true | string>();
+        const sudoIds = new Set<true | string>();
         for (let i = 0; i < writeTargets.length; i++) {
           const t = writeTargets[i];
           if (
             t.sudo &&
-            (allDiffs[i].hasChanges || allDiffs[i].isNew) &&
-            !sudoSessions.has(t.sudo)
+            (allDiffs[i].hasChanges ||
+              allDiffs[i].isNew ||
+              allDiffs[i].lstatFailed ||
+              allDiffs[i].isUnreadable)
           ) {
-            deferredIds.add(t.sudo);
+            sudoIds.add(t.sudo);
           }
         }
         for (let i = 0; i < staleToRestore.length; i++) {
@@ -1410,50 +1084,292 @@ export function pullCommand(): Command {
           if (t.sudo) {
             const diffIdx = staleRestoreDiffIndices[i];
             if (
-              (staleDiffs[diffIdx]?.hasChanges || staleDiffs[diffIdx]?.isNew) &&
-              !sudoSessions.has(t.sudo)
+              staleDiffs[diffIdx]?.hasChanges ||
+              staleDiffs[diffIdx]?.isNew ||
+              staleDiffs[diffIdx]?.lstatFailed ||
+              staleDiffs[diffIdx]?.isUnreadable
             ) {
-              deferredIds.add(t.sudo);
+              sudoIds.add(t.sudo);
             }
           }
         }
         // Mode-only sudo targets (content already matches, only permissions
-        // drifted): hasChanges=true but isNew=false, so neither write-targets
-        // loop above adds their identity to deferredIds. Without this loop,
-        // sudoAtomicWrite falls back to a one-shot runPrivilegedWorker call
-        // (potentially prompting for the password again). Add them here so the
-        // session is opened once, before the user confirms.
+        // drifted): hasChanges=true but contentChanged=false. Include them so
+        // sudoAtomicWrite shares the same session as content writes.
         for (let i = 0; i < writeTargets.length; i++) {
           const t = writeTargets[i];
-          if (
-            t.sudo &&
-            allDiffs[i].modeChange &&
-            !allDiffs[i].contentChanged &&
-            !sudoSessions.has(t.sudo)
-          ) {
-            deferredIds.add(t.sudo);
+          if (t.sudo && allDiffs[i].modeChange && !allDiffs[i].contentChanged) {
+            sudoIds.add(t.sudo);
           }
         }
-        // Only add delete-only identities when the stale file still exists
-        // (hasChanges). Identities for already-absent files are skipped to
-        // avoid spurious password prompts on no-op runs.
+        // Delete-only identities — only when the stale file still exists.
         for (const [p, sv] of staleDeleteSudo) {
           const idx = staleDeleteDiffIndex.get(p);
-          if (
-            idx !== undefined &&
-            staleDiffs[idx]?.hasChanges &&
-            !sudoSessions.has(sv)
-          ) {
-            deferredIds.add(sv);
+          if (idx !== undefined && staleDiffs[idx]?.hasChanges) {
+            sudoIds.add(sv);
           }
         }
         try {
-          for (const [id, session] of openPrivilegedSessions(deferredIds))
+          for (const [id, session] of openPrivilegedSessions(sudoIds))
             sudoSessions.set(id, session);
         } catch (err) {
           closeAllSessions(sudoSessions);
           console.error(err instanceof Error ? err.message : String(err));
           process.exit(2);
+        }
+      }
+
+      // For entries where lstatSync failed (parent directory not searchable),
+      // batch one stat-read op per sudo identity to determine existence, type,
+      // and mode without spawning separate sudo processes.
+      const lstatFailedBatch: Array<{ filePath: string; sudo: true | string }> =
+        [
+          ...writeTargets
+            .filter((t, i) => allDiffs[i].lstatFailed && t.sudo)
+            .map((t) => ({ filePath: t.targetPath, sudo: t.sudo! })),
+          ...staleToRestore
+            .filter((t, i) => {
+              const diffIdx = staleRestoreDiffIndices[i];
+              return staleDiffs[diffIdx]?.lstatFailed && t.sudo;
+            })
+            .map((t) => ({ filePath: t.targetPath, sudo: t.sudo! })),
+        ];
+      if (lstatFailedBatch.length > 0) {
+        try {
+          lstatFailedStats = await sudoStatBatch(
+            lstatFailedBatch,
+            sudoSessions,
+          );
+        } catch (err) {
+          closeAllSessions(sudoSessions);
+          console.error(
+            `stat-read failed: ${err instanceof Error ? err.message : String(err)}`,
+          );
+          process.exit(2);
+        }
+      }
+      for (let i = 0; i < writeTargets.length; i++) {
+        const target = writeTargets[i];
+        const diff = allDiffs[i];
+        if (diff.lstatFailed && target.sudo) {
+          const stat = lstatFailedStats.get(target.targetPath);
+          if (stat?.isSpecialFile) {
+            console.warn(
+              `Warning: ${target.targetPath} is a special file (FIFO/socket/device); skipping write`,
+            );
+            allDiffs[i] = { ...diff, hasChanges: false, isNew: false };
+            writeTargets[i] = { ...target, backupPath: undefined };
+            continue;
+          }
+          const exists = stat ? stat.exists : false;
+          const isNew = !exists;
+          const modeChange = (() => {
+            const desiredMode = target.mode;
+            const actualModeStr = stat?.mode;
+            if (desiredMode && actualModeStr && !isNew) {
+              const desired = parseInt(desiredMode.replace(/^0[oO]/, ''), 8);
+              const current = parseInt(actualModeStr, 8);
+              if (!isNaN(desired) && !isNaN(current) && desired !== current) {
+                return { from: current, to: desired };
+              }
+              return undefined;
+            }
+            return diff.modeChange;
+          })();
+          if (isNew) {
+            if (target.symlinkTarget !== undefined) {
+              allDiffs[i] = buildNewSymlinkDiff(
+                diff.targetPath,
+                target.symlinkTarget,
+              );
+            } else {
+              allDiffs[i] = buildNewFileDiff(
+                diff.targetPath,
+                target.content,
+                modeChange,
+              );
+            }
+            writeTargets[i] = { ...target, backupPath: undefined };
+          } else {
+            let updatedDiff: FileDiff = { ...diff, isNew, modeChange };
+            if (target.symlinkTarget !== undefined) {
+              const isSymlinkAtTarget = stat ? stat.isSymlink : false;
+              if (!isSymlinkAtTarget && (stat ? stat.isDirectory : false)) {
+                updatedDiff = { ...updatedDiff, isDirectory: true };
+              }
+            }
+            allDiffs[i] = updatedDiff;
+          }
+          const hookIdx = fileHookContexts.findIndex(
+            (ctx) => ctx.targetPath === target.targetPath,
+          );
+          if (hookIdx >= 0) {
+            fileHookContexts[hookIdx] = { ...fileHookContexts[hookIdx], isNew };
+          }
+        }
+      }
+      for (let i = 0; i < staleToRestore.length; i++) {
+        const diffIdx = staleRestoreDiffIndices[i];
+        if (staleDiffs[diffIdx]?.lstatFailed && staleToRestore[i].sudo) {
+          const stat = lstatFailedStats.get(staleToRestore[i].targetPath);
+          if (!stat) continue;
+          const entry = staleToRestore[i];
+          if (!stat.exists) {
+            if (entry.symlinkTarget !== undefined) {
+              staleDiffs[diffIdx] = buildNewSymlinkDiff(
+                entry.targetPath,
+                entry.symlinkTarget,
+              );
+            } else {
+              staleDiffs[diffIdx] = buildNewFileDiff(
+                entry.targetPath,
+                entry.content,
+                staleDiffs[diffIdx]?.modeChange,
+              );
+            }
+            staleToRestore[i] = { ...entry, backupPath: undefined };
+          } else if (entry.symlinkTarget !== undefined) {
+            const isDirectory = !stat.isSymlink && stat.isDirectory;
+            if (isDirectory) {
+              staleDiffs[diffIdx] = {
+                ...staleDiffs[diffIdx],
+                isDirectory: true,
+              };
+            }
+          }
+        }
+      }
+      // Detect any directory conflicts that the stat-reads above may have
+      // surfaced (lstatFailed targets whose parent was non-searchable before).
+      for (const d of [...allDiffs, ...staleDiffs]) {
+        if (d?.isDirectory && d?.isSymlink) {
+          console.error(
+            `symlink: ${d.targetPath} is a directory; cannot replace with a symlink`,
+          );
+          hasDirConflict = true;
+        }
+      }
+      if (hasDirConflict) {
+        closeAllSessions(sudoSessions);
+        process.exit(2);
+      }
+
+      // Pre-reads for unreadable sudo targets: read the current file content via
+      // the sudo session for idempotency (skip write when content already matches)
+      // and v0 capture (record original content before overwrite).
+      const preReadRequests: Array<{
+        filePath: string;
+        sudo: true | string;
+        type: 'stat-read';
+      }> = [];
+      for (let i = 0; i < writeTargets.length; i++) {
+        if (allDiffs[i].isUnreadable && writeTargets[i].sudo) {
+          preReadRequests.push({
+            filePath: writeTargets[i].targetPath,
+            sudo: writeTargets[i].sudo!,
+            type: 'stat-read',
+          });
+        }
+      }
+      for (let i = 0; i < staleToRestore.length; i++) {
+        const diffIdx = staleRestoreDiffIndices[i];
+        if (staleDiffs[diffIdx]?.isUnreadable && staleToRestore[i].sudo) {
+          preReadRequests.push({
+            filePath: staleToRestore[i].targetPath,
+            sudo: staleToRestore[i].sudo!,
+            type: 'stat-read',
+          });
+        }
+      }
+      if (preReadRequests.length > 0) {
+        try {
+          preReads = await sudoAtomicRead(preReadRequests, sudoSessions);
+        } catch (err) {
+          closeAllSessions(sudoSessions);
+          console.error(
+            `Read failed: ${err instanceof Error ? err.message : String(err)}`,
+          );
+          process.exit(2);
+        }
+      }
+
+      // Idempotency: compare current file content via sudo against the desired
+      // content. Suppress the write when they already match.
+      for (let i = 0; i < writeTargets.length; i++) {
+        if (allDiffs[i].isUnreadable && writeTargets[i].sudo) {
+          const preRead = preReads.get(writeTargets[i].targetPath);
+          if (preRead === undefined) {
+            closeAllSessions(sudoSessions);
+            throw new Error(
+              `internal: missing pre-read result for sudo target ${writeTargets[i].targetPath}`,
+            );
+          }
+          if (preRead === null) continue;
+          const preReadBuf = Buffer.from(preRead.contentB64, 'base64');
+
+          if (writeTargets[i].symlinkTarget !== undefined) {
+            if (
+              preRead.isSymlink &&
+              preReadBuf.toString() === writeTargets[i].symlinkTarget
+            ) {
+              const updatedHasChanges = allDiffs[i].modeChange !== undefined;
+              allDiffs[i] = {
+                ...allDiffs[i],
+                contentChanged: false,
+                hasChanges: updatedHasChanges,
+              };
+              if (!updatedHasChanges) {
+                const hookIdx = fileHookContexts.findIndex(
+                  (ctx) => ctx.targetPath === writeTargets[i].targetPath,
+                );
+                if (hookIdx >= 0) {
+                  fileHookContexts.splice(hookIdx, 1);
+                }
+              }
+            }
+            continue;
+          }
+          if (preRead.isSymlink) continue;
+
+          const current = preReadBuf;
+          if (current.equals(writeTargets[i].content)) {
+            const updatedHasChanges = allDiffs[i].modeChange !== undefined;
+            allDiffs[i] = {
+              ...allDiffs[i],
+              contentChanged: false,
+              hasChanges: updatedHasChanges,
+            };
+            if (!updatedHasChanges) {
+              const hookIdx = fileHookContexts.findIndex(
+                (ctx) => ctx.targetPath === writeTargets[i].targetPath,
+              );
+              if (hookIdx >= 0) {
+                fileHookContexts.splice(hookIdx, 1);
+              }
+            }
+          }
+        }
+      }
+      for (let i = 0; i < staleToRestore.length; i++) {
+        const diffIdx = staleRestoreDiffIndices[i];
+        if (staleDiffs[diffIdx]?.isUnreadable && staleToRestore[i].sudo) {
+          const preRead = preReads.get(staleToRestore[i].targetPath);
+          if (preRead === undefined) {
+            closeAllSessions(sudoSessions);
+            throw new Error(
+              `internal: missing pre-read result for sudo stale-restore target ${staleToRestore[i].targetPath}`,
+            );
+          }
+          if (preRead === null) continue;
+          if (preRead.isSymlink) continue;
+          const current = Buffer.from(preRead.contentB64, 'base64');
+          if (current.equals(staleToRestore[i].content)) {
+            staleDiffs[diffIdx] = {
+              ...staleDiffs[diffIdx],
+              contentChanged: false,
+              hasChanges: staleDiffs[diffIdx].modeChange !== undefined,
+            };
+          }
         }
       }
 

@@ -175,7 +175,12 @@ function getExistingMode(filePath: string): string | undefined {
     // to defaultMode.
     const stat = lst.isSymbolicLink() ? fs.statSync(filePath) : lst;
     if (!stat.isFile()) return undefined;
-    return (stat.mode & 0o7777).toString(8).padStart(4, '0');
+    const rawMode = stat.mode & 0o7777;
+    // Strip setuid/setgid/sticky when the source was a symlink: the replacement
+    // is a new regular file and the worker runs as root, so inheriting those
+    // bits from the symlink target would silently create a setuid/setgid binary.
+    const strippedMode = lst.isSymbolicLink() ? rawMode & 0o0777 : rawMode;
+    return strippedMode.toString(8).padStart(4, '0');
   } catch (e) {
     const code = (e as NodeJS.ErrnoException).code;
     // ENOENT: file doesn't exist yet → use defaultMode (expected, suppress).
@@ -1533,11 +1538,8 @@ if (require.main === module) {
           emitErrorAndExit('stdin nonce mismatch');
           return;
         }
-        // Invariant: the nonce line must arrive exactly once per session.
-        if (stdinNonceVerified) {
-          emitErrorAndExit('internal: stdin nonce received more than once');
-          return;
-        }
+        // The outer !stdinNonceVerified gate already enforces single delivery:
+        // after setting it true, every subsequent line skips this block entirely.
         stdinNonceVerified = true;
         return; // consume this line as the nonce; wait for the next line with JSON
       }

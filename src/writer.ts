@@ -932,6 +932,8 @@ export async function sudoStatBatch(
       exists: boolean;
       isSymlink: boolean;
       isDirectory: boolean;
+      /** true for FIFOs, sockets, and device nodes — must not be overwritten */
+      isSpecialFile: boolean;
       mode?: string;
       /** base64-encoded file or symlink-target content from the stat-read op */
       contentB64?: string;
@@ -944,6 +946,7 @@ export async function sudoStatBatch(
       exists: boolean;
       isSymlink: boolean;
       isDirectory: boolean;
+      isSpecialFile: boolean;
       mode?: string;
       contentB64?: string;
     }
@@ -1004,6 +1007,7 @@ export async function sudoStatBatch(
         exists: isPermDenied ? false : exists,
         isSymlink: isPermDenied ? false : isSymlink,
         isDirectory: isPermDenied ? false : isDirectory,
+        isSpecialFile: isPermDenied ? false : isSpecialFile,
         mode: r?.mode,
         contentB64: isPermDenied ? undefined : r?.contentB64,
       });
@@ -1499,7 +1503,20 @@ export class SudoWorkerSession {
           this.pending = null;
           if (r.length !== ops.length) {
             if (continueOnError) {
-              // Mirror the spawnSync path: clamp to ops.length and pad
+              // Crash-after-completion sentinel: the worker appends exactly one
+              // extra {ok:false} entry via emitErrorAndExit AFTER all N ops
+              // completed. Preserve the N+1 array so callers can detect it via
+              // results.length > ops.length — slicing it away would leave them
+              // with a complete-looking result set that silently followed a
+              // non-zero worker exit (the bug reported against sudoAtomicRead).
+              if (r.length === ops.length + 1) {
+                const maybeSentinel = r[ops.length];
+                if (maybeSentinel && !maybeSentinel.ok) {
+                  resolve([...r]); // N+1 array; sentinel at index ops.length
+                  return;
+                }
+              }
+              // General: worker crashed mid-batch — clamp to ops.length and pad
               // unprocessed tail ops so callers always receive exactly ops.length
               // results and can distinguish completed ops from those that never ran.
               const padded: WorkerResult[] = [...r].slice(0, ops.length);
@@ -1938,6 +1955,23 @@ export function atomicWrite(
         dest: t.targetPath,
       };
       staged.push(stagingEntry);
+
+      // Resolve effective mode before writing so we can apply fchmodSync via
+      // the fd while it is still open, eliminating the TOCTOU window that a
+      // path-based chmodSync after renameSync would create.
+      let effectiveMode: number | undefined;
+      if (t.mode) {
+        // parseInt('0o644', 8) stops at 'o' and returns 0; strip the prefix.
+        effectiveMode = parseInt(t.mode.replace(/^0[oO]/, ''), 8);
+      } else {
+        try {
+          effectiveMode = fs.statSync(t.targetPath).mode & 0o7777;
+        } catch {
+          // file doesn't exist yet — leave the temp file's umask permissions
+        }
+      }
+      stagingEntry.effectiveMode = effectiveMode;
+
       try {
         let written = 0;
         while (written < t.content.length) {
@@ -1948,26 +1982,14 @@ export function atomicWrite(
             t.content.length - written,
           );
         }
+        // Apply mode via fd while it is still open — sets permissions on the
+        // inode without re-traversing the path (no TOCTOU between rename and chmod).
+        if (effectiveMode !== undefined) {
+          fs.fchmodSync(tmpFd, effectiveMode);
+        }
       } finally {
         fs.closeSync(tmpFd);
       }
-
-      // Resolve the effective mode: explicit config value wins; otherwise
-      // preserve the existing file's full permission bits (0o7777) so rename(2)
-      // doesn't silently reset them to the umask default. New files get the
-      // OS umask default.
-      let effectiveMode: number | undefined;
-      if (t.mode) {
-        effectiveMode = parseInt(t.mode, 8);
-      } else {
-        try {
-          effectiveMode = fs.statSync(t.targetPath).mode & 0o7777;
-        } catch {
-          // file doesn't exist yet — leave the temp file's umask permissions
-        }
-      }
-
-      stagingEntry.effectiveMode = effectiveMode;
     }
 
     // Pre-validate writeInPlace targets before Phase 2: if any is a symlink,
@@ -2074,10 +2096,10 @@ export function atomicWrite(
       fs.renameSync(s.tmp, s.dest);
     }
     for (const s of staged) {
+      // Mode was applied to the temp-file inode via fchmodSync before close —
+      // rename(2) carries the inode with its permissions, so no path-based
+      // chmod is needed here (which would reopen a TOCTOU window).
       fs.renameSync(s.tmp, s.dest);
-      if (s.effectiveMode !== undefined) {
-        fs.chmodSync(s.dest, s.effectiveMode);
-      }
     }
 
     // Phase 4: in-place writes — preserve inode, not atomic
@@ -2106,7 +2128,8 @@ export function atomicWrite(
       }
       let effectiveMode: number | undefined;
       if (t.mode) {
-        effectiveMode = parseInt(t.mode, 8);
+        // parseInt('0o644', 8) stops at 'o' and returns 0; strip the prefix.
+        effectiveMode = parseInt(t.mode.replace(/^0[oO]/, ''), 8);
       } else if (existingEntry?.isFile()) {
         effectiveMode = existingEntry.mode & 0o7777;
       }
@@ -2162,6 +2185,11 @@ export function atomicWrite(
               t.content.length - written,
             );
           }
+          // Apply mode via fd before close — sets permissions on the inode
+          // without re-traversing the path after close (no TOCTOU).
+          if (effectiveMode !== undefined) {
+            fs.fchmodSync(fd, effectiveMode);
+          }
         } finally {
           fs.closeSync(fd);
         }
@@ -2175,7 +2203,11 @@ export function atomicWrite(
           mode: effectiveMode ?? 0o666,
         });
       }
-      if (effectiveMode !== undefined) {
+      // POSIX path: mode applied via fchmodSync above. Windows path: apply now
+      // (O_NOFOLLOW unavailable, so O_CREAT + writeFileSync handles the mode
+      // via the open(2) mode argument; the chmodSync below is belt-and-suspenders
+      // for the case where the file pre-existed with different permissions).
+      if (oNoFollow === 0 && effectiveMode !== undefined) {
         fs.chmodSync(t.targetPath, effectiveMode);
       }
     }
