@@ -822,7 +822,15 @@ export function handleWriteInPlace(
         // between the truncation and the restore.
         const restoreTmp = path.join(dir, `.avanti-restore-${randomHex()}`);
         try {
-          fs.copyFileSync(path.resolve(op.backupPath), restoreTmp);
+          // COPYFILE_EXCL uses O_CREAT|O_EXCL for the destination, so it fails
+          // with EEXIST if a symlink was raced to restoreTmp before we write —
+          // preventing the restore from following an attacker-controlled symlink
+          // to overwrite an unrelated file.
+          fs.copyFileSync(
+            path.resolve(op.backupPath),
+            restoreTmp,
+            fs.constants.COPYFILE_EXCL,
+          );
           fs.renameSync(restoreTmp, resolvedTarget);
         } catch (restoreErr) {
           try {
@@ -836,6 +844,12 @@ export function handleWriteInPlace(
             // lost (truncated). Report clearly; backup copy is at op.backupPath.
             console.error(
               `avanti: write-in-place restore failed — ${op.targetPath} was replaced by a directory; file is truncated. Backup: ${op.backupPath}`,
+            );
+          } else {
+            // Any other restore failure (ENOSPC, EACCES, etc.): surface it so
+            // the user knows the file was left truncated.
+            process.stderr.write(
+              `avanti-worker: writeInPlace: restore of ${op.targetPath} from backup failed: ${(restoreErr as Error).message}\n`,
             );
           }
           // best-effort restore; original write error is re-thrown below

@@ -383,13 +383,19 @@ function runPrivilegedWorker(
   const stdinNonce = isNamedUser
     ? crypto.randomBytes(32).toString('hex')
     : undefined;
+  // For root sudo, create a dedicated 0700 temp dir for the req file so
+  // that concurrent processes running as the same user cannot race to replace
+  // the file between writeFileSync and spawnSync. os.tmpdir() on macOS returns
+  // a per-user path without sticky-bit protection; WORLD_TMP (/tmp on POSIX)
+  // has the sticky bit and isolates the req file in an owner-only directory.
+  let reqTmpDir: string | undefined;
   let reqPath: string | undefined;
   let result;
   try {
     if (!isNamedUser) {
-      const reqDir = tmpDir ?? os.tmpdir();
+      reqTmpDir = fs.mkdtempSync(path.join(WORLD_TMP, 'avanti-req-'));
       reqPath = path.join(
-        reqDir,
+        reqTmpDir,
         `avanti-req-${crypto.randomBytes(8).toString('hex')}.json`,
       );
       const reqFd = fs.openSync(reqPath, 'wx', 0o600);
@@ -434,9 +440,9 @@ function runPrivilegedWorker(
           },
     );
   } finally {
-    if (reqPath) {
+    if (reqTmpDir) {
       try {
-        fs.unlinkSync(reqPath);
+        fs.rmSync(reqTmpDir, { recursive: true, force: true });
       } catch {
         // best-effort
       }
