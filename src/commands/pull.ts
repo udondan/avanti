@@ -942,8 +942,13 @@ export function pullCommand(): Command {
       }
 
       // Fail fast if any symlink write target is a real directory: ln -sf would
-      // place the symlink inside it rather than replacing it, so abort before
-      // prompting the user rather than failing mid-write-batch.
+      // place the symlink inside it rather than replacing it. This first pass
+      // only covers targets whose parent directories are searchable (unprivileged
+      // lstat succeeded). Targets behind non-searchable parents (lstatFailed=true)
+      // are checked again after the stat-batch below, which runs post-confirm and
+      // post-session-open — so for those targets, a sudo password prompt may appear
+      // before the directory conflict is detected. Pulling the stat-batch earlier
+      // is not possible: reading privileged files requires an open session.
       let hasDirConflict = false;
       for (const d of allDiffs) {
         if (d.isDirectory && d.isSymlink) {
@@ -1246,8 +1251,10 @@ export function pullCommand(): Command {
           }
         }
       }
-      // Detect any directory conflicts that the stat-reads above may have
-      // surfaced (lstatFailed targets whose parent was non-searchable before).
+      // Second conflict pass: detect directory conflicts surfaced by the stat-reads
+      // above (lstatFailed targets whose parent was non-searchable). By this point
+      // sessions are open and the user has confirmed — aborting here is correct but
+      // happens after the sudo password prompt, unlike the first pass above.
       for (const d of [...allDiffs, ...staleDiffs]) {
         if (d?.isDirectory && d?.isSymlink) {
           console.error(
