@@ -1262,14 +1262,26 @@ export class SudoWorkerSession {
         }
       });
 
-      // readline buffers each newline-delimited response entirely in memory
-      // before emitting the 'line' event. There is no per-response size cap:
-      // a batch of many large read ops can produce a single JSON line of
-      // several GiB, which readline accumulates across many 'data' events and
-      // may OOM the parent. Callers should limit the total size of read batches
-      // (e.g. split large reads across multiple exec() calls) rather than
-      // relying on a built-in backpressure mechanism here. The runPrivilegedWorker
-      // (spawnSync) path enforces a 150 MiB maxBuffer for comparison.
+      // Guard against OOM: readline buffers each newline-delimited response
+      // entirely in memory before emitting 'line'. Cap the in-flight bytes at
+      // 500 MiB (the runPrivilegedWorker one-shot path caps maxBuffer at
+      // 150 MiB for comparison). Track raw socket bytes; reset after each
+      // complete line so the cap applies per-response, not per-session.
+      let pendingResponseBytes = 0;
+      const MAX_RESPONSE_BYTES = 500 * 1024 * 1024;
+      socket.on('data', (chunk: Buffer) => {
+        pendingResponseBytes += chunk.length;
+        if (pendingResponseBytes > MAX_RESPONSE_BYTES) {
+          const p = this.pending;
+          this.pending = null;
+          this.close();
+          p?.reject(
+            new Error(
+              `IPC response exceeded 500 MiB limit — split large read batches into smaller exec() calls`,
+            ),
+          );
+        }
+      });
       const rl = readline.createInterface({
         input: socket,
         crlfDelay: Infinity,
@@ -1280,6 +1292,7 @@ export class SudoWorkerSession {
       // to the named-user sudo socket before the worker did).
       let nonceVerified = false;
       rl.on('line', (line: string) => {
+        pendingResponseBytes = 0;
         const trimmed = line.trim();
         if (!trimmed) {
           // Blank line before nonce verification: rogue connection probing for
@@ -1359,6 +1372,10 @@ export class SudoWorkerSession {
     });
 
     this.server.listen(this.ipcSocketPath, () => {
+      // Guard against a close() that arrived while the listen I/O was pending.
+      // close() nulls ipcSocketPath (and sets this.closed), so chmodSync and
+      // spawn would receive undefined without this check.
+      if (this.closed) return;
       // Server is listening — now safe to spawn the worker so it cannot miss
       // the listening socket. Set socket permissions: root sudo needs 0600
       // (only invoking user can connect); named-user sudo needs 0666 so the

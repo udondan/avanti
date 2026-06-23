@@ -953,7 +953,10 @@ export function pullCommand(): Command {
           hasDirConflict = true;
         }
       }
-      if (hasDirConflict) process.exit(2);
+      if (hasDirConflict) {
+        printDiffs([...allDiffs, ...staleDiffs]);
+        process.exit(2);
+      }
       // Sudo sessions are opened after the user confirms, not before the diff
       // is shown. Pre-reads and idempotency checks run post-confirm too, so the
       // diff may show "unreadable" for sudo targets whose parent directories are
@@ -1489,7 +1492,8 @@ export function pullCommand(): Command {
             records?.some(
               (r) => !r.matched && acceptedShaLabels.has(r.sourceLabel),
             );
-          if (!allDiffs[i].hasChanges && !hasAcceptedSha) continue;
+          if (!allDiffs[i].hasChanges && !allDiffs[i].isNew && !hasAcceptedSha)
+            continue;
           try {
             const sourceShaRecords: SourceShaRecord[] | undefined =
               records !== undefined

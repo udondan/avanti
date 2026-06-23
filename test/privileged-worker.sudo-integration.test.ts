@@ -26,7 +26,7 @@ const sudoCallLog = process.env.AVANTI_SUDO_CALL_LOG;
 const sudoNamedUser = process.env.AVANTI_SUDO_NAMED_USER;
 const sudoNamedUserDir = process.env.AVANTI_SUDO_NAMED_USER_DIR;
 
-describe.skipIf(!sudoTestDir || process.platform === 'win32')(
+describe.skipIf(!sudoTestDir || !sudoCallLog || process.platform === 'win32')(
   'privileged worker — real sudo',
   () => {
     beforeEach(() => {
@@ -149,7 +149,10 @@ describe.skipIf(!sudoTestDir || process.platform === 'win32')(
 );
 
 describe.skipIf(
-  !sudoNamedUser || !sudoNamedUserDir || process.platform === 'win32',
+  !sudoNamedUser ||
+    !sudoNamedUserDir ||
+    !sudoCallLog ||
+    process.platform === 'win32',
 )('privileged worker — named-user sudo', () => {
   beforeEach(() => {
     if (sudoCallLog) {

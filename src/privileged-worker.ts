@@ -1522,7 +1522,7 @@ if (require.main === module) {
     );
     process.exit(1);
   }
-  if (process.env.SUDO_UID) {
+  if (process.env.SUDO_UID && /^\d+$/.test(process.env.SUDO_UID)) {
     const parsedUid = parseInt(process.env.SUDO_UID, 10);
     if (!isNaN(parsedUid)) {
       trustedUids.add(parsedUid);
@@ -1615,12 +1615,12 @@ if (require.main === module) {
     // completed results in crash responses. batchResults is the same array
     // reference as results — pushes are visible via the reference immediately.
     batchResults = results;
+    batchExpectedOps = request.ops.length;
     const MAX_OPS = 10_000;
     if (request.ops.length > MAX_OPS) {
       emitErrorAndExit(`ops array exceeds maximum batch size of ${MAX_OPS}`);
       return;
     }
-    batchExpectedOps = request.ops.length;
     let aborted = false;
     for (const op of request.ops) {
       if (aborted) {
