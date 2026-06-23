@@ -59,10 +59,12 @@ export function sudoUserArgs(sudo: true | string): string[] {
 const resolvedNodeExecCache = new Map<string, string>();
 
 function resolveNodeExec(sudo: true | string): string {
-  // AVANTI_NODE_EXEC bypasses ALL ownership and version checks — the caller is
-  // responsible for supplying a trustworthy root-owned binary. Checked before
-  // the cache so the env var takes effect immediately on every call without
-  // requiring a process restart (e.g. per-test overrides in test suites).
+  // SECURITY: AVANTI_NODE_EXEC bypasses ALL root-ownership and version checks
+  // on the Node binary passed to `sudo`. Any process that can set this env var
+  // for avanti can redirect sudo to execute an arbitrary binary as root.
+  // Only set this in controlled environments (tests, NixOS/Guix with a system-
+  // managed node) where the supplied path is known trustworthy. Never set it
+  // from untrusted input. Tests must clear it in afterEach.
   // Not cached: the env var can legitimately change between calls in tests.
   if (process.env.AVANTI_NODE_EXEC) {
     return process.env.AVANTI_NODE_EXEC;
@@ -831,6 +833,10 @@ export async function sudoAtomicRead(
     const session = sessions?.get(sudo);
     // No-session fallback: see the note in sudoAtomicWrite — bypasses the
     // single-prompt guarantee; only used by callers that skip openPrivilegedSessions.
+    // Scale timeout with batch size: 2 s per read op keeps large batches
+    // (e.g. 50 × 2 MiB files) from timing out on slow or encrypted filesystems.
+    // The 30 s minimum covers small batches and one-off file reads.
+    const readTimeoutMs = Math.max(30_000, ops.length * 2_000);
     const results: Array<{
       ok: boolean;
       contentB64?: string;
@@ -838,7 +844,7 @@ export async function sudoAtomicRead(
       error?: string;
       code?: string;
     }> = session
-      ? await session.exec(ops, true)
+      ? await session.exec(ops, true, readTimeoutMs)
       : runPrivilegedWorker(sudo, ops, true);
     items.forEach((item, i) => {
       const r = results[i];
@@ -1287,8 +1293,14 @@ export class SudoWorkerSession {
           this.close();
           return;
         }
-        // Named-user sudo: best-effort. The 0711 parent dir still limits
-        // enumeration, so a chmod failure is bad but bounded in impact.
+        // Named-user sudo: chmod failed — warn so users know the socket's
+        // permissions may be degraded. The 0711 parent dir still limits
+        // filesystem enumeration; the nonce handshake (256-bit random) remains
+        // in place as the primary authentication barrier.
+        console.warn(
+          `avanti: warning — failed to set IPC socket permissions for named-user sudo '${sudo}': ${(e as Error).message}. ` +
+            `The socket may be connectable by other local users; nonce handshake is still active.`,
+        );
       }
 
       // Open /dev/tty so that sudo can look up cached credentials via

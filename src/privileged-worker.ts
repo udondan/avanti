@@ -342,15 +342,21 @@ function backupTarget(
   backupPath: string,
   lst: fs.Stats | undefined,
   trustedUids?: Set<number>,
-  // Pre-read link target: callers should pass the readlinkSync result obtained
+  // Pre-read link target: callers MUST pass the readlinkSync result obtained
   // immediately after their lstatSync to avoid a TOCTOU window between the
-  // isSymbolicLink() check and a second readlinkSync here. Required when
-  // lst.isSymbolicLink() is true.
+  // isSymbolicLink() check and a second readlinkSync here. Required (not
+  // optional) when lst.isSymbolicLink() is true — omitting it is an invariant
+  // violation and will throw.
   preobtainedLinkTarget?: string,
 ): void {
   if (lst === undefined) return;
 
   if (lst.isSymbolicLink()) {
+    if (!preobtainedLinkTarget) {
+      throw new Error(
+        'internal: preobtainedLinkTarget must be provided when backing up a symlink',
+      );
+    }
     const resolvedBackup = path.resolve(backupPath);
     const backupDir = path.dirname(resolvedBackup);
 
@@ -373,10 +379,9 @@ function backupTarget(
       `.avanti-backup-${randomHex()}`,
     );
     try {
-      // Use the pre-obtained link target to avoid a TOCTOU window. Callers
-      // read this immediately after lstatSync; a second readlinkSync here
-      // would re-stat the path and be vulnerable to a concurrent symlink swap.
-      const rawTarget = preobtainedLinkTarget ?? fs.readlinkSync(targetPath);
+      // Use the pre-obtained link target to avoid a TOCTOU window between the
+      // caller's isSymbolicLink() check and reading the target here.
+      const rawTarget = preobtainedLinkTarget;
       // Convert relative targets to absolute so the backup is self-contained at
       // its storage location (user-defined via `backup:`, not necessarily the same
       // directory as the original file). Matches the unprivileged path in writer.ts.
@@ -810,13 +815,21 @@ export function handleWriteInPlace(
         try {
           fs.copyFileSync(path.resolve(op.backupPath), restoreTmp);
           fs.renameSync(restoreTmp, resolvedTarget);
-        } catch {
+        } catch (restoreErr) {
           try {
             fs.unlinkSync(restoreTmp);
           } catch {
             // best-effort cleanup
           }
-          // best-effort restore; original content is at op.backupPath
+          if ((restoreErr as NodeJS.ErrnoException).code === 'EISDIR') {
+            // The parent directory was swapped for a symlink→directory between
+            // the O_TRUNC and this restore rename. The file content is already
+            // lost (truncated). Report clearly; backup copy is at op.backupPath.
+            console.error(
+              `avanti: write-in-place restore failed — ${op.targetPath} was replaced by a directory; file is truncated. Backup: ${op.backupPath}`,
+            );
+          }
+          // best-effort restore; original write error is re-thrown below
         }
       }
       // If we temporarily boosted the mode, restore it before closing.
@@ -949,10 +962,15 @@ export function handleDelete(op: DeleteOp): DispatchResult {
       // File already absent — treat as a successful no-op.
       return { kind: 'skipped' };
     }
-    // EISDIR means a concurrent process replaced the file with a directory
-    // between lstatSync and unlinkSync. This is NOT "already gone" — the
-    // directory artifact remains on disk. Re-throw so the caller can surface
-    // it instead of silently skipping future cleanup attempts for this path.
+    if (ec === 'EISDIR') {
+      // A concurrent process replaced the file with a directory between
+      // lstatSync and unlinkSync. Re-throw with a clear message so the caller
+      // does not see a confusing raw EISDIR from Node.
+      throw new Error(
+        `delete: ${op.targetPath} was replaced by a directory between type-check and unlink; cannot delete`,
+        { cause: e },
+      );
+    }
     throw e;
   }
   return { kind: 'ok' };
@@ -1255,10 +1273,14 @@ export function dispatch(
         return readRegular();
       } catch (e) {
         if ((e as NodeJS.ErrnoException).code !== 'ELOOP') throw e;
-        // readlinkSync is path-based and has a narrow TOCTOU window: a concurrent
-        // process running as the same user could replace the symlink between the
-        // ELOOP above and this call. In practice avanti runs on single-user
-        // machines and this window is not exploitable by a different UID.
+        // readlinkSync is path-based and has a narrow TOCTOU window: a
+        // concurrent privileged process could replace the symlink between the
+        // ELOOP above and this call, causing us to return a stale or attacker-
+        // supplied target. Running as root amplifies the consequence (wrong
+        // content captured for history/v0). This race is intentionally accepted:
+        // eliminating it requires readlinkat(2) via an O_PATH fd, which Node.js
+        // does not expose without native code. stat-read results are advisory
+        // (pre-read for history); no write depends on them being race-free.
         // If the path was replaced with a regular file in that window, readlinkSync
         // throws EINVAL — retry readFileToBase64 so the caller sees a regular file.
         try {
@@ -1568,6 +1590,11 @@ if (require.main === module) {
     // reference as results — pushes are visible via the reference immediately.
     batchResults = results;
     batchExpectedOps = request.ops.length;
+    const MAX_OPS = 10_000;
+    if (request.ops.length > MAX_OPS) {
+      emitErrorAndExit(`ops array exceeds maximum batch size of ${MAX_OPS}`);
+      return;
+    }
     let aborted = false;
     for (const op of request.ops) {
       if (aborted) {
