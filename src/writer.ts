@@ -696,7 +696,23 @@ export async function sudoAtomicWrite(
       if (session) {
         // continueOnError=true: a chmod failure must not abort subsequent
         // chmod ops in the same batch (e.g. when multiple files have mode drift).
-        chmodResults = await session.exec(chmodOps, true);
+        try {
+          chmodResults = await session.exec(chmodOps, true);
+        } catch (chmodSessionErr) {
+          // Worker crashed between the write exec() call and this chmod exec()
+          // call. The writes are already committed on disk; only permissions are
+          // affected. Warn per-file rather than propagating as a write failure.
+          const msg =
+            chmodSessionErr instanceof Error
+              ? chmodSessionErr.message
+              : String(chmodSessionErr);
+          for (const co of chmodOps) {
+            console.warn(
+              `Warning: could not apply chmod to ${co.targetPath}: ${msg}. File content is correct; permissions will re-drift.`,
+            );
+          }
+          continue;
+        }
       } else {
         // No session: fall back to a one-shot spawnSync call. This bypasses the
         // single-sudo-prompt guarantee (one spawnSync per identity per call) and
@@ -705,8 +721,13 @@ export async function sudoAtomicWrite(
         // this branch exists for callers that skip session management (e.g. tests).
         chmodResults = runPrivilegedWorker(sudo, chmodOps, true);
       }
-      for (const r of chmodResults) {
+      for (let ci = 0; ci < chmodResults.length; ci++) {
+        const r = chmodResults[ci];
         if (r.ok && !r.skipped) chmodApplied++;
+        else if (!r.ok)
+          console.warn(
+            `Warning: chmod failed for ${chmodOps[ci]?.targetPath}: ${r.error ?? 'unknown error'}`,
+          );
       }
     }
   }
@@ -1214,7 +1235,6 @@ export class SudoWorkerSession {
           return;
         }
         if (!nonceVerified) {
-          nonceVerified = true;
           const trimmedBuf = Buffer.from(trimmed);
           const nonceBuf = Buffer.from(ipcNonce);
           const nonceMatch =
@@ -1226,6 +1246,7 @@ export class SudoWorkerSession {
             socket.destroy();
             return;
           }
+          nonceVerified = true;
           // Nonce verified — promote this socket to the active IPC channel.
           clearTimeout(authTimeout);
           this.ipcSocket = socket;
@@ -1340,6 +1361,12 @@ export class SudoWorkerSession {
             // stdin: /dev/tty (or inherited) so sudo's ttyname() succeeds
             // stdout/stderr: ignored — all IPC goes through the Unix socket
             stdio: [ttyFd ?? 'inherit', 'ignore', 'inherit'],
+            // detached: sudo becomes a new process group leader so that
+            // close() can kill the entire group (-pid) including the node
+            // worker child on platforms where sudo forks rather than exec()s
+            // (e.g. macOS with PAM). The inherited /dev/tty fd on stdin still
+            // reaches sudo for password prompts even in the new session.
+            detached: true,
           },
         );
       } catch (spawnErr) {
@@ -1573,14 +1600,28 @@ export class SudoWorkerSession {
       this.ipcSocketPath = undefined;
     }
     if (this.proc) {
-      // SIGTERM first: sudo forwards it to the child node process, allowing a
-      // graceful shutdown. SIGKILL is the backstop if the child ignores SIGTERM
-      // — sent directly to sudo which is still alive at that point. Unlike
-      // SIGKILL, SIGTERM cannot orphan the child because sudo forwards it.
-      this.proc.kill('SIGTERM');
-      const t = setTimeout(() => this.proc?.kill('SIGKILL'), 5_000);
-      t.unref();
-      this.proc.once('close', () => clearTimeout(t));
+      const pid = this.proc.pid;
+      if (pid !== undefined) {
+        // Kill the entire process group: sudo was spawned with detached:true so
+        // it is the process group leader. -pid targets both sudo and its node
+        // worker child (on macOS where sudo forks rather than exec()s). On Linux
+        // sudo typically exec()s so proc.pid == worker pid and -pid == proc.pid.
+        try {
+          process.kill(-pid, 'SIGTERM');
+        } catch {
+          // Process group may already be gone; fall back to direct kill.
+          this.proc.kill('SIGTERM');
+        }
+        const t = setTimeout(() => {
+          try {
+            process.kill(-pid, 'SIGKILL');
+          } catch {
+            // ignore; process group likely already gone
+          }
+        }, 5_000);
+        t.unref();
+        this.proc.once('close', () => clearTimeout(t));
+      }
     }
     if (this.tmpDir) {
       cleanupWorkerDir(this.tmpDir);

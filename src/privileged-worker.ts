@@ -831,14 +831,21 @@ export function handleWriteInPlace(
           // best-effort restore; original write error is re-thrown below
         }
       }
-      // If we temporarily boosted the mode, restore it before closing.
-      if (rfd !== undefined && savedMode !== undefined) {
+      // Restore temporarily-boosted mode only when writeSucceeded is false.
+      // If the write succeeded but the subsequent fchmod failed, the new content
+      // is already on disk — restoring the old mode here would silently revert
+      // the permission change. The next pull re-detects and re-applies the drift.
+      if (!writeSucceeded && rfd !== undefined && savedMode !== undefined) {
         try {
           safeFchmodSync(rfd, savedMode);
         } catch {
           // best-effort restore
         }
-      } else if (rfd === undefined && savedMode !== undefined) {
+      } else if (
+        !writeSucceeded &&
+        rfd === undefined &&
+        savedMode !== undefined
+      ) {
         // rfd is undefined when O_RDONLY failed with EACCES (write-only or
         // mode-0000 file owned by root; named-user has write but not read
         // access). Path-based chmodSync re-traverses the path string and
@@ -1526,6 +1533,11 @@ if (require.main === module) {
           emitErrorAndExit('stdin nonce mismatch');
           return;
         }
+        // Invariant: the nonce line must arrive exactly once per session.
+        if (stdinNonceVerified) {
+          emitErrorAndExit('internal: stdin nonce received more than once');
+          return;
+        }
         stdinNonceVerified = true;
         return; // consume this line as the nonce; wait for the next line with JSON
       }
@@ -1588,12 +1600,12 @@ if (require.main === module) {
     // completed results in crash responses. batchResults is the same array
     // reference as results — pushes are visible via the reference immediately.
     batchResults = results;
-    batchExpectedOps = request.ops.length;
     const MAX_OPS = 10_000;
     if (request.ops.length > MAX_OPS) {
       emitErrorAndExit(`ops array exceeds maximum batch size of ${MAX_OPS}`);
       return;
     }
+    batchExpectedOps = request.ops.length;
     let aborted = false;
     for (const op of request.ops) {
       if (aborted) {
@@ -1617,6 +1629,14 @@ if (require.main === module) {
         if (!path.isAbsolute(raw['targetPath'])) {
           throw new Error(
             `invalid op ${type}: targetPath must be absolute, got ${raw['targetPath']}`,
+          );
+        }
+        // Reject paths with .. components: path.resolve normalises them
+        // differently from how isAbsolute treats them, so checkAncestorsSafeAsRoot
+        // would walk different ancestors than dispatch writes to.
+        if (path.resolve(raw['targetPath']) !== raw['targetPath']) {
+          throw new Error(
+            `invalid op ${type}: targetPath must be canonical (no .. components), got ${raw['targetPath']}`,
           );
         }
         if (

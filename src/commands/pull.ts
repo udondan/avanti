@@ -1120,7 +1120,27 @@ export function pullCommand(): Command {
         if (staleDiffs[diffIdx]?.lstatFailed && staleToRestore[i].sudo) {
           const stat = lstatFailedStats.get(staleToRestore[i].targetPath);
           if (!stat) continue;
-          if (staleToRestore[i].symlinkTarget !== undefined) {
+          const entry = staleToRestore[i];
+          if (!stat.exists) {
+            // File confirmed absent — rebuild as a proper new diff so
+            // formatDiff shows the actual content instead of "unreadable".
+            // Clear backupPath: it was set assuming the file existed (conservative
+            // lstatFailed default). Since the file is actually new, there is
+            // nothing to back up and the backup should not be created.
+            if (entry.symlinkTarget !== undefined) {
+              staleDiffs[diffIdx] = buildNewSymlinkDiff(
+                entry.targetPath,
+                entry.symlinkTarget,
+              );
+            } else {
+              staleDiffs[diffIdx] = buildNewFileDiff(
+                entry.targetPath,
+                entry.content,
+                staleDiffs[diffIdx]?.modeChange,
+              );
+            }
+            staleToRestore[i] = { ...entry, backupPath: undefined };
+          } else if (entry.symlinkTarget !== undefined) {
             const isDirectory = !stat.isSymlink && stat.isDirectory;
             if (isDirectory) {
               staleDiffs[diffIdx] = {
@@ -1819,6 +1839,14 @@ export function pullCommand(): Command {
                     `Warning: could not delete ${paths[di]}: ${deleteResults[di].error}`,
                   );
                 }
+              }
+              // Crash sentinel: the worker appends an extra result at index
+              // paths.length when it exits non-zero mid-batch (continueOnError).
+              const crashSentinel = deleteResults[paths.length];
+              if (crashSentinel && !crashSentinel.ok) {
+                console.warn(
+                  `Warning: privileged worker crashed during stale-file cleanup: ${crashSentinel.error ?? 'worker exited unexpectedly'}`,
+                );
               }
             } else {
               // Phase 2 opens a session for every identity in deferredIds,
