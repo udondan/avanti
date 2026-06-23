@@ -1,0 +1,1837 @@
+import * as crypto from 'crypto';
+import * as fs from 'fs';
+import * as net from 'net';
+import * as path from 'path';
+
+// O_NOFOLLOW and O_NONBLOCK are POSIX-only; fall back to 0 (no-op) on platforms
+// where they are not defined (Windows). The worker is only invoked via sudo on
+// Unix, so 0 is never reached in production.
+const O_NOFOLLOW: number =
+  (fs.constants as Record<string, number>).O_NOFOLLOW ?? 0;
+const O_NONBLOCK: number =
+  (fs.constants as Record<string, number>).O_NONBLOCK ?? 0;
+
+interface WriteFileOpBase {
+  targetPath: string;
+  contentB64: string;
+  mode?: string;
+  defaultMode: string;
+  backupPath?: string;
+}
+
+export interface WriteMvOp extends WriteFileOpBase {
+  type: 'write-mv';
+}
+
+export interface WriteInPlaceOp extends WriteFileOpBase {
+  type: 'write-in-place';
+}
+
+export interface WriteSymlinkOp {
+  type: 'write-symlink';
+  targetPath: string;
+  symlinkTarget: string;
+  backupPath?: string;
+}
+
+export interface DeleteOp {
+  type: 'delete';
+  targetPath: string;
+}
+
+export interface ChmodOp {
+  type: 'chmod';
+  targetPath: string;
+  mode: string;
+}
+
+export interface ReadOp {
+  type: 'read';
+  targetPath: string;
+}
+
+export interface ReadlinkOp {
+  type: 'readlink';
+  targetPath: string;
+}
+
+export interface StatReadOp {
+  type: 'stat-read';
+  targetPath: string;
+}
+
+export type WriteOp =
+  | WriteMvOp
+  | WriteInPlaceOp
+  | WriteSymlinkOp
+  | DeleteOp
+  | ChmodOp
+  | ReadOp
+  | ReadlinkOp
+  | StatReadOp;
+
+export interface WorkerRequest {
+  ops: WriteOp[];
+  continueOnError?: boolean;
+}
+
+export interface WorkerResult {
+  ok: boolean;
+  error?: string;
+  /** errno code from NodeJS.ErrnoException, e.g. 'ENOENT'; set when ok is false */
+  code?: string;
+  /** true when a chmod op was silently skipped (ENOENT/ELOOP) — not an error */
+  skipped?: boolean;
+  /** base64-encoded file content, set for read/readlink/stat-read ops */
+  contentB64?: string;
+  /** true when stat-read resolved a symlink (contentB64 is the link target) */
+  isSymlink?: boolean;
+  /** octal mode string (e.g. '0644'), set by stat-read for regular files and symlinks */
+  mode?: string;
+}
+
+export interface WorkerResponse {
+  results: WorkerResult[];
+}
+
+type DispatchResult =
+  | { kind: 'ok' }
+  | { kind: 'skipped' }
+  | { kind: 'read'; contentB64: string; isSymlink: boolean; mode?: string };
+
+function randomHex(): string {
+  return crypto.randomBytes(8).toString('hex');
+}
+
+// Opens resolvedPath with O_RDONLY|O_NOFOLLOW|O_NONBLOCK, verifies it is a
+// regular file within the MAX_READ limit, reads it fully, and returns the
+// base64-encoded contents and the file's permission bits (octal string, e.g.
+// "0644"). The label ('read' or 'stat-read') is used in error messages. The fd
+// is always closed, even on error. Mode is captured via fstatSync while the fd
+// is still open — atomically bound to the same inode as the content being read.
+function readFileToBase64(
+  resolvedPath: string,
+  label: string,
+): { contentB64: string; mode: string } {
+  let fd: number | undefined;
+  try {
+    // O_NONBLOCK omitted: a regular-file readSync (below) can return EAGAIN
+    // on NFS/FUSE when O_NONBLOCK is set. The fstatSync check below already
+    // rejects FIFOs and other non-regular files before any read is attempted.
+    fd = fs.openSync(resolvedPath, fs.constants.O_RDONLY | O_NOFOLLOW);
+    const st = fs.fstatSync(fd);
+    if (!st.isFile()) {
+      // Attach a recognisable code so callers can distinguish directory
+      // (EISDIR) from other special files like FIFOs or sockets (ENOTREGFILE).
+      // Without a code, callers would mis-report the path as non-existent.
+      const err = Object.assign(
+        new Error(`${label}: ${resolvedPath} is not a regular file`),
+        { code: st.isDirectory() ? 'EISDIR' : 'ENOTREGFILE' },
+      );
+      throw err;
+    }
+    if (st.size > MAX_READ) {
+      throw new Error(
+        `${label}: ${resolvedPath} exceeds the 100 MiB read limit`,
+      );
+    }
+    const mode = (st.mode & 0o7777).toString(8).padStart(4, '0');
+    // Read until EOF rather than st.size bytes: st.size may be 0 for special
+    // filesystems (procfs, sysfs) and also for empty regular files. Reading
+    // until EOF handles both cases correctly.
+    const chunks: Buffer[] = [];
+    let total = 0;
+    const chunk = Buffer.alloc(65536);
+    let n: number;
+    while ((n = fs.readSync(fd, chunk, 0, chunk.length, null)) > 0) {
+      total += n;
+      if (total > MAX_READ) {
+        throw new Error(
+          `${label}: ${resolvedPath} exceeds the 100 MiB read limit`,
+        );
+      }
+      chunks.push(Buffer.from(chunk.subarray(0, n)));
+    }
+    return { contentB64: Buffer.concat(chunks).toString('base64'), mode };
+  } finally {
+    if (fd !== undefined) {
+      try {
+        fs.closeSync(fd);
+      } catch {
+        /* best-effort close */
+      }
+    }
+  }
+}
+
+function getExistingMode(filePath: string): string | undefined {
+  try {
+    const lst = fs.lstatSync(filePath);
+    // For symlinks, follow to the target to preserve the target file's mode
+    // (matching the old `stat -L` behavior). If the target is not a regular
+    // file or the link is dangling, return undefined so the caller falls back
+    // to defaultMode.
+    const stat = lst.isSymbolicLink() ? fs.statSync(filePath) : lst;
+    if (!stat.isFile()) return undefined;
+    const rawMode = stat.mode & 0o7777;
+    // Strip setuid/setgid/sticky when the source was a symlink: the replacement
+    // is a new regular file and the worker runs as root, so inheriting those
+    // bits from the symlink target would silently create a setuid/setgid binary.
+    const strippedMode = lst.isSymbolicLink() ? rawMode & 0o0777 : rawMode;
+    return strippedMode.toString(8).padStart(4, '0');
+  } catch (e) {
+    const code = (e as NodeJS.ErrnoException).code;
+    // ENOENT: file doesn't exist yet → use defaultMode (expected, suppress).
+    // ELOOP/ENOTDIR: target is a broken symlink or non-dir component → skip.
+    // EACCES/EPERM: even root was denied (SELinux/AppArmor MAC policy) →
+    //   rethrow so the caller doesn't silently reset the file's mode.
+    if (code === 'ENOENT' || code === 'ELOOP' || code === 'ENOTDIR')
+      return undefined;
+    throw e;
+  }
+}
+
+// parseInt('0o644', 8) stops at 'o' and returns 0, silently setting permissions
+// to 0000. Strip the prefix so both '0644' and '0o644' parse correctly.
+export function parseMode(modeStr: string): number {
+  const stripped = modeStr.replace(/^0[oO]/, '');
+  // Validate before parsing: parseInt stops at the first non-octal character
+  // and returns the partial result (e.g. "644abc" → 420), which would
+  // silently set wrong permissions. The isNaN guard only catches the case
+  // where the FIRST character is invalid.
+  if (!/^[0-7]+$/.test(stripped)) throw new Error(`invalid mode: ${modeStr}`);
+  return parseInt(stripped, 8);
+}
+
+// Buffer.from(str, 'base64') silently drops invalid characters, which can
+// silently corrupt content if contentB64 is truncated (e.g. by a short-write
+// on the stdin pipe). Validate before decoding so the op fails loudly.
+// Use a regex + length check rather than the round-trip Buffer approach: the
+// round-trip (decode then re-encode) allocates two extra buffers the size of
+// the input, which for a 10 MiB file means ~27 MiB of garbage per call. For a
+// batch of 20 large files this peaks at ~540 MiB before any write starts.
+// The regex + length check is O(n) with zero extra allocation:
+//   - `^[A-Za-z0-9+/]*={0,2}$` ensures only valid base64 chars and at most 2
+//     trailing `=` signs (so "A===" and "AAAA====" are correctly rejected).
+//   - `s.length % 4 !== 0` rejects strings that aren't padded to a 4-char
+//     boundary (so bare "AA" and "AAA" are correctly rejected).
+// Together these two checks accept exactly canonical standard base64, which is
+// also what Buffer.from(s,'base64').toString('base64') round-trips correctly.
+function validateBase64(s: string, field: string): void {
+  // Empty string is valid: it encodes an empty file (.gitkeep, empty __init__.py, etc.).
+  if (s === '') return;
+  if (!/^[A-Za-z0-9+/]*={0,2}$/.test(s) || s.length % 4 !== 0) {
+    throw new Error(`${field}: invalid base64 string (length ${s.length})`);
+  }
+}
+
+// fs.fchmodSync is not implemented on Windows — no-op there since the worker
+// only ever runs under sudo on Unix.
+function safeFchmodSync(fd: number, mode: number): void {
+  if (process.platform !== 'win32') {
+    fs.fchmodSync(fd, mode);
+  }
+}
+
+function backupRegularFile(
+  targetPath: string,
+  backupPath: string,
+  trustedUids?: Set<number>,
+): void {
+  // Open the source first with O_NOFOLLOW so the isFile check is on the same
+  // fd that will be read — eliminates the TOCTOU window between lstatSync and
+  // openSync where a symlink swap could silently skip the backup.
+  // O_NOFOLLOW: ELOOP if targetPath is a symlink (→ not a regular file, skip).
+  // O_NONBLOCK omitted: the subsequent readSync can return EAGAIN on NFS/FUSE
+  // when O_NONBLOCK is set. The fstatSync check below rejects non-regular
+  // files (FIFOs, sockets) before any read is attempted.
+  let sfd: number | undefined;
+  try {
+    sfd = fs.openSync(targetPath, fs.constants.O_RDONLY | O_NOFOLLOW);
+  } catch (e) {
+    const code = (e as NodeJS.ErrnoException).code;
+    if (code === 'ENOENT' || code === 'ELOOP' || code === 'ENOTDIR') return;
+    throw e;
+  }
+
+  let bfd: number | undefined;
+  let backupTmp: string | undefined;
+  let backupTmpCreated = false;
+  try {
+    const srcStat = fs.fstatSync(sfd);
+    if (!srcStat.isFile()) {
+      fs.closeSync(sfd);
+      sfd = undefined;
+      return;
+    }
+
+    const resolvedBackup = path.resolve(backupPath);
+    const backupDir = path.dirname(resolvedBackup);
+
+    // Refuse if backup destination is a directory.
+    try {
+      if (fs.lstatSync(resolvedBackup).isDirectory()) {
+        throw new Error(`backup path is a directory: ${backupPath}`);
+      }
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
+    }
+
+    // Pre-validate before mkdirSync so we catch world-writable ancestors that
+    // the caller could not lstat (EACCES); re-validate after to cover any
+    // intermediate directories that mkdirSync itself creates.
+    if (trustedUids)
+      checkAncestorsSafeAsRoot(resolvedBackup, trustedUids, 'backup');
+    fs.mkdirSync(backupDir, { recursive: true, mode: 0o755 });
+    if (trustedUids)
+      checkAncestorsSafeAsRoot(resolvedBackup, trustedUids, 'backup');
+
+    backupTmp = path.join(
+      path.resolve(backupDir),
+      `.avanti-backup-${randomHex()}`,
+    );
+
+    // O_EXCL creation — prevents TOCTOU in the backup staging directory. Keep
+    // the fd open and write through it so no path-based TOCTOU window opens
+    // between open and write.
+    bfd = fs.openSync(backupTmp, 'wx', 0o600);
+    backupTmpCreated = true;
+    const buf = Buffer.alloc(65536);
+    let bytesRead: number;
+    while ((bytesRead = fs.readSync(sfd, buf, 0, buf.length, null)) > 0) {
+      fs.writeSync(bfd, buf, 0, bytesRead);
+    }
+    safeFchmodSync(bfd, srcStat.mode & 0o7777);
+    fs.closeSync(bfd);
+    bfd = undefined;
+    fs.closeSync(sfd);
+    sfd = undefined;
+    fs.renameSync(backupTmp, resolvedBackup);
+  } catch (err) {
+    if (bfd !== undefined) {
+      try {
+        fs.closeSync(bfd);
+      } catch {
+        // best-effort close
+      }
+    }
+    // Only unlink backupTmp when WE created it. bfd tracks the open fd, but
+    // it is set to undefined before renameSync — if rename fails, bfd is already
+    // undefined even though we own the temp file. Use a dedicated boolean flag.
+    if (backupTmpCreated && backupTmp !== undefined) {
+      try {
+        fs.unlinkSync(backupTmp);
+      } catch {
+        // best-effort cleanup
+      }
+    }
+    if (sfd !== undefined) {
+      try {
+        fs.closeSync(sfd);
+      } catch {
+        // best-effort close
+      }
+    }
+    throw err;
+  }
+}
+
+// Backs up whatever currently lives at targetPath (regular file or symlink).
+// No-op if targetPath does not exist or is a directory (directories are refused
+// upstream before we reach the backup step).
+function backupTarget(
+  targetPath: string,
+  backupPath: string,
+  lst: fs.Stats | undefined,
+  trustedUids?: Set<number>,
+  // Pre-read link target: callers MUST pass the readlinkSync result obtained
+  // immediately after their lstatSync to avoid a TOCTOU window between the
+  // isSymbolicLink() check and a second readlinkSync here. Required (not
+  // optional) when lst.isSymbolicLink() is true — omitting it is an invariant
+  // violation and will throw.
+  preobtainedLinkTarget?: string,
+): void {
+  if (lst === undefined) return;
+
+  if (lst.isSymbolicLink()) {
+    if (preobtainedLinkTarget === undefined) {
+      throw new Error(
+        'internal: preobtainedLinkTarget must be provided when backing up a symlink',
+      );
+    }
+    const resolvedBackup = path.resolve(backupPath);
+    const backupDir = path.dirname(resolvedBackup);
+
+    try {
+      if (fs.lstatSync(resolvedBackup).isDirectory()) {
+        throw new Error(`backup path is a directory: ${backupPath}`);
+      }
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
+    }
+
+    if (trustedUids)
+      checkAncestorsSafeAsRoot(resolvedBackup, trustedUids, 'backup');
+    fs.mkdirSync(backupDir, { recursive: true, mode: 0o755 });
+    if (trustedUids)
+      checkAncestorsSafeAsRoot(resolvedBackup, trustedUids, 'backup');
+
+    const backupTmp = path.join(
+      path.resolve(backupDir),
+      `.avanti-backup-${randomHex()}`,
+    );
+    try {
+      // Use the pre-obtained link target to avoid a TOCTOU window between the
+      // caller's isSymbolicLink() check and reading the target here.
+      const rawTarget = preobtainedLinkTarget;
+      // Convert relative targets to absolute so the backup is self-contained at
+      // its storage location (user-defined via `backup:`, not necessarily the same
+      // directory as the original file). Matches the unprivileged path in writer.ts.
+      const linkTarget = path.isAbsolute(rawTarget)
+        ? rawTarget
+        : path.resolve(path.dirname(targetPath), rawTarget);
+      fs.symlinkSync(linkTarget, backupTmp);
+      fs.renameSync(backupTmp, resolvedBackup);
+    } catch (err) {
+      try {
+        fs.unlinkSync(backupTmp);
+      } catch {
+        // best-effort cleanup
+      }
+      throw err;
+    }
+  } else if (lst.isFile()) {
+    backupRegularFile(targetPath, backupPath, trustedUids);
+  }
+}
+
+export function handleWriteMv(op: WriteMvOp, trustedUids?: Set<number>): void {
+  const resolvedTarget = path.resolve(op.targetPath);
+  const dir = path.dirname(resolvedTarget);
+
+  // The dispatch loop already ran checkAncestorsSafeAsRoot before calling this
+  // handler; the pre-mkdirSync call below is intentionally redundant (belt-and-
+  // suspenders) for callers that invoke handlers directly in tests or future
+  // code paths. The post-mkdirSync call is essential to validate any new
+  // intermediate directories that mkdirSync itself creates.
+  if (trustedUids)
+    checkAncestorsSafeAsRoot(resolvedTarget, trustedUids, 'destination');
+  fs.mkdirSync(dir, { recursive: true, mode: 0o755 });
+  if (trustedUids)
+    checkAncestorsSafeAsRoot(resolvedTarget, trustedUids, 'destination');
+
+  const existingMode = op.mode ? undefined : getExistingMode(resolvedTarget);
+
+  // O_EXCL temp in destination directory. Keep the fd open and write through
+  // it so no path-based TOCTOU window opens between open and write.
+  const tmpPath = path.join(dir, `.avanti-${randomHex()}`);
+  let tfd: number | undefined;
+  let backupCommitted = false;
+  try {
+    tfd = fs.openSync(tmpPath, 'wx', 0o600);
+    validateBase64(op.contentB64, 'contentB64');
+    fs.writeFileSync(tfd, Buffer.from(op.contentB64, 'base64'));
+
+    const effectiveMode = op.mode ?? existingMode ?? op.defaultMode;
+    safeFchmodSync(tfd, parseMode(effectiveMode));
+    fs.closeSync(tfd);
+    tfd = undefined;
+
+    // rename(2) is atomic and never follows symlinks on any POSIX platform.
+    // Refuse real directories (rename(2) would fail with EISDIR anyway, but
+    // this gives a cleaner error message). Symlinks-to-directories are fine —
+    // rename(2) replaces the symlink itself, not its target.
+    // Capture lst here for reuse in the backup step below.
+    let lst: fs.Stats | undefined;
+    let existingLinkTarget: string | undefined;
+    try {
+      lst = fs.lstatSync(resolvedTarget);
+      if (!lst.isSymbolicLink() && lst.isDirectory()) {
+        throw new Error(`target path is a directory: ${op.targetPath}`);
+      }
+      // Read the symlink target immediately alongside lstat to minimise the
+      // TOCTOU window before passing it to backupTarget.
+      if (lst.isSymbolicLink()) {
+        existingLinkTarget = fs.readlinkSync(resolvedTarget);
+      }
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
+    }
+
+    // Backup AFTER staging succeeds: a staging failure no longer leaves a
+    // backup behind without the new file being committed.
+    // Use backupTarget (not backupRegularFile) so that a symlink at the target
+    // is backed up as a symlink rather than silently skipped.
+    if (op.backupPath) {
+      backupTarget(
+        resolvedTarget,
+        op.backupPath,
+        lst,
+        trustedUids,
+        existingLinkTarget,
+      );
+      backupCommitted = true;
+    }
+
+    fs.renameSync(tmpPath, resolvedTarget);
+  } catch (err) {
+    if (tfd !== undefined) {
+      try {
+        fs.closeSync(tfd);
+      } catch {
+        // best-effort close
+      }
+    }
+    try {
+      fs.unlinkSync(tmpPath);
+    } catch {
+      // best-effort cleanup
+    }
+    // If the backup was committed but the write rename failed, remove the
+    // orphaned backup — the original is still intact at resolvedTarget.
+    if (backupCommitted && op.backupPath) {
+      try {
+        fs.unlinkSync(path.resolve(op.backupPath));
+      } catch {
+        // best-effort
+      }
+    }
+    throw err;
+  }
+}
+
+export function handleWriteInPlace(
+  op: WriteInPlaceOp,
+  trustedUids?: Set<number>,
+): void {
+  const resolvedTarget = path.resolve(op.targetPath);
+  const dir = path.dirname(resolvedTarget);
+
+  if (trustedUids)
+    checkAncestorsSafeAsRoot(resolvedTarget, trustedUids, 'destination');
+  fs.mkdirSync(dir, { recursive: true, mode: 0o755 });
+  if (trustedUids)
+    checkAncestorsSafeAsRoot(resolvedTarget, trustedUids, 'destination');
+
+  // Refuse symlinks (would follow to unintended target).
+  // Refuse non-regular files (FIFOs, devices, sockets).
+  // Check BEFORE the backup so that a race turning the target into a symlink
+  // between these checks does not leave an orphaned backup without a write.
+  // backupRegularFile also uses O_NOFOLLOW and handles ELOOP internally, so
+  // the residual window between here and the backup call is self-contained.
+  let isNewFile = false;
+  try {
+    const lst = fs.lstatSync(resolvedTarget);
+    if (lst.isSymbolicLink()) {
+      throw new Error(
+        `writeInPlace: ${op.targetPath} is a symlink; refusing to follow`,
+      );
+    }
+    if (!lst.isFile()) {
+      throw new Error(
+        `writeInPlace: ${op.targetPath} is not a regular file; refusing to write`,
+      );
+    }
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === 'ENOENT') {
+      isNewFile = true;
+    } else {
+      throw e;
+    }
+  }
+
+  // Validate and decode content before committing the backup. If contentB64 is
+  // invalid, the write would fail anyway — but without this ordering the backup
+  // would already be committed, leaving an orphaned copy at backupPath with no
+  // new file written. Validating first means a bad base64 payload is caught
+  // before any filesystem state changes (matching handleWriteMv's ordering).
+  validateBase64(op.contentB64, 'contentB64');
+  const content = Buffer.from(op.contentB64, 'base64');
+
+  // Commit the backup AFTER confirming the target is still a regular file and
+  // validating contentB64. backupRegularFile internally stages to an O_EXCL temp
+  // and renames atomically, so no outer try/catch wrapper is needed here.
+  if (op.backupPath && !isNewFile) {
+    backupRegularFile(resolvedTarget, path.resolve(op.backupPath), trustedUids);
+  }
+  const effectiveMode = op.mode ?? (isNewFile ? op.defaultMode : undefined);
+
+  if (isNewFile) {
+    // O_EXCL (the 'x' flag) ensures atomic creation — no symlink can exist at
+    // the path at open time, so following is impossible by construction. Keep
+    // the fd open and write through it (no path-based TOCTOU after open).
+    let fd: number | undefined;
+    try {
+      fd = fs.openSync(resolvedTarget, 'wx', 0o600);
+      fs.writeFileSync(fd, content);
+      if (effectiveMode !== undefined) {
+        safeFchmodSync(fd, parseMode(effectiveMode));
+      }
+      fs.closeSync(fd);
+      fd = undefined;
+    } catch (err) {
+      if (fd !== undefined) {
+        try {
+          fs.closeSync(fd);
+        } catch {
+          // best-effort close
+        }
+      }
+      // The file was created (O_EXCL) but the write or chmod failed, leaving
+      // a 0-byte stub. Remove it so the path does not appear to exist on the
+      // next avanti pull (where it would be treated as an existing file and
+      // take the write-in-place path instead of the new-file path).
+      try {
+        fs.unlinkSync(resolvedTarget);
+      } catch {
+        // best-effort; the empty file is benign but avanti pull will overwrite it
+      }
+      throw err;
+    }
+  } else {
+    // Open read-only first (O_NOFOLLOW|O_NONBLOCK) to:
+    //   1. Verify the file is still a regular file (not a symlink/FIFO).
+    //   2. Capture the current mode including setuid/setgid bits BEFORE the
+    //      O_TRUNC write-open clears them on Linux.
+    // Then open for writing. If the write-open fails with EACCES (named-user
+    // sudo running as a non-root uid), fchmod via the read fd to temporarily
+    // add a write bit, retry, then always restore the original mode.
+    // O_NONBLOCK omitted: rfd + fstatSync below already verified the target is
+    // a regular file. O_NONBLOCK on a regular-file write fd can return EAGAIN
+    // on NFS/FUSE, which fs.writeFileSync does not handle.
+    const openFlags = fs.constants.O_WRONLY | fs.constants.O_TRUNC | O_NOFOLLOW;
+    let fd: number | undefined;
+    let rfd: number | undefined;
+    let savedMode: number | undefined;
+    let savedSize: number | undefined;
+    // Declared here (not inside try) so the catch block can read it.
+    let writeSucceeded = false;
+    // Declared here so both the pre-truncation read (inside try) and the
+    // catch block can access it.
+    let originalContentForRestore: Buffer | undefined;
+    // Capture the initial write-open error so we can do EACCES recovery
+    // outside the catch block, avoiding the preserve-caught-error lint constraint.
+    let firstOpenErr: NodeJS.ErrnoException | undefined;
+    try {
+      try {
+        rfd = fs.openSync(
+          resolvedTarget,
+          fs.constants.O_RDONLY | O_NOFOLLOW | O_NONBLOCK,
+        );
+        const rst = fs.fstatSync(rfd);
+        if (!rst.isFile()) {
+          throw new Error(
+            `writeInPlace: ${op.targetPath} is not a regular file; refusing to write`,
+          );
+        }
+        savedMode = rst.mode & 0o7777;
+        savedSize = rst.size;
+      } catch (e) {
+        const code = (e as NodeJS.ErrnoException).code;
+        if (code === 'ELOOP') {
+          // TOCTOU: a symlink was placed at the path after the lstatSync check
+          // above but before O_NOFOLLOW openSync. Surface a clear error.
+          throw new Error(
+            `writeInPlace: ${op.targetPath} is a symlink; refusing to follow`,
+            { cause: e },
+          );
+        }
+        if (code !== 'EACCES') throw e;
+        // Write-only file (e.g. mode 0200): O_RDONLY fails with EACCES.
+        // Fall back to a path-based stat to capture the mode; the write open
+        // below will succeed directly so no rfd-based EACCES recovery is needed.
+        // Use lstatSync (not statSync) to avoid following symlinks — the caller
+        // already verified the path is a regular file via lstatSync above.
+        const rst = fs.lstatSync(resolvedTarget);
+        if (!rst.isFile()) {
+          throw new Error(
+            `writeInPlace: ${op.targetPath} is not a regular file; refusing to write`,
+            { cause: e },
+          );
+        }
+        savedMode = rst.mode & 0o7777;
+        // rfd stays undefined — no EACCES recovery fchmod needed.
+      }
+
+      // Read original content for in-memory restore when no backup: is configured.
+      // Must happen before the O_TRUNC write-open below (which zeroes the file).
+      // Only when rfd is available (EACCES path has no rfd) and within MAX_READ.
+      // If the file is larger than MAX_READ without a backup path, there is no
+      // safe restore on write failure — that scenario is documented below in the
+      // catch block.
+      if (
+        !op.backupPath &&
+        rfd !== undefined &&
+        savedSize !== undefined &&
+        savedSize <= MAX_READ
+      ) {
+        originalContentForRestore = Buffer.alloc(savedSize);
+        if (savedSize > 0) {
+          fs.readSync(rfd, originalContentForRestore, 0, savedSize, 0);
+        }
+      }
+
+      try {
+        fd = fs.openSync(resolvedTarget, openFlags);
+      } catch (e) {
+        firstOpenErr = e as NodeJS.ErrnoException;
+      }
+      if (firstOpenErr !== undefined) {
+        if (
+          firstOpenErr.code === 'EACCES' &&
+          typeof process.getuid === 'function' &&
+          process.getuid() !== 0
+        ) {
+          // Named-user sudo: temporarily add the write bit so we can open the
+          // file for writing. Prefer fd-based fchmod (via rfd) when available
+          // to avoid a path-based TOCTOU window. Fall back to path-based
+          // chmodSync when rfd is undefined (e.g. mode-0000 files where the
+          // read-open also failed with EACCES — lstatSync captured the mode).
+          // savedMode must be defined at this point: if the O_RDONLY open
+          // succeeded, fstatSync set it; if not, lstatSync set it (and any
+          // other failure re-threw above rather than reaching here).
+          if (savedMode === undefined) throw firstOpenErr;
+          const mode = savedMode;
+          if (rfd !== undefined) {
+            // fd-based path: no TOCTOU window between stat and chmod.
+            try {
+              safeFchmodSync(rfd, mode | 0o200);
+            } catch {
+              throw firstOpenErr;
+            }
+          } else {
+            // rfd is undefined: O_RDONLY|O_NOFOLLOW failed with EACCES (write-only
+            // or no-permission file). Try to acquire a write-only fd without following
+            // symlinks so fchmod can go through the fd (no TOCTOU window).
+            let wfd: number | undefined;
+            try {
+              wfd = fs.openSync(
+                resolvedTarget,
+                fs.constants.O_WRONLY | O_NOFOLLOW | O_NONBLOCK,
+              );
+            } catch (e2) {
+              const c2 = (e2 as NodeJS.ErrnoException).code;
+              if (c2 === 'ELOOP') {
+                // A symlink was raced in after lstatSync confirmed a regular file.
+                throw new Error(
+                  `writeInPlace: ${op.targetPath} is a symlink; refusing to follow`,
+                  { cause: e2 },
+                );
+              }
+              // EACCES: mode 0000 or no write bit — fd-based fchmod not possible;
+              // fall through to path-based chmodSync (residual TOCTOU window).
+            }
+            if (wfd !== undefined) {
+              try {
+                safeFchmodSync(wfd, mode | 0o200);
+              } catch {
+                throw firstOpenErr;
+              } finally {
+                try {
+                  fs.closeSync(wfd);
+                } catch {
+                  // best-effort
+                }
+              }
+            } else {
+              // Neither fd-based nor path-based chmod is safe here: O_RDONLY and
+              // O_WRONLY both failed with EACCES (mode-0000 or SELinux/AppArmor MAC
+              // policy). Path-based chmodSync would require two sequential path
+              // traversals (add write bit, then restore) with a TOCTOU window between
+              // them that a racing attacker can exploit to permanently widen permissions
+              // on an unintended root-owned file. Refuse rather than proceed with a
+              // known-racy operation.
+              throw new Error(
+                `writeInPlace: ${op.targetPath} is not writable (mode ${(savedMode ?? 0).toString(8)}) and no fd-based chmod path is available; ` +
+                  `chmod the file to at least 0200 first or use write-mv instead`,
+              );
+            }
+          }
+          try {
+            fd = fs.openSync(resolvedTarget, openFlags);
+          } catch (retryErr) {
+            // Restore original mode before surfacing the error.
+            try {
+              if (rfd !== undefined) {
+                safeFchmodSync(rfd, mode);
+              } else {
+                fs.chmodSync(resolvedTarget, mode);
+              }
+            } catch {
+              // best-effort restore
+            }
+            throw retryErr;
+          }
+          // Restore original mode immediately after the write-open succeeds —
+          // the write bit was temporary. The conditional fchmod below handles
+          // explicit mode and setuid/setgid bits via fd; this restore
+          // covers the case where neither applies (e.g. a plain 0o400 file).
+          try {
+            if (rfd !== undefined) {
+              // fd-based fchmod is safe: operates on the already-open inode,
+              // not on the path string, so no TOCTOU window.
+              safeFchmodSync(rfd, mode);
+            } else {
+              // Path-based fallback: rfd is undefined when O_RDONLY failed with
+              // EACCES (write-only file owned by root; the invoking user has
+              // write but not read access). This chmodSync re-traverses the path
+              // string and follows symlinks, so it has a narrow TOCTOU window:
+              // an attacker controlling the parent directory could race a symlink
+              // between the earlier lstatSync and this call, causing chmodSync to
+              // operate on an unintended file. A full fix would require
+              // fchmodat(2) with AT_EMPTY_PATH on Linux — not exposed by Node.js
+              // without native code. The same window exists in the catch-block
+              // restore below (where rfd is also undefined).
+              fs.chmodSync(resolvedTarget, mode);
+            }
+          } catch (restoreErr) {
+            throw new Error(
+              `writeInPlace: failed to restore mode on ${op.targetPath} after temporary write-bit grant: ${(restoreErr as Error).message}`,
+              { cause: restoreErr },
+            );
+          }
+        } else {
+          throw firstOpenErr;
+        }
+      }
+      if (fd === undefined)
+        throw new Error('writeInPlace: internal error: fd not set');
+      // fstat after the write-open as a belt-and-suspenders check: a FIFO
+      // or other non-regular file could have been substituted in the window
+      // between the rfd open and fd open.
+      const fst = fs.fstatSync(fd);
+      if (!fst.isFile()) {
+        throw new Error(
+          `writeInPlace: ${op.targetPath} is not a regular file after open; refusing to write`,
+        );
+      }
+      fs.writeFileSync(fd, content);
+      writeSucceeded = true;
+      // fchmod only when needed: apply explicit mode, or restore setuid/setgid
+      // bits that Linux strips on O_TRUNC. Skip when neither applies — a named
+      // user writing via group permission may not own the file and fchmod would
+      // fail with EPERM even though the write succeeded.
+      if (
+        effectiveMode !== undefined ||
+        (savedMode !== undefined && (savedMode & 0o7000) !== 0)
+      ) {
+        safeFchmodSync(
+          fd,
+          effectiveMode !== undefined
+            ? parseMode(effectiveMode)
+            : (savedMode ?? 0),
+        );
+      }
+      fs.closeSync(fd);
+      fd = undefined;
+      if (rfd !== undefined) {
+        fs.closeSync(rfd);
+        rfd = undefined;
+      }
+    } catch (err) {
+      // Restore from backup ONLY when the content write itself failed (i.e.
+      // O_TRUNC truncated the file but writeFileSync threw before finishing).
+      // If writeSucceeded=true, only the subsequent fchmod failed — the new
+      // content is already on disk and must NOT be overwritten with the old
+      // backup (that would silently revert a successful write). The file will
+      // have the correct content with potentially wrong permissions; the next
+      // avanti pull will re-detect and re-apply the mode change.
+      if (!writeSucceeded && fd !== undefined) {
+        const restoreTmp = path.join(dir, `.avanti-restore-${randomHex()}`);
+        if (op.backupPath) {
+          // Rename-based restore to avoid following symlinks: stage backup content
+          // to a temp file in the same dir as the target, then rename atomically.
+          // copyFileSync alone would follow a symlink placed at resolvedTarget
+          // between the truncation and the restore.
+          try {
+            // COPYFILE_EXCL uses O_CREAT|O_EXCL for the destination, so it fails
+            // with EEXIST if a symlink was raced to restoreTmp before we write —
+            // preventing the restore from following an attacker-controlled symlink
+            // to overwrite an unrelated file.
+            fs.copyFileSync(
+              path.resolve(op.backupPath),
+              restoreTmp,
+              fs.constants.COPYFILE_EXCL,
+            );
+            fs.renameSync(restoreTmp, resolvedTarget);
+          } catch (restoreErr) {
+            try {
+              fs.unlinkSync(restoreTmp);
+            } catch {
+              // best-effort cleanup
+            }
+            if ((restoreErr as NodeJS.ErrnoException).code === 'EISDIR') {
+              // The parent directory was swapped for a symlink→directory between
+              // the O_TRUNC and this restore rename. The file content is already
+              // lost (truncated). Report clearly; backup copy is at op.backupPath.
+              console.error(
+                `avanti: write-in-place restore failed — ${op.targetPath} was replaced by a directory; file is truncated. Backup: ${op.backupPath}`,
+              );
+            } else {
+              // Any other restore failure (ENOSPC, EACCES, etc.): surface it so
+              // the user knows the file was left truncated.
+              process.stderr.write(
+                `avanti-worker: writeInPlace: restore of ${op.targetPath} from backup failed: ${(restoreErr as Error).message}\n`,
+              );
+            }
+            // best-effort restore; original write error is re-thrown below
+          }
+        } else if (originalContentForRestore !== undefined) {
+          // No backup: path configured. Use the pre-truncation in-memory snapshot
+          // read via rfd before O_TRUNC zeroed the file. Uses the same
+          // rename-based pattern as the backup restore above to avoid following
+          // a symlink placed at resolvedTarget between the truncation and here.
+          try {
+            fs.writeFileSync(restoreTmp, originalContentForRestore, {
+              flag: 'wx',
+            });
+            fs.renameSync(restoreTmp, resolvedTarget);
+          } catch (restoreErr) {
+            try {
+              fs.unlinkSync(restoreTmp);
+            } catch {
+              // best-effort cleanup
+            }
+            process.stderr.write(
+              `avanti-worker: writeInPlace: in-memory restore of ${op.targetPath} failed: ${(restoreErr as Error).message}. File may be truncated.\n`,
+            );
+          }
+        } else {
+          // No backup path and no in-memory snapshot available (rfd was absent
+          // because the read-open failed with EACCES, or the file exceeded
+          // MAX_READ). The file was already truncated by O_TRUNC before the write
+          // failed. No automatic recovery is possible.
+          process.stderr.write(
+            `avanti-worker: writeInPlace: ${op.targetPath} was truncated and no restore is possible (no backup: configured, no pre-read available). File may be permanently empty.\n`,
+          );
+        }
+      }
+      // Restore temporarily-boosted mode only when writeSucceeded is false.
+      // If the write succeeded but the subsequent fchmod failed, the new content
+      // is already on disk — restoring the old mode here would silently revert
+      // the permission change. The next pull re-detects and re-applies the drift.
+      if (!writeSucceeded && rfd !== undefined && savedMode !== undefined) {
+        try {
+          safeFchmodSync(rfd, savedMode);
+        } catch {
+          // best-effort restore
+        }
+      } else if (
+        !writeSucceeded &&
+        rfd === undefined &&
+        savedMode !== undefined
+      ) {
+        // rfd is undefined when O_RDONLY failed with EACCES (write-only or
+        // mode-0000 file owned by root; named-user has write but not read
+        // access). Path-based chmodSync re-traverses the path string and
+        // follows symlinks, so it has a narrow TOCTOU window: an attacker
+        // controlling the parent directory could race a symlink between the
+        // lstatSync check above and this call, causing chmodSync to affect an
+        // unintended file. In the named-user scenario the invoking user already
+        // controls the directory entry (it wrote there), so the window is
+        // bounded in practice. A full fix would require fchmodat(2) with
+        // AT_EMPTY_PATH on Linux — not exposed by Node.js without native code.
+        try {
+          fs.chmodSync(resolvedTarget, savedMode);
+        } catch {
+          // best-effort restore
+        }
+      }
+      if (fd !== undefined) {
+        try {
+          fs.closeSync(fd);
+        } catch {
+          // best-effort close
+        }
+      }
+      if (rfd !== undefined) {
+        try {
+          fs.closeSync(rfd);
+        } catch {
+          // best-effort close
+        }
+      }
+      throw err;
+    }
+  }
+}
+
+export function handleWriteSymlink(
+  op: WriteSymlinkOp,
+  trustedUids?: Set<number>,
+): void {
+  const resolvedTarget = path.resolve(op.targetPath);
+  const dir = path.dirname(resolvedTarget);
+
+  if (trustedUids)
+    checkAncestorsSafeAsRoot(resolvedTarget, trustedUids, 'destination');
+  fs.mkdirSync(dir, { recursive: true, mode: 0o755 });
+  if (trustedUids)
+    checkAncestorsSafeAsRoot(resolvedTarget, trustedUids, 'destination');
+
+  // Refuse to overwrite a real directory with a symlink. Store the lstat
+  // result for reuse in the backup check below — eliminating a second syscall
+  // and the TOCTOU window between the two stats.
+  let lst: fs.Stats | undefined;
+  let existingLinkTarget: string | undefined;
+  try {
+    lst = fs.lstatSync(resolvedTarget);
+    if (!lst.isSymbolicLink() && lst.isDirectory()) {
+      throw new Error(
+        `symlink: ${op.targetPath} is a directory; refusing to replace it with a symlink`,
+      );
+    }
+    // Read the symlink target immediately alongside lstat to minimise the
+    // TOCTOU window before passing it to backupTarget.
+    if (lst.isSymbolicLink()) {
+      existingLinkTarget = fs.readlinkSync(resolvedTarget);
+    }
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
+  }
+
+  let backupCommitted = false;
+  if (op.backupPath) {
+    backupTarget(
+      resolvedTarget,
+      op.backupPath,
+      lst,
+      trustedUids,
+      existingLinkTarget,
+    );
+    backupCommitted = true;
+  }
+
+  // Stage the new symlink at a temp path, then rename atomically.
+  const tmpPath = path.join(dir, `.avanti-symlink-${randomHex()}`);
+  try {
+    fs.symlinkSync(op.symlinkTarget, tmpPath);
+
+    fs.renameSync(tmpPath, resolvedTarget);
+  } catch (err) {
+    try {
+      fs.unlinkSync(tmpPath);
+    } catch {
+      // best-effort cleanup
+    }
+    // renameSync failed — the target was never modified. Remove the backup so
+    // history does not record a change that never committed (mirrors handleWriteMv).
+    if (backupCommitted && op.backupPath) {
+      try {
+        fs.unlinkSync(path.resolve(op.backupPath));
+      } catch {
+        // best-effort; orphaned backup is preferable to masking the real error
+      }
+    }
+    throw err;
+  }
+}
+
+export function handleDelete(op: DeleteOp): DispatchResult {
+  const resolved = path.resolve(op.targetPath);
+  try {
+    const lst = fs.lstatSync(resolved);
+    if (!lst.isFile() && !lst.isSymbolicLink()) {
+      throw new Error(
+        `delete: ${op.targetPath} is not a regular file or symlink; refusing to unlink`,
+      );
+    }
+    fs.unlinkSync(resolved);
+  } catch (e) {
+    const ec = (e as NodeJS.ErrnoException).code;
+    if (ec === 'ENOENT') {
+      // File already absent — treat as a successful no-op.
+      return { kind: 'skipped' };
+    }
+    if (ec === 'EISDIR') {
+      // A concurrent process replaced the file with a directory between
+      // lstatSync and unlinkSync. Re-throw with a clear message so the caller
+      // does not see a confusing raw EISDIR from Node.
+      throw new Error(
+        `delete: ${op.targetPath} was replaced by a directory between type-check and unlink; cannot delete`,
+        { cause: e },
+      );
+    }
+    throw e;
+  }
+  return { kind: 'ok' };
+}
+
+// Verifies that a directory is safe to use as a mktemp staging location.
+// Unlike the caller-side checkDirSafe, this runs inside the privileged worker
+// (as root) and therefore never returns early for EACCES — root can lstatSync
+// any directory, so EACCES-owned ancestors are validated rather than skipped.
+function checkDirSafeAsRoot(
+  absDir: string,
+  trustedUids: Set<number>,
+  label: string,
+): void {
+  let mode: number | undefined;
+  let ownerUid: number | undefined;
+
+  try {
+    const lst = fs.lstatSync(absDir);
+    if (lst.isSymbolicLink()) {
+      ownerUid = lst.uid;
+      let targetOwnerUid: number | undefined;
+      try {
+        const s = fs.statSync(absDir);
+        mode = s.mode & 0o7777;
+        targetOwnerUid = s.uid;
+      } catch (e2) {
+        if ((e2 as NodeJS.ErrnoException).code !== 'ENOENT') throw e2;
+        // Dangling symlink: the target no longer exists. An attacker who owns
+        // the parent directory could atomically replace the symlink with one
+        // pointing to an attacker-controlled location after this check (TOCTOU).
+        throw new Error(
+          `privileged write: ${label} directory ${absDir} is a dangling symlink (TOCTOU risk)`,
+          { cause: e2 },
+        );
+      }
+      if (targetOwnerUid === undefined) {
+        throw new Error(
+          `privileged write: ${label} directory ${absDir} symlink target UID unknown (TOCTOU risk)`,
+        );
+      }
+      if (!trustedUids.has(targetOwnerUid)) {
+        throw new Error(
+          `privileged write: ${label} directory ${absDir} symlink target owned by UID ${targetOwnerUid}, not trusted (TOCTOU risk)`,
+        );
+      }
+    } else {
+      mode = lst.mode & 0o7777;
+      ownerUid = lst.uid;
+    }
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === 'ENOENT') return;
+    throw e;
+    // No EACCES early return: the worker runs as root, so any stat failure
+    // here is unexpected and should propagate.
+  }
+
+  if (process.platform !== 'win32') {
+    const isWritable = mode !== undefined && !!(mode & 0o022);
+    const hasSticky = mode !== undefined && !!(mode & 0o1000);
+    if (isWritable && !hasSticky) {
+      throw new Error(
+        `privileged write: ${label} directory ${absDir} is group/world-writable without sticky bit (TOCTOU risk)`,
+      );
+    }
+  }
+
+  if (ownerUid === undefined) {
+    throw new Error(
+      `privileged write: ${label} directory ${absDir} owner UID unknown (TOCTOU risk)`,
+    );
+  }
+  if (!trustedUids.has(ownerUid)) {
+    throw new Error(
+      `privileged write: ${label} directory ${absDir} owned by UID ${ownerUid}, not trusted (TOCTOU risk)`,
+    );
+  }
+}
+
+// Collects ancestor directories of targetPath from filesystem root down to the
+// immediate parent, then calls callback for each. Mirrored (not shared) by an
+// Mirrored verbatim in writer.ts — privileged-worker.ts is a standalone script
+// compiled to dist/privileged-worker.js and cannot import from the main source
+// tree at runtime. Both copies must remain identical: any edge-case fix (e.g.
+// bind-mount, Windows UNC paths, or loop-termination changes) must be applied
+// to both. If you change this function, search for its twin in writer.ts and
+// update it too. Extracting to a shared module was considered but rejected
+// because it changes the compiled output layout for the standalone worker.
+function walkAncestors(
+  targetPath: string,
+  callback: (anc: string) => void,
+): void {
+  const ancestors: string[] = [];
+  let anc = path.resolve(targetPath);
+  while (true) {
+    anc = path.dirname(anc);
+    ancestors.unshift(anc);
+    if (anc === path.dirname(anc)) break;
+  }
+  for (const ancestor of ancestors) {
+    callback(ancestor);
+  }
+}
+
+function checkAncestorsSafeAsRoot(
+  targetPath: string,
+  trustedUids: Set<number>,
+  label: string,
+  checkedDirs?: Set<string>,
+): void {
+  walkAncestors(targetPath, (ancestor) => {
+    if (checkedDirs?.has(ancestor)) return;
+    checkDirSafeAsRoot(ancestor, trustedUids, label);
+    checkedDirs?.add(ancestor);
+  });
+}
+
+// Base64 encoding inflates raw bytes by ~33%, so a 100 MiB file produces
+// ~133 MiB of base64 in the JSON response. runPrivilegedWorker uses spawnSync
+// with maxBuffer = 150 MiB — a single-file batch fits, but multi-file batches
+// whose combined base64 output exceeds ~113 MiB will overflow and throw
+// ERR_CHILD_PROCESS_STDIO_MAXBUFFER. Use SudoWorkerSession for large
+// multi-file read batches; it streams via readline with a separate 500 MiB
+// per-response cap and no fixed maxBuffer.
+const MAX_READ = 100 * 1024 * 1024;
+
+export function dispatch(
+  op: WriteOp,
+  trustedUids?: Set<number>,
+): DispatchResult {
+  switch (op.type) {
+    case 'write-mv':
+      handleWriteMv(op, trustedUids);
+      return { kind: 'ok' };
+    case 'write-in-place':
+      handleWriteInPlace(op, trustedUids);
+      return { kind: 'ok' };
+    case 'write-symlink':
+      handleWriteSymlink(op, trustedUids);
+      return { kind: 'ok' };
+    case 'delete':
+      return handleDelete(op);
+    case 'chmod': {
+      const resolvedPath = path.resolve(op.targetPath);
+      let fd: number | undefined;
+      let chmodApplied = false;
+      try {
+        try {
+          fd = fs.openSync(
+            resolvedPath,
+            fs.constants.O_RDONLY | O_NOFOLLOW | O_NONBLOCK,
+          );
+        } catch (e) {
+          if ((e as NodeJS.ErrnoException).code === 'EACCES') {
+            try {
+              fd = fs.openSync(
+                resolvedPath,
+                fs.constants.O_WRONLY | O_NOFOLLOW | O_NONBLOCK,
+              );
+            } catch (e2) {
+              if ((e2 as NodeJS.ErrnoException).code === 'EACCES') {
+                // Both O_RDONLY and O_WRONLY failed (e.g. mode-0000 file, or root
+                // blocked by a MAC policy). Use O_PATH (Linux ≥ 2.6.39) to obtain
+                // a no-permission-required fd for a TOCTOU-free fchmod. Fall back
+                // to a path-based chmod with a pre-flight lstat guard on platforms
+                // that lack O_PATH (macOS, Windows).
+                const O_PATH_FLAG =
+                  (fs.constants as Record<string, number>).O_PATH ?? 0;
+                let pathFd: number | undefined;
+                if (O_PATH_FLAG !== 0) {
+                  try {
+                    pathFd = fs.openSync(
+                      resolvedPath,
+                      O_PATH_FLAG | O_NOFOLLOW,
+                    );
+                  } catch (e) {
+                    const c = (e as NodeJS.ErrnoException).code;
+                    // Fall through to path-based chmod only when O_PATH is
+                    // genuinely unavailable (ENOTSUP/ENOSYS on older kernels)
+                    // or permission was denied (EACCES/EPERM). Rethrow resource
+                    // errors such as EMFILE or ENOMEM — those indicate a system
+                    // problem unrelated to the TOCTOU concern and must not
+                    // silently take the racy path-based fallback.
+                    if (
+                      c !== 'ENOTSUP' &&
+                      c !== 'ENOSYS' &&
+                      c !== 'EACCES' &&
+                      c !== 'EPERM'
+                    ) {
+                      throw e;
+                    }
+                  }
+                }
+                // On Linux, O_PATH | O_NOFOLLOW opens the symlink inode itself
+                // instead of returning ELOOP. If the target was raced from a
+                // regular file to a symlink between the earlier lstatSync and
+                // this O_PATH open, pathFd refers to the symlink — and
+                // chmodSync('/proc/self/fd/<n>') would follow it to an
+                // unintended target. Verify via fstat before using the fd.
+                if (pathFd !== undefined) {
+                  const pathSt = fs.fstatSync(pathFd);
+                  if (!pathSt.isFile()) {
+                    fs.closeSync(pathFd);
+                    pathFd = undefined;
+                    throw new Error(
+                      `chmod: ${op.targetPath} is not a regular file`,
+                      { cause: e2 },
+                    );
+                  }
+                }
+                if (pathFd !== undefined) {
+                  try {
+                    // /proc/self/fd/<fd> dereferences the file-description directly
+                    // in the kernel without re-traversing the filesystem path, giving
+                    // a TOCTOU-free chmod even when fchmod(O_PATH_fd) fails with
+                    // EBADF on Linux. Falls back to the path-based chmod below if
+                    // procfs is unavailable (containers, non-Linux platforms).
+                    fs.chmodSync(`/proc/self/fd/${pathFd}`, parseMode(op.mode));
+                    chmodApplied = true;
+                  } catch {
+                    // procfs unavailable or not Linux — fall through to path-based
+                    // chmod with lstat pre-flight below.
+                  } finally {
+                    fs.closeSync(pathFd);
+                  }
+                }
+                if (!chmodApplied) {
+                  // Narrow the TOCTOU window: verify it is still a regular file
+                  // immediately before the path-based chmod.
+                  const lst = fs.lstatSync(resolvedPath);
+                  if (!lst.isFile()) {
+                    throw new Error(
+                      `chmod: ${op.targetPath} is not a regular file`,
+                      { cause: e2 },
+                    );
+                  }
+                  fs.chmodSync(resolvedPath, parseMode(op.mode));
+                  chmodApplied = true;
+                }
+              } else {
+                throw e2;
+              }
+            }
+          } else {
+            throw e;
+          }
+        }
+        if (!chmodApplied) {
+          safeFchmodSync(fd!, parseMode(op.mode));
+        }
+        if (fd !== undefined) {
+          fs.closeSync(fd);
+          fd = undefined;
+        }
+      } catch (e) {
+        if (fd !== undefined) {
+          try {
+            fs.closeSync(fd);
+          } catch {
+            /* best-effort close */
+          }
+        }
+        const code = (e as NodeJS.ErrnoException).code;
+        if (code === 'ENOENT' || code === 'ELOOP') return { kind: 'skipped' };
+        throw e;
+      }
+      return { kind: 'ok' };
+    }
+    case 'read': {
+      const resolvedPath = path.resolve(op.targetPath);
+      return {
+        kind: 'read',
+        contentB64: readFileToBase64(resolvedPath, 'read').contentB64,
+        isSymlink: false,
+      };
+    }
+    case 'readlink': {
+      const resolvedPath = path.resolve(op.targetPath);
+      const target = fs.readlinkSync(resolvedPath);
+      // PATH_MAX caps symlink targets at 4096 bytes on Linux/macOS, but NFS/CIFS
+      // servers and crafted filesystems can exceed this. Guard consistently with
+      // the read/stat-read paths so the parent cannot be OOM'd by a runaway target.
+      if (target.length > MAX_READ) {
+        throw new Error(
+          `readlink: ${resolvedPath} target exceeds the 100 MiB read limit`,
+        );
+      }
+      return {
+        kind: 'read',
+        contentB64: Buffer.from(target).toString('base64'),
+        isSymlink: true,
+      };
+    }
+    case 'stat-read': {
+      const resolvedPath = path.resolve(op.targetPath);
+      // readFileToBase64 opens with O_NOFOLLOW. If the path is (or becomes) a
+      // symlink we get ELOOP; read the link target and return it as a symlink.
+      // This is both simpler and eliminates the TOCTOU window that an initial
+      // lstatSync would introduce.
+      const readRegular = (): DispatchResult => {
+        // readFileToBase64 captures the mode via fstatSync while the fd is
+        // still open — atomically bound to the same inode as the content read.
+        const { contentB64, mode } = readFileToBase64(
+          resolvedPath,
+          'stat-read',
+        );
+        return { kind: 'read', contentB64, isSymlink: false, mode };
+      };
+      try {
+        return readRegular();
+      } catch (e) {
+        if ((e as NodeJS.ErrnoException).code !== 'ELOOP') throw e;
+        // readlinkSync is path-based and has a narrow TOCTOU window: a
+        // concurrent privileged process could replace the symlink between the
+        // ELOOP above and this call, causing us to return a stale or attacker-
+        // supplied target. Running as root amplifies the consequence (wrong
+        // content captured for history/v0). This race is intentionally accepted:
+        // eliminating it requires readlinkat(2) via an O_PATH fd, which Node.js
+        // does not expose without native code. stat-read results are advisory
+        // (pre-read for history); no write depends on them being race-free.
+        // If the path was replaced with a regular file in that window, readlinkSync
+        // throws EINVAL — retry readFileToBase64 so the caller sees a regular file.
+        try {
+          const target = fs.readlinkSync(resolvedPath);
+          // Capture the symlink's own mode bits for permission-drift detection.
+          // lstatSync shares the same TOCTOU window as readlinkSync (both are
+          // path-based). A failure here is mode-unknown, not an error.
+          let symlinkMode: string | undefined;
+          try {
+            const slst = fs.lstatSync(resolvedPath);
+            if (slst.isSymbolicLink()) {
+              symlinkMode = (slst.mode & 0o7777).toString(8).padStart(4, '0');
+            }
+          } catch {
+            // best-effort
+          }
+          return {
+            kind: 'read',
+            contentB64: Buffer.from(target).toString('base64'),
+            isSymlink: true,
+            mode: symlinkMode,
+          };
+        } catch (e2) {
+          if ((e2 as NodeJS.ErrnoException).code !== 'EINVAL') throw e2;
+          return readRegular();
+        }
+      }
+    }
+    default: {
+      const _exhaustive: never = op;
+      throw new Error(`unknown op type: ${(_exhaustive as WriteOp).type}`);
+    }
+  }
+}
+
+// Entry point: only run when this file is the main module, not when imported.
+if (require.main === module) {
+  // Determine the input source from command-line flags:
+  //   --socket-path=P : connect to the Unix domain socket at P for bidirectional
+  //                     JSON IPC (SudoWorkerSession passes this so stdin can be
+  //                     /dev/tty, allowing macOS sudo to find cached credentials
+  //                     via ttyname(STDIN_FILENO) instead of returning NULL).
+  //                     Replaced the old --data-fd=N approach which required
+  //                     `sudo -C 4` to keep fd 3 open — but `sudo -C` needs
+  //                     `closefrom_override` in sudoers (disabled by default).
+  //   --req-file=P    : read a single request from file P then exit
+  //   (default)       : read from stdin (tests, manual invocation, backward compat)
+  const socketPathArg = process.argv.find((a) =>
+    a.startsWith('--socket-path='),
+  );
+  // Nonce is passed via AVANTI_WORKER_NONCE env var (not cmdline) so that
+  // it does not appear in /proc/<pid>/cmdline, which is world-readable on Linux.
+  // The parent uses `sudo -E` to forward the env var to this process.
+  const nonce = process.env.AVANTI_WORKER_NONCE;
+  const reqFileArg = process.argv.find((a) => a.startsWith('--req-file='));
+
+  let inputStream: NodeJS.ReadableStream;
+  let outputStream: NodeJS.WritableStream;
+  if (socketPathArg) {
+    const socketPath = socketPathArg.slice('--socket-path='.length);
+    const ipcSocket = net.createConnection(socketPath);
+    ipcSocket.setNoDelay(true);
+    // Send the nonce back as the very first line so the parent can verify this
+    // is the worker it spawned (not a rogue process that connected to the socket
+    // before us). Must be sent before any request is processed.
+    if (!nonce) {
+      process.stderr.write(
+        'avanti-worker: AVANTI_WORKER_NONCE is not set — sudo env_reset may have stripped it.\n' +
+          'Add `Defaults env_keep += "AVANTI_WORKER_NONCE"` to /etc/sudoers or use NOPASSWD with -E.\n',
+      );
+      process.exit(1);
+    }
+    ipcSocket.write(nonce + '\n');
+    inputStream = ipcSocket;
+    outputStream = ipcSocket;
+  } else if (reqFileArg) {
+    const reqFilePath = reqFileArg.slice('--req-file='.length);
+    const reqStream = fs.createReadStream(reqFilePath);
+    // Unlink the req file as soon as it is opened so the base64 content does
+    // not sit on disk for the full duration of the worker's run. The data
+    // remains accessible via the open file descriptor; the parent's finally
+    // block also tries to unlink (harmlessly no-ops if already gone).
+    reqStream.once('open', () => {
+      try {
+        fs.unlinkSync(reqFilePath);
+      } catch {
+        // best-effort
+      }
+    });
+    inputStream = reqStream;
+    outputStream = process.stdout;
+  } else {
+    // stdin fallback: used by runPrivilegedWorker (named-user path, spawnSync
+    // with stdio:['pipe',...]) and for backward-compatibility. The nonce IS
+    // verified in this mode: the parent prefixes the payload with the nonce line
+    // and passes AVANTI_WORKER_NONCE via env. Security requirement: stdin MUST
+    // be a private pipe so only the parent process can write to it.
+    if (process.stdin.isTTY) {
+      process.stderr.write(
+        'avanti-worker: stdin is a TTY; refusing to accept ops on an unauthenticated channel\n',
+      );
+      process.exit(1);
+    }
+    inputStream = process.stdin;
+    outputStream = process.stdout;
+  }
+  let stdinNonceVerified = false;
+
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const rl = (require('readline') as typeof import('readline')).createInterface(
+    {
+      input: inputStream,
+      crlfDelay: Infinity,
+    },
+  );
+
+  const writeResponse = (obj: unknown, cb?: () => void): void => {
+    outputStream.write(JSON.stringify(obj) + '\n', cb);
+  };
+
+  // In-progress batch state: updated by the rl.on('line') handler as ops
+  // complete. emitErrorAndExit reads these to include completed results in the
+  // crash response, so callers can distinguish ops that finished OK from those
+  // that never ran (rather than reporting all as "exited before processing").
+  let batchResults: WorkerResult[] | null = null;
+  let batchExpectedOps = 0;
+
+  // Shared flush-then-exit helper used by the uncaughtException,
+  // unhandledRejection, and input-stream error handlers below. Emits any
+  // already-completed results for the current batch so the parent's exec()
+  // receives accurate partial state rather than losing all completed ops.
+  // Pads the remainder with the crash error so callers always receive exactly
+  // batchExpectedOps results when a batch was in flight. Falls back to a
+  // single error result when no batch is active (e.g. crash during init).
+  // end() flushes buffered data and sends FIN before the process exits,
+  // ensuring the parent's readline sees the JSON line before the 'close' event
+  // fires. process.stdout cannot be end()ed (throws ERR_STDOUT_CLOSE); only
+  // call end() on the IPC socket path. The 100ms fallback timer fires if the
+  // write callback is never called (e.g. the socket was already torn down).
+  const emitErrorAndExit = (msg: string): void => {
+    try {
+      const completed = batchResults ?? [];
+      const total = batchExpectedOps;
+      const remaining = Math.max(0, total - completed.length);
+      // Always emit at least one {ok:false} crash entry. When remaining>0 the
+      // crash entries cover unprocessed ops. When remaining===0 all ops already
+      // completed (batchResults is full) but the exception fires before
+      // writeResponse() — without an extra entry the parent would receive an
+      // all-ok response and silently miss the crash. The sentinel is one extra
+      // result beyond ops.length; the parent's continueOnError handler trims to
+      // ops.length AFTER checking for non-zero exit, so the sentinel is visible.
+      const padCount = Math.max(remaining, 1);
+      const allResults: WorkerResult[] =
+        completed.length > 0 || remaining > 0
+          ? [
+              ...completed,
+              // Include the real crash message in the first padded slot so the
+              // parent can surface it to the user. Subsequent padding uses the
+              // generic "not yet processed" message to distinguish the crash op
+              // from ops that simply never ran.
+              ...Array.from({ length: padCount }, (_, i) => ({
+                ok: false as const,
+                error:
+                  i === 0 ? msg : 'worker exited before processing this op',
+              })),
+            ]
+          : [{ ok: false, error: msg }];
+      writeResponse({ results: allResults }, () => {
+        if (outputStream !== process.stdout) {
+          outputStream.end(() => process.exit(1));
+        } else {
+          process.exit(1);
+        }
+      });
+      // Do NOT .unref() this timer: if outputStream is a destroyed socket the
+      // write callback may never fire, leaving the event loop empty. Without a
+      // ref'd timer the process would exit 0 before this fires and the crash
+      // result would never reach the parent. 100 ms is negligible.
+      setTimeout(() => process.exit(1), 100);
+    } catch {
+      process.exit(1);
+    }
+  };
+
+  // Shut down immediately on any unexpected error so subsequent ops are not
+  // dispatched while the worker is in an unknown state.
+  // Use process.once so that a second uncaught exception after writeResponse has
+  // already delivered results for the current batch does not push a stale error
+  // line onto the socket, which would corrupt the NEXT exec() call's readline.
+  // emitErrorAndExit includes already-completed results (batchResults) so the
+  // parent receives accurate partial state. Ops that had not yet started are
+  // padded with "worker exited before processing this op".
+  process.once('uncaughtException', (err) => {
+    const msg = err instanceof Error ? err.message : String(err);
+    const stack = err instanceof Error ? err.stack : undefined;
+    process.stderr.write(
+      `avanti privileged-worker: uncaught exception: ${stack ?? msg}\n`,
+    );
+    emitErrorAndExit(msg);
+  });
+  process.once('unhandledRejection', (reason) => {
+    const msg = reason instanceof Error ? reason.message : String(reason);
+    process.stderr.write(
+      `avanti privileged-worker: unhandled rejection: ${msg}\n`,
+    );
+    emitErrorAndExit(msg);
+  });
+
+  (inputStream as NodeJS.EventEmitter).on('error', (err: Error) => {
+    process.stderr.write(`data channel error: ${err.message}\n`);
+    emitErrorAndExit(err.message);
+  });
+
+  // Compute trusted UIDs once at startup from sudo environment variables so the
+  // unprivileged parent cannot forge the list. Capturing here (before the line
+  // handler is registered) means process.env cannot be mutated between batches
+  // to silently expand or shrink the trusted set for subsequent requests.
+  // sudo sets SUDO_UID to the invoking user's real UID before elevating. The
+  // worker's own getuid() returns the target user's UID (0 for root-sudo).
+  const trustedUids = new Set<number>([0]);
+  // Emit an actionable error when sudo's env_reset has stripped SUDO_UID and the
+  // worker is running as root. Without SUDO_UID, the trusted set only contains 0
+  // and the worker's own uid; any user-owned ancestor directory (e.g. /home/alice)
+  // triggers a cryptic "not trusted (TOCTOU risk)" error. Gate on getuid()==0 so
+  // the check is a no-op in the test suite (which runs as a non-root user).
+  if (
+    typeof process.getuid === 'function' &&
+    process.getuid() === 0 &&
+    !process.env.SUDO_UID
+  ) {
+    process.stderr.write(
+      'avanti privileged-worker: SUDO_UID is not set — sudo env_reset may have stripped it.\n' +
+        'Add `Defaults env_keep += "SUDO_UID"` to /etc/sudoers to allow ancestor ownership checks.\n',
+    );
+    process.exit(1);
+  }
+  if (process.env.SUDO_UID && /^\d+$/.test(process.env.SUDO_UID)) {
+    const parsedUid = parseInt(process.env.SUDO_UID, 10);
+    if (!isNaN(parsedUid)) {
+      trustedUids.add(parsedUid);
+    }
+  }
+  if (typeof process.getuid === 'function') {
+    trustedUids.add(process.getuid());
+  }
+
+  rl.on('line', (line: string) => {
+    // Nonce verification for the stdin path: the first line is the nonce, not a
+    // JSON request. Consume it here and return; subsequent lines are JSON ops.
+    if (inputStream === process.stdin) {
+      if (!stdinNonceVerified) {
+        const stdinNonce = process.env.AVANTI_WORKER_NONCE;
+        if (!stdinNonce) {
+          emitErrorAndExit('stdin mode requires AVANTI_WORKER_NONCE to be set');
+          return;
+        }
+        const lineBuf = Buffer.from(line.trim());
+        const nonceBuf = Buffer.from(stdinNonce);
+        if (
+          lineBuf.length !== nonceBuf.length ||
+          !crypto.timingSafeEqual(lineBuf, nonceBuf)
+        ) {
+          emitErrorAndExit('stdin nonce mismatch');
+          return;
+        }
+        // The outer !stdinNonceVerified gate already enforces single delivery:
+        // after setting it true, every subsequent line skips this block entirely.
+        stdinNonceVerified = true;
+        return; // consume this line as the nonce; wait for the next line with JSON
+      }
+    }
+
+    // Fresh per-batch: ancestor checks are not carried over across requests so
+    // that a malicious interleaved rename cannot poison a future batch's checks.
+    const checkedDirs = new Set<string>();
+    const trimmed = line.trim();
+    if (!trimmed) return;
+
+    let request: WorkerRequest;
+    try {
+      request = JSON.parse(trimmed) as WorkerRequest;
+    } catch (e) {
+      // Pause readline synchronously before any async work so buffered lines
+      // from a pipelined second request are not emitted while we are exiting.
+      rl.pause();
+      writeResponse(
+        {
+          results: [
+            {
+              ok: false,
+              error: `failed to parse request: ${(e as Error).message}`,
+            },
+          ],
+        },
+        () => {
+          process.exit(1);
+        },
+      );
+      // Do NOT .unref() this timer: if outputStream is a destroyed socket the
+      // write callback may never fire, leaving the event loop empty. Without a
+      // ref'd timer the process would exit 0 before this fires and the crash
+      // result would never reach the parent. 100 ms is negligible.
+      setTimeout(() => process.exit(1), 100);
+      return;
+    }
+
+    if (!request || !Array.isArray(request.ops)) {
+      rl.pause();
+      writeResponse(
+        {
+          results: [
+            { ok: false, error: 'invalid request: ops must be an array' },
+          ],
+        },
+        () => {
+          process.exit(1);
+        },
+      );
+      // Do NOT .unref() this timer: if outputStream is a destroyed socket the
+      // write callback may never fire, leaving the event loop empty. Without a
+      // ref'd timer the process would exit 0 before this fires and the crash
+      // result would never reach the parent. 100 ms is negligible.
+      setTimeout(() => process.exit(1), 100);
+      return;
+    }
+
+    const continueOnError = request.continueOnError ?? false;
+
+    const results: WorkerResult[] = [];
+    // Expose the in-progress results array so emitErrorAndExit can include
+    // completed results in crash responses. batchResults is the same array
+    // reference as results — pushes are visible via the reference immediately.
+    batchResults = results;
+    batchExpectedOps = request.ops.length;
+    const MAX_OPS = 10_000;
+    if (request.ops.length > MAX_OPS) {
+      emitErrorAndExit(`ops array exceeds maximum batch size of ${MAX_OPS}`);
+      return;
+    }
+    let aborted = false;
+    for (const op of request.ops) {
+      if (aborted) {
+        break;
+      }
+      try {
+        // Validate required fields before dispatching so errors are actionable.
+        if (typeof op !== 'object' || op === null) {
+          throw new Error(`invalid op: expected object, got ${typeof op}`);
+        }
+        const raw = op as unknown as Record<string, unknown>;
+        const type = raw['type'];
+        if (typeof type !== 'string') {
+          throw new Error(`invalid op: missing required field "type"`);
+        }
+        if (typeof raw['targetPath'] !== 'string') {
+          throw new Error(
+            `invalid op ${type}: missing required field "targetPath"`,
+          );
+        }
+        if (!path.isAbsolute(raw['targetPath'])) {
+          throw new Error(
+            `invalid op ${type}: targetPath must be absolute, got ${raw['targetPath']}`,
+          );
+        }
+        // Reject paths with .. components: path.resolve normalises them
+        // differently from how isAbsolute treats them, so checkAncestorsSafeAsRoot
+        // would walk different ancestors than dispatch writes to.
+        if (path.resolve(raw['targetPath']) !== raw['targetPath']) {
+          throw new Error(
+            `invalid op ${type}: targetPath must be canonical (no .. components), got ${raw['targetPath']}`,
+          );
+        }
+        if (
+          typeof raw['backupPath'] === 'string' &&
+          !path.isAbsolute(raw['backupPath'])
+        ) {
+          throw new Error(
+            `invalid op ${type}: backupPath must be absolute, got ${raw['backupPath']}`,
+          );
+        }
+        if (
+          (type === 'write-mv' || type === 'write-in-place') &&
+          typeof raw['contentB64'] !== 'string'
+        ) {
+          throw new Error(
+            `invalid op ${type}: missing required field "contentB64"`,
+          );
+        }
+        if (
+          (type === 'write-mv' || type === 'write-in-place') &&
+          typeof raw['defaultMode'] !== 'string'
+        ) {
+          throw new Error(
+            `invalid op ${type}: missing required field "defaultMode"`,
+          );
+        }
+        if (
+          type === 'write-symlink' &&
+          typeof raw['symlinkTarget'] !== 'string'
+        ) {
+          throw new Error(
+            `invalid op write-symlink: missing required field "symlinkTarget"`,
+          );
+        }
+        if (type === 'chmod' && typeof raw['mode'] !== 'string') {
+          throw new Error(`invalid op chmod: missing required field "mode"`);
+        }
+        if (trustedUids) {
+          checkAncestorsSafeAsRoot(
+            op.targetPath,
+            trustedUids,
+            'destination',
+            checkedDirs,
+          );
+          if (
+            op.type !== 'delete' &&
+            op.type !== 'chmod' &&
+            op.type !== 'read' &&
+            op.type !== 'readlink' &&
+            op.type !== 'stat-read' &&
+            op.backupPath
+          ) {
+            checkAncestorsSafeAsRoot(
+              op.backupPath,
+              trustedUids,
+              'backup',
+              checkedDirs,
+            );
+          }
+        }
+        const dr = dispatch(op, trustedUids);
+        if (dr.kind === 'skipped') {
+          results.push({ ok: true, skipped: true });
+        } else if (dr.kind === 'read') {
+          results.push({
+            ok: true,
+            contentB64: dr.contentB64,
+            isSymlink: dr.isSymlink,
+            ...(dr.mode !== undefined ? { mode: dr.mode } : {}),
+          });
+        } else {
+          results.push({ ok: true });
+        }
+      } catch (e) {
+        results.push({
+          ok: false,
+          error: (e as Error).message,
+          code: (e as NodeJS.ErrnoException).code,
+        });
+        if (!continueOnError) aborted = true;
+      }
+    }
+    writeResponse({ results });
+    // Batch complete — clear in-progress state so a subsequent crash (before
+    // the next batch starts) does not re-emit stale results.
+    batchResults = null;
+    batchExpectedOps = 0;
+  });
+
+  rl.on('close', () => {
+    // input stream closed — session ended naturally
+  });
+}

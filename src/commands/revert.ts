@@ -11,9 +11,11 @@ import {
 } from '../diff';
 import {
   atomicWrite,
+  closeAllSessions,
+  openPrivilegedSessions,
+  sudoAtomicDelete,
   sudoAtomicWrite,
-  sudoAuth,
-  sudoDelete,
+  SudoWorkerSession,
   SudoWriteTarget,
   WriteTarget,
 } from '../writer';
@@ -251,26 +253,36 @@ export function revertCommand(): Command {
         const regularTargets = writeTargets.filter((t) => !t.sudo);
         const sudoTargets = writeTargets.filter(isSudoTarget);
 
-        const sudoValues = new Set<true | string>([
+        // Create one shared session per sudo identity so that sudoAtomicWrite
+        // and sudoAtomicDelete share a single worker process (one password
+        // prompt total, regardless of timestamp_timeout).
+        const sudoIds = new Set<true | string>([
           ...sudoTargets.map((t) => t.sudo),
           ...sudoDeletions.values(),
         ]);
-        for (const sv of sudoValues) {
-          try {
-            sudoAuth(sv);
-          } catch (err: unknown) {
-            console.error(err instanceof Error ? err.message : String(err));
-            process.exit(2);
-          }
+        let sudoSessions: Map<true | string, SudoWorkerSession> = new Map();
+        try {
+          sudoSessions = openPrivilegedSessions(sudoIds);
+        } catch (err) {
+          console.error(err instanceof Error ? err.message : String(err));
+          closeAllSessions(sudoSessions);
+          process.exit(2);
         }
 
         try {
           // Perform privileged operations first: if sudo fails, the
           // unprivileged writes have not yet happened, keeping the project in a
           // consistent (if incomplete) state.
-          if (sudoTargets.length > 0) sudoAtomicWrite(sudoTargets);
-          for (const [p, sv] of sudoDeletions) {
-            sudoDelete(p, sv);
+          if (process.platform !== 'win32') {
+            if (sudoTargets.length > 0)
+              await sudoAtomicWrite(sudoTargets, [], sudoSessions);
+            if (sudoDeletions.size > 0)
+              await sudoAtomicDelete([...sudoDeletions], false, sudoSessions);
+          } else if (sudoTargets.length > 0 || sudoDeletions.size > 0) {
+            const n = sudoTargets.length + sudoDeletions.size;
+            console.warn(
+              `Warning: ${n} privileged file(s) were not reverted — sudo is not supported on Windows.`,
+            );
           }
           atomicWrite(regularTargets, deletions);
           const total =
@@ -280,7 +292,10 @@ export function revertCommand(): Command {
           console.error(
             `Revert failed: ${err instanceof Error ? err.message : String(err)}`,
           );
-          process.exit(2);
+          process.exitCode = 2;
+          return;
+        } finally {
+          closeAllSessions(sudoSessions);
         }
       },
     );

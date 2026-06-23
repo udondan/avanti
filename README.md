@@ -1423,6 +1423,8 @@ files:
 
 > **Warning:** `writeInPlace: true` is **not atomic**. Between the truncate and the completed write, a concurrent reader will see empty or partial content. Use the default atomic rename when correctness under concurrent reads matters more than inode stability.
 
+**Write failure recovery:** avanti reads the file's current content before truncating it. If the write fails (disk full, NFS timeout, etc.), avanti automatically restores the original content via an atomic rename. For files larger than 100 MiB without a `backup:` path configured, in-memory recovery is not available — configure `backup:` to ensure the original content can be restored on write failure.
+
 ### Follow Symlink
 
 When the target path is a symlink, avanti's default atomic-rename strategy replaces the symlink itself — the symlink is overwritten with the fetched file content. Set `followSymlink: true` to write through the symlink instead: avanti resolves the symlink chain to its real path and writes the content there, leaving the symlink pointer intact.
@@ -1516,11 +1518,23 @@ Absolute target paths (e.g. `/etc/ssh/sshd_config`) require `--working-dir /`. T
 avanti pull --working-dir /
 ```
 
-avanti calls `sudo -v` once per distinct identity to prime the OS credential cache, so the user is prompted for their password at most once per distinct sudo identity per pull session. Authentication happens as early as needed: if any sudo target is unreadable by the current user (e.g. a root-owned file), avanti authenticates before reading that file to compare it for the diff — so a password prompt may appear before the diff is displayed or the user is asked to confirm. For files that are already readable, authentication is deferred until just before the write phase.
+avanti opens a single privileged worker session per distinct sudo identity — a persistent `sudo node dist/privileged-worker.js` process that handles all file operations for that identity in one batch. The session is opened **after** the user has reviewed the diff and confirmed the operation, so the sudo password prompt always appears after `Apply changes? [y/N]`, never before. Unreadable targets (e.g. files owned by root with mode `0600`) are shown as `(unreadable)` in the diff before confirmation; avanti reads their actual content for a precise diff after the session opens. Multiple files sharing the same sudo identity share one session — no matter how many files are written, avanti asks for the sudo password at most once per identity.
 
 **Stale-file cleanup** — when a `sudo` entry is removed from the config, avanti uses the stored sudo identity to restore or delete the file during the next pull.
 
 **POSIX only** — `pull` errors on Windows when any file has `sudo` set. Use an `if: { os: [linux, mac] }` condition to gate `sudo` entries in cross-platform configs.
+
+#### Node.js binary requirement
+
+The privileged worker runs as a separate Node.js process launched via `sudo`. avanti looks for a root-owned Node.js ≥18 binary in standard system paths (`/usr/bin`, `/usr/local/bin`, `/opt/homebrew/bin` on macOS, `/bin`). User-managed installs (nvm, fnm, mise) under `$HOME` are not usable because the sudo target cannot traverse the calling user's home directory.
+
+On **NixOS, Guix, and other non-FHS distros** where no root-owned system Node is in those paths, set `AVANTI_NODE_EXEC` to the absolute path of a compatible binary before running avanti:
+
+```sh
+AVANTI_NODE_EXEC=$(readlink -f $(which node)) avanti pull
+```
+
+avanti emits a warning when `AVANTI_NODE_EXEC` is set, since it bypasses the root-ownership security check on the binary passed to `sudo`. Only set it when the binary path is trusted.
 
 **Limitations:**
 

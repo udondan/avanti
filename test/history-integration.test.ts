@@ -525,12 +525,22 @@ describe('history integration', () => {
           fakeSudoBin,
           // Intercept stat calls used by the ancestor safety checks and return
           // safe values (mode 755, UID 0) so the test works under world-writable
-          // tmpdir on Linux. All other commands are passed through unchanged.
-          `#!/bin/sh\necho "$@" >> "${fakeSudoLog}"\n[ "$1" = "-v" ] && exit 0\nif [ "$1" = "stat" ]; then\n  case "$*" in\n    *%u*) echo "0"; exit 0 ;;\n    *%a*|*%Lp*) echo "755"; exit 0 ;;\n  esac\nfi\nexec "$@"\n`,
+          // tmpdir on Linux. All other commands are passed through unchanged,
+          // but sudo options (-u <user>, etc.) are stripped before exec so that
+          // the shell's exec builtin does not misinterpret them as its own flags.
+          // Note: -C is no longer passed (the IPC channel switched from fd 3 to
+          // a Unix domain socket, eliminating the need for closefrom_override).
+          `#!/bin/sh\necho "$@" >> "${fakeSudoLog}"\n[ "$1" = "-v" ] && exit 0\nif [ "$1" = "stat" ]; then\n  case "$*" in\n    *%u*) echo "0"; exit 0 ;;\n    *%a*|*%Lp*) echo "755"; exit 0 ;;\n  esac\nfi\nwhile [ "$#" -gt 0 ]; do\n  case "$1" in\n    -u|-g|-D|-p|-U|-r|-t) shift 2 ;;\n    --) shift; break ;;\n    -*) shift ;;\n    *) break ;;\n  esac\ndone\nexec "$@"\n`,
         );
         chmodSync(fakeSudoBin, 0o755);
 
-        const sudoEnv = { PATH: `${fakeSudoDir}:${process.env.PATH ?? ''}` };
+        const sudoEnv = {
+          PATH: `${fakeSudoDir}:${process.env.PATH ?? ''}`,
+          // resolveNodeExec requires a root-owned node binary; on macOS/nvm
+          // machines there is none. Override so the test works without a
+          // system-wide node install.
+          AVANTI_NODE_EXEC: process.execPath,
+        };
 
         // Pull with sudo: true — the file is tracked with its sudo identity.
         const src = writeSource('src.txt', 'privileged content');
@@ -541,10 +551,10 @@ describe('history integration', () => {
 
         const targetFile = join(tmpDir, 'sudo-managed.txt');
         expect(existsSync(targetFile)).toBe(true);
-        // Confirm that sudo was actually invoked during the write (tee writes content).
+        // Confirm that sudo was actually invoked during the write (worker process).
         expect(existsSync(fakeSudoLog)).toBe(true);
         const pullCalls = readFileSync(fakeSudoLog, 'utf8');
-        expect(pullCalls).toContain('tee');
+        expect(pullCalls).toContain('privileged-worker.js');
 
         // Remove the entry from config and reset the call log.
         // The next pull's stale-cleanup should use the stored sudo identity to delete.
@@ -552,10 +562,10 @@ describe('history integration', () => {
         writeConfig('files: {}');
         run('pull --yes', sudoEnv);
 
-        // Stale cleanup must have called sudo rm to remove the tracked file.
+        // Stale cleanup must have called sudo (via worker) to remove the tracked file.
         expect(existsSync(fakeSudoLog)).toBe(true);
         const cleanupCalls = readFileSync(fakeSudoLog, 'utf8');
-        expect(cleanupCalls).toContain('rm');
+        expect(cleanupCalls).toContain('privileged-worker.js');
         expect(existsSync(targetFile)).toBe(false);
       },
     );

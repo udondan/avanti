@@ -1,22 +1,19 @@
-import * as path from 'path';
+import * as fs from 'fs';
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import {
-  sudoAuth,
+  sudoAtomicDelete,
   sudoAtomicWrite,
-  sudoDelete,
-  sudoRead,
-  sudoReadlink,
-  sudoFileExists,
   sudoUserArgs,
-  sudoRun,
+  SudoWorkerSession,
   SudoWriteTarget,
 } from '../src/writer';
 
 vi.mock('child_process', () => ({
   spawnSync: vi.fn(),
+  spawn: vi.fn(),
 }));
 
-import { spawnSync, type SpawnSyncReturns } from 'child_process';
+import { spawnSync, spawn, type SpawnSyncReturns } from 'child_process';
 import type { MockInstance } from 'vitest';
 
 const mockSpawnSync = spawnSync as unknown as MockInstance<
@@ -25,6 +22,14 @@ const mockSpawnSync = spawnSync as unknown as MockInstance<
     args: readonly string[],
     opts: object,
   ) => SpawnSyncReturns<Buffer>
+>;
+
+const mockSpawn = spawn as unknown as MockInstance<
+  (
+    cmd: string,
+    args: readonly string[],
+    opts: object,
+  ) => ReturnType<typeof spawn>
 >;
 
 function okResult(stdout = ''): SpawnSyncReturns<Buffer> {
@@ -53,9 +58,17 @@ function failResult(status = 1): SpawnSyncReturns<Buffer> {
 
 beforeEach(() => {
   mockSpawnSync.mockReset();
+  mockSpawn.mockReset();
+  // resolveNodeExec looks for a root-owned node binary in SAFE_DIRS for
+  // named-user sudo. On developer machines (Apple Silicon, mise/nvm installs),
+  // there may be no root-owned system node. Set AVANTI_NODE_EXEC so
+  // resolveNodeExec returns early without scanning SAFE_DIRS, keeping the
+  // mock-based tests self-contained and environment-independent.
+  process.env.AVANTI_NODE_EXEC = process.execPath;
 });
 
 afterEach(() => {
+  delete process.env.AVANTI_NODE_EXEC;
   vi.clearAllMocks();
 });
 
@@ -71,570 +84,361 @@ describe('sudoUserArgs', () => {
 
 const isWindows = process.platform === 'win32';
 
-describe('sudoAuth', () => {
-  it.skipIf(isWindows)('calls sudo -v for root', () => {
-    mockSpawnSync.mockReturnValue(okResult());
-    sudoAuth(true);
-    expect(mockSpawnSync).toHaveBeenCalledWith(
-      'sudo',
-      ['-v'],
-      expect.any(Object),
-    );
-  });
-
-  it.skipIf(isWindows)('calls sudo -u <name> -v for a named user', () => {
-    mockSpawnSync.mockReturnValue(okResult());
-    sudoAuth('nobody');
-    expect(mockSpawnSync).toHaveBeenCalledWith(
-      'sudo',
-      ['-u', 'nobody', '-v'],
-      expect.any(Object),
-    );
-  });
-
-  it('throws when sudo -v fails', () => {
-    mockSpawnSync.mockReturnValue(failResult());
-    if (isWindows) {
-      expect(() => sudoAuth()).toThrow('sudo is not supported on Windows');
-    } else {
-      expect(() => sudoAuth()).toThrow('sudo authentication failed');
+// runPrivilegedWorker now writes the JSON request to a temp file and passes
+// its path as --req-file=<path> to the worker, keeping stdin as 'inherit' for
+// macOS sudo credential-cache lookup. This helper mocks spawnSync to capture
+// the req file content (which is synchronously readable during the mock
+// callback, before the finally block deletes it) and returns it as parsed JSON.
+function mockSpawnSyncCapturingReq(resultCount: number): {
+  getReq: () => { ops: unknown[] };
+} {
+  let captured: string | undefined;
+  mockSpawnSync.mockImplementation((cmd: string, args: readonly string[]) => {
+    if (cmd === 'sudo') {
+      const reqArg = (args as string[]).find((a) =>
+        a.startsWith('--req-file='),
+      );
+      if (reqArg) {
+        captured = fs.readFileSync(reqArg.slice('--req-file='.length), 'utf8');
+      }
+      return workerOkResult(resultCount);
     }
+    return okResult('0'); // id -u calls from buildTrustedUids
   });
-});
+  return { getReq: () => JSON.parse(captured ?? 'null') as { ops: unknown[] } };
+}
 
-describe('sudoRead', () => {
-  it('returns stdout buffer on success', () => {
-    mockSpawnSync.mockReturnValue(okResult('hello'));
-    const result = sudoRead(true, '/etc/passwd');
-    expect(result?.toString()).toBe('hello');
+// Helper that produces a fake privileged-worker success response.
+function workerOkResult(opCount = 1): SpawnSyncReturns<Buffer> {
+  const results = Array.from({ length: opCount }, () => ({ ok: true }));
+  const body = JSON.stringify({ results });
+  return {
+    pid: 1,
+    output: [null, Buffer.from(body), null],
+    stdout: Buffer.from(body),
+    stderr: Buffer.from(''),
+    status: 0,
+    signal: null,
+    error: undefined,
+  };
+}
+
+describe.skipIf(isWindows)('sudoAtomicWrite', () => {
+  it('returns immediately and makes no spawnSync calls for empty targets', async () => {
+    await sudoAtomicWrite([]);
+    expect(mockSpawnSync).not.toHaveBeenCalled();
   });
 
-  it('returns null when cat fails', () => {
-    mockSpawnSync.mockReturnValue(failResult());
-    expect(sudoRead(true, '/etc/passwd')).toBeNull();
-  });
+  it('makes exactly one sudo call for multiple write-mv files with the same identity', async () => {
+    mockSpawnSync.mockReturnValue(workerOkResult(3));
 
-  it('uses cat with -u args for named user', () => {
-    mockSpawnSync.mockReturnValue(okResult('data'));
-    sudoRead('nobody', '/tmp/file');
-    expect(mockSpawnSync).toHaveBeenCalledWith(
-      'sudo',
-      expect.arrayContaining(['-u', 'nobody', 'cat', '--']),
-      expect.any(Object),
+    const targets: SudoWriteTarget[] = [
+      { targetPath: '/etc/a.conf', content: Buffer.from('a'), sudo: true },
+      { targetPath: '/etc/b.conf', content: Buffer.from('b'), sudo: true },
+      { targetPath: '/etc/c.conf', content: Buffer.from('c'), sudo: true },
+    ];
+    await sudoAtomicWrite(targets);
+
+    const sudoCalls = mockSpawnSync.mock.calls.filter(
+      ([cmd]) => cmd === 'sudo',
     );
-  });
-});
-
-describe('sudoReadlink', () => {
-  it('returns trimmed symlink target on success', () => {
-    mockSpawnSync.mockReturnValue(okResult('/etc/hosts\n'));
-    expect(sudoReadlink(true, '/etc/link')).toBe('/etc/hosts');
-  });
-
-  it('returns null when readlink exits non-zero', () => {
-    mockSpawnSync.mockReturnValue(failResult());
-    expect(sudoReadlink(true, '/etc/link')).toBeNull();
-  });
-
-  it('calls sudo readlink with resolved path for root', () => {
-    mockSpawnSync.mockReturnValue(okResult('/target'));
-    sudoReadlink(true, '/etc/link');
-    expect(mockSpawnSync).toHaveBeenCalledWith(
-      'sudo',
-      ['readlink', path.resolve('/etc/link')],
-      { stdio: ['ignore', 'pipe', 'ignore'] },
+    expect(sudoCalls).toHaveLength(1);
+    expect(sudoCalls[0][1]).toEqual(
+      expect.arrayContaining([
+        process.execPath,
+        expect.stringContaining('privileged-worker.js'),
+      ]),
     );
-  });
-
-  it('calls sudo -u <name> readlink for a named user', () => {
-    mockSpawnSync.mockReturnValue(okResult('/target'));
-    sudoReadlink('nobody', '/etc/link');
-    expect(mockSpawnSync).toHaveBeenCalledWith(
-      'sudo',
-      ['-u', 'nobody', 'readlink', path.resolve('/etc/link')],
-      { stdio: ['ignore', 'pipe', 'ignore'] },
-    );
-  });
-
-  it('throws when spawnSync returns an error', () => {
-    mockSpawnSync.mockReturnValue({
-      ...failResult(),
-      error: new Error('ENOENT'),
+    expect(sudoCalls[0][2]).toMatchObject({
+      stdio: ['inherit', 'pipe', 'inherit'],
     });
-    expect(() => sudoReadlink(true, '/etc/link')).toThrow(
-      'sudo readlink failed',
-    );
-  });
-});
-
-describe('sudoDelete', () => {
-  it('calls sudo rm -f for root', () => {
-    mockSpawnSync.mockReturnValue(okResult());
-    sudoDelete('/tmp/file', true);
-    expect(mockSpawnSync).toHaveBeenCalledWith(
-      'sudo',
-      ['rm', '-f', '--', '/tmp/file'],
-      expect.any(Object),
-    );
   });
 
-  it('calls sudo -u <name> rm -f for named user', () => {
-    mockSpawnSync.mockReturnValue(okResult());
-    sudoDelete('/tmp/file', 'www-data');
-    expect(mockSpawnSync).toHaveBeenCalledWith(
-      'sudo',
-      ['-u', 'www-data', 'rm', '-f', '--', '/tmp/file'],
-      expect.any(Object),
-    );
-  });
+  it('encodes all ops in a single JSON input for the worker', async () => {
+    const { getReq } = mockSpawnSyncCapturingReq(2);
 
-  it('warns on failure instead of throwing', () => {
-    mockSpawnSync.mockReturnValue(failResult());
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    expect(() => sudoDelete('/tmp/file', true)).not.toThrow();
-    expect(warnSpy).toHaveBeenCalled();
-  });
-});
-
-describe('sudoFileExists', () => {
-  it('returns true when test -e exits 0', () => {
-    mockSpawnSync.mockReturnValue(okResult());
-    expect(sudoFileExists(true, '/etc/hosts')).toBe(true);
-  });
-
-  it('returns false when test -e exits non-zero', () => {
-    mockSpawnSync.mockReturnValue(failResult());
-    expect(sudoFileExists(true, '/no/such/file')).toBe(false);
-  });
-});
-
-describe('sudoAtomicWrite — mv path', () => {
-  it('calls mkdir, mktemp, tee, mv, chmod in order for a new root-owned file', () => {
-    const calls: string[][] = [];
-    mockSpawnSync.mockImplementation(
-      (_cmd: string, args: readonly string[]) => {
-        calls.push([...args]);
-        if (args.includes('mktemp')) return okResult('/etc/.avanti-tmp');
-        // UID stat (-c %u): return 0 (root owns /etc)
-        if (args.includes('stat') && args.includes('%u')) return okResult('0');
-        // mode stat (-c %a or -f %Lp): return 644 (no group/world write)
-        if (args.includes('stat')) return okResult('644');
-        if (args.includes('test') && args.includes('-L')) return failResult();
-        if (args.includes('test') && args.includes('-d')) return failResult();
-        return okResult();
+    const targets: SudoWriteTarget[] = [
+      { targetPath: '/etc/a.conf', content: Buffer.from('a'), sudo: true },
+      {
+        targetPath: '/etc/b.conf',
+        content: Buffer.from('b'),
+        sudo: true,
+        writeInPlace: true,
       },
+    ];
+    await sudoAtomicWrite(targets);
+
+    const sudoCalls = mockSpawnSync.mock.calls.filter(
+      ([cmd]) => cmd === 'sudo',
     );
+    expect(sudoCalls).toHaveLength(1);
+    const { ops } = getReq() as {
+      ops: Array<{ type: string; targetPath: string }>;
+    };
+    expect(ops).toHaveLength(2);
+    expect(ops[0]).toMatchObject({
+      type: 'write-mv',
+      targetPath: '/etc/a.conf',
+    });
+    expect(ops[1]).toMatchObject({
+      type: 'write-in-place',
+      targetPath: '/etc/b.conf',
+    });
+  });
+
+  it('encodes write-symlink ops without a contentSrc temp file', async () => {
+    const { getReq } = mockSpawnSyncCapturingReq(1);
 
     const target: SudoWriteTarget = {
-      targetPath: '/etc/test.conf',
-      content: Buffer.from('hello'),
+      targetPath: '/etc/link',
+      content: Buffer.from('/etc/hosts'),
+      symlinkTarget: '/etc/hosts',
       sudo: true,
     };
-    sudoAtomicWrite([target]);
+    await sudoAtomicWrite([target]);
 
-    const flat = calls.map((a) => a.join(' '));
-    expect(flat.some((c) => c.includes('mkdir'))).toBe(true);
-    expect(flat.some((c) => c.includes('mktemp'))).toBe(true);
-    expect(flat.some((c) => c.includes('tee'))).toBe(true);
-    expect(flat.some((c) => c.includes('mv'))).toBe(true);
-    expect(flat.some((c) => c.includes('chmod'))).toBe(true);
-  });
-
-  it('cleans up temp file on tee failure', () => {
-    const calls: string[][] = [];
-    mockSpawnSync.mockImplementation(
-      (_cmd: unknown, args: readonly string[]) => {
-        calls.push([...args]);
-        if (args.includes('mktemp')) return okResult('/etc/.avanti-tmp');
-        if (args.includes('stat')) return okResult('');
-        if (args.includes('tee')) return failResult();
-        return okResult();
-      },
-    );
-
-    const target: SudoWriteTarget = {
-      targetPath: '/etc/test.conf',
-      content: Buffer.from('hello'),
-      sudo: true,
+    const { ops } = getReq() as {
+      ops: Array<{ type: string; symlinkTarget?: string }>;
     };
-    expect(() => sudoAtomicWrite([target])).toThrow('sudo write failed');
-    const flat = calls.map((a) => a.join(' '));
-    expect(
-      flat.some((c) => c.includes('rm') && c.includes('.avanti-tmp')),
-    ).toBe(true);
+    expect(ops[0].type).toBe('write-symlink');
+    expect(ops[0].symlinkTarget).toBe('/etc/hosts');
+    expect((ops[0] as Record<string, unknown>).contentB64).toBeUndefined();
   });
 
-  it('uses -u args for a named-user target', () => {
-    const calls: string[][] = [];
-    mockSpawnSync.mockImplementation(
-      (_cmd: unknown, args: readonly string[]) => {
-        calls.push([...args]);
-        if (args.includes('mktemp')) return okResult('/tmp/.avanti-tmp');
-        if (args.includes('stat')) return okResult('');
-        if (args.includes('-L')) return failResult();
-        if (args.includes('-d')) return failResult();
-        return okResult();
+  it('makes separate worker calls for different sudo identities', async () => {
+    mockSpawnSync.mockImplementation((cmd: unknown) => {
+      if (cmd === 'id') return okResult('999');
+      return workerOkResult(1);
+    });
+
+    const targets: SudoWriteTarget[] = [
+      { targetPath: '/etc/a.conf', content: Buffer.from('a'), sudo: true },
+      {
+        targetPath: '/etc/b.conf',
+        content: Buffer.from('b'),
+        sudo: 'www-data',
       },
+    ];
+    await sudoAtomicWrite(targets);
+
+    const sudoCalls = mockSpawnSync.mock.calls.filter(
+      ([cmd]) => cmd === 'sudo',
     );
+    expect(sudoCalls).toHaveLength(2);
+  });
+
+  it('passes -u <name> args for named-user targets', async () => {
+    mockSpawnSync.mockImplementation((cmd: unknown) => {
+      if (cmd === 'id') return okResult('999');
+      return workerOkResult(1);
+    });
 
     const target: SudoWriteTarget = {
       targetPath: '/etc/test.txt',
       content: Buffer.from('hi'),
       sudo: 'nobody',
     };
-    sudoAtomicWrite([target]);
-    for (const args of calls) {
-      expect(args[0]).toBe('-u');
-      expect(args[1]).toBe('nobody');
+    await sudoAtomicWrite([target]);
+
+    const sudoCalls = mockSpawnSync.mock.calls.filter(
+      ([cmd]) => cmd === 'sudo',
+    );
+    expect(sudoCalls).toHaveLength(1);
+    expect(sudoCalls[0][1]).toContain('-u');
+    expect(sudoCalls[0][1]).toContain('nobody');
+    expect(sudoCalls[0][2]).toMatchObject({
+      stdio: ['pipe', 'pipe', 'inherit'],
+    });
+  });
+
+  it('throws when worker reports a failed op', async () => {
+    const body = JSON.stringify({
+      results: [{ ok: false, error: 'permission denied on /etc/test.conf' }],
+    });
+    mockSpawnSync.mockReturnValue({
+      ...workerOkResult(0),
+      stdout: Buffer.from(body),
+      output: [null, Buffer.from(body), null],
+    });
+
+    const target: SudoWriteTarget = {
+      targetPath: '/etc/test.conf',
+      content: Buffer.from('data'),
+      sudo: true,
+    };
+    await expect(sudoAtomicWrite([target])).rejects.toThrow(
+      'permission denied',
+    );
+  });
+
+  it('throws when worker exits with a non-zero status', async () => {
+    mockSpawnSync.mockReturnValue(failResult(1));
+
+    const target: SudoWriteTarget = {
+      targetPath: '/etc/test.conf',
+      content: Buffer.from('data'),
+      sudo: true,
+    };
+    await expect(sudoAtomicWrite([target])).rejects.toThrow(
+      'privileged worker failed',
+    );
+  });
+
+  it('passes a backupPath through to the op when specified', async () => {
+    const { getReq } = mockSpawnSyncCapturingReq(1);
+
+    const target: SudoWriteTarget = {
+      targetPath: '/etc/test.conf',
+      content: Buffer.from('data'),
+      sudo: true,
+      backupPath: '/etc/test.conf.bak',
+    };
+    await sudoAtomicWrite([target]);
+
+    const { ops } = getReq() as { ops: Array<{ backupPath?: string }> };
+    expect(ops[0].backupPath).toBe('/etc/test.conf.bak');
+  });
+});
+
+describe.skipIf(isWindows)('sudoAtomicDelete', () => {
+  it('returns immediately and makes no spawnSync calls for empty list', async () => {
+    await sudoAtomicDelete([]);
+    expect(mockSpawnSync).not.toHaveBeenCalled();
+  });
+
+  it('sends a delete op to the worker for a single path', async () => {
+    const { getReq } = mockSpawnSyncCapturingReq(1);
+
+    await sudoAtomicDelete([['/etc/stale.conf', true]]);
+
+    const sudoCalls = mockSpawnSync.mock.calls.filter(
+      ([cmd]) => cmd === 'sudo',
+    );
+    expect(sudoCalls).toHaveLength(1);
+    const { ops } = getReq() as {
+      ops: Array<{ type: string; targetPath: string }>;
+    };
+    expect(ops).toHaveLength(1);
+    expect(ops[0]).toMatchObject({
+      type: 'delete',
+      targetPath: '/etc/stale.conf',
+    });
+  });
+
+  it('batches multiple deletions with the same identity into one worker call', async () => {
+    const { getReq } = mockSpawnSyncCapturingReq(3);
+
+    await sudoAtomicDelete([
+      ['/etc/a.conf', true],
+      ['/etc/b.conf', true],
+      ['/etc/c.conf', true],
+    ]);
+
+    const sudoCalls = mockSpawnSync.mock.calls.filter(
+      ([cmd]) => cmd === 'sudo',
+    );
+    expect(sudoCalls).toHaveLength(1);
+    const { ops } = getReq() as { ops: Array<{ type: string }> };
+    expect(ops).toHaveLength(3);
+    for (const op of ops) expect(op.type).toBe('delete');
+  });
+
+  it('makes separate worker calls for different sudo identities', async () => {
+    mockSpawnSync.mockImplementation((cmd: unknown) => {
+      if (cmd === 'id') return okResult('33'); // www-data uid
+      return workerOkResult(1);
+    });
+
+    await sudoAtomicDelete([
+      ['/etc/a.conf', true],
+      ['/etc/b.conf', 'www-data'],
+    ]);
+
+    const sudoCalls = mockSpawnSync.mock.calls.filter(
+      ([cmd]) => cmd === 'sudo',
+    );
+    expect(sudoCalls).toHaveLength(2);
+  });
+
+  it('throws when the worker reports a failed op (default strict mode)', async () => {
+    const body = JSON.stringify({
+      results: [{ ok: false, error: 'permission denied' }],
+    });
+    mockSpawnSync.mockReturnValue({
+      ...workerOkResult(0),
+      stdout: Buffer.from(body),
+      output: [null, Buffer.from(body), null],
+    });
+
+    await expect(
+      sudoAtomicDelete([['/etc/locked.conf', true]]),
+    ).rejects.toThrow('permission denied');
+  });
+
+  it('warns (does not throw) when the worker reports a failed op in bestEffort mode', async () => {
+    const body = JSON.stringify({
+      results: [{ ok: false, error: 'permission denied' }],
+    });
+    mockSpawnSync.mockReturnValue({
+      ...workerOkResult(0),
+      stdout: Buffer.from(body),
+      output: [null, Buffer.from(body), null],
+    });
+
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      await expect(
+        sudoAtomicDelete([['/etc/locked.conf', true]], true),
+      ).resolves.not.toThrow();
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('permission denied'),
+      );
+    } finally {
+      warnSpy.mockRestore();
     }
   });
-
-  it.skipIf(process.platform === 'linux')(
-    'on macOS/BSD, removes symlink-to-dir before mv',
-    () => {
-      const calls: string[][] = [];
-      const resolvedLink = path.resolve('/etc/link');
-      mockSpawnSync.mockImplementation(
-        (_cmd: unknown, args: readonly string[]) => {
-          calls.push([...args]);
-          if (args.includes('mktemp')) return okResult('/etc/.avanti-tmp');
-          if (args.includes('stat')) return okResult('');
-          // -L: is a symlink
-          if (args.includes('-L') && args.some((a) => a === resolvedLink))
-            return okResult();
-          // -d: symlink target is a directory
-          if (args.includes('-d') && args.some((a) => a === resolvedLink))
-            return okResult();
-          return okResult();
-        },
-      );
-
-      const target: SudoWriteTarget = {
-        targetPath: '/etc/link',
-        content: Buffer.from('data'),
-        sudo: true,
-      };
-      sudoAtomicWrite([target]);
-      const flat = calls.map((a) => a.join(' '));
-      const rmIdx = flat.findIndex(
-        (c) => c.includes('rm') && c.includes(resolvedLink),
-      );
-      const mvIdx = flat.findIndex(
-        (c) => c.includes('mv') && c.includes(resolvedLink),
-      );
-      expect(rmIdx).toBeGreaterThanOrEqual(0);
-      expect(mvIdx).toBeGreaterThan(rmIdx);
-    },
-  );
-
-  it.skipIf(process.platform !== 'linux')(
-    'on Linux, symlinks are replaced atomically without pre-rm (mv -T)',
-    () => {
-      const calls: string[][] = [];
-      const resolvedLink = path.resolve('/etc/link');
-      mockSpawnSync.mockImplementation(
-        (_cmd: unknown, args: readonly string[]) => {
-          calls.push([...args]);
-          if (args.includes('mktemp')) return okResult('/etc/.avanti-tmp');
-          if (args.includes('stat')) return okResult('');
-          // -L: is a symlink
-          if (args.includes('-L') && args.some((a) => a === resolvedLink))
-            return okResult();
-          return okResult();
-        },
-      );
-
-      const target: SudoWriteTarget = {
-        targetPath: '/etc/link',
-        content: Buffer.from('data'),
-        sudo: true,
-      };
-      sudoAtomicWrite([target]);
-      const flat = calls.map((a) => a.join(' '));
-      // No pre-rm on Linux: mv -T replaces the symlink atomically
-      expect(
-        flat.some((c) => c.includes('rm') && c.includes(resolvedLink)),
-      ).toBe(false);
-      const mvIdx = flat.findIndex(
-        (c) => c.includes('mv') && c.includes('-T') && c.includes(resolvedLink),
-      );
-      expect(mvIdx).toBeGreaterThanOrEqual(0);
-    },
-  );
 });
 
-describe('sudoAtomicWrite writeInPlace', () => {
-  const isWindows = process.platform === 'win32';
-
-  beforeEach(() => {
-    mockSpawnSync.mockReset();
-  });
-
-  afterEach(() => {
-    mockSpawnSync.mockReset();
-  });
-
-  it.skipIf(isWindows)(
-    'writeInPlace: calls sudo tee with resolved path',
-    () => {
-      const calls: string[][] = [];
-      const resolvedTarget = path.resolve('/etc/test.conf');
-      mockSpawnSync.mockImplementation(
-        (_cmd: unknown, args: readonly string[]) => {
-          calls.push([...args]);
-          // -L: not a symlink
-          if (args.includes('-L')) return failResult();
-          // -e: file does not exist (new file)
-          if (args.includes('-e')) return failResult();
-          return okResult();
-        },
-      );
-
-      const target: SudoWriteTarget = {
-        targetPath: '/etc/test.conf',
-        content: Buffer.from('hello'),
-        sudo: true,
-        writeInPlace: true,
-      };
-      sudoAtomicWrite([target]);
-      const flat = calls.map((a) => a.join(' '));
-      expect(
-        flat.some((c) => c.includes('tee') && c.includes(resolvedTarget)),
-      ).toBe(true);
-    },
-  );
-
-  it.skipIf(isWindows)('writeInPlace: rejects symlinks', () => {
-    mockSpawnSync.mockImplementation(
-      (_cmd: unknown, args: readonly string[]) => {
-        // -L: is a symlink
-        if (args.includes('-L')) return okResult();
-        return okResult();
-      },
+describe.skipIf(isWindows)('SudoWorkerSession via sudoAtomicWrite', () => {
+  it('uses session exec instead of spawnSync when a session is provided', async () => {
+    // Verify that sudoAtomicWrite dispatches through session.exec() rather
+    // than spawning a new sudo process when a pre-built session map is given.
+    // Use a duck-typed mock session so the test does not depend on the session's
+    // internal IPC mechanism (Unix socket, fd pipe, etc.).
+    const execMock = vi.fn((ops: unknown[]) =>
+      Promise.resolve(ops.map(() => ({ ok: true }))),
     );
+    const fakeSession = {
+      exec: execMock,
+      close: vi.fn(),
+      trustedUids: new Set([0]),
+      sudo: true as const,
+    } as unknown as SudoWorkerSession;
+
+    const sessions = new Map<true | string, SudoWorkerSession>([
+      [true, fakeSession],
+    ]);
 
     const target: SudoWriteTarget = {
-      targetPath: '/etc/link',
+      targetPath: '/etc/test.conf',
       content: Buffer.from('data'),
       sudo: true,
-      writeInPlace: true,
     };
-    expect(() => sudoAtomicWrite([target])).toThrow(
-      'is a symlink; refusing to follow',
+    mockSpawnSync.mockReturnValue(workerOkResult(1));
+    await sudoAtomicWrite([target], [], sessions);
+
+    // spawnSync must NOT have been used for a privileged-worker invocation
+    const workerSpawnSyncCalls = mockSpawnSync.mock.calls.filter(
+      ([, args]) =>
+        Array.isArray(args) &&
+        (args as string[]).some((a) => a.includes('privileged-worker')),
     );
+    expect(workerSpawnSyncCalls).toHaveLength(0);
+
+    // session.exec() must have been called once with the expected op
+    expect(execMock).toHaveBeenCalledTimes(1);
+    const [ops] = execMock.mock.calls[0] as [Array<{ type: string }>];
+    expect(ops).toHaveLength(1);
+    expect(ops[0].type).toBe('write-mv');
   });
-
-  it.skipIf(isWindows)('writeInPlace: rejects non-regular files', () => {
-    mockSpawnSync.mockImplementation(
-      (_cmd: unknown, args: readonly string[]) => {
-        // -L: not a symlink
-        if (args.includes('-L')) return failResult();
-        // -e: file exists
-        if (args.includes('-e')) return okResult();
-        // -f: not a regular file (e.g. FIFO)
-        if (args.includes('-f')) return failResult();
-        return okResult();
-      },
-    );
-
-    const target: SudoWriteTarget = {
-      targetPath: '/etc/fifo',
-      content: Buffer.from('data'),
-      sudo: true,
-      writeInPlace: true,
-    };
-    expect(() => sudoAtomicWrite([target])).toThrow(
-      'is not a regular file; refusing to write',
-    );
-  });
-});
-
-describe('sudoRun — mode-only chmod path', () => {
-  it.skipIf(isWindows)(
-    'calls sudo chmod with padded octal mode for root',
-    () => {
-      mockSpawnSync.mockReturnValue(okResult());
-      sudoRun(true, ['chmod', '--', '0644', '/etc/test.conf']);
-      expect(mockSpawnSync).toHaveBeenCalledWith(
-        'sudo',
-        ['chmod', '--', '0644', '/etc/test.conf'],
-        expect.any(Object),
-      );
-    },
-  );
-
-  it.skipIf(isWindows)(
-    'calls sudo -u <user> chmod for named-user mode-only change',
-    () => {
-      mockSpawnSync.mockReturnValue(okResult());
-      sudoRun('nobody', ['chmod', '--', '0644', '/etc/test.conf']);
-      expect(mockSpawnSync).toHaveBeenCalledWith(
-        'sudo',
-        ['-u', 'nobody', 'chmod', '--', '0644', '/etc/test.conf'],
-        expect.any(Object),
-      );
-    },
-  );
-
-  it('throws when sudo chmod fails', () => {
-    mockSpawnSync.mockReturnValue(failResult());
-    expect(() =>
-      sudoRun(true, ['chmod', '--', '0644', '/etc/test.conf']),
-    ).toThrow();
-  });
-});
-
-describe('sudoAtomicWrite — symlink path', () => {
-  it.skipIf(isWindows)(
-    'stages new symlink via mktemp+mv (atomic) not ln -sf',
-    () => {
-      const calls: string[][] = [];
-      mockSpawnSync.mockImplementation(
-        (_cmd: unknown, args: readonly string[]) => {
-          calls.push([...args]);
-          if (args.includes('stat') && args.includes('%u'))
-            return okResult('0');
-          if (args.includes('stat')) return okResult('644');
-          if (args.includes('test') && args.includes('-L')) return failResult();
-          if (args.includes('test') && args.includes('-d')) return failResult();
-          if (args.includes('test') && args.includes('-f')) return failResult();
-          if (args.includes('mktemp'))
-            return okResult('/etc/.avanti-symlink-tmp');
-          return okResult();
-        },
-      );
-
-      const target: SudoWriteTarget = {
-        targetPath: '/etc/link',
-        content: Buffer.from('/etc/hosts'),
-        symlinkTarget: '/etc/hosts',
-        sudo: true,
-      };
-      sudoAtomicWrite([target]);
-      const flat = calls.map((a) => a.join(' '));
-      expect(flat.some((c) => c.includes('mkdir'))).toBe(true);
-      // Must NOT use ln -sf (non-atomic)
-      expect(flat.some((c) => c.includes('ln') && c.includes('-sf'))).toBe(
-        false,
-      );
-      // Must create temp symlink with ln -s <target> <tmppath>
-      expect(
-        flat.some(
-          (c) =>
-            c.includes('ln') &&
-            c.includes('-s') &&
-            c.includes('/etc/hosts') &&
-            c.includes('/etc/.avanti-symlink-tmp'),
-        ),
-      ).toBe(true);
-      // Must atomically rename temp path over destination
-      expect(
-        flat.some(
-          (c) =>
-            c.includes('mv') &&
-            c.includes('/etc/.avanti-symlink-tmp') &&
-            c.includes(path.resolve('/etc/link')),
-        ),
-      ).toBe(true);
-    },
-  );
-
-  it.skipIf(isWindows)(
-    'throws when target path is an existing real directory',
-    () => {
-      mockSpawnSync.mockImplementation(
-        (_cmd: unknown, args: readonly string[]) => {
-          if (args.includes('stat') && args.includes('%u'))
-            return okResult('0');
-          if (args.includes('stat')) return okResult('644');
-          if (args.includes('test') && args.includes('-L')) return failResult();
-          if (args.includes('test') && args.includes('-d')) return okResult();
-          return okResult();
-        },
-      );
-
-      const target: SudoWriteTarget = {
-        targetPath: '/etc/conf.d',
-        content: Buffer.from('/etc/hosts'),
-        symlinkTarget: '/etc/hosts',
-        sudo: true,
-      };
-      expect(() => sudoAtomicWrite([target])).toThrow('is a directory');
-    },
-  );
-
-  it.skipIf(isWindows)(
-    'backs up an existing symlink then replaces atomically via mktemp+mv',
-    () => {
-      const calls: string[][] = [];
-      mockSpawnSync.mockImplementation(
-        (_cmd: unknown, args: readonly string[]) => {
-          calls.push([...args]);
-          if (args.includes('stat') && args.includes('%u'))
-            return okResult('0');
-          if (args.includes('stat')) return okResult('644');
-          // Target is a symlink (dir-refusal and backup-detection checks)
-          if (args.includes('test') && args.includes('-L')) return okResult();
-          if (args.includes('test') && args.includes('-d')) return failResult();
-          if (args.includes('test') && args.includes('-f')) return failResult();
-          // Distinguish backup mktemp from new-symlink mktemp by template pattern
-          if (args.includes('mktemp')) {
-            const tmpl = args.find((a) => a.includes('.avanti-'));
-            return okResult(
-              tmpl?.includes('backup')
-                ? '/etc/.avanti-backup-tmp'
-                : '/etc/.avanti-symlink-tmp',
-            );
-          }
-          if (args.includes('readlink')) return okResult('/etc/old-target');
-          return okResult();
-        },
-      );
-
-      const target: SudoWriteTarget = {
-        targetPath: '/etc/link',
-        content: Buffer.from('/etc/new-target'),
-        symlinkTarget: '/etc/new-target',
-        backupPath: '/etc/link.bak',
-        sudo: true,
-      };
-      sudoAtomicWrite([target]);
-      const flat = calls.map((a) => a.join(' '));
-      // Symlink backups use ln -s with an absolute target (not cp -pP) so the
-      // backup resolves correctly from the backup directory.
-      expect(flat.some((c) => c.includes('cp') && c.includes('-pP'))).toBe(
-        false,
-      );
-      expect(
-        flat.some(
-          (c) =>
-            c.includes('ln') &&
-            c.includes('-s') &&
-            c.includes('/etc/old-target'),
-        ),
-      ).toBe(true);
-      // Final replacement must NOT use ln -sf (non-atomic)
-      expect(flat.some((c) => c.includes('ln') && c.includes('-sf'))).toBe(
-        false,
-      );
-      // Must stage new symlink at temp path and rename atomically
-      expect(
-        flat.some(
-          (c) =>
-            c.includes('ln') &&
-            c.includes('-s') &&
-            c.includes('/etc/new-target') &&
-            c.includes('/etc/.avanti-symlink-tmp'),
-        ),
-      ).toBe(true);
-      expect(
-        flat.some(
-          (c) =>
-            c.includes('mv') &&
-            c.includes('/etc/.avanti-symlink-tmp') &&
-            c.includes(path.resolve('/etc/link')),
-        ),
-      ).toBe(true);
-    },
-  );
 });

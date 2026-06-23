@@ -67,7 +67,51 @@ jobs:
         if: runner.os != 'Windows'
         run: bun run format:check
 
+      # Ubuntu runners have passwordless sudo — set up a root-owned directory
+      # for the sudo integration tests and inject a counting wrapper that logs
+      # every sudo invocation before delegating to the real sudo.
+      - name: Set up sudo integration test environment
+        if: runner.os == 'Linux'
+        env:
+          SUDO_TEST_DIR: ${{ runner.temp }}/avanti-sudo-test
+          SUDO_BIN_DIR: ${{ runner.temp }}/sudo-bin
+          SUDO_CALL_LOG_PATH: ${{ runner.temp }}/sudo-call-log.txt
+          SUDO_NAMED_USER: testwriter
+        run: |
+          sudo rm -rf "$SUDO_TEST_DIR"
+          sudo mkdir -p "$SUDO_TEST_DIR"
+          sudo chmod 700 "$SUDO_TEST_DIR"
+          mkdir -p "$SUDO_BIN_DIR"
+          # Capture the real sudo path before injecting the wrapper into PATH.
+          # Using 'exec sudo' in the wrapper would recurse into itself since
+          # SUDO_BIN_DIR is prepended to PATH.
+          REAL_SUDO=$(command -v sudo)
+          cat > "$SUDO_BIN_DIR/sudo" << WRAPPER
+          #!/bin/sh
+          echo "sudo: \$*" >> "\$AVANTI_SUDO_CALL_LOG"
+          exec $REAL_SUDO "\$@"
+          WRAPPER
+          chmod +x "$SUDO_BIN_DIR/sudo"
+          echo "$SUDO_BIN_DIR" >> "$GITHUB_PATH"
+          echo "AVANTI_SUDO_TEST_DIR=$SUDO_TEST_DIR" >> "$GITHUB_ENV"
+          echo "AVANTI_SUDO_CALL_LOG=$SUDO_CALL_LOG_PATH" >> "$GITHUB_ENV"
+
+          # Named-user sudo: create a dedicated user and a world-readable temp
+          # directory owned by that user so the named-user integration test can
+          # write there via sudo -u.
+          # Use /tmp (1777, world-traversable) so testwriter can reach the dir;
+          # runner.temp lives under runner's home which testwriter cannot traverse.
+          sudo useradd -m "$SUDO_NAMED_USER" || [ "$?" -eq 9 ]
+          SUDO_NAMED_USER_DIR=$(mktemp -d /tmp/avanti-named-XXXXXX)
+          sudo chown "$SUDO_NAMED_USER:$SUDO_NAMED_USER" "$SUDO_NAMED_USER_DIR"
+          sudo chmod 755 "$SUDO_NAMED_USER_DIR"
+          echo "AVANTI_SUDO_NAMED_USER=$SUDO_NAMED_USER" >> "$GITHUB_ENV"
+          echo "AVANTI_SUDO_NAMED_USER_DIR=$SUDO_NAMED_USER_DIR" >> "$GITHUB_ENV"
+
       - name: Test
+        # No `if: runner.os == 'Linux'` guard: sudo integration tests only run
+        # on Linux (env vars are unset on Windows), and other tests run on all
+        # platforms. A single step covers both cases.
         run: bun run test
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

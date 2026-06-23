@@ -8,6 +8,7 @@
   "main": "./dist/cli.js",
   "scripts": {
     "build": "tsc -p tsconfig.build.json && chmod +x dist/cli.js",
+    "prepare": "node -e \"var f=require('fs'),cp=require('child_process');if(!f.existsSync('dist/cli.js')){cp.execSync('bunx tsc -p tsconfig.build.json',{stdio:'inherit'});if(process.platform!=='win32')cp.execSync('chmod +x dist/cli.js')}\"",
     "dev": "tsx src/cli.ts",
     "test": "vitest run",
     "test:watch": "vitest",
