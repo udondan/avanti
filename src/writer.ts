@@ -987,6 +987,20 @@ export async function sudoStatBatch(
         contentB64: isPermDenied ? undefined : r?.contentB64,
       });
     });
+    // When continueOnError is true, runPrivilegedWorker appends a crash
+    // sentinel (N+1 results for N ops) when the worker exits non-zero after
+    // completing all ops. The forEach above iterates items (length N), so the
+    // sentinel at index N is never visited. Detect and surface it so callers
+    // are not left with a complete-looking result map that silently followed
+    // an abnormal worker exit.
+    if (results.length > items.length) {
+      const sentinel = results[items.length];
+      if (sentinel && !sentinel.ok) {
+        throw new Error(
+          `privileged stat-reader crashed after completing all ops: ${sentinel.error ?? 'unknown'}`,
+        );
+      }
+    }
   }
   return result;
 }
@@ -1282,25 +1296,16 @@ export class SudoWorkerSession {
           typeof sudo === 'string' ? 0o666 : 0o600,
         );
       } catch (e) {
-        if (typeof sudo !== 'string') {
-          // Root sudo: a world-connectable socket is a security hole — abort.
-          // (net.Server.listen creates the socket at 0777&~umask, typically
-          // 0755, so leaving it at that mode means any local user can connect
-          // and become the trusted IPC peer of the root-privileged worker.)
-          // Reject ready rather than throwing so this async callback does not
-          // propagate an uncaughtException that would crash the parent process.
-          readyReject(e instanceof Error ? e : new Error(String(e)));
-          this.close();
-          return;
-        }
-        // Named-user sudo: chmod failed — warn so users know the socket's
-        // permissions may be degraded. The 0711 parent dir still limits
-        // filesystem enumeration; the nonce handshake (256-bit random) remains
-        // in place as the primary authentication barrier.
-        console.warn(
-          `avanti: warning — failed to set IPC socket permissions for named-user sudo '${sudo}': ${(e as Error).message}. ` +
-            `The socket may be connectable by other local users; nonce handshake is still active.`,
-        );
+        // chmod failure leaves the socket world-connectable (0777&~umask,
+        // typically 0755); any local user can connect and attempt to
+        // authenticate. Abort unconditionally — the same risk applies whether
+        // the worker runs as root or as a named user, and the nonce alone is
+        // not sufficient when the socket is reachable by arbitrary processes.
+        // Reject ready rather than throwing so this async callback does not
+        // propagate an uncaughtException that would crash the parent process.
+        readyReject(e instanceof Error ? e : new Error(String(e)));
+        this.close();
+        return;
       }
 
       // Open /dev/tty so that sudo can look up cached credentials via

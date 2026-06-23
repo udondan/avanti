@@ -265,6 +265,7 @@ export function revertCommand(): Command {
           sudoSessions = openPrivilegedSessions(sudoIds);
         } catch (err) {
           console.error(err instanceof Error ? err.message : String(err));
+          closeAllSessions(sudoSessions);
           process.exit(2);
         }
 

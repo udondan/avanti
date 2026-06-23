@@ -117,10 +117,10 @@ function readFileToBase64(
 ): { contentB64: string; mode: string } {
   let fd: number | undefined;
   try {
-    fd = fs.openSync(
-      resolvedPath,
-      fs.constants.O_RDONLY | O_NOFOLLOW | O_NONBLOCK,
-    );
+    // O_NONBLOCK omitted: a regular-file readSync (below) can return EAGAIN
+    // on NFS/FUSE when O_NONBLOCK is set. The fstatSync check below already
+    // rejects FIFOs and other non-regular files before any read is attempted.
+    fd = fs.openSync(resolvedPath, fs.constants.O_RDONLY | O_NOFOLLOW);
     const st = fs.fstatSync(fd);
     if (!st.isFile()) {
       // Attach a recognisable code so callers can distinguish directory
@@ -239,13 +239,12 @@ function backupRegularFile(
   // fd that will be read — eliminates the TOCTOU window between lstatSync and
   // openSync where a symlink swap could silently skip the backup.
   // O_NOFOLLOW: ELOOP if targetPath is a symlink (→ not a regular file, skip).
-  // O_NONBLOCK: prevents opening FIFOs.
+  // O_NONBLOCK omitted: the subsequent readSync can return EAGAIN on NFS/FUSE
+  // when O_NONBLOCK is set. The fstatSync check below rejects non-regular
+  // files (FIFOs, sockets) before any read is attempted.
   let sfd: number | undefined;
   try {
-    sfd = fs.openSync(
-      targetPath,
-      fs.constants.O_RDONLY | O_NOFOLLOW | O_NONBLOCK,
-    );
+    sfd = fs.openSync(targetPath, fs.constants.O_RDONLY | O_NOFOLLOW);
   } catch (e) {
     const code = (e as NodeJS.ErrnoException).code;
     if (code === 'ENOENT' || code === 'ELOOP' || code === 'ENOTDIR') return;
