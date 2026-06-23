@@ -8,6 +8,7 @@
   "main": "./dist/cli.js",
   "scripts": {
     "build": "tsc -p tsconfig.build.json && chmod +x dist/cli.js",
+    "prepare": "tsc -p tsconfig.build.json && chmod +x dist/cli.js",
     "dev": "tsx src/cli.ts",
     "test": "vitest run",
     "test:watch": "vitest",
