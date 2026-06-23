@@ -82,10 +82,14 @@ jobs:
           sudo mkdir -p "$SUDO_TEST_DIR"
           sudo chmod 700 "$SUDO_TEST_DIR"
           mkdir -p "$SUDO_BIN_DIR"
-          cat > "$SUDO_BIN_DIR/sudo" << 'WRAPPER'
+          # Capture the real sudo path before injecting the wrapper into PATH.
+          # Using 'exec sudo' in the wrapper would recurse into itself since
+          # SUDO_BIN_DIR is prepended to PATH.
+          REAL_SUDO=$(command -v sudo)
+          cat > "$SUDO_BIN_DIR/sudo" << WRAPPER
           #!/bin/sh
-          echo "sudo: $*" >> "$AVANTI_SUDO_CALL_LOG"
-          exec sudo "$@"
+          echo "sudo: \$*" >> "\$AVANTI_SUDO_CALL_LOG"
+          exec $REAL_SUDO "\$@"
           WRAPPER
           chmod +x "$SUDO_BIN_DIR/sudo"
           echo "$SUDO_BIN_DIR" >> "$GITHUB_PATH"
