@@ -1118,9 +1118,11 @@ function checkAncestorsSafeAsRoot(
 
 // Base64 encoding inflates raw bytes by ~33%, so a 100 MiB file produces
 // ~133 MiB of base64 in the JSON response. runPrivilegedWorker uses spawnSync
-// with maxBuffer = 150 MiB, so files up to 100 MiB are safely covered.
-// SudoWorkerSession (streaming readline, no fixed maxBuffer) can also handle
-// 100 MiB files without issue.
+// with maxBuffer = 150 MiB — a single-file batch fits, but multi-file batches
+// whose combined base64 output exceeds ~113 MiB will overflow and throw
+// ERR_CHILD_PROCESS_STDIO_MAXBUFFER. Use SudoWorkerSession for large
+// multi-file read batches; it streams via readline with a separate 500 MiB
+// per-response cap and no fixed maxBuffer.
 const MAX_READ = 100 * 1024 * 1024;
 
 export function dispatch(
@@ -1393,7 +1395,20 @@ if (require.main === module) {
     inputStream = ipcSocket;
     outputStream = ipcSocket;
   } else if (reqFileArg) {
-    inputStream = fs.createReadStream(reqFileArg.slice('--req-file='.length));
+    const reqFilePath = reqFileArg.slice('--req-file='.length);
+    const reqStream = fs.createReadStream(reqFilePath);
+    // Unlink the req file as soon as it is opened so the base64 content does
+    // not sit on disk for the full duration of the worker's run. The data
+    // remains accessible via the open file descriptor; the parent's finally
+    // block also tries to unlink (harmlessly no-ops if already gone).
+    reqStream.once('open', () => {
+      try {
+        fs.unlinkSync(reqFilePath);
+      } catch {
+        // best-effort
+      }
+    });
+    inputStream = reqStream;
     outputStream = process.stdout;
   } else {
     // stdin fallback: used by runPrivilegedWorker (named-user path, spawnSync
@@ -1401,6 +1416,12 @@ if (require.main === module) {
     // verified in this mode: the parent prefixes the payload with the nonce line
     // and passes AVANTI_WORKER_NONCE via env. Security requirement: stdin MUST
     // be a private pipe so only the parent process can write to it.
+    if (process.stdin.isTTY) {
+      process.stderr.write(
+        'avanti-worker: stdin is a TTY; refusing to accept ops on an unauthenticated channel\n',
+      );
+      process.exit(1);
+    }
     inputStream = process.stdin;
     outputStream = process.stdout;
   }

@@ -95,7 +95,19 @@ function resolveNodeExec(sudo: true | string): string {
   // variable into avanti's environment.
   // Not cached: the env var can legitimately change between calls in tests.
   if (process.env.AVANTI_NODE_EXEC) {
-    return process.env.AVANTI_NODE_EXEC;
+    const exec = process.env.AVANTI_NODE_EXEC;
+    process.stderr.write(
+      `avanti: WARNING — AVANTI_NODE_EXEC is set to "${exec}"; all Node.js binary security checks are bypassed. ` +
+        `Only set this in controlled environments where the binary is trusted.\n`,
+    );
+    try {
+      fs.accessSync(exec, fs.constants.X_OK);
+    } catch {
+      throw new Error(
+        `AVANTI_NODE_EXEC is set to "${exec}" but the binary is not executable or does not exist`,
+      );
+    }
+    return exec;
   }
   const cacheKey = sudo === true ? '__root__' : sudo;
   const cached = resolvedNodeExecCache.get(cacheKey);
@@ -714,6 +726,14 @@ export async function sudoAtomicWrite(
     const chmodOps = chmodGroups.get(sudo) ?? [];
 
     const session = sessions?.get(sudo);
+    // If a sessions map was provided but this identity is absent, it means
+    // openPrivilegedSessions omitted it — surface as a bug rather than
+    // silently re-prompting via runPrivilegedWorker.
+    if (sessions !== undefined && !session) {
+      throw new Error(
+        `no privileged session for sudo identity "${String(sudo)}"; ensure openPrivilegedSessions is called before sudoAtomicWrite`,
+      );
+    }
     if (writeOps.length > 0) {
       let writeResults: WorkerResult[];
       if (session) {
@@ -822,6 +842,11 @@ export async function sudoAtomicDelete(
     }));
     try {
       const session = sessions?.get(sudo);
+      if (sessions !== undefined && !session) {
+        throw new Error(
+          `no privileged session for sudo identity "${String(sudo)}"; ensure openPrivilegedSessions is called before sudoAtomicDelete`,
+        );
+      }
       // No-session fallback: see the note in sudoAtomicWrite — bypasses the
       // single-prompt guarantee; only used by callers that skip openPrivilegedSessions.
       const results: WorkerResult[] = session
@@ -904,6 +929,11 @@ export async function sudoAtomicRead(
     // for every file in the batch, permanently breaking revert/reset without
     // any user-visible error.
     const session = sessions?.get(sudo);
+    if (sessions !== undefined && !session) {
+      throw new Error(
+        `no privileged session for sudo identity "${String(sudo)}"; ensure openPrivilegedSessions is called before sudoAtomicRead`,
+      );
+    }
     // No-session fallback: see the note in sudoAtomicWrite — bypasses the
     // single-prompt guarantee; only used by callers that skip openPrivilegedSessions.
     // Scale timeout with batch size: 2 s per read op keeps large batches
@@ -1017,6 +1047,11 @@ export async function sudoStatBatch(
       targetPath: path.resolve(item.filePath),
     }));
     const session = sessions?.get(sudo);
+    if (sessions !== undefined && !session) {
+      throw new Error(
+        `no privileged session for sudo identity "${String(sudo)}"; ensure openPrivilegedSessions is called before sudoStatBatch`,
+      );
+    }
     // Scale timeout with batch size: 2 s per stat-read op keeps large batches
     // (e.g. 20+ lstatFailed paths on slow/encrypted filesystems) from timing out
     // while sudoAtomicRead with identical logic would succeed. The 30 s minimum

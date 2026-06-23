@@ -986,8 +986,12 @@ export function pullCommand(): Command {
       >();
 
       const hasChanges =
-        allDiffs.some((d) => d.hasChanges || d.isNew) ||
-        staleDiffs.some((d) => d.hasChanges || d.isNew);
+        allDiffs.some(
+          (d) => d.hasChanges || d.isNew || d.lstatFailed || d.isUnreadable,
+        ) ||
+        staleDiffs.some(
+          (d) => d.hasChanges || d.isNew || d.lstatFailed || d.isUnreadable,
+        );
       printDiffs([...allDiffs, ...staleDiffs]);
 
       if (staleHasError) {
@@ -1713,71 +1717,79 @@ export function pullCommand(): Command {
             sudoDeletionBatch.push([p, sv]);
           }
         }
-        if (sudoDeletionBatch.length > 0) {
-          // Group by sudo identity; use the pre-created session if available
-          const byDeleteId = new Map<true | string, string[]>();
-          for (const [p, sv] of sudoDeletionBatch) {
-            if (!byDeleteId.has(sv)) byDeleteId.set(sv, []);
-            byDeleteId.get(sv)!.push(p);
-          }
-          for (const [sv, paths] of byDeleteId) {
-            const session = sudoSessions.get(sv);
-            if (session) {
-              const deleteOps: WriteOp[] = paths.map((p) => ({
-                type: 'delete' as const,
-                targetPath: p,
-              }));
-              // Stale cleanup is best-effort: a session-level failure (worker
-              // crash, auth error) is treated as a warning, not a fatal error.
-              let deleteResults: WorkerResult[] = [];
-              try {
-                deleteResults = await session.exec(deleteOps, true);
-              } catch (sessionErr) {
-                for (const p of paths)
+        try {
+          if (sudoDeletionBatch.length > 0) {
+            // Group by sudo identity; use the pre-created session if available
+            const byDeleteId = new Map<true | string, string[]>();
+            for (const [p, sv] of sudoDeletionBatch) {
+              if (!byDeleteId.has(sv)) byDeleteId.set(sv, []);
+              byDeleteId.get(sv)!.push(p);
+            }
+            for (const [sv, paths] of byDeleteId) {
+              const session = sudoSessions.get(sv);
+              if (session) {
+                const deleteOps: WriteOp[] = paths.map((p) => ({
+                  type: 'delete' as const,
+                  targetPath: p,
+                }));
+                // Stale cleanup is best-effort: a session-level failure (worker
+                // crash, auth error) is treated as a warning, not a fatal error.
+                let deleteResults: WorkerResult[] = [];
+                try {
+                  deleteResults = await session.exec(deleteOps, true);
+                } catch (sessionErr) {
+                  for (const p of paths)
+                    console.warn(
+                      `Warning: could not delete ${p}: ${sessionErr instanceof Error ? sessionErr.message : String(sessionErr)}`,
+                    );
+                  continue;
+                }
+                for (let di = 0; di < paths.length; di++) {
+                  if (deleteResults[di]?.ok && !deleteResults[di]?.skipped) {
+                    effectivelyDeleted.add(paths[di]);
+                    effectivelyCleaned.add(paths[di]);
+                  } else if (
+                    deleteResults[di]?.ok &&
+                    deleteResults[di]?.skipped
+                  ) {
+                    // File was already absent — clean up its history ref so we
+                    // don't re-attempt the deletion on every subsequent pull.
+                    effectivelyCleaned.add(paths[di]);
+                  } else if (
+                    deleteResults[di] &&
+                    !deleteResults[di].ok &&
+                    deleteResults[di].error
+                  ) {
+                    console.warn(
+                      `Warning: could not delete ${paths[di]}: ${deleteResults[di].error}`,
+                    );
+                  }
+                }
+                // Crash sentinel: the worker appends an extra result at index
+                // paths.length when it exits non-zero mid-batch (continueOnError).
+                const crashSentinel = deleteResults[paths.length];
+                if (crashSentinel && !crashSentinel.ok) {
                   console.warn(
-                    `Warning: could not delete ${p}: ${sessionErr instanceof Error ? sessionErr.message : String(sessionErr)}`,
-                  );
-                continue;
-              }
-              for (let di = 0; di < paths.length; di++) {
-                if (deleteResults[di]?.ok && !deleteResults[di]?.skipped) {
-                  effectivelyDeleted.add(paths[di]);
-                  effectivelyCleaned.add(paths[di]);
-                } else if (
-                  deleteResults[di]?.ok &&
-                  deleteResults[di]?.skipped
-                ) {
-                  // File was already absent — clean up its history ref so we
-                  // don't re-attempt the deletion on every subsequent pull.
-                  effectivelyCleaned.add(paths[di]);
-                } else if (
-                  deleteResults[di] &&
-                  !deleteResults[di].ok &&
-                  deleteResults[di].error
-                ) {
-                  console.warn(
-                    `Warning: could not delete ${paths[di]}: ${deleteResults[di].error}`,
+                    `Warning: privileged worker crashed during stale-file cleanup: ${crashSentinel.error ?? 'worker exited unexpectedly'}`,
                   );
                 }
-              }
-              // Crash sentinel: the worker appends an extra result at index
-              // paths.length when it exits non-zero mid-batch (continueOnError).
-              const crashSentinel = deleteResults[paths.length];
-              if (crashSentinel && !crashSentinel.ok) {
-                console.warn(
-                  `Warning: privileged worker crashed during stale-file cleanup: ${crashSentinel.error ?? 'worker exited unexpectedly'}`,
+              } else {
+                // Phase 2 opens a session for every identity in deferredIds,
+                // which includes all identities that reach this deletion loop.
+                // A missing session means Phase 2 has a bug — surface it loudly
+                // rather than masking it with a silent fallback invocation.
+                throw new Error(
+                  `no privileged session for sudo identity "${String(sv)}" during stale-file cleanup`,
                 );
               }
-            } else {
-              // Phase 2 opens a session for every identity in deferredIds,
-              // which includes all identities that reach this deletion loop.
-              // A missing session means Phase 2 has a bug — surface it loudly
-              // rather than masking it with a silent fallback invocation.
-              throw new Error(
-                `no privileged session for sudo identity "${String(sv)}" during stale-file cleanup`,
-              );
             }
           }
+        } catch (cleanupErr: unknown) {
+          closeAllSessions(sudoSessions);
+          console.error(
+            `Privileged stale-file cleanup failed: ${cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr)}`,
+          );
+          process.exit(2);
         }
 
         // Non-sudo mode-only changes (POSIX only). Sudo mode-only changes are
