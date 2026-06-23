@@ -85,7 +85,7 @@ jobs:
           cat > "$SUDO_BIN_DIR/sudo" << 'WRAPPER'
           #!/bin/sh
           echo "sudo: $*" >> "$AVANTI_SUDO_CALL_LOG"
-          exec /usr/bin/sudo "$@"
+          exec sudo "$@"
           WRAPPER
           chmod +x "$SUDO_BIN_DIR/sudo"
           echo "$SUDO_BIN_DIR" >> "$GITHUB_PATH"

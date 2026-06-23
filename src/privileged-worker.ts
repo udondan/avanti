@@ -11,8 +11,7 @@ const O_NOFOLLOW: number =
 const O_NONBLOCK: number =
   (fs.constants as Record<string, number>).O_NONBLOCK ?? 0;
 
-export interface WriteMvOp {
-  type: 'write-mv';
+interface WriteFileOpBase {
   targetPath: string;
   contentB64: string;
   mode?: string;
@@ -20,13 +19,12 @@ export interface WriteMvOp {
   backupPath?: string;
 }
 
-export interface WriteInPlaceOp {
+export interface WriteMvOp extends WriteFileOpBase {
+  type: 'write-mv';
+}
+
+export interface WriteInPlaceOp extends WriteFileOpBase {
   type: 'write-in-place';
-  targetPath: string;
-  contentB64: string;
-  mode?: string;
-  defaultMode: string;
-  backupPath?: string;
 }
 
 export interface WriteSymlinkOp {
@@ -195,7 +193,7 @@ function getExistingMode(filePath: string): string | undefined {
 
 // parseInt('0o644', 8) stops at 'o' and returns 0, silently setting permissions
 // to 0000. Strip the prefix so both '0644' and '0o644' parse correctly.
-function parseMode(modeStr: string): number {
+export function parseMode(modeStr: string): number {
   const stripped = modeStr.replace(/^0[oO]/, '');
   // Validate before parsing: parseInt stops at the first non-octal character
   // and returns the partial result (e.g. "644abc" → 420), which would
@@ -356,7 +354,7 @@ function backupTarget(
   if (lst === undefined) return;
 
   if (lst.isSymbolicLink()) {
-    if (!preobtainedLinkTarget) {
+    if (preobtainedLinkTarget === undefined) {
       throw new Error(
         'internal: preobtainedLinkTarget must be provided when backing up a symlink',
       );
@@ -1582,6 +1580,9 @@ if (require.main === module) {
     try {
       request = JSON.parse(trimmed) as WorkerRequest;
     } catch (e) {
+      // Pause readline synchronously before any async work so buffered lines
+      // from a pipelined second request are not emitted while we are exiting.
+      rl.pause();
       writeResponse(
         {
           results: [
@@ -1604,6 +1605,7 @@ if (require.main === module) {
     }
 
     if (!request || !Array.isArray(request.ops)) {
+      rl.pause();
       writeResponse(
         {
           results: [

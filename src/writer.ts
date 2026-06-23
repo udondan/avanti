@@ -5,6 +5,7 @@ import * as os from 'os';
 import * as path from 'path';
 import * as readline from 'readline';
 import { spawn, spawnSync } from 'child_process';
+import { parseMode } from './privileged-worker';
 import type {
   WorkerRequest,
   WorkerResponse,
@@ -25,7 +26,7 @@ if (WORLD_TMP_OVERRIDE && process.platform !== 'win32') {
   // (1000). Without sticky, any local user can rename/unlink files in the
   // directory, enabling a race to replace the staged worker or IPC socket dir.
   try {
-    const st = fs.statSync(WORLD_TMP_OVERRIDE);
+    const st = fs.lstatSync(WORLD_TMP_OVERRIDE);
     const isWorldWritable = (st.mode & 0o002) !== 0;
     const hasSticky = (st.mode & 0o1000) !== 0;
     if (isWorldWritable && !hasSticky) {
@@ -202,8 +203,11 @@ function resolveNodeExec(sudo: true | string): string {
 }
 
 // Resolves the compiled privileged-worker.js path and throws if it does not
-// exist (i.e. the user forgot to run `mise run build`).
+// exist (i.e. the user forgot to run `mise run build`). Cached: __dirname and
+// __filename are constant for the process lifetime so the path never changes.
+let _cachedWorkerPath: string | undefined;
 function resolveWorkerPath(): string {
+  if (_cachedWorkerPath !== undefined) return _cachedWorkerPath;
   const workerPath = __filename.endsWith('.ts')
     ? path.resolve(__dirname, '..', 'dist', 'privileged-worker.js')
     : path.join(__dirname, 'privileged-worker.js');
@@ -213,6 +217,7 @@ function resolveWorkerPath(): string {
         (__filename.endsWith('.ts') ? '; run `mise run build` first' : ''),
     );
   }
+  _cachedWorkerPath = workerPath;
   return workerPath;
 }
 
@@ -287,14 +292,20 @@ if (!_proc[_HANDLERS_KEY]) {
   process.on('SIGINT', teardown);
 }
 
+// Cache of staged worker binaries keyed on the source workerPath. Multiple
+// named-user sessions for different identities share one copy so the binary
+// is not copied redundantly within a process lifetime. The tmpDir stays alive
+// until process exit (tracked in stagedWorkerDirs); sessions do NOT clean it
+// up on close() — they each own their own per-session ipcDir instead.
+const _workerStagingCache = new Map<string, string>();
+
 // Copies the privileged-worker script to a world-readable temp directory so
 // that `sudo -u <user>` can reach and exec it regardless of the calling user's
-// home-directory permissions. Returns the staged path and temp directory;
-// callers are responsible for cleaning up tmpDir when done.
-function stageWorkerForSudo(workerPath: string): {
-  stagedPath: string;
-  tmpDir: string;
-} {
+// home-directory permissions. Returns the staged path; the tmpDir is owned by
+// the module (tracked in stagedWorkerDirs) and lives until process exit.
+function stageWorkerForSudo(workerPath: string): string {
+  const cached = _workerStagingCache.get(workerPath);
+  if (cached !== undefined) return cached;
   // mkdtemp(2) is POSIX-specified to create with mode S_IRWXU (0700) regardless
   // of the caller's umask, so no umask manipulation is required here.
   const tmpDir = fs.mkdtempSync(path.join(WORLD_TMP, 'avanti-worker-'));
@@ -305,8 +316,9 @@ function stageWorkerForSudo(workerPath: string): {
     const stagedPath = path.join(tmpDir, 'privileged-worker.js');
     fs.copyFileSync(workerPath, stagedPath);
     fs.chmodSync(stagedPath, 0o444);
-    stagedWorkerDirs.add(tmpDir); // tracked for cleanup on abnormal exit
-    return { stagedPath, tmpDir };
+    stagedWorkerDirs.add(tmpDir); // tracked for process-exit cleanup
+    _workerStagingCache.set(workerPath, stagedPath);
+    return stagedPath;
   } catch (e) {
     // Clean up immediately on staging failure; do not rely solely on process-
     // exit cleanup since a retry loop would accumulate orphaned directories.
@@ -320,24 +332,20 @@ function stageWorkerForSudo(workerPath: string): {
 }
 
 // Shared setup for both runPrivilegedWorker (one-shot spawnSync) and
-// SudoWorkerSession (persistent spawn): resolves the worker script path, the
-// node executable to invoke via sudo, and stages it to a world-readable temp
-// directory when using named-user sudo.  Callers are responsible for cleanup
-// of tmpDir: runPrivilegedWorker uses a try/finally; SudoWorkerSession stores
-// it in this.tmpDir and cleans up in close().
+// SudoWorkerSession (persistent spawn): resolves the worker script path and
+// the node executable to invoke via sudo, staging the binary to a world-
+// readable temp dir for named-user sudo. The staged dir is owned by the
+// module (process-exit cleanup), NOT the caller.
 function prepareWorkerExec(sudo: true | string): {
   nodeExec: string;
   resolvedWorkerPath: string;
-  tmpDir?: string;
 } {
   const workerPath = resolveWorkerPath();
   const nodeExec = resolveNodeExec(sudo);
   if (typeof sudo === 'string') {
-    const staged = stageWorkerForSudo(workerPath);
     return {
       nodeExec,
-      resolvedWorkerPath: staged.stagedPath,
-      tmpDir: staged.tmpDir,
+      resolvedWorkerPath: stageWorkerForSudo(workerPath),
     };
   }
   return { nodeExec, resolvedWorkerPath: workerPath };
@@ -351,8 +359,7 @@ function runPrivilegedWorker(
   if (process.platform === 'win32') {
     throw new Error('sudo is not supported on Windows');
   }
-  const { nodeExec, resolvedWorkerPath, tmpDir } = prepareWorkerExec(sudo);
-  const cleanup = tmpDir ? () => cleanupWorkerDir(tmpDir) : undefined;
+  const { nodeExec, resolvedWorkerPath } = prepareWorkerExec(sudo);
 
   // The worker does not accept trustedUids over the wire — it recomputes the
   // trusted set from SUDO_UID (set by sudo) and its own UID. Hardened sudoers
@@ -447,7 +454,6 @@ function runPrivilegedWorker(
         // best-effort
       }
     }
-    cleanup?.();
   }
 
   if (result.error) {
@@ -1112,7 +1118,15 @@ function buildTrustedUids(sudo: true | string): Set<number> {
   if (typeof process.getuid === 'function') trusted.add(process.getuid());
   if (typeof sudo === 'string') {
     const namedUid = getUserUid(sudo);
-    if (namedUid !== undefined) trusted.add(namedUid);
+    if (namedUid !== undefined) {
+      trusted.add(namedUid);
+    } else {
+      console.warn(
+        `avanti: warning — could not resolve UID for sudo user "${sudo}" (id -u failed). ` +
+          `Ancestor-directory ownership checks may reject paths owned by ${sudo}. ` +
+          `Ensure the user exists and the "id" command is available.`,
+      );
+    }
   }
   return trusted;
 }
@@ -1142,7 +1156,7 @@ export class SudoWorkerSession {
     this.sudo = sudo;
     this.trustedUids = buildTrustedUids(sudo);
 
-    const { nodeExec, resolvedWorkerPath, tmpDir } = prepareWorkerExec(sudo);
+    const { nodeExec, resolvedWorkerPath } = prepareWorkerExec(sudo);
 
     // Random nonce: passed to the worker via --nonce= and echoed back as its
     // first IPC line. Verifies the connecting process is the worker we spawned
@@ -1157,9 +1171,13 @@ export class SudoWorkerSession {
     // option" on virtually all real installations. A Unix socket has no fd
     // that needs to survive sudo's closefrom, so no sudoers changes are needed.
     //
-    // The IPC socket is always placed inside a private directory:
-    //   - Named-user sudo: tmpDir (mode 0711) — created by prepareWorkerExec.
-    //   - Root sudo: a fresh 0700 dir in WORLD_TMP, created here.
+    // The IPC socket is always placed inside a per-session private directory.
+    // For root sudo: mode 0700 — no other user can reach the socket at all.
+    // For named-user sudo: mode 0711 — the target user must traverse the dir
+    // to connect. The staged binary dir is shared (module-level cache) and
+    // separate from the IPC dir, so each session has an independent IPC dir
+    // that is cleaned up on close() without disturbing other sessions.
+    //
     // net.Server.listen() creates the socket with mode 0777 & ~umask (typically
     // 0755 — world-connectable) before our chmodSync runs. For root sudo (0700),
     // no other user can reach the socket at all. For named-user sudo (0711), the
@@ -1179,11 +1197,12 @@ export class SudoWorkerSession {
     // path visibility, a rogue local user could connect in this window — but
     // without the nonce (not yet in any process's cmdline at that point, since
     // the worker is spawned after chmodSync), so the handshake will reject them.
-    if (tmpDir) {
-      this.tmpDir = tmpDir;
-    } else {
+    {
       // mkdtemp(2) creates with mode 0700 by POSIX spec, no umask guard needed.
       const ipcDir = fs.mkdtempSync(path.join(WORLD_TMP, 'avanti-ipc-'));
+      if (typeof sudo === 'string') {
+        fs.chmodSync(ipcDir, 0o711);
+      }
       stagedWorkerDirs.add(ipcDir);
       this.tmpDir = ipcDir;
     }
@@ -1342,14 +1361,22 @@ export class SudoWorkerSession {
           this.pending = null;
           p?.resolve(response.results);
         } catch (e) {
-          const p = this.pending;
-          this.pending = null;
-          this.close();
-          p?.reject(
-            new Error(
-              `failed to parse worker response: ${(e as Error).message}`,
-            ),
-          );
+          if (this.pending !== null) {
+            const p = this.pending;
+            this.pending = null;
+            this.close();
+            p.reject(
+              new Error(
+                `failed to parse worker response: ${(e as Error).message}`,
+              ),
+            );
+          } else {
+            // Unexpected non-JSON line with no op in flight — likely a stray
+            // debug print. Don't destroy the session; log and continue.
+            console.warn(
+              `avanti: unexpected line from privileged worker (no op in flight): ${(e as Error).message}`,
+            );
+          }
         }
       });
 
@@ -1386,8 +1413,8 @@ export class SudoWorkerSession {
       // the listening socket. Set socket permissions: root sudo needs 0600
       // (only invoking user can connect); named-user sudo needs 0666 so the
       // target user can connect regardless of group membership. For named-user
-      // sudo, tmpDir has mode 0711 (world-traversable, not world-listable) to
-      // prevent filesystem enumeration of the socket filename. Note that
+      // sudo, the ipcDir has mode 0711 (world-traversable, not world-listable)
+      // to prevent filesystem enumeration of the socket filename. Note that
       // /proc/net/unix can still reveal the path to local users. The nonce
       // handshake (passed via env, not cmdline) is the primary defense; a rogue
       // process connecting during the brief listen→chmod race window cannot know
@@ -2042,11 +2069,10 @@ export function atomicWrite(
       // path-based chmodSync after renameSync would create.
       let effectiveMode: number | undefined;
       if (t.mode) {
-        // parseInt('0o644', 8) stops at 'o' and returns 0; strip the prefix.
-        effectiveMode = parseInt(t.mode.replace(/^0[oO]/, ''), 8);
+        effectiveMode = parseMode(t.mode);
       } else {
         try {
-          effectiveMode = fs.statSync(t.targetPath).mode & 0o7777;
+          effectiveMode = fs.lstatSync(t.targetPath).mode & 0o7777;
         } catch {
           // file doesn't exist yet — leave the temp file's umask permissions
         }
@@ -2209,8 +2235,7 @@ export function atomicWrite(
       }
       let effectiveMode: number | undefined;
       if (t.mode) {
-        // parseInt('0o644', 8) stops at 'o' and returns 0; strip the prefix.
-        effectiveMode = parseInt(t.mode.replace(/^0[oO]/, ''), 8);
+        effectiveMode = parseMode(t.mode);
       } else if (existingEntry?.isFile()) {
         effectiveMode = existingEntry.mode & 0o7777;
       }

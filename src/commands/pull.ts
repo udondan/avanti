@@ -1802,7 +1802,13 @@ export function pullCommand(): Command {
           activeStaleRestore.length +
           deletedCount +
           modeOnlyCount;
-        console.log(`Wrote ${written} file(s).`);
+        if (written === 0) {
+          // Idempotency checks cleared all diffs after the user confirmed —
+          // every target already matches its desired state.
+          console.log('Nothing to do.');
+        } else {
+          console.log(`Wrote ${written} file(s).`);
+        }
         for (const ctx of fileHookContexts) {
           if (postWriteError !== null) break;
           const env = {
