@@ -326,7 +326,8 @@ describe.skipIf(isWindows)('sudoAtomicWrite', () => {
 
     expect(caught).toBeInstanceOf(SudoWritePartialError);
     const err = caught as SudoWritePartialError;
-    expect(err.message).toBe('disk full');
+    // Per-op failure message always leads; sentinel (from non-zero exit) is appended.
+    expect(err.message).toContain('disk full');
     expect(err.writtenPaths).toEqual(['/etc/a.conf', '/etc/b.conf']);
   });
 

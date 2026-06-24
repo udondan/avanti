@@ -258,6 +258,10 @@ export function revertCommand(): Command {
         // Without this, a second `avanti revert` would re-attempt files already reverted.
         const revertSessionId = history.openPullSession();
 
+        // Mirrors pull.ts: set to true once sudoAtomicWrite returns without throwing
+        // so the catch block can record history when atomicWrite later throws a plain Error.
+        let sudoWriteComplete = false;
+
         // Create one shared session per sudo identity so that sudoAtomicWrite
         // and sudoAtomicDelete share a single worker process (one password
         // prompt total, regardless of timestamp_timeout).
@@ -279,8 +283,10 @@ export function revertCommand(): Command {
           // unprivileged writes have not yet happened, keeping the project in a
           // consistent (if incomplete) state.
           if (process.platform !== 'win32') {
-            if (sudoTargets.length > 0)
+            if (sudoTargets.length > 0) {
               await sudoAtomicWrite(sudoTargets, [], sudoSessions);
+              sudoWriteComplete = true;
+            }
             if (sudoDeletions.size > 0)
               await sudoAtomicDelete([...sudoDeletions], false, sudoSessions);
           } else if (sudoTargets.length > 0 || sudoDeletions.size > 0) {
@@ -294,19 +300,26 @@ export function revertCommand(): Command {
             writeTargets.length + deletions.length + sudoDeletions.size;
           console.log(`Reverted ${total} file(s).`);
         } catch (err: unknown) {
-          if (
-            err instanceof SudoWritePartialError &&
-            err.writtenPaths.length > 0
-          ) {
+          // Determine which paths were successfully written before the failure.
+          // Case (a): SudoWritePartialError — err.writtenPaths lists confirmed writes.
+          // Case (b): sudoWriteComplete + plain Error — sudoAtomicWrite succeeded,
+          //           atomicWrite threw; all sudo targets are on disk.
+          let writtenPaths: string[] | null = null;
+          if (err instanceof SudoWritePartialError) {
+            writtenPaths = err.writtenPaths;
+          } else if (sudoWriteComplete) {
+            writtenPaths = sudoTargets.map((t) => t.targetPath);
+          }
+          if (writtenPaths !== null && writtenPaths.length > 0) {
             console.warn(
-              `Warning: partial revert — the following ${err.writtenPaths.length} file(s) were written before the failure:`,
+              `Warning: partial revert — the following ${writtenPaths.length} file(s) were written before the failure:`,
             );
-            for (const p of err.writtenPaths) {
+            for (const p of writtenPaths) {
               console.warn(`  ${p}`);
             }
             // Remove the reverted paths from pull history so a subsequent
             // `avanti revert` knows not to re-attempt them.
-            const revertedPaths = new Set(err.writtenPaths);
+            const revertedPaths = new Set(writtenPaths);
             try {
               history.closePullSession(
                 revertSessionId,

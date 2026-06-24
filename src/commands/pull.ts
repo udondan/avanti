@@ -1641,7 +1641,23 @@ export function pullCommand(): Command {
       // Set to true once sudoAtomicWrite returns without throwing. Used in the
       // catch block to detect when atomicWrite threw after all sudo files landed
       // on disk — those files need partial history even though err is a plain Error.
+      // Only set when sudoAtomicWrite is actually invoked (inside the guard below).
       let sudoWriteComplete = false;
+      // Paths of chmod-only sudo targets — content was NOT changed for these,
+      // so they must be excluded from writtenPaths in the sudoWriteComplete catch
+      // path (content-write tracking only, no chmod tracking).
+      const modeOnlySudoPaths = new Set<string>(
+        process.platform !== 'win32'
+          ? writeTargets
+              .filter(
+                (t, i) =>
+                  allDiffs[i].modeChange &&
+                  !allDiffs[i].contentChanged &&
+                  !!t.sudo,
+              )
+              .map((t) => t.targetPath)
+          : [],
+      );
       try {
         // Content writes go first so that if atomicWrite throws, no permissions
         // have been changed yet (minimises partial-apply surface).
@@ -1693,8 +1709,10 @@ export function pullCommand(): Command {
             modeOnlySudoTargets,
             sudoSessions,
           );
+          // Only mark complete when sudoAtomicWrite was actually called so that
+          // the catch block can distinguish "never ran" from "ran and succeeded".
+          sudoWriteComplete = true;
         }
-        sudoWriteComplete = true;
         atomicWrite([...regularChanged, ...regularRestore]);
         // Mark all active stale restores as completed (atomicWrite throws on
         // failure so if we reach here all restores were written successfully).
@@ -1879,9 +1897,13 @@ export function pullCommand(): Command {
           if (err instanceof SudoWritePartialError) {
             writtenPaths = err.writtenPaths;
           } else if (sudoWriteComplete) {
+            // Exclude chmod-only targets — they went through sudoAtomicWrite as
+            // chmodOps (no content write), so no new file version was staged.
             writtenPaths = [
               ...stagedFileRefs
-                .filter((r) => !!r.sudo)
+                .filter(
+                  (r) => !!r.sudo && !modeOnlySudoPaths.has(r.absolutePath),
+                )
                 .map((r) => r.absolutePath),
               ...activeStaleRestore
                 .filter((t) => !!t.sudo)

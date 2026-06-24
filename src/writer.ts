@@ -753,7 +753,19 @@ export async function sudoAtomicWrite(
       if (session) {
         // continueOnError=true: get per-op results even when one write fails so
         // writtenPaths records every file that actually landed on disk.
-        writeResults = await session.exec(writeOps, true);
+        try {
+          writeResults = await session.exec(writeOps, true);
+        } catch (sessionErr) {
+          // Session-level error (IPC failure, worker killed, socket closed).
+          // Writes that completed before the crash may have landed on disk;
+          // throw SudoWritePartialError so callers can record partial history.
+          throw new SudoWritePartialError(
+            sessionErr instanceof Error
+              ? sessionErr.message
+              : String(sessionErr),
+            writtenPaths,
+          );
+        }
       } else {
         // No session: fall back to a one-shot spawnSync call. This bypasses the
         // single-sudo-prompt guarantee (one spawnSync per identity per call) and
@@ -777,8 +789,14 @@ export async function sudoAtomicWrite(
       // surface the crash as an error so history is recorded and the pull fails.
       if (writeResults.length > writeOps.length) {
         const sentinel = writeResults[writeOps.length];
-        if (sentinel && !sentinel.ok && writeError === null) {
-          writeError = `privileged worker crashed after completing all write ops: ${sentinel.error ?? 'unknown'}`;
+        if (sentinel && !sentinel.ok) {
+          const sentinelMsg = `privileged worker crashed after completing all write ops: ${sentinel.error ?? 'unknown'}`;
+          // Append to any per-op error so the crash is visible even when an
+          // earlier failure already set writeError — both events are diagnostic.
+          writeError =
+            writeError !== null
+              ? `${writeError}; additionally, ${sentinelMsg}`
+              : sentinelMsg;
         }
       }
       if (writeError !== null) {
