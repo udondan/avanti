@@ -822,8 +822,11 @@ export async function sudoAtomicWrite(
       if (chmodResults.length > chmodOps.length) {
         const sentinel = chmodResults[chmodOps.length];
         if (sentinel && !sentinel.ok) {
-          throw new Error(
+          // All writes already landed on disk; throw SudoWritePartialError so
+          // callers can record partial history even though the chmod worker crashed.
+          throw new SudoWritePartialError(
             `privileged chmod worker crashed after completing all ops: ${sentinel.error ?? 'unknown'}`,
+            writtenPaths,
           );
         }
       }

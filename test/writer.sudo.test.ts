@@ -541,4 +541,111 @@ describe.skipIf(isWindows)('SudoWorkerSession via sudoAtomicWrite', () => {
     expect(ops).toHaveLength(1);
     expect(ops[0].type).toBe('write-mv');
   });
+
+  it('throws SudoWritePartialError via session path when exec returns partial results', async () => {
+    const currentUid =
+      typeof process.getuid === 'function' ? process.getuid() : 0;
+    const execMock = vi.fn(() =>
+      Promise.resolve([
+        { ok: true },
+        { ok: true },
+        { ok: false, error: 'disk full' },
+      ]),
+    );
+    const fakeSession = {
+      exec: execMock,
+      close: vi.fn(),
+      trustedUids: new Set([0, currentUid]),
+      sudo: true as const,
+    } as unknown as SudoWorkerSession;
+
+    const sessions = new Map<true | string, SudoWorkerSession>([
+      [true, fakeSession],
+    ]);
+
+    const targets: SudoWriteTarget[] = [
+      { targetPath: '/etc/a.conf', content: Buffer.from('a'), sudo: true },
+      { targetPath: '/etc/b.conf', content: Buffer.from('b'), sudo: true },
+      { targetPath: '/etc/c.conf', content: Buffer.from('c'), sudo: true },
+    ];
+
+    let caught: unknown;
+    try {
+      await sudoAtomicWrite(targets, [], sessions);
+    } catch (e) {
+      caught = e;
+    }
+
+    expect(caught).toBeInstanceOf(SudoWritePartialError);
+    const err = caught as SudoWritePartialError;
+    expect(err.message).toBe('disk full');
+    expect(err.writtenPaths).toEqual(['/etc/a.conf', '/etc/b.conf']);
+  });
+
+  it('accumulates writtenPaths across multiple identities — first identity success + second identity partial', async () => {
+    // trustedUids must include 0 and the current process UID to pass the ancestor
+    // safety check on /etc (owned by root), mirroring what buildTrustedUids returns.
+    const currentUid =
+      typeof process.getuid === 'function' ? process.getuid() : 0;
+    const baseTrusted = new Set([0, currentUid]);
+
+    // Identity `true` (root): all 2 ops succeed.
+    const rootExecMock = vi.fn(() =>
+      Promise.resolve([{ ok: true }, { ok: true }]),
+    );
+    const rootSession = {
+      exec: rootExecMock,
+      close: vi.fn(),
+      trustedUids: baseTrusted,
+      sudo: true as const,
+    } as unknown as SudoWorkerSession;
+
+    // Identity "admin": first op ok, second fails.
+    const adminExecMock = vi.fn(() =>
+      Promise.resolve([{ ok: true }, { ok: false, error: 'no space left' }]),
+    );
+    const adminSession = {
+      exec: adminExecMock,
+      close: vi.fn(),
+      trustedUids: new Set([...baseTrusted, 500]),
+      sudo: 'admin' as const,
+    } as unknown as SudoWorkerSession;
+
+    const sessions = new Map<true | string, SudoWorkerSession>([
+      [true, rootSession],
+      ['admin', adminSession],
+    ]);
+
+    const targets: SudoWriteTarget[] = [
+      { targetPath: '/etc/root-a.conf', content: Buffer.from('a'), sudo: true },
+      { targetPath: '/etc/root-b.conf', content: Buffer.from('b'), sudo: true },
+      {
+        targetPath: '/etc/admin-a.conf',
+        content: Buffer.from('c'),
+        sudo: 'admin',
+      },
+      {
+        targetPath: '/etc/admin-b.conf',
+        content: Buffer.from('d'),
+        sudo: 'admin',
+      },
+    ];
+
+    let caught: unknown;
+    try {
+      await sudoAtomicWrite(targets, [], sessions);
+    } catch (e) {
+      caught = e;
+    }
+
+    expect(caught).toBeInstanceOf(SudoWritePartialError);
+    const err = caught as SudoWritePartialError;
+    expect(err.message).toBe('no space left');
+    // root-a and root-b landed (identity 1 all ok); admin-a landed (identity 2 first ok)
+    expect(err.writtenPaths).toEqual([
+      '/etc/root-a.conf',
+      '/etc/root-b.conf',
+      '/etc/admin-a.conf',
+    ]);
+  });
 });

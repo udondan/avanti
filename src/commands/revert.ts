@@ -254,6 +254,10 @@ export function revertCommand(): Command {
         const regularTargets = writeTargets.filter((t) => !t.sudo);
         const sudoTargets = writeTargets.filter(isSudoTarget);
 
+        // Open a pull session so a partial failure can update history before exiting.
+        // Without this, a second `avanti revert` would re-attempt files already reverted.
+        const revertSessionId = history.openPullSession();
+
         // Create one shared session per sudo identity so that sudoAtomicWrite
         // and sudoAtomicDelete share a single worker process (one password
         // prompt total, regardless of timestamp_timeout).
@@ -299,6 +303,20 @@ export function revertCommand(): Command {
             );
             for (const p of err.writtenPaths) {
               console.warn(`  ${p}`);
+            }
+            // Remove the reverted paths from pull history so a subsequent
+            // `avanti revert` knows not to re-attempt them.
+            const revertedPaths = new Set(err.writtenPaths);
+            try {
+              history.closePullSession(
+                revertSessionId,
+                normalizeConfigKey(configPath),
+                history
+                  .getLastPullFiles()
+                  .filter((r) => !revertedPaths.has(r.absolutePath)),
+              );
+            } catch {
+              // best-effort — don't mask the real write error
             }
           }
           console.error(

@@ -1638,6 +1638,10 @@ export function pullCommand(): Command {
       // (file already gone, or already matches v0). Used to prune old refs
       // from history so stale cleanup does not repeat on subsequent pulls.
       const effectivelyCleaned = new Set<string>();
+      // Set to true once sudoAtomicWrite returns without throwing. Used in the
+      // catch block to detect when atomicWrite threw after all sudo files landed
+      // on disk — those files need partial history even though err is a plain Error.
+      let sudoWriteComplete = false;
       try {
         // Content writes go first so that if atomicWrite throws, no permissions
         // have been changed yet (minimises partial-apply surface).
@@ -1690,6 +1694,7 @@ export function pullCommand(): Command {
             sudoSessions,
           );
         }
+        sudoWriteComplete = true;
         atomicWrite([...regularChanged, ...regularRestore]);
         // Mark all active stale restores as completed (atomicWrite throws on
         // failure so if we reach here all restores were written successfully).
@@ -1863,42 +1868,58 @@ export function pullCommand(): Command {
             runNamedPostHook('update', ctx.hooks.update);
         }
       } catch (err: unknown) {
-        // For partial sudo write failures, record history for the files that
-        // actually landed on disk so `revert` can see them even though the pull
-        // did not complete.
-        if (
-          err instanceof SudoWritePartialError &&
-          pullId &&
-          err.writtenPaths.length > 0
-        ) {
-          const writtenSet = new Set(err.writtenPaths);
-          const partialRefs = stagedFileRefs.filter((r) =>
-            writtenSet.has(r.absolutePath),
-          );
-          // Stale restores also go through sudoAtomicWrite, so writtenPaths
-          // may include paths from activeStaleRestore that are not in
-          // stagedFileRefs. Track them so they can be excluded from lastFiles
-          // (they are now restored to their pre-avanti state and no longer
-          // tracked), and so the history update is not skipped when only
-          // restores succeeded and partialRefs is empty.
-          const restoredPaths = new Set(
-            activeStaleRestore
-              .map((t) => t.targetPath)
-              .filter((p) => writtenSet.has(p)),
-          );
-          if (partialRefs.length > 0 || restoredPaths.size > 0) {
-            try {
-              history.closePullSession(
-                pullId,
-                normalizeConfigKey(configPath),
-                mergeLastPullRefs(
-                  history.getLastPullFiles(),
-                  restoredPaths,
-                  partialRefs,
-                ),
-              );
-            } catch {
-              // best-effort — don't mask the real write error
+        // Record partial pull history when files landed on disk before the failure
+        // so `revert` can see them even though the pull did not complete.
+        // Two cases:
+        //  a) SudoWritePartialError: err.writtenPaths lists the sudo files that made it.
+        //  b) sudoWriteComplete + plain Error: sudoAtomicWrite succeeded but atomicWrite
+        //     threw — all sudo targets are on disk; regular targets are not.
+        if (pullId) {
+          let writtenPaths: string[] | null = null;
+          if (err instanceof SudoWritePartialError) {
+            writtenPaths = err.writtenPaths;
+          } else if (sudoWriteComplete) {
+            writtenPaths = [
+              ...stagedFileRefs
+                .filter((r) => !!r.sudo)
+                .map((r) => r.absolutePath),
+              ...activeStaleRestore
+                .filter((t) => !!t.sudo)
+                .map((t) => t.targetPath),
+            ];
+          }
+          if (writtenPaths !== null && writtenPaths.length > 0) {
+            const writtenSet = new Set(writtenPaths);
+            const partialRefs = stagedFileRefs.filter((r) =>
+              writtenSet.has(r.absolutePath),
+            );
+            // Stale restores also go through sudoAtomicWrite, so writtenPaths
+            // may include paths from activeStaleRestore that are not in
+            // stagedFileRefs. Track them so they can be excluded from lastFiles
+            // (they are now restored to their pre-avanti state and no longer
+            // tracked), and so the history update is not skipped when only
+            // restores succeeded and partialRefs is empty.
+            const restoredPaths = new Set(
+              activeStaleRestore
+                .map((t) => t.targetPath)
+                .filter((p) => writtenSet.has(p)),
+            );
+            if (partialRefs.length > 0 || restoredPaths.size > 0) {
+              try {
+                history.closePullSession(
+                  pullId,
+                  normalizeConfigKey(configPath),
+                  mergeLastPullRefs(
+                    history.getLastPullFiles(),
+                    restoredPaths,
+                    partialRefs,
+                  ),
+                );
+              } catch {
+                console.warn(
+                  'Warning: could not save partial pull history; avanti revert may not see the partially-written files.',
+                );
+              }
             }
           }
         }
@@ -1956,13 +1977,14 @@ export function pullCommand(): Command {
           // rewritten this pull, so their on-disk ownership reflects the
           // previous write identity. Replacing with the current config value
           // would let stale cleanup run with the wrong privileges.
-          const refsToRecord = historyAvailable
-            ? mergeLastPullRefs(
-                history.getLastPullFiles(),
-                effectivelyCleaned,
-                stagedFileRefs,
-              )
-            : stagedFileRefs;
+          // historyAvailable is always true here: pullId is set iff
+          // historyAvailable (line 644-645), so !historyAvailable => pullId===null
+          // and this block is never entered.
+          const refsToRecord = mergeLastPullRefs(
+            history.getLastPullFiles(),
+            effectivelyCleaned,
+            stagedFileRefs,
+          );
           history.closePullSession(
             pullId,
             normalizeConfigKey(configPath),
