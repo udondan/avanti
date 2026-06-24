@@ -578,6 +578,24 @@ function runPrivilegedWorker(
   return results;
 }
 
+// Base for partial-write errors: carries the paths that were successfully
+// written before the failure so callers can record partial pull history.
+export class PartialWriteError extends Error {
+  readonly writtenPaths: string[];
+  constructor(message: string, writtenPaths: string[]) {
+    super(message);
+    this.writtenPaths = writtenPaths;
+  }
+}
+
+// Thrown by sudoAtomicWrite when at least one write op fails mid-batch.
+export class SudoWritePartialError extends PartialWriteError {
+  constructor(message: string, writtenPaths: string[]) {
+    super(message, writtenPaths);
+    this.name = 'SudoWritePartialError';
+  }
+}
+
 // Each target is written atomically inside the privileged worker process, but
 // the batch is NOT collectively atomic: a failure mid-way leaves earlier targets
 // already written. All targets sharing the same sudo identity are dispatched in
@@ -586,7 +604,8 @@ function runPrivilegedWorker(
 // so that a pull with both content changes and mode-only changes for the same
 // sudo identity still produces exactly one prompt.
 // Returns the count of chmod ops that were actually applied (ENOENT/ELOOP skips
-// are not counted).
+// are not counted). Throws SudoWritePartialError (not plain Error) when writes
+// fail mid-batch so callers can inspect writtenPaths and record partial history.
 export async function sudoAtomicWrite(
   targets: SudoWriteTarget[],
   chmodTargets: SudoChmodTarget[] = [],
@@ -721,6 +740,7 @@ export async function sudoAtomicWrite(
   ]);
 
   let chmodApplied = 0;
+  const writtenPaths: string[] = [];
   for (const sudo of sudoIds) {
     const writeOps = writeGroups.get(sudo) ?? [];
     const chmodOps = chmodGroups.get(sudo) ?? [];
@@ -737,17 +757,55 @@ export async function sudoAtomicWrite(
     if (writeOps.length > 0) {
       let writeResults: WorkerResult[];
       if (session) {
-        writeResults = await session.exec(writeOps);
+        // continueOnError=true: get per-op results even when one write fails so
+        // writtenPaths records every file that actually landed on disk.
+        try {
+          writeResults = await session.exec(writeOps, true);
+        } catch (sessionErr) {
+          // Session-level error (IPC failure, worker killed, socket closed).
+          // Writes that completed before the crash may have landed on disk;
+          // throw SudoWritePartialError so callers can record partial history.
+          throw new SudoWritePartialError(
+            sessionErr instanceof Error
+              ? sessionErr.message
+              : String(sessionErr),
+            writtenPaths,
+          );
+        }
       } else {
         // No session: fall back to a one-shot spawnSync call. This bypasses the
         // single-sudo-prompt guarantee (one spawnSync per identity per call) and
         // silently re-prompts if sudo credential caching is disabled. All production
         // callers (pull, reset, revert) open sessions via openPrivilegedSessions;
         // this branch exists for callers that skip session management (e.g. tests).
-        writeResults = runPrivilegedWorker(sudo, writeOps, false);
+        writeResults = runPrivilegedWorker(sudo, writeOps, true);
       }
-      for (const r of writeResults) {
-        if (!r.ok) throw new Error(r.error ?? 'privileged worker op failed');
+      let writeError: string | null = null;
+      for (let wi = 0; wi < writeOps.length; wi++) {
+        const r = writeResults[wi];
+        if (r?.ok) {
+          writtenPaths.push(writeOps[wi].targetPath);
+        } else if (r && !r.ok && writeError === null) {
+          writeError = r.error ?? 'privileged worker op failed';
+        }
+      }
+      // Crash sentinel: when continueOnError=true and the worker exits non-zero,
+      // runPrivilegedWorker always appends a (N+1)th sentinel with ok:false.
+      // For the session path (session.exec), the sentinel only appears when all
+      // N ops returned ok:true (crash-after-completion). For the spawnSync path,
+      // it is appended unconditionally on any non-zero exit.
+      // Only set writeError from the sentinel when no per-op failure was found —
+      // that case means all N writes landed on disk and the crash happened after.
+      // When a per-op error already set writeError, the sentinel just reflects the
+      // non-zero exit caused by that per-op failure and adds no new information.
+      if (writeResults.length > writeOps.length && writeError === null) {
+        const sentinel = writeResults[writeOps.length];
+        if (sentinel && !sentinel.ok) {
+          writeError = `privileged worker crashed after completing all write ops: ${sentinel.error ?? 'unknown'}`;
+        }
+      }
+      if (writeError !== null) {
+        throw new SudoWritePartialError(writeError, writtenPaths);
       }
     }
     if (chmodOps.length > 0) {
@@ -780,26 +838,32 @@ export async function sudoAtomicWrite(
         // this branch exists for callers that skip session management (e.g. tests).
         chmodResults = runPrivilegedWorker(sudo, chmodOps, true);
       }
-      // Detect crash sentinel: when continueOnError=true and the worker exits
-      // non-zero after completing all N ops, it appends a (N+1)th result with
-      // ok:false. Surface it explicitly rather than masking it as a spurious
-      // "chmod failed for undefined" warning.
-      if (chmodResults.length > chmodOps.length) {
-        const sentinel = chmodResults[chmodOps.length];
-        if (sentinel && !sentinel.ok) {
-          throw new Error(
-            `privileged chmod worker crashed after completing all ops: ${sentinel.error ?? 'unknown'}`,
-          );
-        }
-      }
+      let chmodError: string | null = null;
       for (let ci = 0; ci < chmodOps.length; ci++) {
         const r = chmodResults[ci];
         if (!r) break;
         if (r.ok && !r.skipped) chmodApplied++;
-        else if (!r.ok)
+        else if (!r.ok) {
+          if (chmodError === null) chmodError = r.error ?? 'unknown error';
           console.warn(
             `Warning: chmod failed for ${chmodOps[ci].targetPath}: ${r.error ?? 'unknown error'}`,
           );
+        }
+      }
+      // Crash sentinel: fires when continueOnError=true and the worker exits
+      // non-zero after all N chmod ops returned successfully. Guard on
+      // chmodError === null so the "all ok" message is suppressed when per-op
+      // failures exist — for the spawnSync path, runPrivilegedWorker appends
+      // the sentinel on ANY non-zero exit regardless of how many ops completed,
+      // so the sentinel alone does not mean all ops succeeded.
+      if (chmodResults.length > chmodOps.length && chmodError === null) {
+        const sentinel = chmodResults[chmodOps.length];
+        if (sentinel && !sentinel.ok) {
+          console.warn(
+            `Warning: privileged chmod worker crashed after completing all ops: ${sentinel.error ?? 'unknown'}. ` +
+              `All files are written with correct content and permissions.`,
+          );
+        }
       }
     }
   }
@@ -2014,6 +2078,16 @@ function checkAncestorsSafe(
   });
 }
 
+// Thrown by atomicWrite when Phase 3 (rename) or Phase 4 (in-place write) fails
+// after some destination paths have already been modified. Callers that record
+// pull history can inspect writtenPaths to determine which files actually landed.
+export class AtomicWritePartialError extends PartialWriteError {
+  constructor(message: string, writtenPaths: string[]) {
+    super(message, writtenPaths);
+    this.name = 'AtomicWritePartialError';
+  }
+}
+
 export function atomicWrite(
   targets: WriteTarget[],
   deletions: string[] = [],
@@ -2241,123 +2315,144 @@ export function atomicWrite(
 
     // Phase 3: atomically rename all staged temps (files and symlinks) into place.
     // Only now are destination paths modified — all staging and backups succeeded.
-    for (const s of stagedLinks) {
-      fs.renameSync(s.tmp, s.dest);
-    }
-    for (const s of staged) {
-      // Mode was applied to the temp-file inode via fchmodSync before close —
-      // rename(2) carries the inode with its permissions, so no path-based
-      // chmod is needed here (which would reopen a TOCTOU window).
-      fs.renameSync(s.tmp, s.dest);
-    }
+    // Track each successful rename so AtomicWritePartialError can report which
+    // files actually landed on disk if the loop fails mid-batch.
+    const writtenPaths: string[] = [];
+    try {
+      for (const s of stagedLinks) {
+        fs.renameSync(s.tmp, s.dest);
+        writtenPaths.push(s.dest);
+      }
+      for (const s of staged) {
+        // Mode was applied to the temp-file inode via fchmodSync before close —
+        // rename(2) carries the inode with its permissions, so no path-based
+        // chmod is needed here (which would reopen a TOCTOU window).
+        fs.renameSync(s.tmp, s.dest);
+        writtenPaths.push(s.dest);
+      }
 
-    // Phase 4: in-place writes — preserve inode, not atomic
-    for (const t of inPlaceTargets) {
-      const dir = path.dirname(t.targetPath);
-      if (!fs.existsSync(dir)) {
-        fs.mkdirSync(dir, { recursive: true });
-      }
-      const existingEntry = fs.lstatSync(t.targetPath, {
-        throwIfNoEntry: false,
-      });
-      // Fast-path rejection of non-regular, non-symlink entries (FIFOs,
-      // sockets, devices): opening a FIFO with O_WRONLY blocks until a reader
-      // connects; device/socket writes have unpredictable side effects. Not
-      // relied on for correctness — the fstat check on the opened fd (below,
-      // POSIX path) closes the TOCTOU window if the path is replaced after
-      // this check.
-      if (
-        existingEntry &&
-        !existingEntry.isFile() &&
-        !existingEntry.isSymbolicLink()
-      ) {
-        throw new Error(
-          `writeInPlace: ${t.targetPath} is not a regular file; refusing to write`,
-        );
-      }
-      let effectiveMode: number | undefined;
-      if (t.mode) {
-        effectiveMode = parseMode(t.mode);
-      } else if (existingEntry?.isFile()) {
-        effectiveMode = existingEntry.mode & 0o7777;
-      }
-      // Refuse to follow a symlink — unlike renameSync, which replaces the
-      // symlink itself, writeFileSync would write through it to the target.
-      // On POSIX: open with O_NOFOLLOW so the kernel rejects symlinks
-      // atomically (no TOCTOU window); ELOOP means the path is a symlink.
-      // O_NONBLOCK prevents blocking at open(2) if the lstatSync pre-check
-      // lost a TOCTOU race and the path became a FIFO with no reader.
-      // fstatSync on the opened fd then closes the remaining TOCTOU window by
-      // validating the type after open, before any write.
-      // On Windows: O_NOFOLLOW is not available; fall back to an lstat check
-      // (best-effort — a narrow TOCTOU race remains).
-      const oNoFollow: number =
-        (fs.constants as Record<string, number>)['O_NOFOLLOW'] ?? 0;
-      const oNonBlock: number =
-        (fs.constants as Record<string, number>)['O_NONBLOCK'] ?? 0;
-      if (oNoFollow !== 0) {
-        let fd: number;
-        try {
-          fd = fs.openSync(
-            t.targetPath,
-            fs.constants.O_WRONLY |
-              fs.constants.O_CREAT |
-              fs.constants.O_TRUNC |
-              oNoFollow |
-              oNonBlock,
-            effectiveMode ?? 0o666,
+      // Phase 4: in-place writes — preserve inode, not atomic
+      for (const t of inPlaceTargets) {
+        const dir = path.dirname(t.targetPath);
+        if (!fs.existsSync(dir)) {
+          fs.mkdirSync(dir, { recursive: true });
+        }
+        const existingEntry = fs.lstatSync(t.targetPath, {
+          throwIfNoEntry: false,
+        });
+        // Fast-path rejection of non-regular, non-symlink entries (FIFOs,
+        // sockets, devices): opening a FIFO with O_WRONLY blocks until a reader
+        // connects; device/socket writes have unpredictable side effects. Not
+        // relied on for correctness — the fstat check on the opened fd (below,
+        // POSIX path) closes the TOCTOU window if the path is replaced after
+        // this check.
+        if (
+          existingEntry &&
+          !existingEntry.isFile() &&
+          !existingEntry.isSymbolicLink()
+        ) {
+          throw new Error(
+            `writeInPlace: ${t.targetPath} is not a regular file; refusing to write`,
           );
-        } catch (err) {
-          if ((err as NodeJS.ErrnoException).code === 'ELOOP') {
+        }
+        let effectiveMode: number | undefined;
+        if (t.mode) {
+          effectiveMode = parseMode(t.mode);
+        } else if (existingEntry?.isFile()) {
+          effectiveMode = existingEntry.mode & 0o7777;
+        }
+        // Refuse to follow a symlink — unlike renameSync, which replaces the
+        // symlink itself, writeFileSync would write through it to the target.
+        // On POSIX: open with O_NOFOLLOW so the kernel rejects symlinks
+        // atomically (no TOCTOU window); ELOOP means the path is a symlink.
+        // O_NONBLOCK prevents blocking at open(2) if the lstatSync pre-check
+        // lost a TOCTOU race and the path became a FIFO with no reader.
+        // fstatSync on the opened fd then closes the remaining TOCTOU window by
+        // validating the type after open, before any write.
+        // On Windows: O_NOFOLLOW is not available; fall back to an lstat check
+        // (best-effort — a narrow TOCTOU race remains).
+        const oNoFollow: number =
+          (fs.constants as Record<string, number>)['O_NOFOLLOW'] ?? 0;
+        const oNonBlock: number =
+          (fs.constants as Record<string, number>)['O_NONBLOCK'] ?? 0;
+        if (oNoFollow !== 0) {
+          let fd: number;
+          try {
+            fd = fs.openSync(
+              t.targetPath,
+              fs.constants.O_WRONLY |
+                fs.constants.O_CREAT |
+                fs.constants.O_TRUNC |
+                oNoFollow |
+                oNonBlock,
+              effectiveMode ?? 0o666,
+            );
+          } catch (err) {
+            if ((err as NodeJS.ErrnoException).code === 'ELOOP') {
+              throw new Error(
+                `writeInPlace: ${t.targetPath} is a symlink; refusing to follow`,
+                { cause: err },
+              );
+            }
+            throw err;
+          }
+          try {
+            // fstat validates the type on the opened fd, catching any non-regular
+            // file that slipped past the lstatSync pre-check via a TOCTOU race.
+            if (!fs.fstatSync(fd).isFile()) {
+              throw new Error(
+                `writeInPlace: ${t.targetPath} is not a regular file; refusing to write`,
+              );
+            }
+            let written = 0;
+            while (written < t.content.length) {
+              written += fs.writeSync(
+                fd,
+                t.content,
+                written,
+                t.content.length - written,
+              );
+            }
+            // Content is committed to the fd — track it now so that a subsequent
+            // fchmodSync failure (mode-only, content intact) still reports this
+            // path as written. closeSync in the finally below flushes the data.
+            writtenPaths.push(t.targetPath);
+            // Apply mode via fd before close — sets permissions on the inode
+            // without re-traversing the path after close (no TOCTOU).
+            if (effectiveMode !== undefined) {
+              fs.fchmodSync(fd, effectiveMode);
+            }
+          } finally {
+            fs.closeSync(fd);
+          }
+        } else {
+          if (existingEntry?.isSymbolicLink()) {
             throw new Error(
               `writeInPlace: ${t.targetPath} is a symlink; refusing to follow`,
-              { cause: err },
             );
           }
-          throw err;
+          fs.writeFileSync(t.targetPath, t.content, {
+            mode: effectiveMode ?? 0o666,
+          });
+          // Content written — push now so a subsequent chmodSync failure still
+          // reports this path as written for partial-history purposes.
+          writtenPaths.push(t.targetPath);
         }
-        try {
-          // fstat validates the type on the opened fd, catching any non-regular
-          // file that slipped past the lstatSync pre-check via a TOCTOU race.
-          if (!fs.fstatSync(fd).isFile()) {
-            throw new Error(
-              `writeInPlace: ${t.targetPath} is not a regular file; refusing to write`,
-            );
-          }
-          let written = 0;
-          while (written < t.content.length) {
-            written += fs.writeSync(
-              fd,
-              t.content,
-              written,
-              t.content.length - written,
-            );
-          }
-          // Apply mode via fd before close — sets permissions on the inode
-          // without re-traversing the path after close (no TOCTOU).
-          if (effectiveMode !== undefined) {
-            fs.fchmodSync(fd, effectiveMode);
-          }
-        } finally {
-          fs.closeSync(fd);
+        // POSIX path: mode applied via fchmodSync above. Windows path: apply now
+        // (O_NOFOLLOW unavailable, so O_CREAT + writeFileSync handles the mode
+        // via the open(2) mode argument; the chmodSync below is belt-and-suspenders
+        // for the case where the file pre-existed with different permissions).
+        if (oNoFollow === 0 && effectiveMode !== undefined) {
+          fs.chmodSync(t.targetPath, effectiveMode);
         }
-      } else {
-        if (existingEntry?.isSymbolicLink()) {
-          throw new Error(
-            `writeInPlace: ${t.targetPath} is a symlink; refusing to follow`,
-          );
-        }
-        fs.writeFileSync(t.targetPath, t.content, {
-          mode: effectiveMode ?? 0o666,
-        });
       }
-      // POSIX path: mode applied via fchmodSync above. Windows path: apply now
-      // (O_NOFOLLOW unavailable, so O_CREAT + writeFileSync handles the mode
-      // via the open(2) mode argument; the chmodSync below is belt-and-suspenders
-      // for the case where the file pre-existed with different permissions).
-      if (oNoFollow === 0 && effectiveMode !== undefined) {
-        fs.chmodSync(t.targetPath, effectiveMode);
-      }
+    } catch (phaseErr) {
+      // Re-wrap as AtomicWritePartialError so callers (e.g. pull.ts catch block)
+      // can tell which destination files actually landed on disk.
+      throw new AtomicWritePartialError(
+        phaseErr instanceof Error ? phaseErr.message : String(phaseErr),
+        writtenPaths,
+      );
     }
   } finally {
     for (const s of stagedLinks) {

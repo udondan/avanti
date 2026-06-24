@@ -11,11 +11,13 @@ import {
 } from '../diff';
 import {
   atomicWrite,
+  AtomicWritePartialError,
   closeAllSessions,
   openPrivilegedSessions,
   sudoAtomicDelete,
   sudoAtomicWrite,
   SudoWorkerSession,
+  SudoWritePartialError,
   SudoWriteTarget,
   WriteTarget,
 } from '../writer';
@@ -160,13 +162,19 @@ export function resetCommand(): Command {
         process.exit(2);
       }
 
+      // Set to true once sudoAtomicWrite returns without throwing so the catch
+      // block can warn about sudo files already on disk when atomicWrite fails.
+      let sudoWriteComplete = false;
+
       try {
         // Perform privileged operations first: if sudo fails, the
         // unprivileged writes have not yet happened, keeping the project in a
         // consistent (if incomplete) state.
         if (process.platform !== 'win32') {
-          if (sudoTargets.length > 0)
+          if (sudoTargets.length > 0) {
             await sudoAtomicWrite(sudoTargets, [], sudoSessions);
+            sudoWriteComplete = true;
+          }
           if (sudoDeletions.size > 0)
             await sudoAtomicDelete([...sudoDeletions], false, sudoSessions);
         } else if (sudoTargets.length > 0 || sudoDeletions.size > 0) {
@@ -180,6 +188,32 @@ export function resetCommand(): Command {
           `Restored ${writeTargets.length} file(s), deleted ${deletions.length + sudoDeletions.size} file(s).`,
         );
       } catch (err: unknown) {
+        // Determine which paths were written before the failure so the user
+        // knows what the reset partially applied.
+        // Case (a): SudoWritePartialError — err.writtenPaths lists sudo writes.
+        // Case (b): sudoWriteComplete + AtomicWritePartialError — sudoAtomicWrite
+        //           succeeded; err.writtenPaths lists regular files renamed/written.
+        // Case (c): sudoWriteComplete + plain Error — sudoAtomicWrite succeeded;
+        //           atomicWrite failed before any rename; only sudo files are on disk.
+        let writtenPaths: string[] | null = null;
+        if (err instanceof SudoWritePartialError) {
+          writtenPaths = err.writtenPaths;
+        } else if (sudoWriteComplete) {
+          writtenPaths = [
+            ...sudoTargets.map((t) => t.targetPath),
+            ...(err instanceof AtomicWritePartialError ? err.writtenPaths : []),
+          ];
+        } else if (err instanceof AtomicWritePartialError) {
+          writtenPaths = err.writtenPaths;
+        }
+        if (writtenPaths !== null && writtenPaths.length > 0) {
+          console.warn(
+            `Warning: partial reset — the following ${writtenPaths.length} file(s) were written before the failure:`,
+          );
+          for (const p of writtenPaths) {
+            console.warn(`  ${p}`);
+          }
+        }
         console.error(
           `Reset failed: ${err instanceof Error ? err.message : String(err)}`,
         );

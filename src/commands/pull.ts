@@ -35,6 +35,7 @@ import {
 } from '../diff';
 import {
   atomicWrite,
+  AtomicWritePartialError,
   closeAllSessions,
   openPrivilegedSessions,
   sudoAtomicRead,
@@ -42,6 +43,7 @@ import {
   sudoStatBatch,
   SudoChmodTarget,
   SudoWorkerSession,
+  SudoWritePartialError,
   SudoWriteTarget,
   WriteTarget,
 } from '../writer';
@@ -588,6 +590,24 @@ function printShaErrors(errors: ShaError[]): void {
   }
 }
 
+// Merges new file refs into the surviving refs from the last pull.
+// Paths in excludePaths and paths already present in newRefs are dropped from
+// lastFiles so the three caller sites (stale-only, success, partial-failure)
+// share one definition of "surviving refs" rather than duplicating the logic.
+function mergeLastPullRefs(
+  lastFiles: PullLogFileRef[],
+  excludePaths: Set<string>,
+  newRefs: PullLogFileRef[],
+): PullLogFileRef[] {
+  const newPaths = new Set(newRefs.map((r) => r.absolutePath));
+  return [
+    ...lastFiles.filter(
+      (r) => !excludePaths.has(r.absolutePath) && !newPaths.has(r.absolutePath),
+    ),
+    ...newRefs,
+  ];
+}
+
 export function pullCommand(): Command {
   return new Command('pull')
     .description('Pull remote sources and write to local files')
@@ -1034,10 +1054,6 @@ export function pullCommand(): Command {
             ...staleToDelete,
             ...staleToRestore.map((t) => t.targetPath),
           ]);
-          const lastFiles = history.getLastPullFiles();
-          const survivingRefs = lastFiles.filter(
-            (ref) => !noopStalePaths.has(ref.absolutePath),
-          );
           // Preserve existing sudo on surviving refs — no file was written, so
           // the on-disk ownership reflects the previous write identity, not the
           // current config. Overwriting here would let stale cleanup run with
@@ -1045,7 +1061,7 @@ export function pullCommand(): Command {
           history.closePullSession(
             pullId,
             normalizeConfigKey(configPath),
-            survivingRefs,
+            mergeLastPullRefs(history.getLastPullFiles(), noopStalePaths, []),
           );
         }
         closeAllSessions(sudoSessions);
@@ -1623,6 +1639,37 @@ export function pullCommand(): Command {
       // (file already gone, or already matches v0). Used to prune old refs
       // from history so stale cleanup does not repeat on subsequent pulls.
       const effectivelyCleaned = new Set<string>();
+      // Set to true once sudoAtomicWrite returns without throwing. Used in the
+      // catch block to detect when atomicWrite threw after all sudo files landed
+      // on disk — those files need partial history even though err is a plain Error.
+      // Only set when sudoAtomicWrite is actually invoked (inside the guard below).
+      let sudoWriteComplete = false;
+      // Collect sudo mode-only targets here (outside the try block) so that
+      // modeOnlySudoPaths can be derived from the same computation and the
+      // predicate (modeChange && !contentChanged && sudo) stays in one place.
+      // Also needed inside the try block where it is passed to sudoAtomicWrite.
+      const modeOnlySudoTargets: SudoChmodTarget[] =
+        process.platform !== 'win32'
+          ? writeTargets.flatMap((t, i) => {
+              const d = allDiffs[i];
+              return d.modeChange && !d.contentChanged && t.sudo
+                ? [
+                    {
+                      targetPath: t.targetPath,
+                      mode: d.modeChange.to.toString(8).padStart(4, '0'),
+                      sudo: t.sudo,
+                    },
+                  ]
+                : [];
+            })
+          : [];
+      // Paths of chmod-only sudo targets — content was NOT changed for these,
+      // so they must be excluded from writtenPaths in the sudoWriteComplete catch
+      // path (content-write tracking only, no chmod tracking).
+      // Derived from modeOnlySudoTargets so the filter predicate stays in one place.
+      const modeOnlySudoPaths = new Set(
+        modeOnlySudoTargets.map((t) => t.targetPath),
+      );
       try {
         // Content writes go first so that if atomicWrite throws, no permissions
         // have been changed yet (minimises partial-apply surface).
@@ -1635,28 +1682,6 @@ export function pullCommand(): Command {
         const regularDelete = staleToDelete.filter(
           (p) => !staleDeleteSudo.has(p),
         );
-
-        // Collect sudo mode-only targets before the write batch so they can be
-        // included in the same per-identity worker exec as the content writes.
-        // This keeps all sudo ops (writes + chmods) in a single batch per
-        // identity, so if sudoAtomicWrite fails (for any reason, including a
-        // chmod failure), the unprivileged atomicWrite call below has not yet
-        // run and the working tree remains in a consistent state.
-        const modeOnlySudoTargets: SudoChmodTarget[] =
-          process.platform !== 'win32'
-            ? writeTargets.flatMap((t, i) => {
-                const d = allDiffs[i];
-                return d.modeChange && !d.contentChanged && t.sudo
-                  ? [
-                      {
-                        targetPath: t.targetPath,
-                        mode: d.modeChange.to.toString(8).padStart(4, '0'),
-                        sudo: t.sudo,
-                      },
-                    ]
-                  : [];
-              })
-            : [];
 
         // Privileged writes first: if sudo fails, unprivileged files have not
         // yet changed, keeping the working tree in a consistent state.
@@ -1674,6 +1699,9 @@ export function pullCommand(): Command {
             modeOnlySudoTargets,
             sudoSessions,
           );
+          // Only mark complete when sudoAtomicWrite was actually called so that
+          // the catch block can distinguish "never ran" from "ran and succeeded".
+          sudoWriteComplete = true;
         }
         atomicWrite([...regularChanged, ...regularRestore]);
         // Mark all active stale restores as completed (atomicWrite throws on
@@ -1848,6 +1876,79 @@ export function pullCommand(): Command {
             runNamedPostHook('update', ctx.hooks.update);
         }
       } catch (err: unknown) {
+        // Record partial pull history when files landed on disk before the failure
+        // so `revert` can see them even though the pull did not complete.
+        // Three cases (combinable):
+        //  a) SudoWritePartialError: err.writtenPaths lists confirmed sudo writes.
+        //  b) AtomicWritePartialError: err.writtenPaths lists regular files whose
+        //     temp→dest renames (Phase 3) or in-place writes (Phase 4) completed.
+        //  c) sudoWriteComplete: sudoAtomicWrite returned, so all sudo content-write
+        //     targets are on disk regardless of error type.
+        // Cases (b) and (c) combine when sudoAtomicWrite succeeds and atomicWrite
+        // later throws mid-batch.
+        if (pullId) {
+          let writtenPaths: string[] | null = null;
+          if (err instanceof SudoWritePartialError) {
+            writtenPaths = err.writtenPaths;
+          } else {
+            const regularWritten =
+              err instanceof AtomicWritePartialError ? err.writtenPaths : [];
+            if (sudoWriteComplete || regularWritten.length > 0) {
+              writtenPaths = [
+                ...(sudoWriteComplete
+                  ? [
+                      // Exclude chmod-only targets — they went through sudoAtomicWrite
+                      // as chmodOps (no content write), so no new version was staged.
+                      ...stagedFileRefs
+                        .filter(
+                          (r) =>
+                            r.sudo && !modeOnlySudoPaths.has(r.absolutePath),
+                        )
+                        .map((r) => r.absolutePath),
+                      ...activeStaleRestore
+                        .filter((t) => t.sudo)
+                        .map((t) => t.targetPath),
+                    ]
+                  : []),
+                ...regularWritten,
+              ];
+            }
+          }
+          if (writtenPaths !== null && writtenPaths.length > 0) {
+            const writtenSet = new Set(writtenPaths);
+            const partialRefs = stagedFileRefs.filter((r) =>
+              writtenSet.has(r.absolutePath),
+            );
+            // Stale restores also go through sudoAtomicWrite, so writtenPaths
+            // may include paths from activeStaleRestore that are not in
+            // stagedFileRefs. Track them so they can be excluded from lastFiles
+            // (they are now restored to their pre-avanti state and no longer
+            // tracked), and so the history update is not skipped when only
+            // restores succeeded and partialRefs is empty.
+            const restoredPaths = new Set(
+              activeStaleRestore
+                .map((t) => t.targetPath)
+                .filter((p) => writtenSet.has(p)),
+            );
+            if (partialRefs.length > 0 || restoredPaths.size > 0) {
+              try {
+                history.closePullSession(
+                  pullId,
+                  normalizeConfigKey(configPath),
+                  mergeLastPullRefs(
+                    history.getLastPullFiles(),
+                    restoredPaths,
+                    partialRefs,
+                  ),
+                );
+              } catch {
+                console.warn(
+                  'Warning: could not save partial pull history; avanti revert may not see the partially-written files.',
+                );
+              }
+            }
+          }
+        }
         closeAllSessions(sudoSessions);
         console.error(
           `Write failed: ${err instanceof Error ? err.message : String(err)}`,
@@ -1897,25 +1998,23 @@ export function pullCommand(): Command {
         pullId &&
         (stagedFileRefs.length > 0 || effectivelyCleaned.size > 0)
       ) {
+        // Invariant: pullId !== null ⟺ historyAvailable (set at lines 644-645).
+        // If this ever fires, the assignment logic changed without updating the
+        // invariant.
+        if (!historyAvailable)
+          throw new Error(
+            'invariant violated: pullId is set but historyAvailable is false',
+          );
         try {
-          let refsToRecord = stagedFileRefs;
-          if (historyAvailable) {
-            const lastFiles = history.getLastPullFiles();
-            const survivingRefs = lastFiles.filter(
-              (ref) => !effectivelyCleaned.has(ref.absolutePath),
-            );
-            const stagedPaths = new Set(
-              stagedFileRefs.map((r) => r.absolutePath),
-            );
-            // Preserve existing sudo on surviving refs — these files were not
-            // rewritten this pull, so their on-disk ownership reflects the
-            // previous write identity. Replacing with the current config value
-            // would let stale cleanup run with the wrong privileges.
-            refsToRecord = [
-              ...survivingRefs.filter((r) => !stagedPaths.has(r.absolutePath)),
-              ...stagedFileRefs,
-            ];
-          }
+          // Preserve existing sudo on surviving refs — these files were not
+          // rewritten this pull, so their on-disk ownership reflects the
+          // previous write identity. Replacing with the current config value
+          // would let stale cleanup run with the wrong privileges.
+          const refsToRecord = mergeLastPullRefs(
+            history.getLastPullFiles(),
+            effectivelyCleaned,
+            stagedFileRefs,
+          );
           history.closePullSession(
             pullId,
             normalizeConfigKey(configPath),
