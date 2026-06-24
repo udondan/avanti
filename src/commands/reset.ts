@@ -16,6 +16,7 @@ import {
   sudoAtomicDelete,
   sudoAtomicWrite,
   SudoWorkerSession,
+  SudoWritePartialError,
   SudoWriteTarget,
   WriteTarget,
 } from '../writer';
@@ -180,6 +181,17 @@ export function resetCommand(): Command {
           `Restored ${writeTargets.length} file(s), deleted ${deletions.length + sudoDeletions.size} file(s).`,
         );
       } catch (err: unknown) {
+        if (
+          err instanceof SudoWritePartialError &&
+          err.writtenPaths.length > 0
+        ) {
+          console.warn(
+            `Warning: partial reset — the following ${err.writtenPaths.length} file(s) were written before the failure:`,
+          );
+          for (const p of err.writtenPaths) {
+            console.warn(`  ${p}`);
+          }
+        }
         console.error(
           `Reset failed: ${err instanceof Error ? err.message : String(err)}`,
         );

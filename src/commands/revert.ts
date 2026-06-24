@@ -16,6 +16,7 @@ import {
   sudoAtomicDelete,
   sudoAtomicWrite,
   SudoWorkerSession,
+  SudoWritePartialError,
   SudoWriteTarget,
   WriteTarget,
 } from '../writer';
@@ -289,6 +290,17 @@ export function revertCommand(): Command {
             writeTargets.length + deletions.length + sudoDeletions.size;
           console.log(`Reverted ${total} file(s).`);
         } catch (err: unknown) {
+          if (
+            err instanceof SudoWritePartialError &&
+            err.writtenPaths.length > 0
+          ) {
+            console.warn(
+              `Warning: partial revert — the following ${err.writtenPaths.length} file(s) were written before the failure:`,
+            );
+            for (const p of err.writtenPaths) {
+              console.warn(`  ${p}`);
+            }
+          }
           console.error(
             `Revert failed: ${err instanceof Error ? err.message : String(err)}`,
           );

@@ -589,6 +589,24 @@ function printShaErrors(errors: ShaError[]): void {
   }
 }
 
+// Merges new file refs into the surviving refs from the last pull.
+// Paths in excludePaths and paths already present in newRefs are dropped from
+// lastFiles so the three caller sites (stale-only, success, partial-failure)
+// share one definition of "surviving refs" rather than duplicating the logic.
+function mergeLastPullRefs(
+  lastFiles: PullLogFileRef[],
+  excludePaths: Set<string>,
+  newRefs: PullLogFileRef[],
+): PullLogFileRef[] {
+  const newPaths = new Set(newRefs.map((r) => r.absolutePath));
+  return [
+    ...lastFiles.filter(
+      (r) => !excludePaths.has(r.absolutePath) && !newPaths.has(r.absolutePath),
+    ),
+    ...newRefs,
+  ];
+}
+
 export function pullCommand(): Command {
   return new Command('pull')
     .description('Pull remote sources and write to local files')
@@ -1035,10 +1053,6 @@ export function pullCommand(): Command {
             ...staleToDelete,
             ...staleToRestore.map((t) => t.targetPath),
           ]);
-          const lastFiles = history.getLastPullFiles();
-          const survivingRefs = lastFiles.filter(
-            (ref) => !noopStalePaths.has(ref.absolutePath),
-          );
           // Preserve existing sudo on surviving refs — no file was written, so
           // the on-disk ownership reflects the previous write identity, not the
           // current config. Overwriting here would let stale cleanup run with
@@ -1046,7 +1060,7 @@ export function pullCommand(): Command {
           history.closePullSession(
             pullId,
             normalizeConfigKey(configPath),
-            survivingRefs,
+            mergeLastPullRefs(history.getLastPullFiles(), noopStalePaths, []),
           );
         }
         closeAllSessions(sudoSessions);
@@ -1874,23 +1888,14 @@ export function pullCommand(): Command {
           );
           if (partialRefs.length > 0 || restoredPaths.size > 0) {
             try {
-              const lastFiles = history.getLastPullFiles();
-              const partialPaths = new Set(
-                partialRefs.map((r) => r.absolutePath),
-              );
-              const refsToRecord = [
-                ...lastFiles.filter(
-                  (r) =>
-                    !effectivelyCleaned.has(r.absolutePath) &&
-                    !partialPaths.has(r.absolutePath) &&
-                    !restoredPaths.has(r.absolutePath),
-                ),
-                ...partialRefs,
-              ];
               history.closePullSession(
                 pullId,
                 normalizeConfigKey(configPath),
-                refsToRecord,
+                mergeLastPullRefs(
+                  history.getLastPullFiles(),
+                  restoredPaths,
+                  partialRefs,
+                ),
               );
             } catch {
               // best-effort — don't mask the real write error
@@ -1947,24 +1952,17 @@ export function pullCommand(): Command {
         (stagedFileRefs.length > 0 || effectivelyCleaned.size > 0)
       ) {
         try {
-          let refsToRecord = stagedFileRefs;
-          if (historyAvailable) {
-            const lastFiles = history.getLastPullFiles();
-            const survivingRefs = lastFiles.filter(
-              (ref) => !effectivelyCleaned.has(ref.absolutePath),
-            );
-            const stagedPaths = new Set(
-              stagedFileRefs.map((r) => r.absolutePath),
-            );
-            // Preserve existing sudo on surviving refs — these files were not
-            // rewritten this pull, so their on-disk ownership reflects the
-            // previous write identity. Replacing with the current config value
-            // would let stale cleanup run with the wrong privileges.
-            refsToRecord = [
-              ...survivingRefs.filter((r) => !stagedPaths.has(r.absolutePath)),
-              ...stagedFileRefs,
-            ];
-          }
+          // Preserve existing sudo on surviving refs — these files were not
+          // rewritten this pull, so their on-disk ownership reflects the
+          // previous write identity. Replacing with the current config value
+          // would let stale cleanup run with the wrong privileges.
+          const refsToRecord = historyAvailable
+            ? mergeLastPullRefs(
+                history.getLastPullFiles(),
+                effectivelyCleaned,
+                stagedFileRefs,
+              )
+            : stagedFileRefs;
           history.closePullSession(
             pullId,
             normalizeConfigKey(configPath),

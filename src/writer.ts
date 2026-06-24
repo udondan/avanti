@@ -583,12 +583,10 @@ function runPrivilegedWorker(
 // record partial pull history rather than leaving those files invisible to revert.
 export class SudoWritePartialError extends Error {
   readonly writtenPaths: string[];
-  readonly chmodApplied: number;
-  constructor(message: string, writtenPaths: string[], chmodApplied: number) {
+  constructor(message: string, writtenPaths: string[]) {
     super(message);
     this.name = 'SudoWritePartialError';
     this.writtenPaths = writtenPaths;
-    this.chmodApplied = chmodApplied;
   }
 }
 
@@ -784,7 +782,7 @@ export async function sudoAtomicWrite(
         }
       }
       if (writeError !== null) {
-        throw new SudoWritePartialError(writeError, writtenPaths, chmodApplied);
+        throw new SudoWritePartialError(writeError, writtenPaths);
       }
     }
     if (chmodOps.length > 0) {

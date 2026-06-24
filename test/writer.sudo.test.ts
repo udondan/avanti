@@ -328,7 +328,6 @@ describe.skipIf(isWindows)('sudoAtomicWrite', () => {
     const err = caught as SudoWritePartialError;
     expect(err.message).toBe('disk full');
     expect(err.writtenPaths).toEqual(['/etc/a.conf', '/etc/b.conf']);
-    expect(err.chmodApplied).toBe(0);
   });
 
   it('throws SudoWritePartialError with empty writtenPaths when the first op fails', async () => {
