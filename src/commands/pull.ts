@@ -1861,7 +1861,18 @@ export function pullCommand(): Command {
           const partialRefs = stagedFileRefs.filter((r) =>
             writtenSet.has(r.absolutePath),
           );
-          if (partialRefs.length > 0) {
+          // Stale restores also go through sudoAtomicWrite, so writtenPaths
+          // may include paths from activeStaleRestore that are not in
+          // stagedFileRefs. Track them so they can be excluded from lastFiles
+          // (they are now restored to their pre-avanti state and no longer
+          // tracked), and so the history update is not skipped when only
+          // restores succeeded and partialRefs is empty.
+          const restoredPaths = new Set(
+            activeStaleRestore
+              .map((t) => t.targetPath)
+              .filter((p) => writtenSet.has(p)),
+          );
+          if (partialRefs.length > 0 || restoredPaths.size > 0) {
             try {
               const lastFiles = history.getLastPullFiles();
               const partialPaths = new Set(
@@ -1871,7 +1882,8 @@ export function pullCommand(): Command {
                 ...lastFiles.filter(
                   (r) =>
                     !effectivelyCleaned.has(r.absolutePath) &&
-                    !partialPaths.has(r.absolutePath),
+                    !partialPaths.has(r.absolutePath) &&
+                    !restoredPaths.has(r.absolutePath),
                 ),
                 ...partialRefs,
               ];
