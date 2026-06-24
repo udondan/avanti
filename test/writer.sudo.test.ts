@@ -361,18 +361,11 @@ describe.skipIf(isWindows)('sudoAtomicWrite', () => {
   });
 
   it('throws SudoWritePartialError with all paths on crash-after-completion sentinel', async () => {
-    // Worker completed all 2 ops but crashed before writeResponse — appends
-    // a sentinel at index 2 (N+1) with ok:false.
+    // Worker completed all 2 ops but crashed before writeResponse.
+    // The worker writes exactly 2 results to stdout; runPrivilegedWorker then
+    // appends its own sentinel at index 2 (N+1) with ok:false.
     const body = JSON.stringify({
-      results: [
-        { ok: true },
-        { ok: true },
-        {
-          ok: false,
-          error:
-            'privileged worker exited non-zero (1) after completing all ops',
-        },
-      ],
+      results: [{ ok: true }, { ok: true }],
     });
     mockSpawnSync.mockReturnValue({
       ...workerOkResult(2),

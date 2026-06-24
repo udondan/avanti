@@ -11,6 +11,7 @@ import {
 } from '../diff';
 import {
   atomicWrite,
+  AtomicWritePartialError,
   closeAllSessions,
   openPrivilegedSessions,
   sudoAtomicDelete,
@@ -298,13 +299,22 @@ export function revertCommand(): Command {
         } catch (err: unknown) {
           // Determine which paths were successfully written before the failure.
           // Case (a): SudoWritePartialError — err.writtenPaths lists confirmed writes.
-          // Case (b): sudoWriteComplete + plain Error — sudoAtomicWrite succeeded,
-          //           atomicWrite threw; all sudo targets are on disk.
+          // Case (b): sudoWriteComplete + AtomicWritePartialError — sudoAtomicWrite
+          //           succeeded; err.writtenPaths lists regular files already renamed.
+          // Case (c): sudoWriteComplete + plain Error — sudoAtomicWrite succeeded,
+          //           atomicWrite failed before any rename; only sudo targets are on disk.
           let writtenPaths: string[] | null = null;
           if (err instanceof SudoWritePartialError) {
             writtenPaths = err.writtenPaths;
           } else if (sudoWriteComplete) {
-            writtenPaths = sudoTargets.map((t) => t.targetPath);
+            writtenPaths = [
+              ...sudoTargets.map((t) => t.targetPath),
+              ...(err instanceof AtomicWritePartialError
+                ? err.writtenPaths
+                : []),
+            ];
+          } else if (err instanceof AtomicWritePartialError) {
+            writtenPaths = err.writtenPaths;
           }
           if (writtenPaths !== null && writtenPaths.length > 0) {
             console.warn(

@@ -578,15 +578,21 @@ function runPrivilegedWorker(
   return results;
 }
 
-// Thrown by sudoAtomicWrite when at least one write op fails mid-batch. Carries
-// the paths that were successfully written before the failure so callers can
-// record partial pull history rather than leaving those files invisible to revert.
-export class SudoWritePartialError extends Error {
+// Base for partial-write errors: carries the paths that were successfully
+// written before the failure so callers can record partial pull history.
+export class PartialWriteError extends Error {
   readonly writtenPaths: string[];
   constructor(message: string, writtenPaths: string[]) {
     super(message);
-    this.name = 'SudoWritePartialError';
     this.writtenPaths = writtenPaths;
+  }
+}
+
+// Thrown by sudoAtomicWrite when at least one write op fails mid-batch.
+export class SudoWritePartialError extends PartialWriteError {
+  constructor(message: string, writtenPaths: string[]) {
+    super(message, writtenPaths);
+    this.name = 'SudoWritePartialError';
   }
 }
 
@@ -783,20 +789,19 @@ export async function sudoAtomicWrite(
           writeError = r.error ?? 'privileged worker op failed';
         }
       }
-      // Crash sentinel: when continueOnError=true and the worker exits non-zero
-      // after all N ops completed, it appends a (N+1)th result with ok:false.
-      // All N writes landed on disk, so add them all to writtenPaths, but still
-      // surface the crash as an error so history is recorded and the pull fails.
-      if (writeResults.length > writeOps.length) {
+      // Crash sentinel: when continueOnError=true and the worker exits non-zero,
+      // runPrivilegedWorker always appends a (N+1)th sentinel with ok:false.
+      // For the session path (session.exec), the sentinel only appears when all
+      // N ops returned ok:true (crash-after-completion). For the spawnSync path,
+      // it is appended unconditionally on any non-zero exit.
+      // Only set writeError from the sentinel when no per-op failure was found —
+      // that case means all N writes landed on disk and the crash happened after.
+      // When a per-op error already set writeError, the sentinel just reflects the
+      // non-zero exit caused by that per-op failure and adds no new information.
+      if (writeResults.length > writeOps.length && writeError === null) {
         const sentinel = writeResults[writeOps.length];
         if (sentinel && !sentinel.ok) {
-          const sentinelMsg = `privileged worker crashed after completing all write ops: ${sentinel.error ?? 'unknown'}`;
-          // Append to any per-op error so the crash is visible even when an
-          // earlier failure already set writeError — both events are diagnostic.
-          writeError =
-            writeError !== null
-              ? `${writeError}; additionally, ${sentinelMsg}`
-              : sentinelMsg;
+          writeError = `privileged worker crashed after completing all write ops: ${sentinel.error ?? 'unknown'}`;
         }
       }
       if (writeError !== null) {
@@ -835,16 +840,16 @@ export async function sudoAtomicWrite(
       }
       // Detect crash sentinel: when continueOnError=true and the worker exits
       // non-zero after completing all N ops, it appends a (N+1)th result with
-      // ok:false. Surface it explicitly rather than masking it as a spurious
-      // "chmod failed for undefined" warning.
+      // ok:false. All writes AND all chmod ops completed — every file is on disk
+      // with the correct content AND permissions. Warn rather than throwing
+      // SudoWritePartialError, which would mislead callers into treating a fully
+      // successful batch as a partial one and cause spurious exit-code-2 failures.
       if (chmodResults.length > chmodOps.length) {
         const sentinel = chmodResults[chmodOps.length];
         if (sentinel && !sentinel.ok) {
-          // All writes already landed on disk; throw SudoWritePartialError so
-          // callers can record partial history even though the chmod worker crashed.
-          throw new SudoWritePartialError(
-            `privileged chmod worker crashed after completing all ops: ${sentinel.error ?? 'unknown'}`,
-            writtenPaths,
+          console.warn(
+            `Warning: privileged chmod worker crashed after completing all ops: ${sentinel.error ?? 'unknown'}. ` +
+              `All files are written with correct content and permissions.`,
           );
         }
       }
@@ -2073,12 +2078,10 @@ function checkAncestorsSafe(
 // Thrown by atomicWrite when Phase 3 (rename) or Phase 4 (in-place write) fails
 // after some destination paths have already been modified. Callers that record
 // pull history can inspect writtenPaths to determine which files actually landed.
-export class AtomicWritePartialError extends Error {
-  readonly writtenPaths: string[];
+export class AtomicWritePartialError extends PartialWriteError {
   constructor(message: string, writtenPaths: string[]) {
-    super(message);
+    super(message, writtenPaths);
     this.name = 'AtomicWritePartialError';
-    this.writtenPaths = writtenPaths;
   }
 }
 
@@ -2407,6 +2410,10 @@ export function atomicWrite(
                 t.content.length - written,
               );
             }
+            // Content is committed to the fd — track it now so that a subsequent
+            // fchmodSync failure (mode-only, content intact) still reports this
+            // path as written. closeSync in the finally below flushes the data.
+            writtenPaths.push(t.targetPath);
             // Apply mode via fd before close — sets permissions on the inode
             // without re-traversing the path after close (no TOCTOU).
             if (effectiveMode !== undefined) {
@@ -2424,6 +2431,9 @@ export function atomicWrite(
           fs.writeFileSync(t.targetPath, t.content, {
             mode: effectiveMode ?? 0o666,
           });
+          // Content written — push now so a subsequent chmodSync failure still
+          // reports this path as written for partial-history purposes.
+          writtenPaths.push(t.targetPath);
         }
         // POSIX path: mode applied via fchmodSync above. Windows path: apply now
         // (O_NOFOLLOW unavailable, so O_CREAT + writeFileSync handles the mode
@@ -2432,9 +2442,6 @@ export function atomicWrite(
         if (oNoFollow === 0 && effectiveMode !== undefined) {
           fs.chmodSync(t.targetPath, effectiveMode);
         }
-        // Push only after the full write (including mode) succeeds — a throw above
-        // means the file may be empty/corrupt and must not be reported as written.
-        writtenPaths.push(t.targetPath);
       }
     } catch (phaseErr) {
       // Re-wrap as AtomicWritePartialError so callers (e.g. pull.ts catch block)
