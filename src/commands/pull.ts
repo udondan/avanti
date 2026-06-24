@@ -35,6 +35,7 @@ import {
 } from '../diff';
 import {
   atomicWrite,
+  AtomicWritePartialError,
   closeAllSessions,
   openPrivilegedSessions,
   sudoAtomicRead,
@@ -1888,27 +1889,41 @@ export function pullCommand(): Command {
       } catch (err: unknown) {
         // Record partial pull history when files landed on disk before the failure
         // so `revert` can see them even though the pull did not complete.
-        // Two cases:
-        //  a) SudoWritePartialError: err.writtenPaths lists the sudo files that made it.
-        //  b) sudoWriteComplete + plain Error: sudoAtomicWrite succeeded but atomicWrite
-        //     threw — all sudo targets are on disk; regular targets are not.
+        // Three cases (combinable):
+        //  a) SudoWritePartialError: err.writtenPaths lists confirmed sudo writes.
+        //  b) AtomicWritePartialError: err.writtenPaths lists regular files whose
+        //     temp→dest renames (Phase 3) or in-place writes (Phase 4) completed.
+        //  c) sudoWriteComplete: sudoAtomicWrite returned, so all sudo content-write
+        //     targets are on disk regardless of error type.
+        // Cases (b) and (c) combine when sudoAtomicWrite succeeds and atomicWrite
+        // later throws mid-batch.
         if (pullId) {
           let writtenPaths: string[] | null = null;
           if (err instanceof SudoWritePartialError) {
             writtenPaths = err.writtenPaths;
-          } else if (sudoWriteComplete) {
-            // Exclude chmod-only targets — they went through sudoAtomicWrite as
-            // chmodOps (no content write), so no new file version was staged.
-            writtenPaths = [
-              ...stagedFileRefs
-                .filter(
-                  (r) => !!r.sudo && !modeOnlySudoPaths.has(r.absolutePath),
-                )
-                .map((r) => r.absolutePath),
-              ...activeStaleRestore
-                .filter((t) => !!t.sudo)
-                .map((t) => t.targetPath),
-            ];
+          } else {
+            const regularWritten =
+              err instanceof AtomicWritePartialError ? err.writtenPaths : [];
+            if (sudoWriteComplete || regularWritten.length > 0) {
+              writtenPaths = [
+                ...(sudoWriteComplete
+                  ? [
+                      // Exclude chmod-only targets — they went through sudoAtomicWrite
+                      // as chmodOps (no content write), so no new version was staged.
+                      ...stagedFileRefs
+                        .filter(
+                          (r) =>
+                            r.sudo && !modeOnlySudoPaths.has(r.absolutePath),
+                        )
+                        .map((r) => r.absolutePath),
+                      ...activeStaleRestore
+                        .filter((t) => t.sudo)
+                        .map((t) => t.targetPath),
+                    ]
+                  : []),
+                ...regularWritten,
+              ];
+            }
           }
           if (writtenPaths !== null && writtenPaths.length > 0) {
             const writtenSet = new Set(writtenPaths);

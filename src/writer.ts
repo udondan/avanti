@@ -2070,6 +2070,18 @@ function checkAncestorsSafe(
   });
 }
 
+// Thrown by atomicWrite when Phase 3 (rename) or Phase 4 (in-place write) fails
+// after some destination paths have already been modified. Callers that record
+// pull history can inspect writtenPaths to determine which files actually landed.
+export class AtomicWritePartialError extends Error {
+  readonly writtenPaths: string[];
+  constructor(message: string, writtenPaths: string[]) {
+    super(message);
+    this.name = 'AtomicWritePartialError';
+    this.writtenPaths = writtenPaths;
+  }
+}
+
 export function atomicWrite(
   targets: WriteTarget[],
   deletions: string[] = [],
@@ -2297,123 +2309,140 @@ export function atomicWrite(
 
     // Phase 3: atomically rename all staged temps (files and symlinks) into place.
     // Only now are destination paths modified — all staging and backups succeeded.
-    for (const s of stagedLinks) {
-      fs.renameSync(s.tmp, s.dest);
-    }
-    for (const s of staged) {
-      // Mode was applied to the temp-file inode via fchmodSync before close —
-      // rename(2) carries the inode with its permissions, so no path-based
-      // chmod is needed here (which would reopen a TOCTOU window).
-      fs.renameSync(s.tmp, s.dest);
-    }
+    // Track each successful rename so AtomicWritePartialError can report which
+    // files actually landed on disk if the loop fails mid-batch.
+    const writtenPaths: string[] = [];
+    try {
+      for (const s of stagedLinks) {
+        fs.renameSync(s.tmp, s.dest);
+        writtenPaths.push(s.dest);
+      }
+      for (const s of staged) {
+        // Mode was applied to the temp-file inode via fchmodSync before close —
+        // rename(2) carries the inode with its permissions, so no path-based
+        // chmod is needed here (which would reopen a TOCTOU window).
+        fs.renameSync(s.tmp, s.dest);
+        writtenPaths.push(s.dest);
+      }
 
-    // Phase 4: in-place writes — preserve inode, not atomic
-    for (const t of inPlaceTargets) {
-      const dir = path.dirname(t.targetPath);
-      if (!fs.existsSync(dir)) {
-        fs.mkdirSync(dir, { recursive: true });
-      }
-      const existingEntry = fs.lstatSync(t.targetPath, {
-        throwIfNoEntry: false,
-      });
-      // Fast-path rejection of non-regular, non-symlink entries (FIFOs,
-      // sockets, devices): opening a FIFO with O_WRONLY blocks until a reader
-      // connects; device/socket writes have unpredictable side effects. Not
-      // relied on for correctness — the fstat check on the opened fd (below,
-      // POSIX path) closes the TOCTOU window if the path is replaced after
-      // this check.
-      if (
-        existingEntry &&
-        !existingEntry.isFile() &&
-        !existingEntry.isSymbolicLink()
-      ) {
-        throw new Error(
-          `writeInPlace: ${t.targetPath} is not a regular file; refusing to write`,
-        );
-      }
-      let effectiveMode: number | undefined;
-      if (t.mode) {
-        effectiveMode = parseMode(t.mode);
-      } else if (existingEntry?.isFile()) {
-        effectiveMode = existingEntry.mode & 0o7777;
-      }
-      // Refuse to follow a symlink — unlike renameSync, which replaces the
-      // symlink itself, writeFileSync would write through it to the target.
-      // On POSIX: open with O_NOFOLLOW so the kernel rejects symlinks
-      // atomically (no TOCTOU window); ELOOP means the path is a symlink.
-      // O_NONBLOCK prevents blocking at open(2) if the lstatSync pre-check
-      // lost a TOCTOU race and the path became a FIFO with no reader.
-      // fstatSync on the opened fd then closes the remaining TOCTOU window by
-      // validating the type after open, before any write.
-      // On Windows: O_NOFOLLOW is not available; fall back to an lstat check
-      // (best-effort — a narrow TOCTOU race remains).
-      const oNoFollow: number =
-        (fs.constants as Record<string, number>)['O_NOFOLLOW'] ?? 0;
-      const oNonBlock: number =
-        (fs.constants as Record<string, number>)['O_NONBLOCK'] ?? 0;
-      if (oNoFollow !== 0) {
-        let fd: number;
-        try {
-          fd = fs.openSync(
-            t.targetPath,
-            fs.constants.O_WRONLY |
-              fs.constants.O_CREAT |
-              fs.constants.O_TRUNC |
-              oNoFollow |
-              oNonBlock,
-            effectiveMode ?? 0o666,
+      // Phase 4: in-place writes — preserve inode, not atomic
+      for (const t of inPlaceTargets) {
+        const dir = path.dirname(t.targetPath);
+        if (!fs.existsSync(dir)) {
+          fs.mkdirSync(dir, { recursive: true });
+        }
+        const existingEntry = fs.lstatSync(t.targetPath, {
+          throwIfNoEntry: false,
+        });
+        // Fast-path rejection of non-regular, non-symlink entries (FIFOs,
+        // sockets, devices): opening a FIFO with O_WRONLY blocks until a reader
+        // connects; device/socket writes have unpredictable side effects. Not
+        // relied on for correctness — the fstat check on the opened fd (below,
+        // POSIX path) closes the TOCTOU window if the path is replaced after
+        // this check.
+        if (
+          existingEntry &&
+          !existingEntry.isFile() &&
+          !existingEntry.isSymbolicLink()
+        ) {
+          throw new Error(
+            `writeInPlace: ${t.targetPath} is not a regular file; refusing to write`,
           );
-        } catch (err) {
-          if ((err as NodeJS.ErrnoException).code === 'ELOOP') {
+        }
+        let effectiveMode: number | undefined;
+        if (t.mode) {
+          effectiveMode = parseMode(t.mode);
+        } else if (existingEntry?.isFile()) {
+          effectiveMode = existingEntry.mode & 0o7777;
+        }
+        // Refuse to follow a symlink — unlike renameSync, which replaces the
+        // symlink itself, writeFileSync would write through it to the target.
+        // On POSIX: open with O_NOFOLLOW so the kernel rejects symlinks
+        // atomically (no TOCTOU window); ELOOP means the path is a symlink.
+        // O_NONBLOCK prevents blocking at open(2) if the lstatSync pre-check
+        // lost a TOCTOU race and the path became a FIFO with no reader.
+        // fstatSync on the opened fd then closes the remaining TOCTOU window by
+        // validating the type after open, before any write.
+        // On Windows: O_NOFOLLOW is not available; fall back to an lstat check
+        // (best-effort — a narrow TOCTOU race remains).
+        const oNoFollow: number =
+          (fs.constants as Record<string, number>)['O_NOFOLLOW'] ?? 0;
+        const oNonBlock: number =
+          (fs.constants as Record<string, number>)['O_NONBLOCK'] ?? 0;
+        if (oNoFollow !== 0) {
+          let fd: number;
+          try {
+            fd = fs.openSync(
+              t.targetPath,
+              fs.constants.O_WRONLY |
+                fs.constants.O_CREAT |
+                fs.constants.O_TRUNC |
+                oNoFollow |
+                oNonBlock,
+              effectiveMode ?? 0o666,
+            );
+          } catch (err) {
+            if ((err as NodeJS.ErrnoException).code === 'ELOOP') {
+              throw new Error(
+                `writeInPlace: ${t.targetPath} is a symlink; refusing to follow`,
+                { cause: err },
+              );
+            }
+            throw err;
+          }
+          try {
+            // fstat validates the type on the opened fd, catching any non-regular
+            // file that slipped past the lstatSync pre-check via a TOCTOU race.
+            if (!fs.fstatSync(fd).isFile()) {
+              throw new Error(
+                `writeInPlace: ${t.targetPath} is not a regular file; refusing to write`,
+              );
+            }
+            let written = 0;
+            while (written < t.content.length) {
+              written += fs.writeSync(
+                fd,
+                t.content,
+                written,
+                t.content.length - written,
+              );
+            }
+            // Apply mode via fd before close — sets permissions on the inode
+            // without re-traversing the path after close (no TOCTOU).
+            if (effectiveMode !== undefined) {
+              fs.fchmodSync(fd, effectiveMode);
+            }
+          } finally {
+            fs.closeSync(fd);
+          }
+        } else {
+          if (existingEntry?.isSymbolicLink()) {
             throw new Error(
               `writeInPlace: ${t.targetPath} is a symlink; refusing to follow`,
-              { cause: err },
             );
           }
-          throw err;
+          fs.writeFileSync(t.targetPath, t.content, {
+            mode: effectiveMode ?? 0o666,
+          });
         }
-        try {
-          // fstat validates the type on the opened fd, catching any non-regular
-          // file that slipped past the lstatSync pre-check via a TOCTOU race.
-          if (!fs.fstatSync(fd).isFile()) {
-            throw new Error(
-              `writeInPlace: ${t.targetPath} is not a regular file; refusing to write`,
-            );
-          }
-          let written = 0;
-          while (written < t.content.length) {
-            written += fs.writeSync(
-              fd,
-              t.content,
-              written,
-              t.content.length - written,
-            );
-          }
-          // Apply mode via fd before close — sets permissions on the inode
-          // without re-traversing the path after close (no TOCTOU).
-          if (effectiveMode !== undefined) {
-            fs.fchmodSync(fd, effectiveMode);
-          }
-        } finally {
-          fs.closeSync(fd);
+        // POSIX path: mode applied via fchmodSync above. Windows path: apply now
+        // (O_NOFOLLOW unavailable, so O_CREAT + writeFileSync handles the mode
+        // via the open(2) mode argument; the chmodSync below is belt-and-suspenders
+        // for the case where the file pre-existed with different permissions).
+        if (oNoFollow === 0 && effectiveMode !== undefined) {
+          fs.chmodSync(t.targetPath, effectiveMode);
         }
-      } else {
-        if (existingEntry?.isSymbolicLink()) {
-          throw new Error(
-            `writeInPlace: ${t.targetPath} is a symlink; refusing to follow`,
-          );
-        }
-        fs.writeFileSync(t.targetPath, t.content, {
-          mode: effectiveMode ?? 0o666,
-        });
+        // Push only after the full write (including mode) succeeds — a throw above
+        // means the file may be empty/corrupt and must not be reported as written.
+        writtenPaths.push(t.targetPath);
       }
-      // POSIX path: mode applied via fchmodSync above. Windows path: apply now
-      // (O_NOFOLLOW unavailable, so O_CREAT + writeFileSync handles the mode
-      // via the open(2) mode argument; the chmodSync below is belt-and-suspenders
-      // for the case where the file pre-existed with different permissions).
-      if (oNoFollow === 0 && effectiveMode !== undefined) {
-        fs.chmodSync(t.targetPath, effectiveMode);
-      }
+    } catch (phaseErr) {
+      // Re-wrap as AtomicWritePartialError so callers (e.g. pull.ts catch block)
+      // can tell which destination files actually landed on disk.
+      throw new AtomicWritePartialError(
+        phaseErr instanceof Error ? phaseErr.message : String(phaseErr),
+        writtenPaths,
+      );
     }
   } finally {
     for (const s of stagedLinks) {

@@ -254,12 +254,8 @@ export function revertCommand(): Command {
         const regularTargets = writeTargets.filter((t) => !t.sudo);
         const sudoTargets = writeTargets.filter(isSudoTarget);
 
-        // Open a pull session so a partial failure can update history before exiting.
-        // Without this, a second `avanti revert` would re-attempt files already reverted.
-        const revertSessionId = history.openPullSession();
-
         // Mirrors pull.ts: set to true once sudoAtomicWrite returns without throwing
-        // so the catch block can record history when atomicWrite later throws a plain Error.
+        // so the catch block can warn about which sudo files are on disk.
         let sudoWriteComplete = false;
 
         // Create one shared session per sudo identity so that sudoAtomicWrite
@@ -317,20 +313,10 @@ export function revertCommand(): Command {
             for (const p of writtenPaths) {
               console.warn(`  ${p}`);
             }
-            // Remove the reverted paths from pull history so a subsequent
-            // `avanti revert` knows not to re-attempt them.
-            const revertedPaths = new Set(writtenPaths);
-            try {
-              history.closePullSession(
-                revertSessionId,
-                normalizeConfigKey(configPath),
-                history
-                  .getLastPullFiles()
-                  .filter((r) => !revertedPaths.has(r.absolutePath)),
-              );
-            } catch {
-              // best-effort — don't mask the real write error
-            }
+            // History is intentionally NOT updated here. A subsequent `avanti revert`
+            // will recompute diffs against the target snapshot; files already at the
+            // target state will show no diff and be skipped automatically, making
+            // the retry idempotent without any history bookkeeping.
           }
           console.error(
             `Revert failed: ${err instanceof Error ? err.message : String(err)}`,
