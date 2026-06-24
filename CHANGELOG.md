@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.28.0](https://github.com/udondan/avanti/compare/v0.27.1...v0.28.0) (2026-06-24)
+
+
+### Features
+
+* **sudo:** collapse all privileged writes into a single sudo invocation ([#288](https://github.com/udondan/avanti/issues/288)) ([e5d39b0](https://github.com/udondan/avanti/commit/e5d39b0f4467b15490187c0bb08342d19c4dd0f6))
+
+
+### Bug Fixes
+
+* **sudo:** record partial history on mid-batch write failure ([#307](https://github.com/udondan/avanti/issues/307)) ([8a352b5](https://github.com/udondan/avanti/commit/8a352b5b68ae1992e2b8dd2a08dd3a058f01ffac))
+
 ## [0.27.1](https://github.com/udondan/avanti/compare/v0.27.0...v0.27.1) (2026-06-18)
 
 
