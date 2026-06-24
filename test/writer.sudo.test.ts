@@ -5,6 +5,7 @@ import {
   sudoAtomicWrite,
   sudoUserArgs,
   SudoWorkerSession,
+  SudoWritePartialError,
   SudoWriteTarget,
 } from '../src/writer';
 
@@ -297,6 +298,106 @@ describe.skipIf(isWindows)('sudoAtomicWrite', () => {
 
     const { ops } = getReq() as { ops: Array<{ backupPath?: string }> };
     expect(ops[0].backupPath).toBe('/etc/test.conf.bak');
+  });
+
+  it('throws SudoWritePartialError with writtenPaths for files before a mid-batch failure', async () => {
+    const body = JSON.stringify({
+      results: [{ ok: true }, { ok: true }, { ok: false, error: 'disk full' }],
+    });
+    mockSpawnSync.mockReturnValue({
+      ...workerOkResult(3),
+      status: 1,
+      stdout: Buffer.from(body),
+      output: [null, Buffer.from(body), null],
+    });
+
+    const targets: SudoWriteTarget[] = [
+      { targetPath: '/etc/a.conf', content: Buffer.from('a'), sudo: true },
+      { targetPath: '/etc/b.conf', content: Buffer.from('b'), sudo: true },
+      { targetPath: '/etc/c.conf', content: Buffer.from('c'), sudo: true },
+    ];
+
+    let caught: unknown;
+    try {
+      await sudoAtomicWrite(targets);
+    } catch (e) {
+      caught = e;
+    }
+
+    expect(caught).toBeInstanceOf(SudoWritePartialError);
+    const err = caught as SudoWritePartialError;
+    expect(err.message).toBe('disk full');
+    expect(err.writtenPaths).toEqual(['/etc/a.conf', '/etc/b.conf']);
+    expect(err.chmodApplied).toBe(0);
+  });
+
+  it('throws SudoWritePartialError with empty writtenPaths when the first op fails', async () => {
+    const body = JSON.stringify({
+      results: [{ ok: false, error: 'permission denied' }],
+    });
+    mockSpawnSync.mockReturnValue({
+      ...workerOkResult(1),
+      status: 1,
+      stdout: Buffer.from(body),
+      output: [null, Buffer.from(body), null],
+    });
+
+    const target: SudoWriteTarget = {
+      targetPath: '/etc/a.conf',
+      content: Buffer.from('a'),
+      sudo: true,
+    };
+
+    let caught: unknown;
+    try {
+      await sudoAtomicWrite([target]);
+    } catch (e) {
+      caught = e;
+    }
+
+    expect(caught).toBeInstanceOf(SudoWritePartialError);
+    const err = caught as SudoWritePartialError;
+    expect(err.writtenPaths).toEqual([]);
+  });
+
+  it('throws SudoWritePartialError with all paths on crash-after-completion sentinel', async () => {
+    // Worker completed all 2 ops but crashed before writeResponse — appends
+    // a sentinel at index 2 (N+1) with ok:false.
+    const body = JSON.stringify({
+      results: [
+        { ok: true },
+        { ok: true },
+        {
+          ok: false,
+          error:
+            'privileged worker exited non-zero (1) after completing all ops',
+        },
+      ],
+    });
+    mockSpawnSync.mockReturnValue({
+      ...workerOkResult(2),
+      status: 1,
+      stdout: Buffer.from(body),
+      output: [null, Buffer.from(body), null],
+    });
+
+    const targets: SudoWriteTarget[] = [
+      { targetPath: '/etc/a.conf', content: Buffer.from('a'), sudo: true },
+      { targetPath: '/etc/b.conf', content: Buffer.from('b'), sudo: true },
+    ];
+
+    let caught: unknown;
+    try {
+      await sudoAtomicWrite(targets);
+    } catch (e) {
+      caught = e;
+    }
+
+    expect(caught).toBeInstanceOf(SudoWritePartialError);
+    const err = caught as SudoWritePartialError;
+    // Both files landed on disk even though the worker crashed after them.
+    expect(err.writtenPaths).toEqual(['/etc/a.conf', '/etc/b.conf']);
+    expect(err.message).toContain('crashed after completing all write ops');
   });
 });
 

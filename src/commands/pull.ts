@@ -42,6 +42,7 @@ import {
   sudoStatBatch,
   SudoChmodTarget,
   SudoWorkerSession,
+  SudoWritePartialError,
   SudoWriteTarget,
   WriteTarget,
 } from '../writer';
@@ -1848,6 +1849,42 @@ export function pullCommand(): Command {
             runNamedPostHook('update', ctx.hooks.update);
         }
       } catch (err: unknown) {
+        // For partial sudo write failures, record history for the files that
+        // actually landed on disk so `revert` can see them even though the pull
+        // did not complete.
+        if (
+          err instanceof SudoWritePartialError &&
+          pullId &&
+          err.writtenPaths.length > 0
+        ) {
+          const writtenSet = new Set(err.writtenPaths);
+          const partialRefs = stagedFileRefs.filter((r) =>
+            writtenSet.has(r.absolutePath),
+          );
+          if (partialRefs.length > 0) {
+            try {
+              const lastFiles = history.getLastPullFiles();
+              const partialPaths = new Set(
+                partialRefs.map((r) => r.absolutePath),
+              );
+              const refsToRecord = [
+                ...lastFiles.filter(
+                  (r) =>
+                    !effectivelyCleaned.has(r.absolutePath) &&
+                    !partialPaths.has(r.absolutePath),
+                ),
+                ...partialRefs,
+              ];
+              history.closePullSession(
+                pullId,
+                normalizeConfigKey(configPath),
+                refsToRecord,
+              );
+            } catch {
+              // best-effort — don't mask the real write error
+            }
+          }
+        }
         closeAllSessions(sudoSessions);
         console.error(
           `Write failed: ${err instanceof Error ? err.message : String(err)}`,

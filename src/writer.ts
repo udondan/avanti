@@ -578,6 +578,20 @@ function runPrivilegedWorker(
   return results;
 }
 
+// Thrown by sudoAtomicWrite when at least one write op fails mid-batch. Carries
+// the paths that were successfully written before the failure so callers can
+// record partial pull history rather than leaving those files invisible to revert.
+export class SudoWritePartialError extends Error {
+  readonly writtenPaths: string[];
+  readonly chmodApplied: number;
+  constructor(message: string, writtenPaths: string[], chmodApplied: number) {
+    super(message);
+    this.name = 'SudoWritePartialError';
+    this.writtenPaths = writtenPaths;
+    this.chmodApplied = chmodApplied;
+  }
+}
+
 // Each target is written atomically inside the privileged worker process, but
 // the batch is NOT collectively atomic: a failure mid-way leaves earlier targets
 // already written. All targets sharing the same sudo identity are dispatched in
@@ -586,7 +600,8 @@ function runPrivilegedWorker(
 // so that a pull with both content changes and mode-only changes for the same
 // sudo identity still produces exactly one prompt.
 // Returns the count of chmod ops that were actually applied (ENOENT/ELOOP skips
-// are not counted).
+// are not counted). Throws SudoWritePartialError (not plain Error) when writes
+// fail mid-batch so callers can inspect writtenPaths and record partial history.
 export async function sudoAtomicWrite(
   targets: SudoWriteTarget[],
   chmodTargets: SudoChmodTarget[] = [],
@@ -721,6 +736,7 @@ export async function sudoAtomicWrite(
   ]);
 
   let chmodApplied = 0;
+  const writtenPaths: string[] = [];
   for (const sudo of sudoIds) {
     const writeOps = writeGroups.get(sudo) ?? [];
     const chmodOps = chmodGroups.get(sudo) ?? [];
@@ -737,17 +753,38 @@ export async function sudoAtomicWrite(
     if (writeOps.length > 0) {
       let writeResults: WorkerResult[];
       if (session) {
-        writeResults = await session.exec(writeOps);
+        // continueOnError=true: get per-op results even when one write fails so
+        // writtenPaths records every file that actually landed on disk.
+        writeResults = await session.exec(writeOps, true);
       } else {
         // No session: fall back to a one-shot spawnSync call. This bypasses the
         // single-sudo-prompt guarantee (one spawnSync per identity per call) and
         // silently re-prompts if sudo credential caching is disabled. All production
         // callers (pull, reset, revert) open sessions via openPrivilegedSessions;
         // this branch exists for callers that skip session management (e.g. tests).
-        writeResults = runPrivilegedWorker(sudo, writeOps, false);
+        writeResults = runPrivilegedWorker(sudo, writeOps, true);
       }
-      for (const r of writeResults) {
-        if (!r.ok) throw new Error(r.error ?? 'privileged worker op failed');
+      let writeError: string | null = null;
+      for (let wi = 0; wi < writeOps.length; wi++) {
+        const r = writeResults[wi];
+        if (r?.ok) {
+          writtenPaths.push(writeOps[wi].targetPath);
+        } else if (r && !r.ok && writeError === null) {
+          writeError = r.error ?? 'privileged worker op failed';
+        }
+      }
+      // Crash sentinel: when continueOnError=true and the worker exits non-zero
+      // after all N ops completed, it appends a (N+1)th result with ok:false.
+      // All N writes landed on disk, so add them all to writtenPaths, but still
+      // surface the crash as an error so history is recorded and the pull fails.
+      if (writeResults.length > writeOps.length) {
+        const sentinel = writeResults[writeOps.length];
+        if (sentinel && !sentinel.ok && writeError === null) {
+          writeError = `privileged worker crashed after completing all write ops: ${sentinel.error ?? 'unknown'}`;
+        }
+      }
+      if (writeError !== null) {
+        throw new SudoWritePartialError(writeError, writtenPaths, chmodApplied);
       }
     }
     if (chmodOps.length > 0) {
