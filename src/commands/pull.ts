@@ -1644,20 +1644,31 @@ export function pullCommand(): Command {
       // on disk — those files need partial history even though err is a plain Error.
       // Only set when sudoAtomicWrite is actually invoked (inside the guard below).
       let sudoWriteComplete = false;
+      // Collect sudo mode-only targets here (outside the try block) so that
+      // modeOnlySudoPaths can be derived from the same computation and the
+      // predicate (modeChange && !contentChanged && sudo) stays in one place.
+      // Also needed inside the try block where it is passed to sudoAtomicWrite.
+      const modeOnlySudoTargets: SudoChmodTarget[] =
+        process.platform !== 'win32'
+          ? writeTargets.flatMap((t, i) => {
+              const d = allDiffs[i];
+              return d.modeChange && !d.contentChanged && t.sudo
+                ? [
+                    {
+                      targetPath: t.targetPath,
+                      mode: d.modeChange.to.toString(8).padStart(4, '0'),
+                      sudo: t.sudo,
+                    },
+                  ]
+                : [];
+            })
+          : [];
       // Paths of chmod-only sudo targets — content was NOT changed for these,
       // so they must be excluded from writtenPaths in the sudoWriteComplete catch
       // path (content-write tracking only, no chmod tracking).
-      const modeOnlySudoPaths = new Set<string>(
-        process.platform !== 'win32'
-          ? writeTargets
-              .filter(
-                (t, i) =>
-                  allDiffs[i].modeChange &&
-                  !allDiffs[i].contentChanged &&
-                  !!t.sudo,
-              )
-              .map((t) => t.targetPath)
-          : [],
+      // Derived from modeOnlySudoTargets so the filter predicate stays in one place.
+      const modeOnlySudoPaths = new Set(
+        modeOnlySudoTargets.map((t) => t.targetPath),
       );
       try {
         // Content writes go first so that if atomicWrite throws, no permissions
@@ -1671,28 +1682,6 @@ export function pullCommand(): Command {
         const regularDelete = staleToDelete.filter(
           (p) => !staleDeleteSudo.has(p),
         );
-
-        // Collect sudo mode-only targets before the write batch so they can be
-        // included in the same per-identity worker exec as the content writes.
-        // This keeps all sudo ops (writes + chmods) in a single batch per
-        // identity, so if sudoAtomicWrite fails (for any reason, including a
-        // chmod failure), the unprivileged atomicWrite call below has not yet
-        // run and the working tree remains in a consistent state.
-        const modeOnlySudoTargets: SudoChmodTarget[] =
-          process.platform !== 'win32'
-            ? writeTargets.flatMap((t, i) => {
-                const d = allDiffs[i];
-                return d.modeChange && !d.contentChanged && t.sudo
-                  ? [
-                      {
-                        targetPath: t.targetPath,
-                        mode: d.modeChange.to.toString(8).padStart(4, '0'),
-                        sudo: t.sudo,
-                      },
-                    ]
-                  : [];
-              })
-            : [];
 
         // Privileged writes first: if sudo fails, unprivileged files have not
         // yet changed, keeping the working tree in a consistent state.
@@ -2009,14 +1998,18 @@ export function pullCommand(): Command {
         pullId &&
         (stagedFileRefs.length > 0 || effectivelyCleaned.size > 0)
       ) {
+        // Invariant: pullId !== null ⟺ historyAvailable (set at lines 644-645).
+        // If this ever fires, the assignment logic changed without updating the
+        // invariant.
+        if (!historyAvailable)
+          throw new Error(
+            'invariant violated: pullId is set but historyAvailable is false',
+          );
         try {
           // Preserve existing sudo on surviving refs — these files were not
           // rewritten this pull, so their on-disk ownership reflects the
           // previous write identity. Replacing with the current config value
           // would let stale cleanup run with the wrong privileges.
-          // historyAvailable is always true here: pullId is set iff
-          // historyAvailable (line 644-645), so !historyAvailable => pullId===null
-          // and this block is never entered.
           const refsToRecord = mergeLastPullRefs(
             history.getLastPullFiles(),
             effectivelyCleaned,

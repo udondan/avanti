@@ -838,13 +838,25 @@ export async function sudoAtomicWrite(
         // this branch exists for callers that skip session management (e.g. tests).
         chmodResults = runPrivilegedWorker(sudo, chmodOps, true);
       }
-      // Detect crash sentinel: when continueOnError=true and the worker exits
-      // non-zero after completing all N ops, it appends a (N+1)th result with
-      // ok:false. All writes AND all chmod ops completed — every file is on disk
-      // with the correct content AND permissions. Warn rather than throwing
-      // SudoWritePartialError, which would mislead callers into treating a fully
-      // successful batch as a partial one and cause spurious exit-code-2 failures.
-      if (chmodResults.length > chmodOps.length) {
+      let chmodError: string | null = null;
+      for (let ci = 0; ci < chmodOps.length; ci++) {
+        const r = chmodResults[ci];
+        if (!r) break;
+        if (r.ok && !r.skipped) chmodApplied++;
+        else if (!r.ok) {
+          if (chmodError === null) chmodError = r.error ?? 'unknown error';
+          console.warn(
+            `Warning: chmod failed for ${chmodOps[ci].targetPath}: ${r.error ?? 'unknown error'}`,
+          );
+        }
+      }
+      // Crash sentinel: fires when continueOnError=true and the worker exits
+      // non-zero after all N chmod ops returned successfully. Guard on
+      // chmodError === null so the "all ok" message is suppressed when per-op
+      // failures exist — for the spawnSync path, runPrivilegedWorker appends
+      // the sentinel on ANY non-zero exit regardless of how many ops completed,
+      // so the sentinel alone does not mean all ops succeeded.
+      if (chmodResults.length > chmodOps.length && chmodError === null) {
         const sentinel = chmodResults[chmodOps.length];
         if (sentinel && !sentinel.ok) {
           console.warn(
@@ -852,15 +864,6 @@ export async function sudoAtomicWrite(
               `All files are written with correct content and permissions.`,
           );
         }
-      }
-      for (let ci = 0; ci < chmodOps.length; ci++) {
-        const r = chmodResults[ci];
-        if (!r) break;
-        if (r.ok && !r.skipped) chmodApplied++;
-        else if (!r.ok)
-          console.warn(
-            `Warning: chmod failed for ${chmodOps[ci].targetPath}: ${r.error ?? 'unknown error'}`,
-          );
       }
     }
   }
