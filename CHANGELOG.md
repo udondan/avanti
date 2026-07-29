@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.28.1](https://github.com/udondan/avanti/compare/v0.28.0...v0.28.1) (2026-07-29)
+
+
+### Bug Fixes
+
+* **sources:** resolve path: object sources relative to config directory ([#362](https://github.com/udondan/avanti/issues/362)) ([20d398b](https://github.com/udondan/avanti/commit/20d398b4e63607f336259d8a3acf70975f3979de))
+
 ## [0.28.0](https://github.com/udondan/avanti/compare/v0.27.1...v0.28.0) (2026-06-24)
 
 
