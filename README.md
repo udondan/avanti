@@ -330,7 +330,7 @@ Use `--yes` to skip the prompt. The history log is preserved — you can still r
 Relative `src` and `target` paths are resolved against different bases:
 
 - **`target` paths** (map keys) — resolved relative to the **working directory** (where you invoke `avanti`, or the path given with `-w`). This controls where pulled files land on disk.
-- **`src` paths** (plain string, for fetching content) — resolved relative to the **config file's location**. If the config is a local file, relative sources resolve relative to its directory. If the config is remote (GitHub, GitLab, HTTPS, `git+ssh://`), relative plain-string sources resolve to the same remote location. **Exception:** when `symlink:` is set, `src` is the symlink target path (always a local filesystem path) and resolves against the working directory — it is never config-relative. `path:` object sources also always resolve relative to the working directory.
+- **`src` paths** (plain string, for fetching content, and `path:` object sources) — resolved relative to the **config file's location**. If the config is a local file, relative sources resolve relative to its directory. If the config is remote (GitHub, GitLab, HTTPS, `git+ssh://`), relative plain-string sources resolve to the same remote location; `path:` object sources (which always refer to the local filesystem) fall back to resolving against the working directory instead, since a remote config has no local directory to be relative to. **Exception:** when `symlink:` is set, `src` is the symlink target path (always a local filesystem path) and resolves against the working directory — it is never config-relative.
 
 This means a config at `./configs/avanti.yml` can use `src: ./templates/foo.sh` to reference `./configs/templates/foo.sh`, regardless of what working directory you pass with `-w`.
 
@@ -343,7 +343,14 @@ files:
     src: ./scripts/build.sh # fetches github:owner/repo:configs/scripts/build.sh
 ```
 
-The `path:` object source always refers to the local filesystem and its relative paths resolve against the working directory, regardless of whether the config file is local or remote.
+The `path:` object source always refers to the local filesystem. For a local config it resolves relative to the config file's directory, same as plain-string `src`; for a remote config it resolves relative to the working directory instead, since there is no local directory to be relative to. To force a `path:` (or any other) source to resolve against the working directory explicitly regardless of the config's location, use the `$workingDir` variable:
+
+```yaml
+files:
+  target/file:
+    src:
+      path: $workingDir/local-only-file.txt
+```
 
 This is independent of where the config file lives only for targets. A config loaded from another location with `-c /shared/avanti.yml` writes target files into your working directory but reads sources from `/shared/`.
 
@@ -1813,10 +1820,13 @@ files:
 
 **Pull-time variables** — injected once at the start of every run and available everywhere (source URLs, conditions, `replace:`, `on.write` scripts, template rendering, `backup:`):
 
-| Variable    | Value                                   | Example               |
-| ----------- | --------------------------------------- | --------------------- |
-| `$date`     | Current date `YYYY-MM-DD`               | `2026-05-20`          |
-| `$datetime` | Current date+time `YYYY-MM-DD-HH-mm-ss` | `2026-05-20-14-30-00` |
+| Variable      | Value                                   | Example               |
+| ------------- | --------------------------------------- | --------------------- |
+| `$date`       | Current date `YYYY-MM-DD`               | `2026-05-20`          |
+| `$datetime`   | Current date+time `YYYY-MM-DD-HH-mm-ss` | `2026-05-20-14-30-00` |
+| `$workingDir` | The resolved working directory          | `/home/user/project`  |
+
+`$workingDir` is useful to force a specific source to resolve against the working directory instead of the config file's location — e.g. `src: { path: $workingDir/local-only-file.txt }` — see [Working Directory](#working-directory).
 
 ```yaml
 files:

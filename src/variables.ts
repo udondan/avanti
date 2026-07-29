@@ -21,6 +21,7 @@ export const RESERVED_VAR_NAMES = new Set([
   'os',
   'arch',
   'arch_go',
+  'workingDir',
 ]);
 
 export function validateVariables(vars: Variables | VariableSpec): void {

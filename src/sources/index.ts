@@ -34,6 +34,7 @@ import { isBinary } from '../binary';
 import { applyFilter } from '../filter';
 import { extractArchive, detectArchiveFormat } from '../extract';
 import {
+  isRemoteConfigSpec,
   parseGitHubSpec,
   parseGitLabSpec,
   resolveRelativeSrc,
@@ -509,7 +510,11 @@ async function _fetchOneSrcRaw(
 
   if ('path' in src) {
     const resolved = resolveVars(src.path, vars);
-    const result = fetchLocal(resolved, workingDir, src.optional ?? false);
+    const effective =
+      configBase !== undefined && !isRemoteConfigSpec(configBase)
+        ? resolveRelativeSrc(resolved, configBase)
+        : resolved;
+    const result = fetchLocal(effective, workingDir, src.optional ?? false);
     if (result.missing) {
       return { files: new Map(), skipped: true };
     }
@@ -773,7 +778,11 @@ function pendingLocalFiles(
         }
       }
     } else if ('path' in src) {
-      rawPath = resolveVars(src.path, vars);
+      const resolved = resolveVars(src.path, vars);
+      rawPath =
+        configBase !== undefined && !isRemoteConfigSpec(configBase)
+          ? resolveRelativeSrc(resolved, configBase)
+          : resolved;
     }
   } catch {
     return null;

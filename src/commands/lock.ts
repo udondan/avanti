@@ -61,6 +61,7 @@ export function lockCommand(): Command {
       }
       Object.assign(vars, buildDateVars());
       Object.assign(vars, buildSystemVars());
+      vars['workingDir'] = workingDir;
       const toPin = new Map<string, string>(); // label → sha
       let hasError = false;
       let remoteSourceCount = 0;
