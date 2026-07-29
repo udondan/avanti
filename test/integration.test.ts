@@ -293,6 +293,29 @@ describe('Integration', () => {
       );
     });
 
+    it('resolves $cwd as an alias for $workingDir', () => {
+      const configDir = join(tmpDir, 'configs');
+      mkdirSync(configDir);
+      const sourceFile = join(tmpDir, 'source.txt');
+      writeFileSync(sourceFile, 'from working dir via $cwd');
+
+      const configPath = join(configDir, 'avanti.yml');
+      writeFileSync(
+        configPath,
+        `files:
+  ./output.txt:
+    src: $cwd/source.txt
+`,
+      );
+
+      const { exitCode, stderr } = runAvanti(configPath, tmpDir);
+      expect(stderr).toBe('');
+      expect(exitCode).toBe(0);
+      expect(readFileSync(join(tmpDir, 'output.txt'), 'utf8')).toBe(
+        'from working dir via $cwd',
+      );
+    });
+
     it('does not affect absolute src paths', () => {
       const configDir = join(tmpDir, 'configs');
       mkdirSync(configDir);

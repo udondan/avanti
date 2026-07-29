@@ -138,6 +138,7 @@ async function runFetchLoop(
   Object.assign(vars, dateVars);
   Object.assign(vars, buildSystemVars());
   vars['workingDir'] = workingDir;
+  vars['cwd'] = workingDir;
   const writeTargets: WriteTarget[] = [];
   const allDiffs: FileDiff[] = [];
   const fileHookContexts: FileHookContext[] = [];

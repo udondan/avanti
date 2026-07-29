@@ -71,6 +71,7 @@ async function runDiffLoop(
   Object.assign(vars, dateVars);
   Object.assign(vars, buildSystemVars());
   vars['workingDir'] = workingDir;
+  vars['cwd'] = workingDir;
   const allDiffs: FileDiff[] = [];
   const pendingWrites = new Map<string, Buffer>();
   let hasError = false;

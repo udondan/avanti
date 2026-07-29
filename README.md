@@ -1825,8 +1825,9 @@ files:
 | `$date`       | Current date `YYYY-MM-DD`               | `2026-05-20`          |
 | `$datetime`   | Current date+time `YYYY-MM-DD-HH-mm-ss` | `2026-05-20-14-30-00` |
 | `$workingDir` | The resolved working directory          | `/home/user/project`  |
+| `$cwd`        | Alias for `$workingDir`                 | `/home/user/project`  |
 
-`$workingDir` is useful to force a specific source to resolve against the working directory instead of the config file's location — e.g. `src: { path: $workingDir/local-only-file.txt }` — see [Working Directory](#working-directory).
+`$workingDir` (or its alias `$cwd`) is useful to force a specific source to resolve against the working directory instead of the config file's location — e.g. `src: { path: $workingDir/local-only-file.txt }` — see [Working Directory](#working-directory).
 
 ```yaml
 files:
