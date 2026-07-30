@@ -40,8 +40,7 @@ const TOKEN =
   /\$\$|\$env:([A-Za-z_][A-Za-z0-9_]*)|\$\{([^}]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)/g;
 
 type PathSegment =
-  | { type: 'prop'; key: string }
-  | { type: 'index'; index: number };
+  { type: 'prop'; key: string } | { type: 'index'; index: number };
 
 // Strict grammar: name ( '.' propKey | '[' integer ']' )*
 // Each segment must be explicitly separated — missing dots (arr[0]key) and

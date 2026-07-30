@@ -246,12 +246,10 @@ export async function fetchBitbucket(
     );
   }
   const entries = await Promise.all(
-    paths.map(
-      async (p): Promise<[string, Buffer]> => [
-        path.relative(normalizedPath, p),
-        await fetchFile(workspace, repo, p, resolvedRef, host),
-      ],
-    ),
+    paths.map(async (p): Promise<[string, Buffer]> => [
+      path.relative(normalizedPath, p),
+      await fetchFile(workspace, repo, p, resolvedRef, host),
+    ]),
   );
   return { files: new Map(entries) };
 }
