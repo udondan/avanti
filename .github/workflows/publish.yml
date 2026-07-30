@@ -37,5 +37,17 @@ jobs:
       - name: Build
         run: bun run build
 
+      - name: Debug npm OIDC auth state
+        run: |
+          echo "npm version: $(npm --version)"
+          echo "node version: $(node --version)"
+          echo "NPM_CONFIG_USERCONFIG=$NPM_CONFIG_USERCONFIG"
+          echo "--- .npmrc content ---"
+          cat "${NPM_CONFIG_USERCONFIG:-$RUNNER_TEMP/.npmrc}" || echo "(missing)"
+          echo "--- npm config list ---"
+          npm config list
+          echo "ACTIONS_ID_TOKEN_REQUEST_URL set: $([ -n "$ACTIONS_ID_TOKEN_REQUEST_URL" ] && echo yes || echo no)"
+          echo "ACTIONS_ID_TOKEN_REQUEST_TOKEN set: $([ -n "$ACTIONS_ID_TOKEN_REQUEST_TOKEN" ] && echo yes || echo no)"
+
       - name: Publish
         run: npm publish --access public --provenance
