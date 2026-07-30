@@ -24,6 +24,13 @@ jobs:
           node-version: lts/*
           registry-url: https://registry.npmjs.org
 
+      # Works around https://github.com/actions/setup-node/issues/1551:
+      # setup-node always writes an empty _authToken line to .npmrc when
+      # NODE_AUTH_TOKEN isn't set, which makes npm skip OIDC trusted
+      # publishing and try (and fail) classic token auth instead.
+      - name: Remove empty npm auth token from generated .npmrc
+        run: sed -i '/_authToken/d' "${NPM_CONFIG_USERCONFIG:-$RUNNER_TEMP/.npmrc}"
+
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
