@@ -44,7 +44,7 @@ jobs:
           echo "ACTIONS_ID_TOKEN_REQUEST_TOKEN set: $([ -n "$ACTIONS_ID_TOKEN_REQUEST_TOKEN" ] && echo yes || echo no)"
 
       - name: Publish
-        run: npm publish --access public --provenance --loglevel silly
+        run: npm stage publish --access public --provenance --loglevel silly
 
       - name: Dump npm debug log
         if: always()

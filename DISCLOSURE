@@ -1,0 +1,32 @@
+DISCLOSURE — npm Dual-Use Content Policy declaration
+
+avanti is a general-purpose developer tool: a CLI that assembles local files
+from a declarative YAML specification written by the user.
+
+Capabilities that may resemble dual-use behavior to automated scanning:
+
+1. Remote file retrieval: avanti downloads file content from sources the user
+   explicitly lists in their local configuration file — plain HTTPS URLs,
+   GitHub/GitLab/Bitbucket repositories, git remotes, AWS S3 buckets, and
+   HashiCorp Vault secrets.
+
+2. Shell command execution: the user's configuration may define `exec:` sources
+   and `post:` processors, which run user-specified shell commands locally and
+   use their output as (or to transform) file content.
+
+3. Local file writes: fetched and processed content is written to local file
+   paths chosen by the user in the same configuration.
+
+Intended legitimate use: keeping shared configuration files (linter configs,
+CI workflows, editor settings, policy files, etc.) in sync across many
+repositories and machines from declarative, version-controlled specs.
+
+All network access, command execution, and file writes are driven solely by
+the explicit, local, user-authored configuration file. avanti contains no
+embedded remote endpoints, no telemetry, no auto-update mechanism, and no
+functionality that runs without the user invoking the CLI against their own
+configuration. Every write is previewed as a diff and requires interactive
+confirmation unless the user passes an explicit flag.
+
+avanti is open source (MIT): https://github.com/udondan/avanti
+Every release is published with provenance attestations from GitHub Actions.

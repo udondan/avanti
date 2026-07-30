@@ -34,9 +34,13 @@
   },
   "files": [
     "dist",
-    "LICENSE"
+    "LICENSE",
+    "DISCLOSURE"
   ],
   "license": "MIT",
+  "contentPolicy": {
+    "class": "dual-use"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/udondan/avanti.git"
