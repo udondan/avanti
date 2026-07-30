@@ -2,12 +2,7 @@ import { parse, stringify, assign } from 'comment-json';
 import { JsonMergeOptions } from '../types';
 
 type JsonValue =
-  | null
-  | boolean
-  | number
-  | string
-  | JsonValue[]
-  | { [key: string]: JsonValue };
+  null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
 
 interface ResolvedOptions {
   conflicts: 'abort' | 'first_wins' | 'last_wins';

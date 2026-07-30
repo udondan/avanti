@@ -2,4 +2,5 @@
 export default {
   singleQuote: true,
   trailingComma: 'all',
+  embeddedLanguageFormatting: 'off',
 };

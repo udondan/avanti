@@ -764,12 +764,10 @@ export async function fetchGitHub(
     );
   }
   const entries = await Promise.all(
-    paths.map(
-      async (p): Promise<[string, Buffer]> => [
-        path.relative(normalizedPath, p),
-        await fetchFile(repo, p, resolvedRef, host, transports),
-      ],
-    ),
+    paths.map(async (p): Promise<[string, Buffer]> => [
+      path.relative(normalizedPath, p),
+      await fetchFile(repo, p, resolvedRef, host, transports),
+    ]),
   );
   return { files: new Map(entries) };
 }

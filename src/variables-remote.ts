@@ -86,8 +86,7 @@ export async function resolveVariableSpec(
 ): Promise<Variables> {
   const resolved: Variables = Object.create(null) as Variables;
   let applyTemplate:
-    | typeof import('./processors/template').applyTemplate
-    | undefined;
+    typeof import('./processors/template').applyTemplate | undefined;
   for (const [name, value] of Object.entries(spec)) {
     if (typeof value === 'string') {
       try {

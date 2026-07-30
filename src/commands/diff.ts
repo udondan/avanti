@@ -324,8 +324,7 @@ export function diffCommand(): Command {
           cmd.parent?.opts().config as string | undefined,
         );
         const rawWorkingDir = cmd.parent?.opts().workingDir as
-          | string
-          | undefined;
+          string | undefined;
         const workingDir = rawWorkingDir
           ? path.resolve(expandTilde(rawWorkingDir))
           : process.cwd();
