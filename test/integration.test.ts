@@ -1254,6 +1254,78 @@ files:
     });
   });
 
+  describe('environment block', () => {
+    it('exposes an environment: entry as $NAME, $env:NAME, and to exec: subprocesses', () => {
+      // Deliberately avoid a literal `$MY_TOKEN` in the exec command string —
+      // that would be substituted by avanti's own token resolution. This
+      // reads the value purely via OS process.env inheritance instead.
+      const execCmd = isWindows
+        ? "[Console]::Out.Write([Environment]::GetEnvironmentVariable('MY_TOKEN'))"
+        : 'printenv MY_TOKEN';
+
+      const config = writeConfig(
+        tmpDir,
+        `environment:
+  MY_TOKEN:
+    src:
+      raw: secret-value
+files:
+  ./from-var.txt:
+    src:
+      raw: "token is PLACEHOLDER"
+    replace:
+      - from: PLACEHOLDER
+        to: $MY_TOKEN
+  ./from-env.txt:
+    src:
+      raw: "token is PLACEHOLDER"
+    replace:
+      - from: PLACEHOLDER
+        to: $env:MY_TOKEN
+  ./from-exec.txt:
+    src:
+      exec: "${execCmd}"
+`,
+      );
+
+      const { exitCode } = runAvanti(config, tmpDir);
+      expect(exitCode).toBe(0);
+      expect(readFileSync(join(tmpDir, 'from-var.txt'), 'utf8')).toBe(
+        'token is secret-value',
+      );
+      expect(readFileSync(join(tmpDir, 'from-env.txt'), 'utf8')).toBe(
+        'token is secret-value',
+      );
+      expect(readFileSync(join(tmpDir, 'from-exec.txt'), 'utf8')).toContain(
+        'secret-value',
+      );
+    });
+
+    it('resolves a cross-block dependency end to end through avanti pull', () => {
+      const config = writeConfig(
+        tmpDir,
+        `variables:
+  header: "Bearer $API_TOKEN"
+environment:
+  API_TOKEN: abc123
+files:
+  ./output.txt:
+    src:
+      raw: "PLACEHOLDER"
+    replace:
+      - from: PLACEHOLDER
+        to: $header
+`,
+      );
+
+      const { exitCode } = runAvanti(config, tmpDir);
+      expect(exitCode).toBe(0);
+      expect(readFileSync(join(tmpDir, 'output.txt'), 'utf8')).toBe(
+        'Bearer abc123',
+      );
+    });
+  });
+
   describe('JSON merge — auto-detection and json: true/false', () => {
     it('auto-merges when all sources are .json files (no json: key needed)', () => {
       const aFile = join(tmpDir, 'a.json');
