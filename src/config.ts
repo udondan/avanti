@@ -6,6 +6,8 @@ import {
   AvantiConfig,
   AwsS3Src,
   Condition,
+  EnvironmentEntry,
+  EnvironmentSpec,
   ExecSrc,
   OnHooks,
   FileEntry,
@@ -38,7 +40,8 @@ import {
   VariableValue,
   Via,
 } from './types';
-import { validateVariables } from './variables';
+import { RESERVED_VAR_NAMES, validateVariables } from './variables';
+import { validateEnvironmentNames } from './environment';
 import { expandBraces } from './paths';
 import { fetchHttp } from './sources/http';
 import { fetchGitHub } from './sources/github';
@@ -388,6 +391,14 @@ export function parseConfigContent(content: string): AvantiConfig {
   }
 
   const variables = parseVariables(obj['variables']);
+  const environment = parseEnvironment(obj['environment']);
+  for (const name of Object.keys(environment)) {
+    if (Object.hasOwn(variables, name)) {
+      throw new Error(
+        `"${name}" is declared in both "variables" and "environment" — pick one`,
+      );
+    }
+  }
 
   const filesRaw = obj['files'] as Record<string, unknown>;
   const files: Record<string, FileEntry> = Object.create(null) as Record<
@@ -787,7 +798,7 @@ export function parseConfigContent(content: string): AvantiConfig {
     backup_roots = obj['backup_roots'] as string[];
   }
 
-  return { variables, backup_roots, files };
+  return { variables, environment, backup_roots, files };
 }
 
 export async function loadConfig(
@@ -945,6 +956,76 @@ function parseVariableEntry(
   }
 
   return entry;
+}
+
+function parseEnvironment(raw: unknown): EnvironmentSpec {
+  if (raw === undefined || raw === null)
+    return Object.create(null) as EnvironmentSpec;
+  if (typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new Error(
+      '"environment" must be a map of environment variable names to string values or source objects',
+    );
+  }
+  const obj = raw as Record<string, unknown>;
+  const spec: EnvironmentSpec = Object.create(null) as EnvironmentSpec;
+  for (const [key, val] of Object.entries(obj)) {
+    if (typeof val === 'string') {
+      spec[key] = val;
+    } else if (typeof val === 'number' || typeof val === 'boolean') {
+      spec[key] = String(val);
+    } else if (
+      val &&
+      typeof val === 'object' &&
+      !Array.isArray(val) &&
+      Object.hasOwn(val, 'src')
+    ) {
+      // `src` is a reserved key: any object with a top-level `src` key is
+      // treated as a source-backed EnvironmentEntry.
+      spec[key] = parseEnvironmentEntry(
+        val as unknown as Record<string, unknown>,
+        key,
+      );
+    } else {
+      throw new Error(
+        `environment.${key}: value must be a string, number, boolean, or source object with "src"`,
+      );
+    }
+  }
+  validateEnvironmentNames(spec);
+  // Environment values are merged into the same $name namespace as
+  // variables, so the system-injected/reserved sentinel names apply here too.
+  for (const name of Object.keys(spec)) {
+    if (RESERVED_VAR_NAMES.has(name)) {
+      throw new Error(
+        `Environment variable name "${name}" is reserved and cannot be used`,
+      );
+    }
+  }
+  return spec;
+}
+
+function parseEnvironmentEntry(
+  obj: Record<string, unknown>,
+  envName: string,
+): EnvironmentEntry {
+  const loc = `environment.${envName}`;
+  const rawSrc = obj['src'];
+  if (rawSrc === undefined || rawSrc === null) {
+    throw new Error(`${loc}: "src" is required`);
+  }
+  for (const key of ['json', 'yaml', 'toml', 'ini', 'template']) {
+    if (obj[key] !== undefined) {
+      throw new Error(
+        `${loc}.${key}: not supported on "environment" entries — use "variables" instead if you need structured merging`,
+      );
+    }
+  }
+  const src = Array.isArray(rawSrc)
+    ? (rawSrc as unknown[]).map((item, j) =>
+        parseSingleSrc(item, `${loc}.src[${j}]`),
+      )
+    : parseSingleSrc(rawSrc, `${loc}.src`);
+  return { src };
 }
 
 function parseSha(value: unknown, loc: string): string | undefined {

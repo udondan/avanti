@@ -64,7 +64,7 @@ import { resolveSymlinkSrcPath } from '../sources/local';
 import { HistoryManager, PullLogFileRef, SourceShaRecord } from '../history';
 import { confirm } from '../prompt';
 import { applyUpdatedShas, writeUpdatedShas } from '../config-writeback';
-import { resolveVariableSpec } from '../variables-remote';
+import { resolveVariablesAndEnvironment } from '../context';
 import {
   buildDateVars,
   buildFileVars,
@@ -112,12 +112,13 @@ async function runFetchLoop(
 ): Promise<FetchLoopResult> {
   let vars;
   try {
-    vars = await resolveVariableSpec(
+    ({ vars } = await resolveVariablesAndEnvironment(
       config.variables ?? {},
+      config.environment ?? {},
       workingDir,
       cache,
       configBase,
-    );
+    ));
   } catch (err: unknown) {
     console.error(err instanceof Error ? err.message : String(err));
     return {

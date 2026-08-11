@@ -36,7 +36,7 @@ export function validateVariables(vars: Variables | VariableSpec): void {
 // Single-pass regex: $$ → literal $, then $env:NAME, then ${expr} (braced),
 // then $name (unbraced). Ordering within the alternation matters: $$ must
 // come first so it is consumed before any other branch matches the second $.
-const TOKEN =
+export const TOKEN =
   /\$\$|\$env:([A-Za-z_][A-Za-z0-9_]*)|\$\{([^}]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)/g;
 
 type PathSegment =

@@ -316,8 +316,15 @@ export interface VariableEntry {
 
 export type VariableSpec = Record<string, VariableValue | VariableEntry>;
 
+export interface EnvironmentEntry {
+  src: FileSrc | FileSrc[];
+}
+
+export type EnvironmentSpec = Record<string, string | EnvironmentEntry>;
+
 export interface AvantiConfig {
   variables?: VariableSpec;
+  environment?: EnvironmentSpec;
   backup_roots?: string[];
   files: Record<string, FileEntry>;
 }

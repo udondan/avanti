@@ -55,6 +55,7 @@ atomic rollbacks, and diff-before-apply safety.
     - [Accessing nested values with \${expr}](#accessing-nested-values-with-expr)
     - [Source-based variables](#source-based-variables)
     - [System-injected variables](#system-injected-variables)
+  - [Environment Variables](#environment-variables)
   - [$self — Self-managing Config](#self--self-managing-config)
   - [Authentication](#authentication)
   - [Private Instances](#private-instances)
@@ -124,6 +125,7 @@ avanti revert  # roll back instantly if something breaks
 - **TOML merging** — deep-merge multiple TOML sources with configurable conflict, array, and table strategies
 - **INI merging** — deep-merge multiple INI/CFG sources with the same strategies, with full comment and key-order preservation
 - **Variables** — define reusable values in a `variables:` block and reference them anywhere with `$name`; variables can be plain strings, `$env:NAME` environment variable references, or fetched from any remote/local source (the same source types as `files:`)
+- **Environment variables** — declare real environment variables in an `environment:` block; values are usable as `$name` in the config and exported to `process.env` for `exec:` commands, `on:` hooks, and source integrations (GitHub/GitLab/Bitbucket/AWS/Vault) that read credentials from the environment
 - **Post-processing** — apply text replacements (string or regex) and/or pipe content through a shell script
 - **Release artifacts** — download release assets attached to a GitHub or GitLab release by tag, `$latest` (newest stable semver tag), `$recent` (most recently created/published tag), or `/pattern/[flags]` (GitLab prefers `package`-type links; falls back to all links)
 - **Directory sync** — recursively sync directories from GitLab/GitHub/Bitbucket/git/S3/local sources
@@ -1716,7 +1718,7 @@ variables:
       conflicts: last_wins
 ```
 
-**Evaluation order** — variables are resolved one by one in the order they are defined. A variable may reference any variable defined above it. Referencing a variable that has not yet been defined (a forward reference) is an error. This rule also prevents circular dependencies.
+**Evaluation order** — `variables:` entries (and, if declared, [`environment:`](#environment-variables) entries) are resolved via dependency order, not strictly top-to-bottom: an entry may reference another entry declared anywhere in either block, above or below it, as long as there is no cycle. When multiple entries are simultaneously ready to resolve, declaration order (`variables:` first, then `environment:`, top to bottom within each) is used as a tiebreaker — so a config where every reference already points at an earlier-declared entry resolves in exactly the order it's written, same as before. A circular reference (direct or indirect, including across both blocks) is an error that names the full cycle chain.
 
 ```yaml
 variables:
@@ -1726,6 +1728,18 @@ variables:
       aws_secrets_manager:
         name: my-token # fetched first; $host is already resolved
   registry_line: //$host/:_authToken=$token # both $host and $token are available
+```
+
+Forward references are also allowed:
+
+```yaml
+variables:
+  registry_line: //$host/:_authToken=$token # references entries declared below — resolved once $host and $token are ready
+  host: registry.example.com
+  token:
+    src:
+      aws_secrets_manager:
+        name: my-token
 ```
 
 The `ref` (and `release`) field accepts four forms:
@@ -1871,6 +1885,73 @@ files:
     src: https://dl.k8s.io/release/v$kubectl_version/bin/$os/$arch_go/kubectl
 ```
 
+### Environment Variables
+
+Declare real environment variables at the top level under `environment:`:
+
+```yaml
+environment:
+  NODE_ENV: production
+  MAX_RETRIES: 3
+  GITLAB_TOKEN:
+    src:
+      path: ~/.secrets/gitlab-token
+```
+
+Values are string, number, or boolean literals (numbers/booleans are coerced to strings), or a source-backed form with a `src:` key — the same source types supported by `files:` and `variables:`. Unlike source-based variables, `environment:` entries do not support `json:`/`yaml:`/`toml:`/`ini:`/`template:` — an entry must resolve to a single scalar value. If you need structured merging, do it via `variables:` and reference `$name` as an `environment:` value instead.
+
+Environment variable names must be valid identifiers (`^[A-Za-z_][A-Za-z0-9_]*$`) — this is what allows them to be referenced with `$env:NAME`. `AVANTI_TARGET` and `AVANTI_IS_NEW` are reserved (avanti injects these itself for `on:` write hooks) and cannot be declared.
+
+**Dual exposure** — this is the point of the block. Every resolved `environment:` entry is:
+
+1. Merged into the same `$name` namespace as `variables:`, so it can be referenced anywhere a variable is valid — `exec:` commands, `replace:` rules, source fields, conditions, and so on.
+2. Written into the real `process.env` of the running avanti process, so it is also readable as `$env:NAME`, inherited by every subprocess (`exec:` sources, `on:` hooks), and picked up automatically by any source integration that authenticates via the environment — GitHub, GitLab, Bitbucket, S3/Secrets Manager/SSM, and Vault (see [Authentication](#authentication)).
+
+```yaml
+environment:
+  GITLAB_TOKEN:
+    src:
+      path: ~/.secrets/gitlab-token
+
+files:
+  # $GITLAB_TOKEN is a plain variable...
+  .env:
+    src:
+      raw: 'TOKEN=$GITLAB_TOKEN'
+
+  # ...and GITLAB_TOKEN is also a real env var, so this source authenticates
+  # against a private project with no extra configuration:
+  policy.md:
+    src:
+      gitlab:
+        project: group/private-project
+        file: policy.md
+```
+
+Because `variables:` and `environment:` share one `$name` namespace, declaring the same name in both blocks is a parse-time error — pick one:
+
+```yaml
+variables:
+  TOKEN: from-variables
+environment:
+  TOKEN: from-environment
+# Error: "TOKEN" is declared in both "variables" and "environment" — pick one
+```
+
+The two blocks also share one dependency graph (see [Evaluation order](#variables) above), so a `variables:` entry can reference an `environment:` entry and vice versa, regardless of which block or which position each is declared in:
+
+```yaml
+variables:
+  auth_header: Bearer $GITLAB_TOKEN # depends on an environment: entry
+
+environment:
+  GITLAB_TOKEN:
+    src:
+      path: ~/.secrets/gitlab-token
+```
+
+**Secrets hygiene** — `--verbose` logging prints the _names_ of resolved `environment:` entries only, never their values.
+
 ### $self — Self-managing Config
 
 The special `$self` key in the `files:` map tells avanti to manage its own config file. When `$self` is present, avanti fetches the listed sources and uses the result as the active config for the rest of the run — all in a single invocation.
@@ -1917,7 +1998,7 @@ files:
 
 ### Authentication
 
-Public repositories on github.com and gitlab.com work without any configuration. For private repositories or instances, supply credentials via environment variables:
+Public repositories on github.com and gitlab.com work without any configuration. For private repositories or instances, supply credentials via environment variables — either pre-set in the calling shell, or declared in an [`environment:`](#environment-variables) block so the config is self-contained:
 
 | Platform        | Environment variable(s)                                          | Notes                                      |
 | --------------- | ---------------------------------------------------------------- | ------------------------------------------ |

@@ -541,10 +541,9 @@ describe('resolveVariableSpec', () => {
     expect(result).toEqual({ prefix: 'hello', msg: 'hello world' });
   });
 
-  it('throws on forward reference in plain string variable', async () => {
-    await expect(resolveVariableSpec({ b: '$a', a: 'x' }, cwd)).rejects.toThrow(
-      'Undefined variable: $a',
-    );
+  it('resolves a forward reference in plain string variable', async () => {
+    const result = await resolveVariableSpec({ b: '$a', a: 'x' }, cwd);
+    expect(result).toEqual({ b: 'x', a: 'x' });
   });
 
   it('fetches a raw source and trims whitespace', async () => {
@@ -563,13 +562,20 @@ describe('resolveVariableSpec', () => {
     expect(result).toEqual({ base: 'hello', greeting: 'hello world' });
   });
 
-  it('throws when raw source references a forward variable', async () => {
+  it('resolves when raw source references a forward variable', async () => {
+    const result = await resolveVariableSpec(
+      { greeting: { src: { raw: '$later' } }, later: 'x' },
+      cwd,
+    );
+    expect(result).toEqual({ greeting: 'x', later: 'x' });
+  });
+
+  it('throws on a circular variable dependency', async () => {
     await expect(
-      resolveVariableSpec(
-        { greeting: { src: { raw: '$later' } }, later: 'x' },
-        cwd,
-      ),
-    ).rejects.toThrow('Undefined variable: $later');
+      resolveVariableSpec({ a: '$b', b: '$a' }, cwd),
+    ).rejects.toThrow(
+      'Circular dependency: variables.a → variables.b → variables.a',
+    );
   });
 
   it('mix of string and source-based variables resolves in order', async () => {
