@@ -11,7 +11,7 @@ import { evaluateConditions } from '../condition';
 import { fetchSource, formatSourceLabel } from '../sources';
 import { buildEntryPreVars, expandTilde, resolveTargetPath } from '../paths';
 import { writeUpdatedShas } from '../config-writeback';
-import { resolveVariableSpec } from '../variables-remote';
+import { resolveVariablesAndEnvironment } from '../context';
 import { buildDateVars, buildSystemVars } from '../variables';
 
 export function lockCommand(): Command {
@@ -46,12 +46,13 @@ export function lockCommand(): Command {
       const configBase = deriveConfigBase(configPath);
       let vars;
       try {
-        vars = await resolveVariableSpec(
+        ({ vars } = await resolveVariablesAndEnvironment(
           config.variables ?? {},
+          config.environment ?? {},
           workingDir,
           undefined,
           configBase,
-        );
+        ));
       } catch (err: unknown) {
         console.error(err instanceof Error ? err.message : String(err));
         process.exit(2);

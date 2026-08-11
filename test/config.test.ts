@@ -2302,6 +2302,127 @@ files:
   });
 });
 
+describe('environment block parsing', () => {
+  it('loads an environment block', async () => {
+    const f = writeTmp(`
+environment:
+  GREETING: hello
+  PORT: 8080
+files:
+  foo.txt:
+    src: https://example.com/foo.txt
+`);
+    const cfg = await loadConfig(f);
+    expect(cfg.environment).toEqual({ GREETING: 'hello', PORT: '8080' });
+  });
+
+  it('returns empty environment when block is absent', async () => {
+    const f = writeTmp(`
+files:
+  foo.txt:
+    src: https://example.com/foo.txt
+`);
+    const cfg = await loadConfig(f);
+    expect(cfg.environment).toEqual({});
+  });
+
+  it('throws when environment block is not a map', async () => {
+    const f = writeTmp(`
+environment:
+  - GREETING
+files:
+  foo.txt:
+    src: https://example.com/foo.txt
+`);
+    await expect(loadConfig(f)).rejects.toThrow('"environment" must be a map');
+  });
+
+  it('throws when a reserved environment name is used', async () => {
+    const f = writeTmp(`
+environment:
+  AVANTI_TARGET: foo
+files:
+  foo.txt:
+    src: https://example.com/foo.txt
+`);
+    await expect(loadConfig(f)).rejects.toThrow(
+      'Environment variable name "AVANTI_TARGET" is reserved',
+    );
+  });
+
+  it('throws when an environment name is not a valid identifier', async () => {
+    const f = writeTmp(`
+environment:
+  "not-an-identifier": foo
+files:
+  foo.txt:
+    src: https://example.com/foo.txt
+`);
+    await expect(loadConfig(f)).rejects.toThrow(
+      'Environment variable name "not-an-identifier" is invalid',
+    );
+  });
+
+  it('coerces number and boolean environment values to strings', async () => {
+    const f = writeTmp(`
+environment:
+  PORT: 8080
+  DEBUG: true
+files:
+  foo.txt:
+    src: https://example.com/foo.txt
+`);
+    const cfg = await loadConfig(f);
+    expect(cfg.environment).toEqual({ PORT: '8080', DEBUG: 'true' });
+  });
+
+  it('parses a source-backed environment entry', async () => {
+    const f = writeTmp(`
+environment:
+  TOKEN:
+    src:
+      raw: my-secret
+files:
+  foo.txt:
+    src: https://example.com/foo.txt
+`);
+    const cfg = await loadConfig(f);
+    const entry = cfg.environment?.['TOKEN'] as { src: { raw: string } };
+    expect(entry.src).toEqual({ raw: 'my-secret' });
+  });
+
+  it('rejects merge-option keys on an environment entry', async () => {
+    const f = writeTmp(`
+environment:
+  TOKEN:
+    src:
+      raw: my-secret
+    json: true
+files:
+  foo.txt:
+    src: https://example.com/foo.txt
+`);
+    await expect(loadConfig(f)).rejects.toThrow(
+      'environment.TOKEN.json: not supported',
+    );
+  });
+
+  it('throws when a key is declared in both variables and environment', async () => {
+    const f = writeTmp(`
+variables:
+  TOKEN: from-variables
+environment:
+  TOKEN: from-environment
+files:
+  foo.txt:
+    src: https://example.com/foo.txt
+`);
+    await expect(loadConfig(f)).rejects.toThrow(
+      '"TOKEN" is declared in both "variables" and "environment"',
+    );
+  });
+});
+
 describe('if/ifAny condition parsing in config', () => {
   it('parses if as a single condition object on a file entry', () => {
     const f = writeTmp(`

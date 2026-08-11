@@ -33,7 +33,7 @@ import {
 import { AvantiConfig, FileEntry, LocalSrc, Variables } from '../types';
 import { resolveSymlinkSrcPath } from '../sources/local';
 import { HistoryManager } from '../history';
-import { resolveVariableSpec } from '../variables-remote';
+import { resolveVariablesAndEnvironment } from '../context';
 import { evaluateConditions } from '../condition';
 import { buildDateVars, buildFileVars, buildSystemVars } from '../variables';
 
@@ -55,12 +55,13 @@ async function runDiffLoop(
 ): Promise<DiffLoopResult> {
   let vars;
   try {
-    vars = await resolveVariableSpec(
+    ({ vars } = await resolveVariablesAndEnvironment(
       config.variables ?? {},
+      config.environment ?? {},
       workingDir,
       cache,
       configBase,
-    );
+    ));
   } catch (err: unknown) {
     console.error(err instanceof Error ? err.message : String(err));
     return { allDiffs: [], hasError: true };
