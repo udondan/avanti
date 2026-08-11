@@ -391,7 +391,7 @@ files:
   });
 
   describe('HTTP source', () => {
-    it('fetches a file from a URL', { timeout: 30_000 }, () => {
+    it('fetches a file from a URL', { timeout: 60_000 }, () => {
       const config = writeConfig(
         tmpDir,
         `files:
@@ -411,7 +411,7 @@ files:
   describe('GitHub source', () => {
     it(
       'fetches a single file from a public GitHub repo',
-      { timeout: 30_000 },
+      { timeout: 60_000 },
       () => {
         const config = writeConfig(
           tmpDir,
@@ -434,7 +434,7 @@ files:
 
     it(
       'fetches a directory from a public GitHub repo',
-      { timeout: 30_000 },
+      { timeout: 60_000 },
       () => {
         const config = writeConfig(
           tmpDir,
@@ -458,7 +458,7 @@ files:
 
     it(
       'resolves $latest ref to the most recent release',
-      { timeout: 30_000 },
+      { timeout: 60_000 },
       () => {
         const config = writeConfig(
           tmpDir,
@@ -484,7 +484,7 @@ files:
   describe('GitLab source', () => {
     it(
       'fetches a single file from a public GitLab repo',
-      { timeout: 30_000 },
+      { timeout: 60_000 },
       () => {
         const config = writeConfig(
           tmpDir,
@@ -507,7 +507,7 @@ files:
 
     it(
       'fetches a directory from a public GitLab repo',
-      { timeout: 30_000 },
+      { timeout: 60_000 },
       () => {
         const config = writeConfig(
           tmpDir,
@@ -602,7 +602,7 @@ files:
   describe.skipIf(!hasBitbucketCreds)('Bitbucket source', () => {
     it(
       'fetches a single file from a public Bitbucket repo',
-      { timeout: 30_000 },
+      { timeout: 60_000 },
       () => {
         const config = writeConfig(
           tmpDir,
@@ -625,7 +625,7 @@ files:
 
     it(
       'fetches a directory from a public Bitbucket repo',
-      { timeout: 30_000 },
+      { timeout: 60_000 },
       () => {
         const config = writeConfig(
           tmpDir,
@@ -1174,7 +1174,7 @@ files:
       expect(JSON.parse(content)).toEqual({ a: 1, b: 2 });
     });
 
-    it('merges JSON fetched from HTTP', { timeout: 30_000 }, () => {
+    it('merges JSON fetched from HTTP', { timeout: 60_000 }, () => {
       const localFile = join(tmpDir, 'overrides.json');
       writeFileSync(localFile, JSON.stringify({ extra: true }));
 
