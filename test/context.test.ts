@@ -3,6 +3,7 @@ import * as os from 'os';
 import * as path from 'path';
 import { afterEach, beforeEach, describe, it, expect } from 'vitest';
 import { resolveVariablesAndEnvironment } from '../src/context';
+import { isWindows } from '../src/shell';
 
 const cwd = process.cwd();
 
@@ -122,7 +123,10 @@ describe('resolveVariablesAndEnvironment', () => {
   it('resolves eligible nodes in declaration order (variables then environment)', async () => {
     const orderFile = path.join(tmpDir, 'order.txt');
     fs.writeFileSync(orderFile, '');
-    const append = (marker: string) => `printf '${marker}' >> '${orderFile}'`;
+    const append = (marker: string) =>
+      isWindows
+        ? `Add-Content -NoNewline -Path '${orderFile}' -Value '${marker}'`
+        : `printf '${marker}' >> '${orderFile}'`;
 
     await resolveVariablesAndEnvironment(
       {
