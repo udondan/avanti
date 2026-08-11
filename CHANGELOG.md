@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.29.0](https://github.com/udondan/avanti/compare/v0.28.1...v0.29.0) (2026-08-11)
+
+
+### Features
+
+* add environment: config block with dependency-graph variable resolution ([#386](https://github.com/udondan/avanti/issues/386)) ([331165e](https://github.com/udondan/avanti/commit/331165e601fba482f8b59f14612d492c1e04ebc5))
+
 ## [0.28.1](https://github.com/udondan/avanti/compare/v0.28.0...v0.28.1) (2026-07-29)
 
 
