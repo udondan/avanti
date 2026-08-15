@@ -16,7 +16,7 @@
         "eta": "4.6.0",
         "handlebars": "4.7.9",
         "js-yaml": "5.2.3",
-        "liquidjs": "10.28.0",
+        "liquidjs": "10.29.0",
         "mustache": "4.2.0",
         "nunjucks": "3.2.4",
         "smol-toml": "1.7.2",
@@ -447,7 +447,7 @@
 
     "lightningcss-win32-x64-msvc": ["lightningcss-win32-x64-msvc@1.32.0", "", { "os": "win32", "cpu": "x64" }, "sha512-Amq9B/SoZYdDi1kFrojnoqPLxYhQ4Wo5XiL8EVJrVsB8ARoC1PWW6VGtT0WKCemjy8aC+louJnjS7U18x3b06Q=="],
 
-    "liquidjs": ["liquidjs@10.28.0", "", { "dependencies": { "commander": "^10.0.0" }, "bin": { "liquid": "bin/liquid.js", "liquidjs": "bin/liquid.js" } }, "sha512-b6tmBXYMQTuGPnM5vB0CuZMo5kvmKMtSB/gvUWP6RFn2pIB5s+bJkBfIyJnattkc5bgeAiflrZVptx3iaLLioQ=="],
+    "liquidjs": ["liquidjs@10.29.0", "", { "dependencies": { "commander": "^10.0.0" }, "bin": { "liquid": "bin/liquid.js", "liquidjs": "bin/liquid.js" } }, "sha512-pCVOhs6FLAR8su3ItJ07diN26t6W5dHQRnmTMy8HPyTFuv1+oSCVJIGp5pGjfQyOZfh50KswvKtMTp6p4JEIdw=="],
 
     "locate-path": ["locate-path@6.0.0", "", { "dependencies": { "p-locate": "^5.0.0" } }, "sha512-iPZK6eYjbxRu3uB4/WZ3EsEIMJFMqAoopl3R+zuq0UjcAm/MO6KCweDgPfP3elTztoKP3KtnVHxTn2NHBSDVUw=="],
 
