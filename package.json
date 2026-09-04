@@ -42,9 +42,9 @@
     "url": "git+https://github.com/udondan/avanti.git"
   },
   "dependencies": {
-    "@aws-sdk/client-s3": "3.1121.0",
-    "@aws-sdk/client-secrets-manager": "3.1121.0",
-    "@aws-sdk/client-ssm": "3.1121.0",
+    "@aws-sdk/client-s3": "3.1123.0",
+    "@aws-sdk/client-secrets-manager": "3.1123.0",
+    "@aws-sdk/client-ssm": "3.1123.0",
     "chalk": "6.0.0",
     "commander": "15.0.0",
     "comment-json": "5.0.0",
