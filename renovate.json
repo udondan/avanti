@@ -2,7 +2,7 @@
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": ["config:recommended"],
   "semanticCommitType": "chore",
-  "mode": "auto",
+  "mode": "full",
   "prHourlyLimit": 10,
   "rebaseWhen": "behind-base-branch",
   "minimumReleaseAge": "3 days",
@@ -11,24 +11,8 @@
   "automergeStrategy": "squash",
   "packageRules": [
     {
-      "matchPackagePatterns": [".*"],
+      "matchPackageNames": ["/.*/"],
       "semanticCommitType": "chore"
-    }
-  ],
-  "customManagers": [
-    {
-      "customType": "regex",
-      "managerFilePatterns": [
-        "/^\\.github/workflows/.*\\.yml$/",
-        "/^mise\\.toml$/"
-      ],
-      "matchStrings": [
-        "bun-version: \"(?<currentValue>[^\"]+)\"",
-        "bun = \"(?<currentValue>[^\"]+)\""
-      ],
-      "depNameTemplate": "oven-sh/bun",
-      "datasourceTemplate": "github-releases",
-      "extractVersionTemplate": "^bun-v(?<version>.+)$"
     }
   ]
 }
