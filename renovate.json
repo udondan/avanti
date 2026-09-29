@@ -3,6 +3,7 @@
   "extends": ["config:recommended"],
   "semanticCommitType": "chore",
   "mode": "full",
+  "semanticCommits": "enabled",
   "prHourlyLimit": 10,
   "rebaseWhen": "behind-base-branch",
   "minimumReleaseAge": "3 days",
