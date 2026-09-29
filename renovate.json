@@ -1,20 +1,5 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": ["config:recommended"],
-  "semanticCommitType": "chore",
-  "mode": "full",
-  "semanticCommits": "enabled",
-  "labels": ["renovate"],
-  "prHourlyLimit": 10,
-  "rebaseWhen": "behind-base-branch",
-  "minimumReleaseAge": "3 days",
-  "automerge": true,
-  "automergeType": "pr",
-  "automergeStrategy": "squash",
-  "packageRules": [
-    {
-      "matchPackageNames": ["/.*/"],
-      "semanticCommitType": "chore"
-    }
-  ]
+  "extends": ["github>udondan/renovate-config"],
+  "prHourlyLimit": 10
 }
