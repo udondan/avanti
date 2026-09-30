@@ -374,7 +374,7 @@ avanti -c /shared/avanti.yml -w /project-b pull
 
 Avanti enforces that target paths cannot escape the working directory:
 
-- **Relative targets** are resolved under the working directory. A path like `../../etc/passwd` is rejected.
+- **Relative targets** are resolved under the working directory. A path like `../../outside/file.txt` is rejected.
 - **Absolute targets** (e.g. `/etc/hosts`) are only permitted when the working directory is `/`. If your working directory is any other path, absolute targets are an error.
 - **Home-directory targets** (`~/…`) are expanded to the home directory and then subject to the same working-directory constraint — the expanded path must fall within the working directory. The most common case is running `avanti` from `~` so that all `~/…` targets resolve within it.
 
