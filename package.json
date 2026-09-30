@@ -33,7 +33,7 @@
     "url": "https://github.com/sponsors/udondan"
   },
   "files": [
-    "dist/**/*.js",
+    "dist",
     "LICENSE"
   ],
   "license": "MIT",
