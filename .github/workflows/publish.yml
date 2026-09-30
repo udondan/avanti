@@ -1,10 +1,9 @@
----
 name: Publish
 
 on:
   workflow_dispatch:
-  release:
-    types: [created]
+  pull_request:
+    types: [opened, synchronize, reopened]
 
 jobs:
   publish:
@@ -14,6 +13,8 @@ jobs:
       id-token: write
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - uses: oven-sh/setup-bun@v2
         with:
@@ -22,7 +23,6 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: lts/*
-          registry-url: https://registry.npmjs.org
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
@@ -30,5 +30,20 @@ jobs:
       - name: Build
         run: bun run build
 
-      - name: Publish
-        run: npm publish --access public --provenance
+      - name: Set bisect version
+        run: |
+          git log -1 --format='Building %H %s'
+          npm version "0.28.0-bisect.${{ github.run_number }}.${{ github.run_attempt }}" --no-git-tag-version
+          node --version
+          npm --version
+          echo "--- npm config"
+          npm config list
+          echo "--- ~/.npmrc"
+          cat ~/.npmrc 2>/dev/null || echo "(none)"
+
+      - name: Stage publish
+        run: npm stage publish --access public --provenance --tag bisect --loglevel silly
+
+      - name: Dump npm debug log
+        if: always()
+        run: cat ~/.npm/_logs/*-debug-0.log 2>/dev/null || echo "(no debug log)"
