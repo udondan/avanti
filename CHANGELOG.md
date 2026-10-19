@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.29.2](https://github.com/udondan/avanti/compare/v0.29.1...v0.29.2) (2026-10-19)
+
+
+### Dependencies
+
+* **deps:** lock file maintenance ([#497](https://github.com/udondan/avanti/issues/497)) ([40725fc](https://github.com/udondan/avanti/commit/40725fc0532aca7a76abd0d40ebc332bac36fd27))
+* **deps:** pin dependencies ([#478](https://github.com/udondan/avanti/issues/478)) ([09e89c4](https://github.com/udondan/avanti/commit/09e89c4acb086502be881c5e4bed49f96d3f79bb))
+* **deps:** update aws-sdk-js-v3 monorepo to v3.1149.0 ([#485](https://github.com/udondan/avanti/issues/485)) ([d687fa1](https://github.com/udondan/avanti/commit/d687fa1f956ef1de370620077408ec0a99995590))
+* **deps:** update aws-sdk-js-v3 monorepo to v3.1150.0 ([#492](https://github.com/udondan/avanti/issues/492)) ([7223e3d](https://github.com/udondan/avanti/commit/7223e3d81b18c057d4905a8f08578ca473bf33fe))
+* **deps:** update aws-sdk-js-v3 monorepo to v3.1151.0 ([#493](https://github.com/udondan/avanti/issues/493)) ([492f58f](https://github.com/udondan/avanti/commit/492f58f89635c6d24e9688902b83bec2e27af0b9))
+* **deps:** update aws-sdk-js-v3 monorepo to v3.1152.0 ([#494](https://github.com/udondan/avanti/issues/494)) ([880c4c2](https://github.com/udondan/avanti/commit/880c4c26b5bfbe73c9042aea7e9170483758d38a))
+* **deps:** update dependency @types/node to v26.6.5 ([#479](https://github.com/udondan/avanti/issues/479)) ([8e45c23](https://github.com/udondan/avanti/commit/8e45c23a43170c3322c6e3bbff2e197bf33daca3))
+* **deps:** update dependency bun to v1.4.3 ([#480](https://github.com/udondan/avanti/issues/480)) ([b54167a](https://github.com/udondan/avanti/commit/b54167abb718ae0cc9ed212d8909f704c18e95f8))
+* **deps:** update dependency ejs to v7 ([#489](https://github.com/udondan/avanti/issues/489)) ([ea25724](https://github.com/udondan/avanti/commit/ea25724cb9085af6b3f51ba40fa263edbf6d7824))
+* **deps:** update dependency handlebars to v4.7.10 ([#481](https://github.com/udondan/avanti/issues/481)) ([4edd747](https://github.com/udondan/avanti/commit/4edd74702e7c24a183c8a2b90820ef39043a2353))
+* **deps:** update dependency js-yaml to v5.4.3 ([#482](https://github.com/udondan/avanti/issues/482)) ([a5fa022](https://github.com/udondan/avanti/commit/a5fa022d95b17a89561991caf3a95a684805400d))
+* **deps:** update dependency js-yaml to v5.5.0 ([#496](https://github.com/udondan/avanti/issues/496)) ([b523684](https://github.com/udondan/avanti/commit/b523684e9e0cf35a29be23a4dcbc32e5b6478346))
+* **deps:** update dependency liquidjs to v10.30.0 ([#486](https://github.com/udondan/avanti/issues/486)) ([65fcd05](https://github.com/udondan/avanti/commit/65fcd055397834a18d871d930418b645ff89ea87))
+* **deps:** update dependency smol-toml to v1.9.1 ([#483](https://github.com/udondan/avanti/issues/483)) ([3cfcd07](https://github.com/udondan/avanti/commit/3cfcd0700b63b66b164408c7969794fd58736ca9))
+* **deps:** update dependency typescript-eslint to v8.71.2 ([#491](https://github.com/udondan/avanti/issues/491)) ([936ca34](https://github.com/udondan/avanti/commit/936ca348fa3d24d664a21faafcd91f056db42439))
+* **deps:** update dependency vitest to v5.0.3 ([#484](https://github.com/udondan/avanti/issues/484)) ([5480524](https://github.com/udondan/avanti/commit/5480524916ccad4820a2dacae44d26dcff1a6427))
+* **deps:** update dependency vitest to v5.0.4 ([#490](https://github.com/udondan/avanti/issues/490)) ([77ef96d](https://github.com/udondan/avanti/commit/77ef96d0079a368dfdc49d4d24680f63c231baec))
+* **deps:** update dependency vitest to v5.0.5 ([#495](https://github.com/udondan/avanti/issues/495)) ([56477b1](https://github.com/udondan/avanti/commit/56477b1c3a3b707ea3e615c1b0d8e00d47e1dc06))
+* **deps:** update lint tooling ([#488](https://github.com/udondan/avanti/issues/488)) ([9d6ef01](https://github.com/udondan/avanti/commit/9d6ef01736f4eef5dc51bed5fea4f2b8a8d2337b))
+
 ## [0.29.1](https://github.com/udondan/avanti/compare/v0.29.0...v0.29.1) (2026-09-30)
 
 
