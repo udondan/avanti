@@ -30,6 +30,9 @@ jobs:
     runs-on: ${{ matrix.os }}
     needs: [changes]
     if: always() && (needs.changes.result == 'skipped' || (needs.changes.result == 'success' && needs.changes.outputs.src == 'true'))
+    permissions:
+      contents: read
+      id-token: write # Codecov upload via OIDC
     strategy:
       fail-fast: false
       matrix:
@@ -112,10 +115,17 @@ jobs:
         # No `if: runner.os == 'Linux'` guard: sudo integration tests only run
         # on Linux (env vars are unset on Windows), and other tests run on all
         # platforms. A single step covers both cases.
-        run: bun run test
+        run: bun run test -- --coverage --coverage.reporter=lcov --coverage.reporter=text
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITLAB_TOKEN: ${{ secrets.GITLAB_TOKEN }}
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
+        with:
+          use_oidc: true
+          fail_ci_if_error: false
+          files: coverage/lcov.info
 
   integration-tests-vault:
     runs-on: ubuntu-latest
