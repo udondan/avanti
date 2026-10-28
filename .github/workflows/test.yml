@@ -185,15 +185,32 @@ jobs:
         env:
           VAULT_ADDR: http://127.0.0.1:8200
 
+  actions:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        with:
+          install_args: actionlint shellcheck
+
+      # Also runs shellcheck over every `run:` block.
+      - name: actionlint
+        run: actionlint
+
   required:
     runs-on: ubuntu-latest
-    needs: [changes, test, integration-tests-vault]
+    needs: [changes, actions, test, integration-tests-vault]
     if: always()
     steps:
       - name: Check result
         run: |
           if [[ "${{ needs.changes.result }}" == "failure" || \
                 "${{ needs.changes.result }}" == "cancelled" || \
+                "${{ needs.actions.result }}" == "failure" || \
+                "${{ needs.actions.result }}" == "cancelled" || \
                 "${{ needs.test.result }}" == "failure" || \
                 "${{ needs.test.result }}" == "cancelled" || \
                 "${{ needs.integration-tests-vault.result }}" == "failure" || \
