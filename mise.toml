@@ -1,6 +1,6 @@
 [tools]
 node = "lts"
-bun = "1.4.3"
+bun = "1.4.4"
 # Used by the actions job in test.yml.
 actionlint = "1.7.12"
 # The runner's own shellcheck is older and reports differently. actionlint runs it over every `run:` block.
