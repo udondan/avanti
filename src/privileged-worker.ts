@@ -1424,7 +1424,7 @@ if (require.main === module) {
   );
   // Nonce is passed via AVANTI_WORKER_NONCE env var (not cmdline) so that
   // it does not appear in /proc/<pid>/cmdline, which is world-readable on Linux.
-  // The parent uses `sudo -E` to forward the env var to this process.
+  // The parent uses `sudo --preserve-env=AVANTI_WORKER_NONCE` to forward it.
   const nonce = process.env.AVANTI_WORKER_NONCE;
   const reqFileArg = process.argv.find((a) => a.startsWith('--req-file='));
 
@@ -1440,7 +1440,7 @@ if (require.main === module) {
     if (!nonce) {
       process.stderr.write(
         'avanti-worker: AVANTI_WORKER_NONCE is not set — sudo env_reset may have stripped it.\n' +
-          'Add `Defaults env_keep += "AVANTI_WORKER_NONCE"` to /etc/sudoers or use NOPASSWD with -E.\n',
+          'Add `Defaults env_keep += "AVANTI_WORKER_NONCE"` to /etc/sudoers or allow SETENV for the invoking user.\n',
       );
       process.exit(1);
     }
