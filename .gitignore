@@ -7,3 +7,4 @@ dist/
 test-run/
 .DS_Store
 **/.DS_Store
+coverage/
