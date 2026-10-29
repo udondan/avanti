@@ -5,14 +5,20 @@ on:
   workflow_dispatch:
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   changes:
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
+    permissions:
+      contents: read
+      pull-requests: read # paths-filter lists the PR's files via the API
     outputs:
       src: ${{ steps.filter.outputs.src }}
     steps:
-      - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4
+      - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
         id: filter
         with:
           filters: |
@@ -39,10 +45,12 @@ jobs:
         os: [ubuntu-latest, windows-2022]
     steps:
       - uses: actions/checkout@v7
-
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
-          bun-version: '1.4.3'
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: '1.4.4'
 
       - uses: actions/setup-node@v7
         with:
@@ -133,10 +141,12 @@ jobs:
     if: always() && (needs.changes.result == 'skipped' || (needs.changes.result == 'success' && needs.changes.outputs.src == 'true'))
     steps:
       - uses: actions/checkout@v7
-
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
-          bun-version: '1.4.3'
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: '1.4.4'
 
       - uses: actions/setup-node@v7
         with:
@@ -146,7 +156,7 @@ jobs:
         run: bun install --frozen-lockfile
 
       - name: Start Vault, seed secrets and run integration tests
-        uses: nick-invision/retry@ad984534de44a9489a53aefd81eb77f87c70dc60 # v4
+        uses: nick-invision/retry@ad984534de44a9489a53aefd81eb77f87c70dc60 # v4.0.0
         with:
           max_attempts: 3
           timeout_minutes: 10
@@ -195,15 +205,37 @@ jobs:
         env:
           VAULT_ADDR: http://127.0.0.1:8200
 
+  actions:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: jdx/mise-action@82a612c5ab8bcda7cc5db6b7e81a8e7584c3dc6e # v5.2.3
+        with:
+          install_args: actionlint shellcheck zizmor
+
+      # Also runs shellcheck over every `run:` block.
+      - name: actionlint
+        run: actionlint
+
+      - name: zizmor
+        run: zizmor .
+        env:
+          GH_TOKEN: ${{ github.token }} # zizmor checks the actions online
+
   required:
     runs-on: ubuntu-latest
-    needs: [changes, test, integration-tests-vault]
+    needs: [changes, actions, test, integration-tests-vault]
     if: always()
     steps:
       - name: Check result
         run: |
           if [[ "${{ needs.changes.result }}" == "failure" || \
                 "${{ needs.changes.result }}" == "cancelled" || \
+                "${{ needs.actions.result }}" == "failure" || \
+                "${{ needs.actions.result }}" == "cancelled" || \
                 "${{ needs.test.result }}" == "failure" || \
                 "${{ needs.test.result }}" == "cancelled" || \
                 "${{ needs.integration-tests-vault.result }}" == "failure" || \

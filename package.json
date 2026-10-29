@@ -42,14 +42,14 @@
     "url": "git+https://github.com/udondan/avanti.git"
   },
   "dependencies": {
-    "@aws-sdk/client-s3": "3.1152.0",
-    "@aws-sdk/client-secrets-manager": "3.1152.0",
-    "@aws-sdk/client-ssm": "3.1152.0",
+    "@aws-sdk/client-s3": "3.1156.0",
+    "@aws-sdk/client-secrets-manager": "3.1156.0",
+    "@aws-sdk/client-ssm": "3.1156.0",
     "chalk": "6.0.1",
     "commander": "15.0.0",
     "comment-json": "5.0.0",
     "diff": "9.0.0",
-    "ejs": "7.0.1",
+    "ejs": "7.0.2",
     "eta": "4.6.0",
     "handlebars": "4.7.10",
     "js-yaml": "5.5.0",
@@ -72,12 +72,12 @@
     "@types/tar": "7.0.87",
     "@types/unzipper": "0.10.11",
     "@vitest/coverage-v8": "5.0.5",
-    "eslint": "10.12.0",
+    "eslint": "10.13.0",
     "eslint-config-prettier": "10.1.8",
     "prettier": "3.9.10",
     "tsx": "4.23.15",
     "typescript": "6.0.3",
-    "typescript-eslint": "8.71.2",
+    "typescript-eslint": "8.72.0",
     "vitest": "5.0.5"
   }
 }

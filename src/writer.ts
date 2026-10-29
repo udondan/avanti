@@ -65,6 +65,10 @@ export interface WriteTarget {
 
 export type SudoWriteTarget = WriteTarget & { sudo: true | string };
 
+// Forwards only the worker nonce through sudo. `-E` would forward the whole
+// environment, but sudo-rs (the default sudo since Ubuntu 26.04) ignores it.
+const SUDO_PRESERVE_NONCE_ARG = '--preserve-env=AVANTI_WORKER_NONCE';
+
 export function sudoUserArgs(sudo: true | string): string[] {
   return typeof sudo === 'string' ? ['-u', sudo] : [];
 }
@@ -433,10 +437,10 @@ function runPrivilegedWorker(
     result = spawnSync(
       'sudo',
       [
-        // -E: forward AVANTI_WORKER_NONCE to the worker so it can verify the
+        // Forward AVANTI_WORKER_NONCE to the worker so it can verify the
         // nonce embedded in the first stdin line. Required only for the stdin
         // (named-user) path; the req-file (root) path does not use a nonce.
-        ...(reqPath ? [] : ['-E']),
+        ...(reqPath ? [] : [SUDO_PRESERVE_NONCE_ARG]),
         ...sudoUserArgs(sudo),
         nodeExec,
         resolvedWorkerPath,
@@ -1287,7 +1291,8 @@ export class SudoWorkerSession {
     // connecting first. It is passed to the worker via AVANTI_WORKER_NONCE env
     // (not cmdline) because /proc/<pid>/cmdline is world-readable on Linux,
     // while /proc/<pid>/environ is readable only by the process owner. The parent
-    // uses `sudo -E` to forward the env var; this requires that the invoking
+    // uses `sudo --preserve-env=AVANTI_WORKER_NONCE` to forward the env var;
+    // this requires that the invoking
     // user's sudoers entry does not set `!setenv`. A full mitigation would use
     // SO_PEERCRED/SCM_CREDENTIALS (Linux-only) to verify the connecting PID.
     //
@@ -1551,11 +1556,11 @@ export class SudoWorkerSession {
         this.proc = spawn(
           'sudo',
           [
-            // -E: forward AVANTI_WORKER_NONCE from the parent env to the worker.
+            // Forward AVANTI_WORKER_NONCE from the parent env to the worker.
             // This requires the invoking user's sudoers entry to allow setenv
             // (i.e. not have !setenv). If denied, sudo exits non-zero before the
             // worker starts and exec() rejects via the proc.on('close') handler.
-            '-E',
+            SUDO_PRESERVE_NONCE_ARG,
             ...sudoUserArgs(sudo),
             nodeExec,
             resolvedWorkerPath,
