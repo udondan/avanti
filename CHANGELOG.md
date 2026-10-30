@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.29.3](https://github.com/udondan/avanti/compare/v0.29.2...v0.29.3) (2026-10-30)
+
+
+### Bug Fixes
+
+* forward worker nonce through sudo-rs ([#505](https://github.com/udondan/avanti/issues/505)) ([b666a51](https://github.com/udondan/avanti/commit/b666a51005ee93cc2d6c0a492c814b3e2071755c))
+
+
+### Dependencies
+
+* **deps:** lock file maintenance ([#502](https://github.com/udondan/avanti/issues/502)) ([6044b49](https://github.com/udondan/avanti/commit/6044b498c50842b8c20d0f2c6433bc3aa8fde2ea))
+* **deps:** update aws-sdk-js-v3 monorepo to v3.1153.0 ([#500](https://github.com/udondan/avanti/issues/500)) ([263ef62](https://github.com/udondan/avanti/commit/263ef62346e2127eb8c84e51a829b82f5d9c5781))
+* **deps:** update aws-sdk-js-v3 monorepo to v3.1157.0 ([#509](https://github.com/udondan/avanti/issues/509)) ([cda456b](https://github.com/udondan/avanti/commit/cda456b9b364c68c2225d3811c8d48bdb7baf0e3))
+* **deps:** update aws-sdk-js-v3 monorepo to v3.1158.0 ([#511](https://github.com/udondan/avanti/issues/511)) ([3d64b69](https://github.com/udondan/avanti/commit/3d64b690af5753c24584dbdbe145d7912f9e8d7e))
+* **deps:** update dependency bun to v1.4.4 ([#501](https://github.com/udondan/avanti/issues/501)) ([0fe491e](https://github.com/udondan/avanti/commit/0fe491ec2c46341de35fdb87166f4be20fbcd233))
+* **deps:** update dependency ejs to v7.0.2 ([#499](https://github.com/udondan/avanti/issues/499)) ([001320b](https://github.com/udondan/avanti/commit/001320be3ec5186e6ffc12f3aadc68b2b5488907))
+* **deps:** update dependency eslint to v10.13.0 ([#498](https://github.com/udondan/avanti/issues/498)) ([3728dfe](https://github.com/udondan/avanti/commit/3728dfea5dd7cc5b09a298c4b6be8ccc2d0e072f))
+* **deps:** update dependency typescript-eslint to v8.72.1 ([#508](https://github.com/udondan/avanti/issues/508)) ([5c678ba](https://github.com/udondan/avanti/commit/5c678baddf5a4021c9073470b59d5546f8aef395))
+* **deps:** update jdx/mise-action action to v5 ([#507](https://github.com/udondan/avanti/issues/507)) ([aa056c3](https://github.com/udondan/avanti/commit/aa056c30b36a11b821792e8f35dcdee11e884974))
+* **deps:** update jdx/mise-action action to v5.2.4 ([#510](https://github.com/udondan/avanti/issues/510)) ([b51c22e](https://github.com/udondan/avanti/commit/b51c22e756f0c3d396bebd3d06202e1807a89812))
+
 ## [0.29.2](https://github.com/udondan/avanti/compare/v0.29.1...v0.29.2) (2026-10-19)
 
 
