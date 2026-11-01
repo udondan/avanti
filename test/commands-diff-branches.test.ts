@@ -131,6 +131,24 @@ describe('diff: defaults', () => {
   });
 });
 
+describe('diff: templates', () => {
+  it('renders each file of a directory source', async () => {
+    const dir = path.join(env.work, 'tpl');
+    fs.mkdirSync(dir);
+    fs.writeFileSync(path.join(dir, 'a.txt'), 'hi {{ name }}');
+    env.writeConfig(`variables:
+  name: world
+files:
+  out/:
+    src: ${JSON.stringify(dir + path.sep)}
+    template: handlebars
+`);
+    const res = await diff();
+    expect(res.code).toBe(1);
+    expect(res.stdout).toContain('hi world');
+  });
+});
+
 describe('diff: remote config', () => {
   let server: http.Server;
   let url: string;
