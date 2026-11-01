@@ -143,6 +143,9 @@ jobs:
           use_oidc: true
           fail_ci_if_error: false
           files: coverage/lcov.info,coverage/child/lcov.info
+          # Without this, Codecov also uploads the unfiltered c8 report from
+          # coverage/child-raw, which counts comments as lines.
+          disable_search: true
 
   # Codecov reports its result as the check runs codecov/project and
   # codecov/patch. This job waits for them, so a coverage drop fails the
