@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { MockInstance } from 'vitest';
-import { fetchWithRetry, _testable } from '../src/fetch';
+import { fetchWithRetry, redactUrl, _testable } from '../src/fetch';
 import { setVerbose } from '../src/logger';
 
 function makeResponse(
@@ -217,5 +217,77 @@ describe('fetchWithRetry', () => {
       const output = stderrSpy.mock.calls.map((c) => String(c[0])).join('');
       expect(output).not.toContain('network error');
     });
+  });
+});
+
+describe('fetchWithRetry — verbose retry logging', () => {
+  afterEach(() => {
+    setVerbose(false);
+  });
+
+  it('logs the retry delay when verbose is enabled', async () => {
+    const stderrSpy = vi
+      .spyOn(process.stderr, 'write')
+      .mockImplementation(() => true);
+    setVerbose(true);
+    vi.spyOn(global, 'fetch')
+      .mockResolvedValueOnce(makeResponse(503))
+      .mockResolvedValue(makeResponse(200));
+
+    await fetchWithRetry('https://example.com/file');
+
+    const output = stderrSpy.mock.calls.map((c) => String(c[0])).join('');
+    expect(output).toContain('-> retrying in 1000ms (status 503)');
+  });
+});
+
+describe('_testable.sleep', () => {
+  it('resolves after the given delay', async () => {
+    sleepSpy.mockRestore();
+    await expect(_testable.sleep(5)).resolves.toBeUndefined();
+  });
+});
+
+describe('redactUrl', () => {
+  it.each([
+    'token',
+    'access_token',
+    'api_key',
+    'key',
+    'secret',
+    'password',
+    'auth',
+    'sig',
+    'signature',
+    'TOKEN',
+  ])('redacts the generic sensitive query parameter %s', (param) => {
+    expect(redactUrl(`https://example.com/f?${param}=abc`)).toBe(
+      `https://example.com/f?${param}=***`,
+    );
+  });
+
+  it('redacts AWS and GCP pre-signed URL parameters', () => {
+    const out = redactUrl(
+      'https://example.com/f?X-Amz-Signature=a&X-Goog-Credential=b&page=2',
+    );
+    expect(out).toContain('X-Amz-Signature=***');
+    expect(out).toContain('X-Goog-Credential=***');
+    expect(out).toContain('page=2');
+  });
+
+  it('leaves non-sensitive query parameters untouched', () => {
+    expect(redactUrl('https://example.com/f?ref=main')).toBe(
+      'https://example.com/f?ref=main',
+    );
+  });
+
+  it('strips basic-auth credentials', () => {
+    expect(redactUrl('https://user:pass@example.com/f')).toBe(
+      'https://example.com/f',
+    );
+  });
+
+  it('redacts scp-style user:pass@ in strings that are not URLs', () => {
+    expect(redactUrl('user:secret@host:repo.git')).toBe('***@host:repo.git');
   });
 });

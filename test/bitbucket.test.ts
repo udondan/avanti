@@ -213,6 +213,26 @@ describe('fetchBitbucket — ref resolution', () => {
     expect(mockFetch.mock.calls[1][0] as string).toContain('/src/v1.9.0/');
   });
 
+  it('throws when the $latest tag listing request fails', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response('Forbidden', { status: 403 }),
+    );
+
+    await expect(
+      fetchBitbucket('ws', 'repo', 'file.txt', '$latest'),
+    ).rejects.toThrow('Failed to list tags for ws/repo: HTTP 403');
+  });
+
+  it('throws when the pattern tag listing request fails', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response('Forbidden', { status: 403 }),
+    );
+
+    await expect(
+      fetchBitbucket('ws', 'repo', 'file.txt', '/^v1\\./'),
+    ).rejects.toThrow('Failed to list tags for ws/repo: HTTP 403');
+  });
+
   it('throws when pattern matches no tags', async () => {
     vi.spyOn(globalThis, 'fetch').mockImplementation(() =>
       Promise.resolve(jsonResponse({ values: [{ name: 'v2.0.0' }] })),
@@ -273,6 +293,20 @@ describe('fetchBitbucket — directory fetch (trailing slash)', () => {
     expect(result.files.size).toBe(2);
     expect(result.files.get('a.txt')?.toString('utf8')).toBe('content of a');
     expect(result.files.get('b.txt')?.toString('utf8')).toBe('content of b');
+  });
+
+  it('throws when fetching a listed file fails', async () => {
+    vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(
+        jsonResponse({
+          values: [{ type: 'commit_file', path: 'docs/a.txt' }],
+        }),
+      )
+      .mockResolvedValueOnce(new Response('Not Found', { status: 404 }));
+
+    await expect(fetchBitbucket('ws', 'repo', 'docs/', 'main')).rejects.toThrow(
+      'Failed to fetch docs/a.txt from ws/repo@main: HTTP 404',
+    );
   });
 
   it('paginates through multiple pages of directory listings', async () => {

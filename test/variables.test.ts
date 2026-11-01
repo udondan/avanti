@@ -910,3 +910,103 @@ describe('resolveVars — braced ${expr} syntax', () => {
     ).toThrow('Property "toString" not found');
   });
 });
+
+describe('variables — remaining edge cases', () => {
+  it('rejects property access on an array', () => {
+    expect(() => resolveVars('${list.x}', { list: ['a'] })).toThrow(
+      'Cannot access property "x" on non-object in "${list.x}"',
+    );
+  });
+
+  it('rejects an index on a non-array', () => {
+    expect(() => resolveVars('${db[0]}', { db: { host: 'x' } })).toThrow(
+      'Cannot use index [0] on non-array in "${db[0]}"',
+    );
+  });
+
+  describe('on win32', () => {
+    const realPlatform = process.platform;
+    beforeEach(() => {
+      Object.defineProperty(process, 'platform', { value: 'win32' });
+    });
+    afterEach(() => {
+      Object.defineProperty(process, 'platform', { value: realPlatform });
+    });
+
+    it('shell-quotes values PowerShell-style', () => {
+      expect(resolveVarsShellSafe('echo $msg', { msg: "it's" })).toBe(
+        "echo 'it''s'",
+      );
+    });
+
+    it('compares backup paths case-insensitively', () => {
+      expect(() =>
+        assertBackupPathAllowed('C:/Work', 'c:\\work', []),
+      ).not.toThrow();
+    });
+  });
+
+  it('rejects relative backup_roots entries', () => {
+    expect(() =>
+      assertBackupPathAllowed('/tmp/b/f.bkp', '/work', ['relative/dir']),
+    ).toThrow(
+      'backup_roots entry "relative/dir" is a relative path. Use an absolute path or ~/',
+    );
+  });
+
+  it('expands ~/ in a backup path pattern', () => {
+    const home = os.homedir();
+    const target = path.join(home, 'avanti-nonexistent-target.txt');
+    const result = resolveBackupPath(
+      '~/avanti-nonexistent-backup.bkp',
+      target,
+      home,
+      {},
+      [],
+    );
+    expect(result).toBe(path.join(home, 'avanti-nonexistent-backup.bkp'));
+  });
+});
+
+describe('resolveVariableSpec — remaining edge cases', () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'avanti-varspec-'));
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('rejects class instances in programmatic values', async () => {
+    await expect(
+      resolveVariableSpec({ v: { when: new Date(0) } } as never, tmpDir),
+    ).rejects.toThrow(
+      'Variable value contains a non-plain object (Date) at .when',
+    );
+  });
+
+  it('names objects without a constructor as unknown', async () => {
+    const odd = Object.create(Object.create(null) as object) as object;
+    await expect(
+      resolveVariableSpec({ v: { odd } } as never, tmpDir),
+    ).rejects.toThrow('non-plain object (unknown)');
+  });
+
+  it('rejects sources with several files', async () => {
+    fs.writeFileSync(path.join(tmpDir, 'a'), 'a');
+    fs.writeFileSync(path.join(tmpDir, 'b'), 'b');
+    await expect(
+      resolveVariableSpec({ v: { src: { path: tmpDir } } }, tmpDir),
+    ).rejects.toThrow('variables.v: source resolved to multiple files');
+  });
+
+  it('rejects binary content', async () => {
+    const file = path.join(tmpDir, 'bin');
+    fs.writeFileSync(file, Buffer.from([0, 1, 2, 3]));
+    await expect(
+      resolveVariableSpec({ v: { src: { path: file } } }, tmpDir),
+    ).rejects.toThrow('variables.v: source resolved to binary content');
+  });
+});

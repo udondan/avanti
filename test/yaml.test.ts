@@ -248,3 +248,38 @@ describe('trailing newline', () => {
     expect(formatYaml('a: 1')).toMatch(/\n$/);
   });
 });
+
+describe('mergeYaml — non-map documents', () => {
+  it('keeps identical root sequences', () => {
+    expect(mergeYaml(['- a\n', '- a\n'], { conflicts: 'abort' })).toBe('- a\n');
+  });
+
+  it('abort throws on differing root values', () => {
+    expect(() => mergeYaml(['- a\n', '- b\n'], { conflicts: 'abort' })).toThrow(
+      'YAML conflict at (root)',
+    );
+  });
+
+  it('last_wins replaces the root value', () => {
+    expect(mergeYaml(['- a\n', 'plain\n'])).toBe('plain\n');
+  });
+
+  it('first_wins keeps the root value', () => {
+    expect(mergeYaml(['- a\n', '- b\n'], { conflicts: 'first_wins' })).toBe(
+      '- a\n',
+    );
+  });
+
+  it('takes the overlay when the base document is empty', () => {
+    expect(mergeYaml(['', 'a: 1\n'])).toBe('a: 1\n');
+  });
+
+  it('treats keys without a value node as null', () => {
+    expect(mergeYaml(['? k\n', 'k: null\n'], { conflicts: 'abort' })).toBe(
+      '? k\n',
+    );
+    expect(() =>
+      mergeYaml(['? k\n', 'k: 1\n'], { conflicts: 'abort' }),
+    ).toThrow('YAML conflict at k');
+  });
+});

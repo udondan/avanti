@@ -218,6 +218,43 @@ describe('fetchVault — HTTP API path', () => {
     ).rejects.toThrow('Field "missing_field" not found');
   });
 
+  it('throws when the KV v1 response has no data', async () => {
+    vi.spyOn(global, 'fetch')
+      .mockResolvedValueOnce(new Response(null, { status: 404 }))
+      .mockResolvedValue(new Response(JSON.stringify({}), { status: 200 }));
+
+    await expect(fetchVault('secret/myapp/db')).rejects.toThrow(
+      'No data found at secret/myapp/db',
+    );
+  });
+
+  it('extracts a specific field from a KV v1 response', async () => {
+    vi.spyOn(global, 'fetch')
+      .mockResolvedValueOnce(new Response(null, { status: 404 }))
+      .mockResolvedValue(
+        new Response(JSON.stringify({ data: { apikey: 42 } }), {
+          status: 200,
+        }),
+      );
+
+    const result = await fetchVault('secret/myapp/token', 'apikey');
+    expect(result.files.get('apikey')?.toString('utf8')).toBe('42');
+  });
+
+  it('throws when the field is missing from a KV v1 response', async () => {
+    vi.spyOn(global, 'fetch')
+      .mockResolvedValueOnce(new Response(null, { status: 404 }))
+      .mockResolvedValue(
+        new Response(JSON.stringify({ data: { apikey: 'x' } }), {
+          status: 200,
+        }),
+      );
+
+    await expect(fetchVault('secret/myapp/token', 'nope')).rejects.toThrow(
+      'Field "nope" not found at secret/myapp/token',
+    );
+  });
+
   it('throws when HTTP request fails (both v2 and v1)', async () => {
     vi.spyOn(global, 'fetch')
       .mockResolvedValueOnce(new Response(null, { status: 403 })) // v2 fails

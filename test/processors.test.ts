@@ -163,6 +163,12 @@ describe('applyTemplate', () => {
   const fixtureOutput =
     'app: myapp\nversion: 1.2.3\nurl: https://example.com/myapp/1.2.3\n';
 
+  it('rejects unsupported engine names', async () => {
+    await expect(
+      applyTemplate('x', 'bogus' as unknown as 'ejs', {}),
+    ).rejects.toThrow('Unsupported template engine: bogus');
+  });
+
   it('renders handlebars fixture ({{var}} syntax, variable used twice)', async () => {
     expect(
       await applyTemplate(fixture('app.hbs'), 'handlebars', fixtureVars),

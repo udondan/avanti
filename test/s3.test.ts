@@ -14,6 +14,7 @@ vi.mock('@aws-sdk/client-s3', () => {
 });
 
 import { fetchS3 } from '../src/sources/s3';
+import { setVerbose } from '../src/logger';
 
 function fakeBody(content: string) {
   return {
@@ -162,5 +163,25 @@ describe('fetchS3 — directory prefix', () => {
     await expect(fetchS3('s3://my-bucket/prefix/')).rejects.toThrow(
       'No body returned',
     );
+  });
+});
+
+describe('fetchS3 — verbose logging', () => {
+  it('logs each GetObject under a prefix when verbose is enabled', async () => {
+    const stderrSpy = vi
+      .spyOn(process.stderr, 'write')
+      .mockImplementation(() => true);
+    setVerbose(true);
+    try {
+      mockSend
+        .mockResolvedValueOnce({ Contents: [{ Key: 'prefix/a.txt' }] })
+        .mockResolvedValueOnce({ Body: fakeBody('content') });
+      await fetchS3('s3://my-bucket/prefix/');
+      const output = stderrSpy.mock.calls.map((c) => String(c[0])).join('');
+      expect(output).toContain('s3 GetObject s3://my-bucket/prefix/a.txt');
+    } finally {
+      setVerbose(false);
+      stderrSpy.mockRestore();
+    }
   });
 });

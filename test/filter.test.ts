@@ -189,3 +189,29 @@ describe('applyFilter — no match throws', () => {
     expect(() => applyFilter(files, ['x.txt', 'y.txt'])).toThrow('2 patterns');
   });
 });
+
+describe('filter — remaining edge cases', () => {
+  const files = new Map([['a/b.txt', Buffer.from('x')]]);
+
+  it('rejects an invalid regex pattern', () => {
+    expect(() => applyFilter(files, ['/(/'])).toThrow(
+      'pattern "/(/": invalid regex',
+    );
+  });
+
+  it('rejects directory prefixes with many brace alternatives', () => {
+    expect(() => applyFilter(files, ['{a,b,c}/'])).toThrow(
+      'brace expansion is not supported in directory-prefix patterns',
+    );
+  });
+
+  it.each([
+    ['without braces', 'plain'],
+    ['with an unclosed brace', 'x{abc'],
+    ['with a comma-less group', '{abc}'],
+  ])('enforces the expansion limit for patterns %s', (_label, pattern) => {
+    expect(() => expandBraces(pattern, 0)).toThrow(
+      'brace expansion exceeds 0 entries',
+    );
+  });
+});

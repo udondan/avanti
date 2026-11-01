@@ -24,6 +24,12 @@ describe('computeContentSha256', () => {
   it('differs for different content', () => {
     expect(computeContentSha256('foo')).not.toBe(computeContentSha256('bar'));
   });
+
+  it('hashes a Buffer the same as the equivalent UTF-8 string', () => {
+    expect(computeContentSha256(Buffer.from('héllo', 'utf8'))).toBe(
+      computeContentSha256('héllo'),
+    );
+  });
 });
 
 // ---------------------------------------------------------------------------

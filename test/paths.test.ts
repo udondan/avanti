@@ -2,7 +2,13 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { expandBraces, expandTilde, resolveFollowSymlink } from '../src/paths';
+import {
+  buildEntryPreVars,
+  expandBraces,
+  expandTilde,
+  resolveFollowSymlink,
+  resolveTargetPath,
+} from '../src/paths';
 
 describe('expandTilde', () => {
   it('expands bare ~ to the home directory', () => {
@@ -314,5 +320,136 @@ describe('expandBraces', () => {
       'config/dev.yml',
       'config/prod.yml',
     ]);
+  });
+
+  it('throws when a single group has more alternatives than the limit', () => {
+    expect(() => expandBraces('{a,b,c}', 2)).toThrow(
+      'brace expansion exceeds 2 entries',
+    );
+  });
+
+  it('throws when the expanded results exceed the limit', () => {
+    expect(() => expandBraces('plain', 0)).toThrow(
+      'brace expansion exceeds 0 entries',
+    );
+  });
+});
+
+describe('resolveTargetPath', () => {
+  const wd = path.join(os.tmpdir(), 'avanti-target-wd');
+  const home = os.homedir();
+
+  it('resolves relPath against workingDir when there is no target', () => {
+    expect(resolveTargetPath({}, 'a/b.txt', wd)).toBe(
+      path.join(wd, 'a', 'b.txt'),
+    );
+  });
+
+  it('resolves a relative file target, substituting variables', () => {
+    expect(
+      resolveTargetPath({ target: '$name.txt' }, 'ignored', wd, {
+        name: 'out',
+      }),
+    ).toBe(path.join(wd, 'out.txt'));
+  });
+
+  it('appends relPath to a relative directory target', () => {
+    expect(resolveTargetPath({ target: 'dir/' }, 'f.txt', wd)).toBe(
+      path.join(wd, 'dir', 'f.txt'),
+    );
+  });
+
+  it('rejects relative targets that escape the working directory', () => {
+    expect(() => resolveTargetPath({ target: '../x' }, '', wd)).toThrow(
+      'escapes working directory',
+    );
+  });
+
+  it('accepts absolute file and directory targets inside workingDir', () => {
+    const file = path.join(wd, 'abs.txt');
+    expect(resolveTargetPath({ target: file }, 'ignored', wd)).toBe(file);
+    expect(
+      resolveTargetPath({ target: path.join(wd, 'dir') + '/' }, 'f.txt', wd),
+    ).toBe(path.join(wd, 'dir', 'f.txt'));
+  });
+
+  it('rejects absolute targets outside workingDir', () => {
+    expect(() =>
+      resolveTargetPath({ target: path.join(home, 'x') }, '', wd),
+    ).toThrow('escapes working directory');
+  });
+
+  it('resolves ~/ file and directory targets under home', () => {
+    expect(resolveTargetPath({ target: '~/a.txt' }, 'ignored', home)).toBe(
+      path.join(home, 'a.txt'),
+    );
+    expect(resolveTargetPath({ target: '~/d/' }, 'f.txt', home)).toBe(
+      path.join(home, 'd', 'f.txt'),
+    );
+  });
+
+  it('rejects ~/ targets that escape the home directory', () => {
+    expect(() =>
+      resolveTargetPath({ target: '~/../elsewhere' }, '', home),
+    ).toThrow('escapes home directory');
+  });
+
+  it('rejects ~/ targets outside workingDir', () => {
+    expect(() => resolveTargetPath({ target: '~/a.txt' }, '', wd)).toThrow(
+      'escapes working directory',
+    );
+  });
+
+  describe('on win32', () => {
+    const realPlatform = process.platform;
+    beforeEach(() => {
+      Object.defineProperty(process, 'platform', { value: 'win32' });
+    });
+    afterEach(() => {
+      Object.defineProperty(process, 'platform', { value: realPlatform });
+    });
+
+    it('compares paths case-insensitively', () => {
+      expect(resolveTargetPath({}, '', wd.toUpperCase())).toBe(
+        path.resolve(wd.toUpperCase()),
+      );
+    });
+  });
+});
+
+describe('buildEntryPreVars', () => {
+  const wd = path.join(os.tmpdir(), 'avanti-prevars-wd');
+  const vars = { v: 'x' };
+
+  it('returns the global vars for $self and entries without target', () => {
+    const entry = { src: 'a', target: 'out.txt' };
+    expect(buildEntryPreVars(entry, true, wd, vars)).toBe(vars);
+    expect(buildEntryPreVars({ src: 'a', target: '' }, false, wd, vars)).toBe(
+      vars,
+    );
+  });
+
+  it('adds per-file vars for a fixed target', () => {
+    const pre = buildEntryPreVars(
+      { src: 'a', target: '$v.txt' },
+      false,
+      wd,
+      vars,
+    );
+    expect(pre.v).toBe('x');
+    expect(pre.path).toBe(path.join(wd, 'x.txt'));
+    expect(pre.filename).toBe('x.txt');
+  });
+
+  it('returns the global vars for directory targets', () => {
+    expect(
+      buildEntryPreVars({ src: 'a', target: 'dir/' }, false, wd, vars),
+    ).toBe(vars);
+  });
+
+  it('returns the global vars when the target cannot be resolved', () => {
+    expect(
+      buildEntryPreVars({ src: 'a', target: '$missing' }, false, wd, vars),
+    ).toBe(vars);
   });
 });

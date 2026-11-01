@@ -255,7 +255,7 @@ describe('extractArchive — path traversal protection', () => {
   // Build a minimal raw ZIP with arbitrary entry paths so we can inject paths
   // that real zip tools would normally normalise away.
   function makeDangerousZipBuffer(
-    entries: Array<{ path: string; content: string }>,
+    entries: Array<{ path: string; content: string; type?: string }>,
   ): Buffer {
     const localParts: Buffer[] = [];
     const centralParts: Buffer[] = [];
@@ -296,10 +296,10 @@ describe('extractArchive — path traversal protection', () => {
   // Build a raw (uncompressed) tar buffer with arbitrary entry paths so we can
   // inject paths that tar.create() would normally normalise away.
   function makeDangerousTarBuffer(
-    entries: Array<{ path: string; content: string }>,
+    entries: Array<{ path: string; content: string; type?: string }>,
   ): Buffer {
     const blocks: Buffer[] = [];
-    for (const { path: entryPath, content } of entries) {
+    for (const { path: entryPath, content, type = '0' } of entries) {
       const header = Buffer.alloc(512, 0);
       header.write(entryPath.slice(0, 100), 0, 'ascii');
       header.write('0000644\0', 100, 'ascii');
@@ -314,7 +314,7 @@ describe('extractArchive — path traversal protection', () => {
         136,
         'ascii',
       );
-      header.write('0', 156, 'ascii');
+      header.write(type, 156, 'ascii');
       header.write('ustar\0', 257, 'ascii');
       header.write('00', 263, 'ascii');
       // Checksum: fill field with spaces, sum all bytes, then write octal
@@ -333,6 +333,18 @@ describe('extractArchive — path traversal protection', () => {
     blocks.push(Buffer.alloc(1024, 0));
     return Buffer.concat(blocks);
   }
+
+  it('skips non-file tar entries and entries that normalise to "."', async () => {
+    const buffer = makeDangerousTarBuffer([
+      { path: 'dir/', content: '', type: '5' },
+      { path: 'link', content: '', type: '2' },
+      { path: '.', content: 'dot' },
+      { path: 'keep.txt', content: 'kept' },
+    ]);
+    const files = await extractArchive(buffer, 'archive.tar');
+    expect([...files.keys()]).toEqual(['keep.txt']);
+    expect(files.get('keep.txt')?.toString()).toBe('kept');
+  });
 
   it('rejects tar entries with .. segments', async () => {
     const buffer = makeDangerousTarBuffer([

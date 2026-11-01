@@ -424,3 +424,12 @@ describe('mergeJson — three sources', () => {
     expect(result.a).toBe(1);
   });
 });
+
+describe('formatJson — trailing_commas with escapes', () => {
+  it('ignores // and escaped quotes inside strings when locating comments', () => {
+    const input = '{\n  "url": "say \\"http://x\\"" // note\n}';
+    expect(formatJson(input, { trailingCommas: true })).toBe(
+      '{\n  "url": "say \\"http://x\\"", // note\n}\n',
+    );
+  });
+});
