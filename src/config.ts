@@ -457,9 +457,7 @@ export function parseConfigContent(content: string): AvantiConfig {
       if (
         typeof e['on'] !== 'object' ||
         e['on'] === null ||
-        Array.isArray(e['on']) ||
-        (Object.getPrototypeOf(e['on']) !== Object.prototype &&
-          Object.getPrototypeOf(e['on']) !== null)
+        Array.isArray(e['on'])
       ) {
         throw new Error(`files["${target}"].on: must be a mapping`);
       }
@@ -751,10 +749,9 @@ export function parseConfigContent(content: string): AvantiConfig {
     try {
       expandedTargets = expandBraces(target);
     } catch (err) {
-      throw new Error(
-        `files["${target}"]: ${err instanceof Error ? err.message : String(err)}`,
-        { cause: err },
-      );
+      throw new Error(`files["${target}"]: ${(err as Error).message}`, {
+        cause: err,
+      });
     }
     for (const expandedTarget of expandedTargets) {
       if (expandedTarget in files) {
@@ -1194,7 +1191,7 @@ function parseFilter(
         new RegExp(entry.slice(1, -1));
       } catch (err) {
         throw new Error(
-          `${loc}.filter[${i}]: invalid regex: ${err instanceof Error ? err.message : String(err)}`,
+          `${loc}.filter[${i}]: invalid regex: ${(err as Error).message}`,
           { cause: err },
         );
       }
