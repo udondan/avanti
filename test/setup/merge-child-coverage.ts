@@ -47,15 +47,12 @@ const out: string[] = [];
 for (const [file, rec] of child) {
   const counted = vitest.get(file);
   if (!counted) continue;
-  const keepBranches = new Set([
-    ...counted.lines.keys(),
-    ...counted.branches.keys(),
-  ]);
+  const keep = new Set([...counted.lines.keys(), ...counted.branches.keys()]);
   out.push('TN:', `SF:${path.relative(process.cwd(), file)}`);
   let branchesFound = 0;
   let branchesHit = 0;
   for (const [n, brdas] of [...rec.branches].sort((a, b) => a[0] - b[0])) {
-    if (!keepBranches.has(n)) continue;
+    if (!keep.has(n)) continue;
     for (const brda of brdas) {
       out.push(brda);
       branchesFound++;
@@ -67,10 +64,11 @@ for (const [file, rec] of child) {
   let found = 0;
   let hit = 0;
   // c8 often reports 0 hits for lines that only hold a branch (e.g. a
-  // default parameter), even when they ran, so only lines Vitest counts as
-  // lines are kept here.
+  // default parameter), even when they ran. On such lines only hits are
+  // kept, so they never hide the branch data Vitest has for them.
   for (const [n, hits] of [...rec.lines].sort((a, b) => a[0] - b[0])) {
-    if (!counted.lines.has(n)) continue;
+    if (!keep.has(n)) continue;
+    if (!counted.lines.has(n) && hits === 0) continue;
     out.push(`DA:${n},${hits}`);
     found++;
     if (hits > 0) hit++;
