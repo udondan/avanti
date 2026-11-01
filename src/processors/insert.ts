@@ -535,10 +535,7 @@ interface IniSnapshot {
   sections: Set<IniSection>;
   // Sections by name and position, so a section that objects: replace swapped
   // for a new object is matched with the one it replaced.
-  byPosition: Map<
-    string,
-    { section: IniSection; kvs: Map<string, IniValueSnapshot> }
-  >;
+  byPosition: Map<string, { section: IniSection; kvs: IniOwnedKv[] }>;
 }
 
 function copyIniValue(v: IniScalar | IniScalar[]): IniScalar | IniScalar[] {
@@ -578,15 +575,15 @@ function snapshotIni(doc: IniDocument, kept: ReadonlySet<object>): IniSnapshot {
   };
   for (const item of doc.items) if (item.kind === 'kv') record(item);
   forEachIniSection(doc, (section, positionKey) => {
-    const byKey = new Map<string, IniValueSnapshot>();
+    const kvs: IniOwnedKv[] = [];
     for (const child of section.items) {
       if (child.kind !== 'kv') continue;
       const value = record(child);
-      if (value) byKey.set(child.key, value);
+      if (value) kvs.push({ key: child.key, ...value });
     }
     if (kept.has(section)) return;
     snap.sections.add(section);
-    snap.byPosition.set(positionKey, { section, kvs: byKey });
+    snap.byPosition.set(positionKey, { section, kvs });
   });
   return snap;
 }
@@ -638,12 +635,26 @@ function computeIniOwnership(
   forEachIniSection(doc, (section, positionKey, index) => {
     let created = !snap.sections.has(section);
     let lookup = byIdentity;
+    let others = section.items.flatMap((it) =>
+      it.kind === 'kv' && snap.kvs.has(it) ? [it.key] : [],
+    );
     const replaced = snap.byPosition.get(positionKey);
     if (created && replaced && !doc.items.includes(replaced.section)) {
       // objects: replace swapped the section for a copy of the new one:
-      // compare its values by key with the section it replaced.
+      // match each value with an unused occurrence of the same key and type
+      // in the section it replaced.
       created = false;
-      lookup = (node) => replaced.kvs.get(node.key);
+      const unused = [...replaced.kvs];
+      lookup = (node) => {
+        const i = unused.findIndex(
+          (kv) =>
+            kv.key === node.key &&
+            kv.isArray === node.isArray &&
+            (kv.isArray || deepEqual(kv.value, node.value)),
+        );
+        return i === -1 ? undefined : unused.splice(i, 1)[0];
+      };
+      others = replaced.kvs.map((kv) => kv.key);
     }
     const kvs = ownKvs(section.items, lookup);
     if (!created && kvs.length === 0) return;
@@ -652,13 +663,7 @@ function computeIniOwnership(
       ...(section.subName !== undefined ? { subName: section.subName } : {}),
       index,
       count: counts.get(iniSectionKey(section.name, section.subName))!,
-      others: [
-        ...new Set(
-          section.items.flatMap((it) =>
-            it.kind === 'kv' && lookup(it) ? [it.key] : [],
-          ),
-        ),
-      ],
+      others: [...new Set(others)],
       created,
       kvs,
     });
@@ -719,13 +724,41 @@ function removeEarlierIniScalars(
   }
 }
 
-// True when the section still holds every owned value.
+// The last node of a key is the one that counts in INI, and the normal removal
+// only looks at that one. When it is not the owned value (a later occurrence
+// belongs to the user), the owned value is an earlier occurrence: move it to
+// `earlier` so it is removed on its own and the user's value stays.
+function moveShadowedIniScalars(
+  items: IniItem[],
+  owned: { contrib: Record<string, unknown>; earlier: IniOwnedKv[] },
+): void {
+  for (const key of Object.keys(owned.contrib)) {
+    const value = owned.contrib[key];
+    if (Array.isArray(value)) continue;
+    let last: IniKeyValue | undefined;
+    for (const it of items) {
+      if (it.kind === 'kv' && it.key === key && !it.isArray) last = it;
+    }
+    if (last && !deepEqual(last.value, value)) {
+      delete owned.contrib[key];
+      owned.earlier.push({ key, isArray: false, value: value as IniScalar });
+    }
+  }
+}
+
+// True when the section still holds every owned value. Each owned scalar
+// needs its own node, so repeated values are not matched by one node.
 function iniSectionHolds(section: IniSection, kvs: IniOwnedKv[]): boolean {
+  const used = new Set<IniKeyValue>();
   return kvs.every((kv) =>
     section.items.some((it) => {
       if (it.kind !== 'kv' || it.key !== kv.key || it.isArray !== kv.isArray)
         return false;
-      if (!kv.isArray) return deepEqual(it.value, kv.value);
+      if (!kv.isArray) {
+        if (used.has(it) || !deepEqual(it.value, kv.value)) return false;
+        used.add(it);
+        return true;
+      }
       const rest = [...(it.value as IniScalar[])];
       return (
         removeArrayContribution(rest, kv.value as IniScalar[]).length === 0
@@ -764,6 +797,7 @@ function removeIniOwnership(
   kept: Set<object>,
 ): void {
   const globals = iniOwnedToContrib(owned.globals);
+  moveShadowedIniScalars(doc.items, globals);
   for (const key of Object.keys(globals.contrib)) {
     const newVal =
       newContrib != null && Object.hasOwn(newContrib, key)
@@ -787,7 +821,9 @@ function removeIniOwnership(
       newContrib != null && Object.hasOwn(newContrib, jsKey)
         ? newContrib[jsKey]
         : undefined;
-    const { contrib, earlier } = iniOwnedToContrib(s.kvs);
+    const sectionOwned = iniOwnedToContrib(s.kvs);
+    moveShadowedIniScalars(target.items, sectionOwned);
+    const { contrib, earlier } = sectionOwned;
     deepRemoveFromIniSections(
       [target],
       effective,

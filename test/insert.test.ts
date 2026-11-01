@@ -796,6 +796,17 @@ describe('INI — removal edge cases', () => {
     ).toThrow('insert mode: existing file is not valid INI');
   });
 
+  it('updates values the user changed when the new contribution has them', () => {
+    const result = insertInto(
+      'f.ini',
+      'k = mine\n[s]\nj = mine\n',
+      { ini: true },
+      'k = w\n[s]\nj = w\n',
+      'k = v\n[s]\nj = v\n',
+    );
+    expect(result).toBe('k = w\n[s]\nj = w\n');
+  });
+
   it('merges without removal on first insert', () => {
     const result = insertInto(
       'f.ini',
@@ -1505,6 +1516,55 @@ describe('INI — ownership tracking', () => {
       '',
     ]);
     expect(texts).toEqual(['[s]\nk[] = 1\n', '[s]\n']);
+  });
+
+  it.each([
+    ['a scalar and an array', '[s]\nk[] = a\nk = b\n'],
+    ['repeated scalars', '[s]\nk = a\nk = b\n'],
+  ])(
+    'keeps unchanged values with the same key when objects: replace swaps a section (%s)',
+    (_, existing) => {
+      const { texts, owned } = iniSteps(existing, { objects: 'replace' }, [
+        `${existing}x = 1\n`,
+        '',
+      ]);
+      expect(texts).toEqual([`${existing}x = 1\n`, existing]);
+      expect(owned[0]).toMatchObject({
+        sections: [{ kvs: [{ key: 'x', isArray: false, value: 1 }] }],
+      });
+    },
+  );
+
+  it('removes an owned earlier occurrence and keeps the user value after it', () => {
+    const { texts, owned } = iniSteps('[s]\nk = b\n', { objects: 'replace' }, [
+      '[s]\nk = a\nk = b\nx = 1\n',
+      '',
+    ]);
+    expect(owned[0]).toMatchObject({
+      sections: [
+        {
+          kvs: [
+            { key: 'k', value: 'a' },
+            { key: 'x', value: 1 },
+          ],
+        },
+      ],
+    });
+    expect(texts[1]).toBe('[s]\nk = b\n');
+  });
+
+  it('keeps a value the user added after an owned top-level key', () => {
+    const processed = 'k = a\n';
+    const { owned } = iniSteps(null, true, [processed]);
+    expect(removeWith('k = a\nk = b\n', processed, owned[0])).toBe('k = b\n');
+  });
+
+  it('needs a separate node for each repeated owned value to match a section', () => {
+    const processed = '[s]\nk = a\nk = a\n[s]\nx = 1\n';
+    const { owned } = iniSteps(null, true, [processed]);
+    expect(removeWith('[s]\nx = 1\nk = a\n', processed, owned[0])).toBe(
+      '[s]\nk = a\n',
+    );
   });
 
   it.each([
