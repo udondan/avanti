@@ -410,8 +410,11 @@ describe('resolveTargetPath', () => {
     });
 
     it('compares paths case-insensitively', () => {
-      expect(resolveTargetPath({}, '', wd.toUpperCase())).toBe(
-        path.resolve(wd.toUpperCase()),
+      // The target is the working directory itself in other casing. A path
+      // below it would need path.sep to be '\', which a faked platform lacks.
+      const target = wd.toLowerCase();
+      expect(resolveTargetPath({ target }, '', wd.toUpperCase())).toBe(
+        path.resolve(target),
       );
     });
   });

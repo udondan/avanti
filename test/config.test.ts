@@ -1161,6 +1161,29 @@ files:
     await expect(loadConfig(f)).rejects.toThrow('on: must be a mapping');
   });
 
+  it('rejects a date as on: value', async () => {
+    const f = writeTmp(`
+files:
+  out.txt:
+    src:
+      exec: echo hi
+    on: 2026-01-01
+`);
+    await expect(loadConfig(f)).rejects.toThrow('on: must be a mapping');
+  });
+
+  // js-yaml has no timestamp type, so a Date can never reach the on: check.
+  it('rejects an explicit timestamp tag on on:', async () => {
+    const f = writeTmp(`
+files:
+  out.txt:
+    src:
+      exec: echo hi
+    on: !!timestamp 2026-01-01
+`);
+    await expect(loadConfig(f)).rejects.toThrow('unknown scalar tag');
+  });
+
   it('rejects legacy post: field with migration hint', async () => {
     const f = writeTmp(`
 files:
