@@ -389,6 +389,23 @@ describe('inserted fragments', () => {
     expect(h.getFileMeta(target)?.currentVersion).toBe(1);
   });
 
+  it('stores what the insert added, and drops it when an update has none', () => {
+    const h = makeManager();
+    h.ensureStorageDir();
+    const target = path.join(tmpDir, 'owned');
+    h.saveInsertedFragment(target, 'r1', 'p1', { format: 'ini' });
+    expect(h.getInsertedFragment(target)).toEqual({
+      raw: 'r1',
+      processed: 'p1',
+      owned: { format: 'ini' },
+    });
+    h.saveInsertedFragment(target, 'r2', 'p2');
+    expect(h.getInsertedFragment(target)).toEqual({
+      raw: 'r2',
+      processed: 'p2',
+    });
+  });
+
   it('recreates meta when the index points at a missing meta.json', () => {
     const h = makeManager();
     h.ensureStorageDir();

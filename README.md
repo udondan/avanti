@@ -1216,6 +1216,17 @@ files:
     strategy: insert
 ```
 
+**INI files:**
+
+For INI files avanti records exactly what each pull added: the keys and array items it wrote, the sections it created, and which of several sections with the same name they went into. The next pull removes only those, so:
+
+- Values the file already had before the pull stay, even if the source contains the same values.
+- A section header the file already had stays when the values avanti added to it are removed; sections avanti created are removed once they are empty.
+- Repeated sections (the same `[name]` more than once) are cleaned up correctly. If you add or remove sections with that name by hand, avanti looks for the one section that still holds what it added; if it can't tell which one that is, it leaves the values in place.
+- The same goes for a key you repeat with a value avanti also wrote, or remove a line of when the file already had the same key and value: if it can't tell which line is yours, all of them stay.
+
+History written by older versions of avanti only has the previous source text. For such files the first pull falls back to removing values that match that text, and records what it added from then on.
+
 **Plain text:**
 
 On the first insert, the text is appended to the existing file. On subsequent runs, the old block is replaced in-place when the source changes; if it is no longer found (e.g. the user removed it), the new block is appended.
