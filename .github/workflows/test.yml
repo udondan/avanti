@@ -36,10 +36,34 @@ jobs:
               - prettier.config.mjs
               - .github/workflows/test.yml
 
+  # The tests call the live GitHub, GitLab and Bitbucket APIs, whose rate
+  # limits are shared by all runs. Many parallel runs, for example of several
+  # Renovate PRs, exhaust them and make the tests fail, so only one run at a
+  # time may run the tests, including the runs on main. Runs that skip the
+  # tests, e.g. when only the README changes, don't queue.
+  priority-boarding:
+    needs: [changes]
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && (needs.changes.result == 'skipped' || (needs.changes.result == 'success' && needs.changes.outputs.src == 'true')) }}
+    permissions:
+      actions: read
+      contents: write # lock refs under refs/priority-boarding/
+      pull-requests: read # labels for label-weights
+      statuses: write # queue position as commit status
+    # Queue order, the concurrency group that cancels outdated waiting runs and
+    # the rebase of branches that are behind main: see
+    # https://github.com/udondan/priority-boarding#reusable-workflow
+    # The rebase needs OVERRIDE_TOKEN: pushes with github.token don't start new runs.
+    uses: udondan/priority-boarding/.github/workflows/priority-boarding.yml@v1
+    secrets:
+      update-token: ${{ secrets.OVERRIDE_TOKEN }}
+
   test:
     runs-on: ${{ matrix.os }}
-    needs: [changes]
-    if: always() && (needs.changes.result == 'skipped' || (needs.changes.result == 'success' && needs.changes.outputs.src == 'true'))
+    needs: [changes, priority-boarding]
+    # Pull requests from forks can't take the turn and skip the wait, as they
+    # don't get the secrets. The first step fails if the wait failed or was
+    # cancelled.
+    if: ${{ !cancelled() && (needs.changes.result == 'skipped' || (needs.changes.result == 'success' && needs.changes.outputs.src == 'true')) }}
     permissions:
       contents: read
       id-token: write # Codecov upload via OIDC
@@ -48,6 +72,10 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-2022]
     steps:
+      - name: Check turn
+        if: needs.priority-boarding.result == 'failure' || needs.priority-boarding.result == 'cancelled'
+        run: exit 1
+
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
@@ -279,22 +307,18 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }} # zizmor checks the actions online
 
+  # The only test check the ruleset requires, whatever jobs are added later.
   required:
     runs-on: ubuntu-latest
-    needs: [changes, actions, test, coverage, integration-tests-vault]
+    needs:
+      - changes
+      - priority-boarding
+      - actions
+      - test
+      - coverage
+      - integration-tests-vault
     if: always()
     steps:
       - name: Check result
-        run: |
-          if [[ "${{ needs.changes.result }}" == "failure" || \
-                "${{ needs.changes.result }}" == "cancelled" || \
-                "${{ needs.actions.result }}" == "failure" || \
-                "${{ needs.actions.result }}" == "cancelled" || \
-                "${{ needs.test.result }}" == "failure" || \
-                "${{ needs.test.result }}" == "cancelled" || \
-                "${{ needs.coverage.result }}" == "failure" || \
-                "${{ needs.coverage.result }}" == "cancelled" || \
-                "${{ needs.integration-tests-vault.result }}" == "failure" || \
-                "${{ needs.integration-tests-vault.result }}" == "cancelled" ]]; then
-            exit 1
-          fi
+        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+        run: exit 1
