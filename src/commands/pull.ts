@@ -1580,6 +1580,10 @@ export function pullCommand(): Command {
       // on disk — those files need partial history even though err is a plain Error.
       // Only set when sudoAtomicWrite is actually invoked (inside the guard below).
       let sudoWriteComplete = false;
+      // Paths of regular files written, set once atomicWrite returns. A later
+      // failure (e.g. a mode-only chmod) is a plain Error, so the catch block
+      // uses this to know these files landed.
+      let regularWrittenPaths: string[] = [];
       // Collect sudo mode-only targets here (outside the try block) so that
       // modeOnlySudoPaths can be derived from the same computation and the
       // predicate (modeChange && !contentChanged && sudo) stays in one place.
@@ -1640,6 +1644,9 @@ export function pullCommand(): Command {
           sudoWriteComplete = true;
         }
         atomicWrite([...regularChanged, ...regularRestore]);
+        regularWrittenPaths = [...regularChanged, ...regularRestore].map(
+          (t) => t.targetPath,
+        );
         // Mark all active stale restores as completed (atomicWrite throws on
         // failure so if we reach here all restores were written successfully).
         for (const t of activeStaleRestore) {
@@ -1819,6 +1826,7 @@ export function pullCommand(): Command {
         //  a) SudoWritePartialError: err.writtenPaths lists confirmed sudo writes.
         //  b) AtomicWritePartialError: err.writtenPaths lists regular files whose
         //     temp→dest renames (Phase 3) or in-place writes (Phase 4) completed.
+        //     If atomicWrite itself returned, regularWrittenPaths lists them all.
         //  c) sudoWriteComplete: sudoAtomicWrite returned, so all sudo content-write
         //     targets are on disk regardless of error type.
         // Cases (b) and (c) combine when sudoAtomicWrite succeeds and atomicWrite
@@ -1829,7 +1837,9 @@ export function pullCommand(): Command {
             writtenPaths = err.writtenPaths;
           } else {
             const regularWritten =
-              err instanceof AtomicWritePartialError ? err.writtenPaths : [];
+              err instanceof AtomicWritePartialError
+                ? err.writtenPaths
+                : regularWrittenPaths;
             if (sudoWriteComplete || regularWritten.length > 0) {
               writtenPaths = [
                 ...(sudoWriteComplete

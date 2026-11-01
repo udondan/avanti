@@ -24,9 +24,14 @@ import {
 
 vi.mock('fs', async (importOriginal) => {
   const actual = await importOriginal<typeof import('fs')>();
-  return { ...actual, rmSync: vi.fn(actual.rmSync) };
+  return {
+    ...actual,
+    rmSync: vi.fn(actual.rmSync),
+    chmodSync: vi.fn(actual.chmodSync),
+  };
 });
 const mockRmSync = vi.mocked(fs.rmSync);
+const mockChmodSync = vi.mocked(fs.chmodSync);
 
 const posixOnly = it.skipIf(process.platform === 'win32');
 
@@ -74,6 +79,7 @@ beforeEach(() => {
 afterEach(async () => {
   const actual = await vi.importActual<typeof import('fs')>('fs');
   mockRmSync.mockReset().mockImplementation(actual.rmSync);
+  mockChmodSync.mockReset().mockImplementation(actual.chmodSync);
   env.cleanup();
   vi.restoreAllMocks();
 });
@@ -410,6 +416,36 @@ describe('pull: stale files', () => {
     });
     expect(history().getInsertedFragment(p('b.ini'))).toBeNull();
   });
+
+  posixOnly(
+    'saves the inserted fragments when a mode-only change fails after the write',
+    async () => {
+      w('a.ini', '[s]\nx = 1\n');
+      w('m.txt', 'x');
+      fs.chmodSync(p('m.txt'), 0o644);
+      env.writeConfig(`files:
+  a.ini:
+    src:
+      - raw: "[s]\\nk = v\\n"
+    strategy: insert
+    ini: true
+  m.txt:
+    src:
+      - raw: x
+    mode: "0600"
+`);
+      mockChmodSync.mockImplementation(() => {
+        throwNonError('EPERM');
+      });
+      const res = await pull('--yes');
+      expect(res.code).toBe(2);
+      expect(res.stderr).toContain('Write failed: EPERM');
+      expect(fs.readFileSync(p('a.ini'), 'utf8')).toBe('[s]\nx = 1\nk = v\n');
+      expect(history().getInsertedFragment(p('a.ini'))?.owned).toMatchObject({
+        sections: [{ kvs: [{ key: 'k', value: 'v' }] }],
+      });
+    },
+  );
 
   it('records nothing when the partial write names no tracked file', async () => {
     env.writeConfig(RAW_ENTRY);
