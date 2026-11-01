@@ -523,8 +523,10 @@ function isIniOwnership(v: unknown): v is IniOwnership {
         isPlainObject(s) &&
         typeof s['name'] === 'string' &&
         (s['subName'] === undefined || typeof s['subName'] === 'string') &&
-        typeof s['index'] === 'number' &&
-        typeof s['count'] === 'number' &&
+        Number.isInteger(s['index']) &&
+        Number.isInteger(s['count']) &&
+        (s['index'] as number) >= 0 &&
+        (s['count'] as number) > (s['index'] as number) &&
         Array.isArray(s['others']) &&
         s['others'].every((k) => typeof k === 'string') &&
         typeof s['created'] === 'boolean' &&

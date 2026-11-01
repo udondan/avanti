@@ -1798,6 +1798,22 @@ describe('INI — ownership tracking', () => {
       },
     ],
     [
+      'negative index',
+      { format: 'ini', globals: [], sections: [{ ...section, index: -1 }] },
+    ],
+    [
+      'fractional index',
+      { format: 'ini', globals: [], sections: [{ ...section, index: 0.5 }] },
+    ],
+    [
+      'index past count',
+      { format: 'ini', globals: [], sections: [{ ...section, index: 1 }] },
+    ],
+    [
+      'fractional count',
+      { format: 'ini', globals: [], sections: [{ ...section, count: 1.5 }] },
+    ],
+    [
       'bad others',
       { format: 'ini', globals: [], sections: [{ ...section, others: 'x' }] },
     ],
