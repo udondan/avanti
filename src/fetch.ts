@@ -31,6 +31,17 @@ function retryDelayMs(attempt: number, headers: Headers): number {
   return Math.min(BASE_DELAY_MS * 2 ** attempt, MAX_DELAY_MS);
 }
 
+// Collects the headers that tell which rate limit was hit (e.g. GitLab's
+// RateLimit-Name, GitHub's X-RateLimit-Resource). Returns '' when there are none.
+function rateLimitHeaders(headers: Headers): string {
+  const parts: string[] = [];
+  headers.forEach((value, name) => {
+    if (/^(x-)?ratelimit-|^retry-after$/i.test(name))
+      parts.push(`${name}=${value}`);
+  });
+  return parts.sort().join(', ');
+}
+
 function isSensitiveParam(k: string): boolean {
   const lower = k.toLowerCase();
   // Generic names
@@ -99,7 +110,13 @@ export async function fetchWithRetry(
       }
       throw e;
     }
-    if (isVerbose()) verbose(`  -> HTTP ${res.status}`);
+    if (isVerbose()) {
+      verbose(`  -> HTTP ${res.status}`);
+      if (res.status === 429) {
+        const info = rateLimitHeaders(res.headers);
+        if (info) verbose(`  -> rate limit headers: ${info}`);
+      }
+    }
     const shouldRetry =
       res.status === 429 || (res.status >= 500 && res.status <= 599);
     if (!shouldRetry || attempt >= MAX_RETRIES) return res;

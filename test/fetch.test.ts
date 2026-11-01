@@ -319,6 +319,45 @@ describe('fetchWithRetry — verbose retry logging', () => {
       '-> retry budget of 60000ms used up, giving up (status 429)',
     );
   });
+
+  it('logs rate limit headers of a 429 response when verbose is enabled', async () => {
+    const stderrSpy = vi
+      .spyOn(process.stderr, 'write')
+      .mockImplementation(() => true);
+    setVerbose(true);
+    vi.spyOn(global, 'fetch')
+      .mockResolvedValueOnce(
+        makeResponse(429, {
+          'Retry-After': '2',
+          'RateLimit-Name': 'throttle_authenticated_api',
+          'RateLimit-Remaining': '0',
+          'Content-Type': 'text/plain',
+        }),
+      )
+      .mockResolvedValue(makeResponse(200));
+
+    await fetchWithRetry('https://example.com/file');
+
+    const output = stderrSpy.mock.calls.map((c) => String(c[0])).join('');
+    expect(output).toContain(
+      '-> rate limit headers: ratelimit-name=throttle_authenticated_api, ratelimit-remaining=0, retry-after=2',
+    );
+  });
+
+  it('logs no rate limit line when a 429 has no rate limit headers', async () => {
+    const stderrSpy = vi
+      .spyOn(process.stderr, 'write')
+      .mockImplementation(() => true);
+    setVerbose(true);
+    vi.spyOn(global, 'fetch')
+      .mockResolvedValueOnce(makeResponse(429))
+      .mockResolvedValue(makeResponse(200));
+
+    await fetchWithRetry('https://example.com/file');
+
+    const output = stderrSpy.mock.calls.map((c) => String(c[0])).join('');
+    expect(output).not.toContain('rate limit headers');
+  });
 });
 
 describe('_testable.sleep', () => {
