@@ -1580,7 +1580,11 @@ if (require.main === module) {
     emitErrorAndExit(msg);
   });
 
-  (inputStream as NodeJS.EventEmitter).on('error', (err: Error) => {
+  // Listen on the readline interface rather than inputStream: readline
+  // registers its own 'error' listener on the input first and re-emits the
+  // error on the interface, which throws when the interface has no listener —
+  // so a handler on inputStream would never run.
+  rl.on('error', (err: Error) => {
     process.stderr.write(`data channel error: ${err.message}\n`);
     emitErrorAndExit(err.message);
   });
