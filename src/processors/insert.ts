@@ -1107,8 +1107,16 @@ function applyIniInsert(
       } else {
         // Older history only has the fragment text. Merge it into an empty
         // file with the same options, so repeated sections in it collapse to
-        // the values that were written.
-        const oldDoc = parseIniDoc(mergeIni(['', last.processed], opts));
+        // the values that were written. Under conflicts: abort that merge
+        // rejects a fragment that repeats a key, though a missing target got
+        // it as is: use the fragment itself then.
+        let oldText: string;
+        try {
+          oldText = mergeIni(['', last.processed], opts);
+        } catch {
+          oldText = last.processed;
+        }
+        const oldDoc = parseIniDoc(oldText);
         const oldContrib = iniDocToJs(oldDoc);
         deepRemoveFromIniDoc(doc, oldContrib, newContrib, newKeys, kept);
       }

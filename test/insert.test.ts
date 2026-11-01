@@ -796,6 +796,19 @@ describe('INI — removal edge cases', () => {
     ).toThrow('insert mode: existing file is not valid INI');
   });
 
+  it('cleans up an old fragment with a repeated key under abort', () => {
+    const fragment = '[s]\nk = a\n[s]\nk = b\n';
+    const result = insertInto(
+      'f.ini',
+      fragment,
+      { ini: { conflicts: 'abort' } },
+      '',
+      fragment,
+    );
+    // The effective value goes; the shadowed one cannot be told apart.
+    expect(result).toBe('[s]\nk = a\n');
+  });
+
   it('updates values the user changed when the new contribution has them', () => {
     const result = insertInto(
       'f.ini',
