@@ -3,6 +3,9 @@ import { verbose, isVerbose } from './logger';
 const MAX_RETRIES = 5;
 const BASE_DELAY_MS = 1_000;
 const MAX_DELAY_MS = 60_000;
+// Total time one request may spend waiting between retries. Without it a
+// rate-limited request can wait about 5 minutes (5 retries x 60 s).
+const MAX_TOTAL_DELAY_MS = 60_000;
 
 // Object wrapper so tests can spy on sleep without fake timers
 export const _testable = {
@@ -26,6 +29,17 @@ function retryDelayMs(attempt: number, headers: Headers): number {
   }
 
   return Math.min(BASE_DELAY_MS * 2 ** attempt, MAX_DELAY_MS);
+}
+
+// Collects the headers that tell which rate limit was hit (e.g. GitLab's
+// RateLimit-Name, GitHub's X-RateLimit-Resource). Returns '' when there are none.
+function rateLimitHeaders(headers: Headers): string {
+  const parts: string[] = [];
+  headers.forEach((value, name) => {
+    if (/^(x-)?ratelimit-|^retry-after$/i.test(name))
+      parts.push(`${name}=${value}`);
+  });
+  return parts.sort().join(', ');
 }
 
 function isSensitiveParam(k: string): boolean {
@@ -81,6 +95,7 @@ export async function fetchWithRetry(
     const method = (options.method ?? 'GET').toUpperCase();
     verbose(`${method} ${redactUrl(url)}`);
   }
+  let waitedMs = 0;
   for (let attempt = 0; ; attempt++) {
     let res: Response;
     try {
@@ -95,11 +110,25 @@ export async function fetchWithRetry(
       }
       throw e;
     }
-    if (isVerbose()) verbose(`  -> HTTP ${res.status}`);
+    if (isVerbose()) {
+      verbose(`  -> HTTP ${res.status}`);
+      if (res.status === 429) {
+        const info = rateLimitHeaders(res.headers);
+        if (info) verbose(`  -> rate limit headers: ${info}`);
+      }
+    }
     const shouldRetry =
       res.status === 429 || (res.status >= 500 && res.status <= 599);
     if (!shouldRetry || attempt >= MAX_RETRIES) return res;
     const delay = retryDelayMs(attempt, res.headers);
+    if (waitedMs + delay > MAX_TOTAL_DELAY_MS) {
+      if (isVerbose())
+        verbose(
+          `  -> retry budget of ${MAX_TOTAL_DELAY_MS}ms used up, giving up (status ${res.status})`,
+        );
+      return res;
+    }
+    waitedMs += delay;
     if (isVerbose())
       verbose(`  -> retrying in ${delay}ms (status ${res.status})`);
     await _testable.sleep(delay);

@@ -130,7 +130,11 @@ jobs:
         run: bun run test -- --coverage --coverage.reporter=lcov --coverage.reporter=text
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITLAB_TOKEN: ${{ secrets.GITLAB_TOKEN }}
+          # No GITLAB_TOKEN on purpose. The GitLab tests only read public
+          # projects. Authenticated requests from a free-plan account share one
+          # budget of 100 requests per minute across all CI jobs and branches
+          # (burst_traffic_per_user_free_plan). Unauthenticated requests get
+          # 500 per minute per runner IP instead (see #516).
 
       # The CLI and the privileged worker run in child processes, which write
       # raw coverage data during the test step. This turns it into lcov.
