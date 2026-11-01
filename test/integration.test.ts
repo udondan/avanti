@@ -482,6 +482,44 @@ files:
   });
 
   describe('GitLab source', () => {
+    // Runs pull with --verbose and stops it before the test timeout, so a slow
+    // or failed run prints the HTTP requests and retries instead of an empty
+    // "Test timed out" (see #516).
+    function runAvantiGitLab(configPath: string, workingDir: string): number {
+      const started = Date.now();
+      const result = spawnSync(
+        'bunx',
+        [
+          'tsx',
+          CLI,
+          '--verbose',
+          '--config',
+          configPath,
+          '--working-dir',
+          workingDir,
+          'pull',
+          '--yes',
+        ],
+        {
+          encoding: 'utf8',
+          cwd: PROJECT_ROOT,
+          env: { ...process.env },
+          timeout: 50_000,
+        },
+      );
+      const elapsed = Date.now() - started;
+      if (result.status !== 0 || elapsed > 15_000) {
+        const log = (result.stderr ?? '')
+          .split('\n')
+          .filter((l) => l.startsWith('[verbose]') || /error/i.test(l))
+          .join('\n');
+        console.log(
+          `avanti GitLab run: exit ${result.status ?? result.signal}, ${elapsed}ms\n${log}`,
+        );
+      }
+      return result.status ?? 2;
+    }
+
     it(
       'fetches a single file from a public GitLab repo',
       { timeout: 60_000 },
@@ -498,8 +536,7 @@ files:
 `,
         );
 
-        const { exitCode } = runAvanti(config, tmpDir);
-        expect(exitCode).toBe(0);
+        expect(runAvantiGitLab(config, tmpDir)).toBe(0);
         const content = readFileSync(join(tmpDir, 'license.txt'), 'utf8');
         expect(content).toContain('MIT');
       },
@@ -521,8 +558,7 @@ files:
 `,
         );
 
-        const { exitCode } = runAvanti(config, tmpDir);
-        expect(exitCode).toBe(0);
+        expect(runAvantiGitLab(config, tmpDir)).toBe(0);
         const outputDir = join(tmpDir, 'config');
         expect(existsSync(outputDir)).toBe(true);
         const entries = readdirSync(outputDir, { recursive: true });
