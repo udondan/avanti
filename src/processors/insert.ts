@@ -491,6 +491,12 @@ interface IniOwnership {
   sections: IniOwnedSection[];
 }
 
+function isIniScalar(v: unknown): v is IniScalar {
+  return (
+    typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean'
+  );
+}
+
 function isIniOwnedKvList(v: unknown): v is IniOwnedKv[] {
   return (
     Array.isArray(v) &&
@@ -500,8 +506,8 @@ function isIniOwnedKvList(v: unknown): v is IniOwnedKv[] {
         typeof kv['key'] === 'string' &&
         typeof kv['isArray'] === 'boolean' &&
         (kv['isArray']
-          ? Array.isArray(kv['value'])
-          : kv['value'] !== undefined),
+          ? Array.isArray(kv['value']) && kv['value'].every(isIniScalar)
+          : isIniScalar(kv['value'])),
     )
   );
 }
@@ -737,7 +743,9 @@ function removeEarlierIniScalars(
 // The last node of a key is the one that counts in INI, and the normal removal
 // only looks at that one. When it is not the owned value (a later occurrence
 // belongs to the user), the owned value is an earlier occurrence: move it to
-// `earlier` so it is removed on its own and the user's value stays.
+// `earlier` so it is removed on its own and the user's value stays. A later
+// array node with the same key shadows it too: the merge updates the last
+// node of a key whatever its type.
 function moveShadowedIniScalars(
   items: IniItem[],
   owned: { contrib: Record<string, unknown>; earlier: IniOwnedKv[] },
@@ -747,9 +755,9 @@ function moveShadowedIniScalars(
     if (Array.isArray(value)) continue;
     let last: IniKeyValue | undefined;
     for (const it of items) {
-      if (it.kind === 'kv' && it.key === key && !it.isArray) last = it;
+      if (it.kind === 'kv' && it.key === key) last = it;
     }
-    if (last && !deepEqual(last.value, value)) {
+    if (last && (last.isArray || !deepEqual(last.value, value))) {
       delete owned.contrib[key];
       owned.earlier.push({ key, isArray: false, value: value as IniScalar });
     }

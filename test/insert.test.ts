@@ -1264,6 +1264,44 @@ describe('INI — ownership tracking', () => {
     ).text;
   }
 
+  it('ignores stored scalars with array values', () => {
+    const owned = {
+      format: 'ini',
+      globals: [],
+      sections: [
+        {
+          ...{ name: 's', index: 0, count: 1, others: [], created: false },
+          kvs: [{ key: 'list', isArray: false, value: ['a'] }],
+        },
+      ],
+    };
+    // Falls back to the fragment, which does not match the user's values.
+    expect(
+      removeWith('[s]\nlist = v\nt[] = a\n', '[s]\nlist = a\n', owned),
+    ).toBe('[s]\nlist = v\nt[] = a\n');
+  });
+
+  it.each([
+    ['section', '[s]\nk = a\n', '[s]\nk = a\nk[] = b\n', '[s]\nk = c\n'],
+    ['global', 'k = a\n', 'k = a\nk[] = b\nu = 1\n', 'k = c\nu = 1\n'],
+  ])(
+    'removes an owned %s scalar shadowed by a later user array',
+    (_, first, edited, expected) => {
+      const ini = { conflicts: 'last_wins' } as const;
+      const { owned } = iniSteps('u = 1\n', ini, [first]);
+      const targetPath = path.join(tmpDir, 'f.ini');
+      fs.writeFileSync(targetPath, edited);
+      const second = first.replace('k = a', 'k = c');
+      const result = applyInsertModeTracked(
+        makeEntry({ target: 'f.ini', ini }),
+        second,
+        { processed: first, owned: owned[0] },
+        targetPath,
+      );
+      expect(result.text).toBe(expected);
+    },
+  );
+
   it('keeps user arrays when first_wins rejected the contributed one', () => {
     const { texts } = iniSteps(
       '[s]\nlist[] = a\n[s]\nlist[] = b\n',
@@ -1692,6 +1730,22 @@ describe('INI — ownership tracking', () => {
     [
       'scalar kv without value',
       { format: 'ini', globals: [{ key: 'k', isArray: false }], sections: [] },
+    ],
+    [
+      'scalar kv with array value',
+      {
+        format: 'ini',
+        globals: [{ key: 'k', isArray: false, value: ['v'] }],
+        sections: [],
+      },
+    ],
+    [
+      'array kv with non-scalar item',
+      {
+        format: 'ini',
+        globals: [{ key: 'k', isArray: true, value: [{}] }],
+        sections: [],
+      },
     ],
     ['bad sections', { format: 'ini', globals: [], sections: 'x' }],
     [
