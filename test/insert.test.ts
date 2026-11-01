@@ -979,6 +979,45 @@ describe('INI — removal edge cases', () => {
     expect(result).toBe('[s]\nmine = 3\n');
   });
 
+  it('removes only the array values a repeated-section contribution wrote (arrays: replace)', () => {
+    // Under arrays: replace only `b` was written; the earlier `a` is the user's.
+    const targetPath = path.join(tmpDir, 'f.ini');
+    fs.writeFileSync(targetPath, '[s]\nlist[] = a\n[s]\nx = 1\n');
+    const entry = makeEntry({ ini: true, target: 'f.ini' });
+    const contrib = '[s]\nlist[] = a\n[s]\nlist[] = b\n';
+    const written = applyInsertMode(entry, contrib, null, targetPath);
+    expect(written).toBe('[s]\nlist[] = a\n[s]\nx = 1\nlist[] = b\n');
+    fs.writeFileSync(targetPath, written);
+    expect(applyInsertMode(entry, '', contrib, targetPath)).toBe(
+      '[s]\nlist[] = a\n[s]\nx = 1\n',
+    );
+  });
+
+  it.each(['first_wins', 'abort'] as const)(
+    'updates a section with objects: replace (conflicts: %s)',
+    (conflicts) => {
+      const result = insertInto(
+        'f.ini',
+        '[s]\nk = v\n',
+        { ini: { objects: 'replace', conflicts } },
+        '[s]\nk = w\n',
+        '[s]\nk = v\n',
+      );
+      expect(result).toBe('[s]\nk = w\n');
+    },
+  );
+
+  it('ignores comments in the new contribution', () => {
+    const result = insertInto(
+      'f.ini',
+      '[s]\nx = 1\n[s]\nlist[] = a\n',
+      { ini: { conflicts: 'first_wins' } },
+      '; top\n[s]\n; about list\nlist[] = b\n',
+      '[s]\nlist[] = a\n',
+    );
+    expect(result).toBe('[s]\nx = 1\n[s]\nlist[] = b\n');
+  });
+
   it('keeps a repeated section it removed nothing from', () => {
     const result = insertInto(
       'f.ini',

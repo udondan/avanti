@@ -444,21 +444,16 @@ function iniDocToJs(doc: IniDocument): Record<string, unknown> {
         item.subName !== undefined
           ? `${item.name} "${item.subName}"`
           : item.name;
-      // Repeated sections are combined: later scalars win, arrays are joined.
-      const obj =
-        (result[INI_SECTION_PREFIX + sectionKey] as
-          Record<string, unknown> | undefined) ??
-        (Object.create(null) as Record<string, unknown>);
+      const obj: Record<string, unknown> = Object.create(null) as Record<
+        string,
+        unknown
+      >;
       for (const child of item.items) {
         if (child.kind === 'kv') {
           const jsKey = child.isArray
             ? INI_ARRAY_PREFIX + child.key
             : child.key;
-          const prev = obj[jsKey];
-          obj[jsKey] =
-            child.isArray && Array.isArray(prev)
-              ? [...(prev as IniScalar[]), ...(child.value as IniScalar[])]
-              : child.value;
+          obj[jsKey] = child.value;
         }
       }
       result[INI_SECTION_PREFIX + sectionKey] = obj;
@@ -637,7 +632,9 @@ function applyIniInsert(
       );
     }
     try {
-      const oldDoc = parseIniDoc(lastProcessed);
+      // Merge the fragment into an empty file with the same options, so
+      // repeated sections in it collapse to the values that were written.
+      const oldDoc = parseIniDoc(mergeIni(['', lastProcessed], opts));
       const oldContrib = iniDocToJs(oldDoc);
       // Order-preservation only works under last_wins; with first_wins the
       // stale key would persist, and with abort mergeIni would throw on
@@ -654,8 +651,14 @@ function applyIniInsert(
         // unparseable processedText → no new keys (old behaviour)
       }
       const newContrib = effectiveConflicts === 'last_wins' ? newParsed : null;
-      // Which keys the new contribution has, under any conflict strategy.
-      const newKeys = new Set(Object.keys(newParsed));
+      // Keys whose emptied last section may stay for the merge to refill:
+      // under any conflict strategy, except with objects: replace, where an
+      // empty section would conflict with the new one instead of being filled.
+      const newKeys = new Set(
+        Object.keys(
+          opts['objects'] === 'replace' ? (newContrib ?? {}) : newParsed,
+        ),
+      );
       deepRemoveFromIniDoc(existingDoc, oldContrib, newContrib, newKeys);
     } catch {
       // Corrupted history fragment — skip key removal, fall through to merge
