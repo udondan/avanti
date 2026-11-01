@@ -13,10 +13,14 @@ export interface FileHistoryMeta {
   sudo?: true | string;
   isSymlink?: boolean;
   v0IsSymlink?: boolean;
-  insertedFragment?: {
-    raw: string;
-    processed: string;
-  };
+  insertedFragment?: InsertedFragment;
+}
+
+export interface InsertedFragment {
+  raw: string;
+  processed: string;
+  /** What the insert added to the file, for formats that track it (INI). */
+  owned?: unknown;
 }
 
 export interface PullLogEntry {
@@ -491,9 +495,7 @@ export class HistoryManager {
     return results;
   }
 
-  getInsertedFragment(
-    targetPath: string,
-  ): { raw: string; processed: string } | null {
+  getInsertedFragment(targetPath: string): InsertedFragment | null {
     const meta = this.getFileMeta(targetPath);
     return meta?.insertedFragment ?? null;
   }
@@ -502,7 +504,10 @@ export class HistoryManager {
     targetPath: string,
     raw: string,
     processed: string,
+    owned?: unknown,
   ): void {
+    const fragment: InsertedFragment =
+      owned === undefined ? { raw, processed } : { raw, processed, owned };
     try {
       this.ensureStorageDir();
       const index = this.readIndex();
@@ -526,7 +531,7 @@ export class HistoryManager {
           firstSeenAt: new Date().toISOString(),
           existedBeforeAvanti,
           currentVersion: 0,
-          insertedFragment: { raw, processed },
+          insertedFragment: fragment,
         };
         fs.writeFileSync(
           path.join(fileDir, 'meta.json'),
@@ -560,7 +565,7 @@ export class HistoryManager {
           currentVersion: 0,
         };
       }
-      meta.insertedFragment = { raw, processed };
+      meta.insertedFragment = fragment;
       fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2), 'utf8');
     } catch {
       // non-fatal

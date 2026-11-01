@@ -245,28 +245,56 @@ function spliceIniNode(items: IniSectionItems, node: IniKeyValue): void {
 
 // Finds all sections with this name, in file order. A file may repeat a
 // section; mergeIni merges into the last one.
-function findIniSections(doc: IniDocument, sectionName: string): IniSection[] {
-  const subsectionMatch = /^(.+?)\s+"([^"]*)"$/.exec(sectionName);
+function findIniSections(
+  doc: IniDocument,
+  name: string,
+  subName: string | undefined,
+): IniSection[] {
   return doc.items.filter(
     (it): it is IniSection =>
-      it.kind === 'section' &&
-      (subsectionMatch
-        ? it.name === subsectionMatch[1] && it.subName === subsectionMatch[2]
-        : it.name === sectionName && it.subName === undefined),
+      it.kind === 'section' && it.name === name && it.subName === subName,
   );
 }
 
-// Removes the old contribution from all sections that share one name, later
-// sections first. Only in the last section (the one mergeIni merges into) may
-// nodes stay in place for the merge to refill. Returns the sections that had
-// something removed.
+function iniSectionKey(name: string, subName: string | undefined): string {
+  return subName !== undefined ? `${name} "${subName}"` : name;
+}
+
+// Removes the given sections when they have no key/value pairs left. The last
+// section is kept instead when `keepEffective` is set, so the merge refills it
+// in place; it is then added to `kept`.
+function removeEmptiedSections(
+  doc: IniDocument,
+  sections: Iterable<IniSection>,
+  effective: IniSection,
+  keepEffective: boolean,
+  kept: Set<object>,
+): void {
+  for (const section of sections) {
+    if (section.items.some((it) => it.kind === 'kv')) continue;
+    if (section === effective && keepEffective) {
+      kept.add(section);
+      continue;
+    }
+    // Do not strip preceding comment/blank nodes at the doc level —
+    // they may be file-level separators unrelated to this section.
+    const idx = doc.items.indexOf(section);
+    if (idx !== -1) doc.items.splice(idx, 1);
+  }
+}
+
+// Removes the old contribution from the given sections, searched in the given
+// order. Only in `effective` (the last section with that name, the one
+// mergeIni merges into) may nodes stay in place for the merge to refill; those
+// nodes are added to `kept`. Returns the sections that had something removed.
 function deepRemoveFromIniSections(
-  sections: IniSection[],
+  searchOrder: IniSection[],
+  effective: IniSection,
   oldContrib: Record<string, unknown>,
   newContrib: Record<string, unknown> | null,
+  kept: Set<object>,
 ): Set<IniSection> {
   const touched = new Set<IniSection>();
-  const effective = sections[sections.length - 1];
   for (const key of Object.keys(oldContrib)) {
     const oldVal = oldContrib[key];
     const newVal =
@@ -278,12 +306,12 @@ function deepRemoveFromIniSections(
       // iniDocToJs prefixes every array key, so the prefix is always present.
       const iniKey = key.slice(INI_ARRAY_PREFIX.length);
       const matches: { section: IniSection; node: IniKeyValue }[] = [];
-      for (let s = sections.length - 1; s >= 0; s--) {
-        const items = sections[s].items;
+      for (const section of searchOrder) {
+        const items = section.items;
         for (let j = items.length - 1; j >= 0; j--) {
           const it = items[j];
           if (it.kind === 'kv' && it.key === iniKey && it.isArray) {
-            matches.push({ section: sections[s], node: it });
+            matches.push({ section, node: it });
           }
         }
       }
@@ -309,15 +337,15 @@ function deepRemoveFromIniSections(
     } else {
       // The last node wins in INI, so only that one is compared.
       let match: { section: IniSection; node: IniKeyValue } | undefined;
-      for (let s = sections.length - 1; s >= 0 && !match; s--) {
-        const items = sections[s].items;
-        for (let j = items.length - 1; j >= 0; j--) {
+      for (const section of searchOrder) {
+        const items = section.items;
+        for (let j = items.length - 1; j >= 0 && !match; j--) {
           const it = items[j];
           if (it.kind === 'kv' && it.key === key && !it.isArray) {
-            match = { section: sections[s], node: it };
-            break;
+            match = { section, node: it };
           }
         }
+        if (match) break;
       }
       if (!match) continue;
       // Skip only when the node is in the last section and newVal is the same
@@ -327,8 +355,10 @@ function deepRemoveFromIniSections(
         match.section === effective &&
         newVal !== undefined &&
         !Array.isArray(newVal)
-      )
+      ) {
+        if (deepEqual(match.node.value, oldVal)) kept.add(match.node);
         continue;
+      }
       if (deepEqual(match.node.value, oldVal)) {
         spliceIniNode(match.section.items, match.node);
         touched.add(match.section);
@@ -338,11 +368,63 @@ function deepRemoveFromIniSections(
   return touched;
 }
 
+// Removes an old global (doc-level) value. Global keys come before the first
+// section, so they cannot repeat across sections.
+function removeIniGlobal(
+  doc: IniDocument,
+  key: string,
+  oldVal: unknown,
+  newVal: unknown,
+  kept: Set<object>,
+): void {
+  const isArray = Array.isArray(oldVal);
+  // iniDocToJs prefixes every array key, so the prefix is always present.
+  const iniKey = isArray ? key.slice(INI_ARRAY_PREFIX.length) : key;
+  let node: IniKeyValue | undefined;
+  for (let j = doc.items.length - 1; j >= 0; j--) {
+    const it = doc.items[j];
+    if (it.kind === 'kv' && it.key === iniKey && it.isArray === isArray) {
+      node = it;
+      break;
+    }
+  }
+  if (!node) return;
+  if (isArray) {
+    const curArr = node.value as IniScalar[];
+    removeArrayContribution(curArr, oldVal as unknown[]);
+    // An emptied node stays in place when the key is still an array, so the
+    // merge refills it at the same position. Otherwise drop it. Do not strip
+    // preceding comment/blank nodes at the doc level.
+    if (curArr.length === 0 && !Array.isArray(newVal)) {
+      doc.items.splice(doc.items.indexOf(node), 1);
+    }
+    return;
+  }
+  // Skip only when newVal is the same scalar type; remove the old node
+  // when type changes to array or section so the merge can re-add it.
+  if (
+    newVal !== undefined &&
+    !Array.isArray(newVal) &&
+    !isPlainObject(newVal)
+  ) {
+    if (deepEqual(node.value, oldVal)) kept.add(node);
+    return;
+  }
+  if (deepEqual(node.value, oldVal)) {
+    // Do not strip preceding comment/blank nodes at the doc level.
+    doc.items.splice(doc.items.indexOf(node), 1);
+  }
+}
+
+// Removes an old contribution that is only known as the text of the fragment
+// (history written before ownership tracking). Values are searched in every
+// section with a matching name.
 function deepRemoveFromIniDoc(
   doc: IniDocument,
   oldContrib: Record<string, unknown>,
   newContrib: Record<string, unknown> | null,
   newKeys: ReadonlySet<string>,
+  kept: Set<object>,
 ): void {
   for (const key of Object.keys(oldContrib)) {
     const oldVal = oldContrib[key];
@@ -351,73 +433,234 @@ function deepRemoveFromIniDoc(
         ? newContrib[key]
         : undefined;
 
-    if (isPlainObject(oldVal)) {
-      // iniDocToJs prefixes every section key, so the prefix is always present.
-      const sections = findIniSections(
-        doc,
-        key.slice(INI_SECTION_PREFIX.length),
-      );
-      if (sections.length === 0) continue;
-      const effective = sections[sections.length - 1];
-      const nestedNew = isPlainObject(newVal) ? newVal : null;
-      const touched = deepRemoveFromIniSections(sections, oldVal, nestedNew);
-      // A contributed section without keys was written into the last section.
-      if (Object.keys(oldVal).length === 0) touched.add(effective);
-      for (const section of touched) {
-        if (section.items.some((it) => it.kind === 'kv')) continue;
-        // The last section stays when the new contribution still has it
-        // (under any conflict strategy), so the merge refills it in place.
-        if (section === effective && newKeys.has(key)) continue;
-        // Do not strip preceding comment/blank nodes at the doc level —
-        // they may be file-level separators unrelated to this section.
-        doc.items.splice(doc.items.indexOf(section), 1);
-      }
-    } else if (Array.isArray(oldVal)) {
-      // iniDocToJs prefixes every array key, so the prefix is always present.
-      const iniKey = key.slice(INI_ARRAY_PREFIX.length);
-      let node: IniKeyValue | undefined;
-      for (let j = doc.items.length - 1; j >= 0; j--) {
-        const it = doc.items[j];
-        if (it.kind === 'kv' && it.key === iniKey && it.isArray) {
-          node = it;
-          break;
-        }
-      }
-      if (!node) continue;
-      const curArr = node.value as IniScalar[];
-      removeArrayContribution(curArr, oldVal);
-      if (curArr.length === 0) {
-        if (Array.isArray(newVal)) {
-          // See deepRemoveFromIniSectionItems: avoid a stray blank line.
-          node.value = [...(newVal as IniScalar[])];
-        } else {
-          // Key removed or type changed to scalar/section: drop the node.
-          // Do not strip preceding comment/blank nodes at the doc level.
-          doc.items.splice(doc.items.indexOf(node), 1);
-        }
-      }
-    } else {
-      let node: IniKeyValue | undefined;
-      for (let j = doc.items.length - 1; j >= 0; j--) {
-        const it = doc.items[j];
-        if (it.kind === 'kv' && it.key === key && !it.isArray) {
-          node = it;
-          break;
-        }
-      }
-      if (!node) continue;
-      // Skip only when newVal is the same scalar type; remove the old node
-      // when type changes to array or section so the merge can re-add it.
-      if (
-        newVal !== undefined &&
-        !Array.isArray(newVal) &&
-        !isPlainObject(newVal)
-      )
-        continue;
-      if (deepEqual(node.value, oldVal)) {
-        // Do not strip preceding comment/blank nodes at the doc level.
-        doc.items.splice(doc.items.indexOf(node), 1);
-      }
+    if (!isPlainObject(oldVal)) {
+      removeIniGlobal(doc, key, oldVal, newVal, kept);
+      continue;
+    }
+    // iniDocToJs prefixes every section key, so the prefix is always present.
+    const sectionKey = key.slice(INI_SECTION_PREFIX.length);
+    const subsectionMatch = /^(.+?)\s+"([^"]*)"$/.exec(sectionKey);
+    const sections = subsectionMatch
+      ? findIniSections(doc, subsectionMatch[1], subsectionMatch[2])
+      : findIniSections(doc, sectionKey, undefined);
+    if (sections.length === 0) continue;
+    const effective = sections[sections.length - 1];
+    const nestedNew = isPlainObject(newVal) ? newVal : null;
+    const touched = deepRemoveFromIniSections(
+      [...sections].reverse(),
+      effective,
+      oldVal,
+      nestedNew,
+      kept,
+    );
+    // A contributed section without keys was written into the last section.
+    if (Object.keys(oldVal).length === 0) touched.add(effective);
+    // The last section stays when the new contribution still has it (under
+    // any conflict strategy), so the merge refills it in place. Sections
+    // nothing was removed from are never removed.
+    removeEmptiedSections(doc, touched, effective, newKeys.has(key), kept);
+  }
+}
+
+// ── INI ownership (what each pull added) ─────────────────────────────────────
+
+interface IniOwnedKv {
+  key: string;
+  isArray: boolean;
+  value: IniScalar | IniScalar[];
+}
+
+interface IniOwnedSection {
+  name: string;
+  subName?: string;
+  // Position among the sections with the same name, counted from the start.
+  index: number;
+  // True when the pull added the section itself, not only values in it.
+  created: boolean;
+  kvs: IniOwnedKv[];
+}
+
+interface IniOwnership {
+  format: 'ini';
+  globals: IniOwnedKv[];
+  sections: IniOwnedSection[];
+}
+
+function isIniOwnedKvList(v: unknown): v is IniOwnedKv[] {
+  return (
+    Array.isArray(v) &&
+    v.every(
+      (kv) =>
+        isPlainObject(kv) &&
+        typeof kv['key'] === 'string' &&
+        typeof kv['isArray'] === 'boolean' &&
+        (kv['isArray']
+          ? Array.isArray(kv['value'])
+          : kv['value'] !== undefined),
+    )
+  );
+}
+
+function isIniOwnership(v: unknown): v is IniOwnership {
+  return (
+    isPlainObject(v) &&
+    v['format'] === 'ini' &&
+    isIniOwnedKvList(v['globals']) &&
+    Array.isArray(v['sections']) &&
+    v['sections'].every(
+      (s) =>
+        isPlainObject(s) &&
+        typeof s['name'] === 'string' &&
+        (s['subName'] === undefined || typeof s['subName'] === 'string') &&
+        typeof s['index'] === 'number' &&
+        typeof s['created'] === 'boolean' &&
+        isIniOwnedKvList(s['kvs']),
+    )
+  );
+}
+
+interface IniSnapshot {
+  kvs: Map<IniKeyValue, { isArray: boolean; value: IniScalar | IniScalar[] }>;
+  sections: Set<IniSection>;
+}
+
+function copyIniValue(v: IniScalar | IniScalar[]): IniScalar | IniScalar[] {
+  return Array.isArray(v) ? [...v] : v;
+}
+
+// Records every node and its value before the merge. Nodes in `kept` held the
+// previous contribution and were left in place for the merge to refill, so
+// they count as added by this pull.
+function snapshotIni(doc: IniDocument, kept: ReadonlySet<object>): IniSnapshot {
+  const snap: IniSnapshot = { kvs: new Map(), sections: new Set() };
+  const record = (node: IniKeyValue): void => {
+    if (kept.has(node)) return;
+    snap.kvs.set(node, {
+      isArray: node.isArray,
+      value: copyIniValue(node.value),
+    });
+  };
+  for (const item of doc.items) {
+    if (item.kind === 'kv') record(item);
+    if (item.kind !== 'section') continue;
+    if (!kept.has(item)) snap.sections.add(item);
+    for (const child of item.items) if (child.kind === 'kv') record(child);
+  }
+  return snap;
+}
+
+// Compares the merged document (mergeIni changes it in place) with the
+// snapshot taken before the merge, and returns what the merge added.
+function computeIniOwnership(
+  doc: IniDocument,
+  snap: IniSnapshot,
+): IniOwnership {
+  const ownKv = (node: IniKeyValue): IniOwnedKv | null => {
+    const owned = {
+      key: node.key,
+      isArray: node.isArray,
+      value: copyIniValue(node.value),
+    };
+    const before = snap.kvs.get(node);
+    if (!before || before.isArray !== node.isArray) return owned;
+    if (Array.isArray(owned.value)) {
+      // Keep only the items the merge added.
+      removeArrayContribution(owned.value, before.value as IniScalar[]);
+      return owned.value.length > 0 ? owned : null;
+    }
+    return deepEqual(before.value, node.value) ? null : owned;
+  };
+  const ownKvs = (items: IniItem[]): IniOwnedKv[] =>
+    items.flatMap((it) => {
+      if (it.kind !== 'kv') return [];
+      const owned = ownKv(it);
+      return owned ? [owned] : [];
+    });
+
+  const ownership: IniOwnership = {
+    format: 'ini',
+    globals: ownKvs(doc.items),
+    sections: [],
+  };
+  const seen = new Map<string, number>();
+  for (const item of doc.items) {
+    if (item.kind !== 'section') continue;
+    const sectionKey = iniSectionKey(item.name, item.subName);
+    const index = seen.get(sectionKey) ?? 0;
+    seen.set(sectionKey, index + 1);
+    const created = !snap.sections.has(item);
+    const kvs = ownKvs(item.items);
+    if (!created && kvs.length === 0) continue;
+    ownership.sections.push({
+      name: item.name,
+      ...(item.subName !== undefined ? { subName: item.subName } : {}),
+      index,
+      created,
+      kvs,
+    });
+  }
+  return ownership;
+}
+
+// Converts owned values to the shape iniDocToJs produces. The parser keeps
+// one node per array key, so keys do not repeat within one list.
+function iniOwnedToContrib(kvs: IniOwnedKv[]): Record<string, unknown> {
+  const result: Record<string, unknown> = Object.create(null) as Record<
+    string,
+    unknown
+  >;
+  for (const kv of kvs) {
+    result[kv.isArray ? INI_ARRAY_PREFIX + kv.key : kv.key] = copyIniValue(
+      kv.value,
+    );
+  }
+  return result;
+}
+
+// Removes exactly what the previous pull added. Values the file already had
+// are left alone, and only sections the pull created are removed.
+function removeIniOwnership(
+  doc: IniDocument,
+  owned: IniOwnership,
+  newContrib: Record<string, unknown> | null,
+  newKeys: ReadonlySet<string>,
+  kept: Set<object>,
+): void {
+  const globals = iniOwnedToContrib(owned.globals);
+  for (const key of Object.keys(globals)) {
+    const newVal =
+      newContrib != null && Object.hasOwn(newContrib, key)
+        ? newContrib[key]
+        : undefined;
+    removeIniGlobal(doc, key, globals[key], newVal, kept);
+  }
+
+  // Find every target before changing anything: removing a section shifts
+  // the positions of the ones after it.
+  const targets = owned.sections.flatMap((s) => {
+    const group = findIniSections(doc, s.name, s.subName);
+    if (group.length === 0) return [];
+    // The section may have been removed by hand; fall back to the last one.
+    const target = group[s.index] ?? group[group.length - 1];
+    return [{ s, target, effective: group[group.length - 1] }];
+  });
+  for (const { s, target, effective } of targets) {
+    const jsKey = INI_SECTION_PREFIX + iniSectionKey(s.name, s.subName);
+    const newVal =
+      newContrib != null && Object.hasOwn(newContrib, jsKey)
+        ? newContrib[jsKey]
+        : undefined;
+    deepRemoveFromIniSections(
+      [target],
+      effective,
+      iniOwnedToContrib(s.kvs),
+      isPlainObject(newVal) ? newVal : null,
+      kept,
+    );
+    if (s.created) {
+      removeEmptiedSections(doc, [target], effective, newKeys.has(jsKey), kept);
+      // A created section that stays is still one this pull added.
+      kept.add(target);
     }
   }
 }
@@ -617,25 +860,22 @@ function applyTomlInsert(
 function applyIniInsert(
   existingContent: string,
   processedText: string,
-  lastProcessed: string | null,
+  last: InsertHistory | null,
   opts: Record<string, unknown>,
-): string {
-  let cleanedIni: string | IniDocument;
-  if (lastProcessed !== null) {
-    let existingDoc: IniDocument;
+): InsertResult {
+  let doc: IniDocument;
+  try {
+    doc = parseIniDoc(existingContent);
+  } catch (err) {
+    throw new Error(
+      `insert mode: existing file is not valid INI: ${(err as Error).message}`,
+      { cause: err },
+    );
+  }
+  // Nodes that held the previous contribution and stay for the merge to refill.
+  const kept = new Set<object>();
+  if (last !== null) {
     try {
-      existingDoc = parseIniDoc(existingContent);
-    } catch (err) {
-      throw new Error(
-        `insert mode: existing file is not valid INI: ${(err as Error).message}`,
-        { cause: err },
-      );
-    }
-    try {
-      // Merge the fragment into an empty file with the same options, so
-      // repeated sections in it collapse to the values that were written.
-      const oldDoc = parseIniDoc(mergeIni(['', lastProcessed], opts));
-      const oldContrib = iniDocToJs(oldDoc);
       // Order-preservation only works under last_wins; with first_wins the
       // stale key would persist, and with abort mergeIni would throw on
       // the un-removed key.
@@ -659,19 +899,55 @@ function applyIniInsert(
           opts['objects'] === 'replace' ? (newContrib ?? {}) : newParsed,
         ),
       );
-      deepRemoveFromIniDoc(existingDoc, oldContrib, newContrib, newKeys);
+      if (isIniOwnership(last.owned)) {
+        removeIniOwnership(doc, last.owned, newContrib, newKeys, kept);
+      } else {
+        // Older history only has the fragment text. Merge it into an empty
+        // file with the same options, so repeated sections in it collapse to
+        // the values that were written.
+        const oldDoc = parseIniDoc(mergeIni(['', last.processed], opts));
+        const oldContrib = iniDocToJs(oldDoc);
+        deepRemoveFromIniDoc(doc, oldContrib, newContrib, newKeys, kept);
+      }
     } catch {
       // Corrupted history fragment — skip key removal, fall through to merge
     }
-    // Passed as a document, so emptied array nodes keep their position.
-    cleanedIni = existingDoc;
-  } else {
-    cleanedIni = existingContent;
   }
-  return mergeIni([cleanedIni, processedText], opts);
+  const snap = snapshotIni(doc, kept);
+  // Passed as a document, so emptied array nodes keep their position and the
+  // merge changes `doc` in place.
+  const text = mergeIni([doc, processedText], opts);
+  return { text, owned: computeIniOwnership(doc, snap) };
+}
+
+// What a missing target gets: the contribution is written as is, so all of
+// it is owned.
+function iniOwnershipOfNewFile(
+  processedText: string,
+): IniOwnership | undefined {
+  try {
+    const doc = parseIniDoc(processedText);
+    return computeIniOwnership(doc, { kvs: new Map(), sections: new Set() });
+  } catch {
+    return undefined;
+  }
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────
+
+/** What history knows about the previous insert into a file. */
+export interface InsertHistory {
+  /** The processed fragment that was inserted. */
+  processed: string;
+  /** What the insert added, when the format tracks it (INI). */
+  owned?: unknown;
+}
+
+export interface InsertResult {
+  text: string;
+  /** What this insert added; store it in history for the next insert. */
+  owned?: unknown;
+}
 
 export function applyInsertMode(
   entry: FileEntry,
@@ -679,11 +955,21 @@ export function applyInsertMode(
   lastProcessed: string | null,
   targetPath: string,
 ): string {
-  if (!fs.existsSync(targetPath)) {
-    return processedText;
-  }
+  return applyInsertModeTracked(
+    entry,
+    processedText,
+    lastProcessed === null ? null : { processed: lastProcessed },
+    targetPath,
+  ).text;
+}
 
-  const existingContent = fs.readFileSync(targetPath, 'utf8');
+export function applyInsertModeTracked(
+  entry: FileEntry,
+  processedText: string,
+  last: InsertHistory | null,
+  targetPath: string,
+): InsertResult {
+  const lastProcessed = last?.processed ?? null;
   const srcs: FileSrc[] = Array.isArray(entry.src) ? entry.src : [entry.src];
 
   const jsonOpts = resolveJsonOptions(entry, srcs);
@@ -697,35 +983,51 @@ export function applyInsertMode(
       ? resolveIniOptions(entry, srcs)
       : null;
 
+  if (!fs.existsSync(targetPath)) {
+    return {
+      text: processedText,
+      ...(iniOpts !== null
+        ? { owned: iniOwnershipOfNewFile(processedText) }
+        : {}),
+    };
+  }
+  const existingContent = fs.readFileSync(targetPath, 'utf8');
+
   if (jsonOpts !== null) {
-    return applyJsonInsert(
-      existingContent,
-      processedText,
-      lastProcessed,
-      jsonOpts as Record<string, unknown>,
-    );
+    return {
+      text: applyJsonInsert(
+        existingContent,
+        processedText,
+        lastProcessed,
+        jsonOpts as Record<string, unknown>,
+      ),
+    };
   }
   if (yamlOpts !== null) {
-    return applyYamlInsert(
-      existingContent,
-      processedText,
-      lastProcessed,
-      yamlOpts as Record<string, unknown>,
-    );
+    return {
+      text: applyYamlInsert(
+        existingContent,
+        processedText,
+        lastProcessed,
+        yamlOpts as Record<string, unknown>,
+      ),
+    };
   }
   if (tomlOpts !== null) {
-    return applyTomlInsert(
-      existingContent,
-      processedText,
-      lastProcessed,
-      tomlOpts as Record<string, unknown>,
-    );
+    return {
+      text: applyTomlInsert(
+        existingContent,
+        processedText,
+        lastProcessed,
+        tomlOpts as Record<string, unknown>,
+      ),
+    };
   }
   if (iniOpts !== null) {
     return applyIniInsert(
       existingContent,
       processedText,
-      lastProcessed,
+      last,
       iniOpts as Record<string, unknown>,
     );
   }
@@ -737,12 +1039,13 @@ export function applyInsertMode(
     existingContent.includes(lastProcessed)
   ) {
     const idx = existingContent.lastIndexOf(lastProcessed);
-    return (
-      existingContent.slice(0, idx) +
-      processedText +
-      existingContent.slice(idx + lastProcessed.length)
-    );
+    return {
+      text:
+        existingContent.slice(0, idx) +
+        processedText +
+        existingContent.slice(idx + lastProcessed.length),
+    };
   }
   const sep = existingContent.endsWith('\n') ? '' : '\n';
-  return existingContent + sep + processedText;
+  return { text: existingContent + sep + processedText };
 }

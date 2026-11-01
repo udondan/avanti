@@ -22,7 +22,7 @@ import {
 import { sortByDependencies } from '../dependencies';
 import { applyReplace } from '../processors/replace';
 import { applyWriteHook, runHook } from '../processors/on';
-import { applyInsertMode } from '../processors/insert';
+import { applyInsertModeTracked } from '../processors/insert';
 import { isBinary } from '../binary';
 import {
   buildNewFileDiff,
@@ -61,7 +61,12 @@ import {
   Variables,
 } from '../types';
 import { resolveSymlinkSrcPath } from '../sources/local';
-import { HistoryManager, PullLogFileRef, SourceShaRecord } from '../history';
+import {
+  HistoryManager,
+  InsertedFragment,
+  PullLogFileRef,
+  SourceShaRecord,
+} from '../history';
 import { confirm } from '../prompt';
 import { applyUpdatedShas, writeUpdatedShas } from '../config-writeback';
 import { resolveVariablesAndEnvironment } from '../context';
@@ -94,7 +99,7 @@ interface FetchLoopResult {
   sourceRecordsByTarget: Map<string, SourceFetchRecord[]>;
   skippedPaths: Set<string>;
   hasUnresolvableSkippedPath: boolean;
-  insertedFragments: Map<string, { raw: string; processed: string }>;
+  insertedFragments: Map<string, InsertedFragment>;
   selfContent?: string;
   selfMode?: string;
   selfSudo?: true | string;
@@ -145,10 +150,7 @@ async function runFetchLoop(
   const seenShaErrorLabels = new Set<string>();
   const sourceRecordsByTarget = new Map<string, SourceFetchRecord[]>();
   const skippedPaths = new Set<string>();
-  const insertedFragments = new Map<
-    string,
-    { raw: string; processed: string }
-  >();
+  const insertedFragments = new Map<string, InsertedFragment>();
   const pendingWrites = new Map<string, Buffer>();
   let hasUnresolvableSkippedPath = false;
   let hasError = false;
@@ -475,15 +477,17 @@ async function runFetchLoop(
               continue; // source and processed output unchanged — skip write entirely (no-op)
             }
             const processedText = text;
-            text = applyInsertMode(
+            const inserted = applyInsertModeTracked(
               entry,
               processedText,
-              lastInserted?.processed ?? null,
+              lastInserted,
               effectivePath!,
             );
+            text = inserted.text;
             insertedFragments.set(effectivePath!, {
               raw: rawText,
               processed: processedText,
+              owned: inserted.owned,
             });
           }
           content = Buffer.from(text, 'utf8');
@@ -1009,6 +1013,7 @@ export function pullCommand(): Command {
               targetPath,
               fragment.raw,
               fragment.processed,
+              fragment.owned,
             );
           }
         }
@@ -1903,6 +1908,7 @@ export function pullCommand(): Command {
             targetPath,
             fragment.raw,
             fragment.processed,
+            fragment.owned,
           );
         }
       }

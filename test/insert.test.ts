@@ -2,7 +2,11 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { applyInsertMode } from '../src/processors/insert';
+import {
+  applyInsertMode,
+  applyInsertModeTracked,
+  type InsertHistory,
+} from '../src/processors/insert';
 import type { FileEntry } from '../src/types';
 
 function makeEntry(overrides: Partial<FileEntry> = {}): FileEntry {
@@ -1211,4 +1215,258 @@ describe('insert — previous contribution no longer matches the file', () => {
     );
     expect(result).toBe('[s]\nuser = 1\n');
   });
+});
+
+describe('INI — ownership tracking', () => {
+  // Runs inserts one after another, passing each result's ownership to the
+  // next one the way pull stores it in history. Returns the file after each.
+  function iniSteps(
+    existing: string | null,
+    ini: FileEntry['ini'],
+    steps: string[],
+  ): { texts: string[]; owned: unknown[] } {
+    const targetPath = path.join(tmpDir, 'f.ini');
+    if (existing !== null) fs.writeFileSync(targetPath, existing);
+    const entry = makeEntry({ target: 'f.ini', ini });
+    const texts: string[] = [];
+    const owned: unknown[] = [];
+    let last: InsertHistory | null = null;
+    for (const processed of steps) {
+      const result = applyInsertModeTracked(entry, processed, last, targetPath);
+      fs.writeFileSync(targetPath, result.text);
+      texts.push(result.text);
+      owned.push(result.owned);
+      last = { processed, owned: result.owned };
+    }
+    return { texts, owned };
+  }
+
+  // Removes the previous contribution from `file`, given its ownership.
+  function removeWith(file: string, processed: string, owned: unknown): string {
+    const targetPath = path.join(tmpDir, 'f.ini');
+    fs.writeFileSync(targetPath, file);
+    return applyInsertModeTracked(
+      makeEntry({ target: 'f.ini', ini: true }),
+      '',
+      { processed, owned },
+      targetPath,
+    ).text;
+  }
+
+  it('keeps user arrays when first_wins rejected the contributed one', () => {
+    const { texts } = iniSteps(
+      '[s]\nlist[] = a\n[s]\nlist[] = b\n',
+      { conflicts: 'first_wins' },
+      ['[s]\nlist[] = a\nowned = 1\n', ''],
+    );
+    expect(texts).toEqual([
+      '[s]\nlist[] = a\n[s]\nlist[] = b\nowned = 1\n',
+      '[s]\nlist[] = a\n[s]\nlist[] = b\n',
+    ]);
+  });
+
+  it.each(['first_wins', 'abort'] as const)(
+    'removes all repeated sections written to a missing target (%s)',
+    (conflicts) => {
+      const { texts, owned } = iniSteps(null, { conflicts }, [
+        '[s]\nk = a\n[s]\nk = b\n',
+        '',
+      ]);
+      expect(texts).toEqual(['[s]\nk = a\n[s]\nk = b\n', '\n']);
+      expect(owned[0]).toEqual({
+        format: 'ini',
+        globals: [],
+        sections: [
+          {
+            name: 's',
+            index: 0,
+            created: true,
+            kvs: [{ key: 'k', isArray: false, value: 'a' }],
+          },
+          {
+            name: 's',
+            index: 1,
+            created: true,
+            kvs: [{ key: 'k', isArray: false, value: 'b' }],
+          },
+        ],
+      });
+    },
+  );
+
+  it('keeps the user array item a concat contribution repeated', () => {
+    const { texts, owned } = iniSteps(
+      '[s]\nlist[] = a\n',
+      { arrays: 'concat' },
+      ['[s]\nlist[] = a\n[s]\nlist[] = b\n', ''],
+    );
+    expect(texts).toEqual([
+      '[s]\nlist[] = a\nlist[] = b\n',
+      '[s]\nlist[] = a\n',
+    ]);
+    expect(owned[0]).toEqual({
+      format: 'ini',
+      globals: [],
+      sections: [
+        {
+          name: 's',
+          index: 0,
+          created: false,
+          kvs: [{ key: 'list', isArray: true, value: ['b'] }],
+        },
+      ],
+    });
+  });
+
+  it('owns nothing when the file already had the contribution', () => {
+    const { texts, owned } = iniSteps('k = v\n[s]\nlist[] = a\n', true, [
+      'k = v\n[s]\nlist[] = a\n',
+      '',
+    ]);
+    expect(owned[0]).toEqual({ format: 'ini', globals: [], sections: [] });
+    expect(texts[1]).toBe('k = v\n[s]\nlist[] = a\n');
+  });
+
+  it('still owns values an update repeats unchanged', () => {
+    const { texts } = iniSteps('u = 1\n', true, [
+      'k = v\n[s]\nx = 1\n',
+      'k = v\n[s]\nx = 1\n',
+      '',
+    ]);
+    expect(texts).toEqual([
+      'u = 1\nk = v\n[s]\nx = 1\n',
+      'u = 1\nk = v\n[s]\nx = 1\n',
+      'u = 1\n',
+    ]);
+  });
+
+  it('updates owned values in place and then removes them', () => {
+    const { texts } = iniSteps('u = 1\n', true, [
+      'k = v\nl[] = a\n[s]\nx = 1\n',
+      'k = w\nl[] = b\n[s]\ny = 2\n',
+      '',
+    ]);
+    expect(texts).toEqual([
+      'u = 1\nk = v\nl[] = a\n[s]\nx = 1\n',
+      'u = 1\nk = w\nl[] = b\n[s]\ny = 2\n',
+      'u = 1\n',
+    ]);
+  });
+
+  it('keeps a user section header after removing values added to it', () => {
+    const { texts } = iniSteps('[s]\n', true, ['[s]\nx = 1\n', '']);
+    expect(texts).toEqual(['[s]\nx = 1\n', '[s]\n']);
+  });
+
+  it('removes a created empty section', () => {
+    const { texts } = iniSteps('u = 1\n', true, ['[s]\n', '']);
+    expect(texts).toEqual(['u = 1\n[s]\n', 'u = 1\n']);
+  });
+
+  it('owns a value whose type changed', () => {
+    const { texts } = iniSteps('k = 1\nu = 1\n', true, ['k[] = a\n', '']);
+    expect(texts).toEqual(['k[] = a\nu = 1\n', 'u = 1\n']);
+  });
+
+  it('owns a value it changed', () => {
+    const { texts } = iniSteps('k = 1\nu = 1\n', true, ['k = 2\n', '']);
+    expect(texts).toEqual(['k = 2\nu = 1\n', 'u = 1\n']);
+  });
+
+  it('owns all items of an array key repeated in the contribution', () => {
+    const { texts } = iniSteps(null, true, [
+      '[s]\nl[] = a\nx = 1\nl[] = b\n',
+      '',
+    ]);
+    expect(texts[1]).toBe('\n');
+  });
+
+  it('owns the new value when the user changed an owned one', () => {
+    const targetPath = path.join(tmpDir, 'f.ini');
+    const entry = makeEntry({ target: 'f.ini', ini: true });
+    const processed = 'k = 1\n[s]\nx = 1\n';
+    const first = applyInsertModeTracked(entry, processed, null, targetPath);
+    fs.writeFileSync(targetPath, 'k = 5\n[s]\nx = 5\n');
+    const second = applyInsertModeTracked(
+      entry,
+      'k = 2\n[s]\nx = 2\n',
+      { processed, owned: first.owned },
+      targetPath,
+    );
+    expect(second.text).toBe('k = 2\n[s]\nx = 2\n');
+    expect(removeWith(second.text, 'k = 2\n[s]\nx = 2\n', second.owned)).toBe(
+      '\n',
+    );
+  });
+
+  it('owns subsections', () => {
+    const { texts } = iniSteps('u = 1\n', true, ['[s "x"]\nk = v\n', '']);
+    expect(texts).toEqual(['u = 1\n[s "x"]\nk = v\n', 'u = 1\n']);
+  });
+
+  it('falls back to the last section when an owned one was removed by hand', () => {
+    const processed = '[s]\nk = a\n[s]\nk = b\n';
+    const { owned } = iniSteps(null, true, [processed]);
+    expect(removeWith('[s]\nk = a\n', processed, owned[0])).toBe('\n');
+  });
+
+  it('skips owned sections that no longer exist', () => {
+    const processed = '[s]\nk = v\n';
+    const { owned } = iniSteps('u = 1\n', true, [processed]);
+    expect(removeWith('u = 1\n', processed, owned[0])).toBe('u = 1\n');
+  });
+
+  it('owns nothing for a missing target that is not valid INI', () => {
+    const result = applyInsertModeTracked(
+      makeEntry({ target: 'f.ini', ini: true }),
+      '[broken\n',
+      null,
+      path.join(tmpDir, 'f.ini'),
+    );
+    expect(result).toEqual({ text: '[broken\n', owned: undefined });
+  });
+
+  it('tracks no ownership for other formats', () => {
+    const result = applyInsertModeTracked(
+      makeEntry({ target: 'f.json', json: true }),
+      '{"a": 1}',
+      null,
+      path.join(tmpDir, 'f.json'),
+    );
+    expect(result).toEqual({ text: '{"a": 1}' });
+  });
+
+  const section = { name: 's', index: 0, created: true, kvs: [] };
+  it.each([
+    ['not an object', 'x'],
+    ['wrong format', { format: 'json', globals: [], sections: [] }],
+    ['bad globals', { format: 'ini', globals: 'x', sections: [] }],
+    ['bad global kv', { format: 'ini', globals: [{ key: 'k' }], sections: [] }],
+    [
+      'array kv without array value',
+      {
+        format: 'ini',
+        globals: [{ key: 'k', isArray: true, value: 'v' }],
+        sections: [],
+      },
+    ],
+    [
+      'scalar kv without value',
+      { format: 'ini', globals: [{ key: 'k', isArray: false }], sections: [] },
+    ],
+    ['bad sections', { format: 'ini', globals: [], sections: 'x' }],
+    [
+      'bad subName',
+      { format: 'ini', globals: [], sections: [{ ...section, subName: 1 }] },
+    ],
+    [
+      'bad section kvs',
+      { format: 'ini', globals: [], sections: [{ ...section, kvs: 'x' }] },
+    ],
+  ])(
+    'falls back to the fragment when ownership is invalid (%s)',
+    (_, owned) => {
+      expect(removeWith('k = v\nu = 1\n', 'k = v\n', owned)).toBe('u = 1\n');
+    },
+  );
 });

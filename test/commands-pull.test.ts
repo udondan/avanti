@@ -330,6 +330,39 @@ describe('pull: insert strategy', () => {
       h.getInsertedFragment(path.join(env.work, 'host.json')),
     ).not.toBeNull();
   });
+
+  it('removes only the INI values the previous pull added', async () => {
+    w('host.ini', '[s]\nlist[] = a\n');
+    const config = (raw: string) => `files:
+  host.ini:
+    src:
+      - raw: "${raw}"
+    strategy: insert
+    ini:
+      arrays: concat
+`;
+    env.writeConfig(config('[s]\\nlist[] = a\\nlist[] = b\\n'));
+    expect((await pull('--yes')).code).toBe(0);
+    expect(r('host.ini')).toBe('[s]\nlist[] = a\nlist[] = a\nlist[] = b\n');
+    const h = new HistoryManager(env.configPath, env.work);
+    expect(
+      h.getInsertedFragment(path.join(env.work, 'host.ini'))?.owned,
+    ).toEqual({
+      format: 'ini',
+      globals: [],
+      sections: [
+        {
+          name: 's',
+          index: 0,
+          created: false,
+          kvs: [{ key: 'list', isArray: true, value: ['a', 'b'] }],
+        },
+      ],
+    });
+    env.writeConfig(config('[t]\\nk = 1\\n'));
+    expect((await pull('--yes')).code).toBe(0);
+    expect(r('host.ini')).toBe('[s]\nlist[] = a\n[t]\nk = 1\n');
+  });
 });
 
 describe('pull: prompt', () => {

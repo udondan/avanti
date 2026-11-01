@@ -15,7 +15,7 @@ import { fetchSource, FetchCache, formatSourceLabel } from '../sources';
 import { sortByDependencies } from '../dependencies';
 import { applyReplace } from '../processors/replace';
 import { applyWriteHook } from '../processors/on';
-import { applyInsertMode } from '../processors/insert';
+import { applyInsertModeTracked } from '../processors/insert';
 import { isBinary } from '../binary';
 import {
   computeDiff,
@@ -268,12 +268,12 @@ async function runDiffLoop(
             ) {
               continue; // source and processed output unchanged — would be a no-op write, skip diff
             }
-            text = applyInsertMode(
+            text = applyInsertModeTracked(
               entry,
               text,
-              lastInserted?.processed ?? null,
+              lastInserted,
               effectivePath!,
-            );
+            ).text;
           }
           content = Buffer.from(text, 'utf8');
         }
