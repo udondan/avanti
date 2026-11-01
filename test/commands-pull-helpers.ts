@@ -14,7 +14,8 @@ export class ExitError extends Error {
 }
 
 export interface RunResult {
-  /** Code of the first process.exit() call; 0 when the action returned. */
+  /** Code of the first process.exit() call; 0 when the action returned,
+   *  2 when it threw anything else. */
   code: number;
   stdout: string;
   stderr: string;
@@ -59,7 +60,11 @@ export async function runCommand(
   try {
     await program.parseAsync(['node', 'avanti', ...args]);
   } catch (e) {
-    if (!(e instanceof ExitError)) thrown = e;
+    if (!(e instanceof ExitError)) {
+      thrown = e;
+      // An unexpected throw must not look like success.
+      code ??= 2;
+    }
   } finally {
     for (const s of spies) s.mockRestore();
     exitSpy.mockRestore();
