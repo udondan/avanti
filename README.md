@@ -1,5 +1,10 @@
 # Avanti!
 
+[![npm](https://img.shields.io/npm/v/@udondan/avanti)](https://www.npmjs.com/package/@udondan/avanti)
+[![CI](https://github.com/udondan/avanti/actions/workflows/test.yml/badge.svg?branch=main)](https://github.com/udondan/avanti/actions/workflows/test.yml)
+[![codecov](https://codecov.io/gh/udondan/avanti/graph/badge.svg)](https://codecov.io/gh/udondan/avanti)
+[![License](https://img.shields.io/github/license/udondan/avanti)](LICENSE)
+
 A stateful package manager for arbitrary text files. Declare what you need and
 where to get it; avanti fetches, diffs, and writes with full version history,
 atomic rollbacks, and diff-before-apply safety.
