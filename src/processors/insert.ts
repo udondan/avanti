@@ -1,6 +1,13 @@
 import * as fs from 'fs';
 import { parse as parseJson, stringify as stringifyJson } from 'comment-json';
-import { parseDocument, isMap, isSeq, isScalar, type Pair } from 'yaml';
+import {
+  parseDocument,
+  isMap,
+  isSeq,
+  isScalar,
+  type Pair,
+  type YAMLMap,
+} from 'yaml';
 import { parse as parseToml, stringify as stringifyToml } from 'smol-toml';
 import type { FileEntry, FileSrc } from '../types';
 import { mergeJson } from './json';
@@ -8,7 +15,6 @@ import { mergeYaml } from './yaml';
 import { mergeToml } from './toml';
 import {
   parseIniDoc,
-  stringifyIniDoc,
   mergeIni,
   type IniDocument,
   type IniItem,
@@ -113,12 +119,10 @@ function yamlNodeToJs(node: unknown): unknown {
 }
 
 function deepRemoveFromYamlMap(
-  base: ReturnType<typeof parseDocument>['contents'] & object,
+  base: YAMLMap,
   oldContrib: Record<string, unknown>,
   newContrib: Record<string, unknown> | null = null,
 ): void {
-  if (!isMap(base)) return;
-
   for (const key of Object.keys(oldContrib)) {
     const pairIdx = base.items.findIndex((p) => yamlPairKey(p) === key);
     if (pairIdx === -1) continue;
@@ -240,9 +244,8 @@ function deepRemoveFromIniSectionItems(
         : undefined;
 
     if (Array.isArray(oldVal)) {
-      const iniKey = key.startsWith(INI_ARRAY_PREFIX)
-        ? key.slice(INI_ARRAY_PREFIX.length)
-        : key;
+      // iniDocToJs prefixes every array key, so the prefix is always present.
+      const iniKey = key.slice(INI_ARRAY_PREFIX.length);
       let node: IniKeyValue | undefined;
       for (let j = items.length - 1; j >= 0; j--) {
         const it = items[j];
@@ -254,14 +257,13 @@ function deepRemoveFromIniSectionItems(
       if (!node) continue;
       const curArr = node.value as IniScalar[];
       removeArrayContribution(curArr, oldVal);
-      // Remove the array node when it becomes empty and newVal is not an array
-      // (key removed or type changed to scalar).
+      // An empty node stays in place when the key is still an array, so
+      // mergeIni refills it at the same position. Otherwise (key removed or
+      // type changed to scalar) the node is dropped.
       if (curArr.length === 0 && !Array.isArray(newVal)) {
         const idx = items.indexOf(node);
-        if (idx !== -1) {
-          items.splice(idx, 1);
-          splicePrecedingCommentBlanks(items, idx);
-        }
+        items.splice(idx, 1);
+        splicePrecedingCommentBlanks(items, idx);
       }
     } else {
       let node: IniKeyValue | undefined;
@@ -278,10 +280,8 @@ function deepRemoveFromIniSectionItems(
       if (newVal !== undefined && !Array.isArray(newVal)) continue;
       if (deepEqual(node.value, oldVal)) {
         const idx = items.indexOf(node);
-        if (idx !== -1) {
-          items.splice(idx, 1);
-          splicePrecedingCommentBlanks(items, idx);
-        }
+        items.splice(idx, 1);
+        splicePrecedingCommentBlanks(items, idx);
       }
     }
   }
@@ -300,9 +300,8 @@ function deepRemoveFromIniDoc(
         : undefined;
 
     if (isPlainObject(oldVal)) {
-      const sectionName = key.startsWith(INI_SECTION_PREFIX)
-        ? key.slice(INI_SECTION_PREFIX.length)
-        : key;
+      // iniDocToJs prefixes every section key, so the prefix is always present.
+      const sectionName = key.slice(INI_SECTION_PREFIX.length);
       const subsectionMatch = /^(.+?)\s+"([^"]*)"$/.exec(sectionName);
       let section: IniSection | undefined;
       for (let j = doc.items.length - 1; j >= 0; j--) {
@@ -330,17 +329,13 @@ function deepRemoveFromIniDoc(
         section.items.filter((it) => it.kind === 'kv').length === 0 &&
         !isPlainObject(newVal)
       ) {
-        const idx = doc.items.indexOf(section);
-        if (idx !== -1) {
-          doc.items.splice(idx, 1);
-          // Do not strip preceding comment/blank nodes at the doc level —
-          // they may be file-level separators unrelated to this section.
-        }
+        // Do not strip preceding comment/blank nodes at the doc level —
+        // they may be file-level separators unrelated to this section.
+        doc.items.splice(doc.items.indexOf(section), 1);
       }
     } else if (Array.isArray(oldVal)) {
-      const iniKey = key.startsWith(INI_ARRAY_PREFIX)
-        ? key.slice(INI_ARRAY_PREFIX.length)
-        : key;
+      // iniDocToJs prefixes every array key, so the prefix is always present.
+      const iniKey = key.slice(INI_ARRAY_PREFIX.length);
       let node: IniKeyValue | undefined;
       for (let j = doc.items.length - 1; j >= 0; j--) {
         const it = doc.items[j];
@@ -352,13 +347,14 @@ function deepRemoveFromIniDoc(
       if (!node) continue;
       const curArr = node.value as IniScalar[];
       removeArrayContribution(curArr, oldVal);
-      // Remove the array node when it becomes empty and newVal is not an array
-      // (key removed or type changed to scalar/section).
-      if (curArr.length === 0 && !Array.isArray(newVal)) {
-        const idx = doc.items.indexOf(node);
-        if (idx !== -1) {
-          doc.items.splice(idx, 1);
+      if (curArr.length === 0) {
+        if (Array.isArray(newVal)) {
+          // See deepRemoveFromIniSectionItems: avoid a stray blank line.
+          node.value = [...(newVal as IniScalar[])];
+        } else {
+          // Key removed or type changed to scalar/section: drop the node.
           // Do not strip preceding comment/blank nodes at the doc level.
+          doc.items.splice(doc.items.indexOf(node), 1);
         }
       }
     } else {
@@ -380,11 +376,8 @@ function deepRemoveFromIniDoc(
       )
         continue;
       if (deepEqual(node.value, oldVal)) {
-        const idx = doc.items.indexOf(node);
-        if (idx !== -1) {
-          doc.items.splice(idx, 1);
-          // Do not strip preceding comment/blank nodes at the doc level.
-        }
+        // Do not strip preceding comment/blank nodes at the doc level.
+        doc.items.splice(doc.items.indexOf(node), 1);
       }
     }
   }
@@ -448,7 +441,7 @@ function applyJsonInsert(
       >;
     } catch (err) {
       throw new Error(
-        `insert mode: existing file is not valid JSON/JSONC: ${err instanceof Error ? err.message : String(err)}`,
+        `insert mode: existing file is not valid JSON/JSONC: ${(err as Error).message}`,
         { cause: err },
       );
     }
@@ -548,7 +541,7 @@ function applyTomlInsert(
       existingParsed = parseToml(existingContent);
     } catch (err) {
       throw new Error(
-        `insert mode: existing file is not valid TOML: ${err instanceof Error ? err.message : String(err)}`,
+        `insert mode: existing file is not valid TOML: ${(err as Error).message}`,
         { cause: err },
       );
     }
@@ -588,14 +581,14 @@ function applyIniInsert(
   lastProcessed: string | null,
   opts: Record<string, unknown>,
 ): string {
-  let cleanedIni: string;
+  let cleanedIni: string | IniDocument;
   if (lastProcessed !== null) {
     let existingDoc: IniDocument;
     try {
       existingDoc = parseIniDoc(existingContent);
     } catch (err) {
       throw new Error(
-        `insert mode: existing file is not valid INI: ${err instanceof Error ? err.message : String(err)}`,
+        `insert mode: existing file is not valid INI: ${(err as Error).message}`,
         { cause: err },
       );
     }
@@ -613,8 +606,7 @@ function applyIniInsert(
       let newContrib: Record<string, unknown> | null = null;
       if (effectiveConflicts === 'last_wins') {
         try {
-          const p = iniDocToJs(parseIniDoc(processedText));
-          if (isPlainObject(p)) newContrib = p;
+          newContrib = iniDocToJs(parseIniDoc(processedText));
         } catch {
           // unparseable processedText → null (old behaviour)
         }
@@ -623,7 +615,8 @@ function applyIniInsert(
     } catch {
       // Corrupted history fragment — skip key removal, fall through to merge
     }
-    cleanedIni = stringifyIniDoc(existingDoc);
+    // Passed as a document, so emptied array nodes keep their position.
+    cleanedIni = existingDoc;
   } else {
     cleanedIni = existingContent;
   }

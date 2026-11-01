@@ -210,30 +210,29 @@ export function parseIniDoc(text: string): IniDocument {
 
     // Bare key (no `=`): treat as empty-string value.
     // Reject lines that look like a broken section header or an empty-key
-    // assignment — those are parse errors, not bare keys.
-    if (trimmed !== '') {
-      if (trimmed.startsWith('[')) {
-        throw new Error(`line ${i + 1}: malformed section header: ${trimmed}`);
-      }
-      if (trimmed.startsWith('=')) {
-        throw new Error(
-          `line ${i + 1}: key/value line with empty key: ${trimmed}`,
-        );
-      }
-      const { value: bareKey, inlineComment: bareComment } =
-        splitValueAndComment(trimmed);
-      if (bareKey.includes('\0')) {
-        throw new Error(`line ${i + 1}: INI key must not contain null bytes`);
-      }
-      pushItem({
-        kind: 'kv',
-        key: bareKey,
-        isArray: false,
-        value: '',
-        sep: '',
-        inlineComment: bareComment,
-      });
+    // assignment — those are parse errors, not bare keys. (Blank lines were
+    // already handled above, so `trimmed` is never empty here.)
+    if (trimmed.startsWith('[')) {
+      throw new Error(`line ${i + 1}: malformed section header: ${trimmed}`);
     }
+    if (trimmed.startsWith('=')) {
+      throw new Error(
+        `line ${i + 1}: key/value line with empty key: ${trimmed}`,
+      );
+    }
+    const { value: bareKey, inlineComment: bareComment } =
+      splitValueAndComment(trimmed);
+    if (bareKey.includes('\0')) {
+      throw new Error(`line ${i + 1}: INI key must not contain null bytes`);
+    }
+    pushItem({
+      kind: 'kv',
+      key: bareKey,
+      isArray: false,
+      value: '',
+      sep: '',
+      inlineComment: bareComment,
+    });
     i++;
   }
 
@@ -347,9 +346,12 @@ function valuesEqual(
   a: IniScalar | IniScalar[],
   b: IniScalar | IniScalar[],
 ): boolean {
-  if (Array.isArray(a) && Array.isArray(b)) return arraysEqual(a, b);
-  if (!Array.isArray(a) && !Array.isArray(b)) return scalarsEqual(a, b);
-  return false;
+  // Callers only compare values of the same shape (scalar↔array changes are
+  // detected beforehand), but stay defensive about mixed shapes.
+  if (Array.isArray(a) || Array.isArray(b)) {
+    return Array.isArray(a) && Array.isArray(b) && arraysEqual(a, b);
+  }
+  return scalarsEqual(a, b);
 }
 
 function dedupeArrayValues(
@@ -367,7 +369,7 @@ function mergeKvIntoItems(
   items: (IniComment | IniBlank | IniKeyValue)[],
   overlay: IniKeyValue,
   opts: ResolvedOptions,
-  path: string,
+  path: string, // never empty: it always ends with the (non-empty) key
 ): void {
   // Match by key only (ignoring isArray) so that a scalar↔array type change on
   // the same key is handled by the conflict strategy rather than silently
@@ -399,8 +401,7 @@ function mergeKvIntoItems(
 
   // Scalar↔array type change: treat as a conflict regardless of array strategy.
   if (baseKv.isArray !== overlay.isArray) {
-    const loc = path || '(root)';
-    if (opts.conflicts === 'abort') throw new Error(`INI conflict at ${loc}`);
+    if (opts.conflicts === 'abort') throw new Error(`INI conflict at ${path}`);
     if (opts.conflicts === 'first_wins') return;
     // last_wins: replace value and type in-place.
     baseKv.value = overlay.value;
@@ -423,9 +424,8 @@ function mergeKvIntoItems(
     // replace (default) falls through to conflict handling
   }
 
-  const loc = path || '(root)';
   if (opts.conflicts === 'abort') {
-    throw new Error(`INI conflict at ${loc}`);
+    throw new Error(`INI conflict at ${path}`);
   }
   if (opts.conflicts === 'first_wins') return;
 
@@ -574,7 +574,12 @@ function mergeDocuments(
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
-export function mergeIni(parts: string[], opts: IniMergeOptions = {}): string {
+// A part may also be a parsed document, which keeps nodes that have no text of
+// their own (empty arrays) at their position.
+export function mergeIni(
+  parts: (string | IniDocument)[],
+  opts: IniMergeOptions = {},
+): string {
   const resolved: ResolvedOptions = {
     conflicts: opts.conflicts ?? 'last_wins',
     arrays: opts.arrays ?? 'replace',
@@ -584,6 +589,7 @@ export function mergeIni(parts: string[], opts: IniMergeOptions = {}): string {
   if (parts.length === 0) return '';
 
   const parsed = parts.map((p, i) => {
+    if (typeof p !== 'string') return p;
     try {
       return parseIniDoc(p);
     } catch (e) {

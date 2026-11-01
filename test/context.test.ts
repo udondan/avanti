@@ -83,6 +83,18 @@ describe('resolveVariablesAndEnvironment', () => {
     );
   });
 
+  it('reports only the cycle, not entries that merely depend on it', async () => {
+    await expect(
+      resolveVariablesAndEnvironment(
+        { base: 'x', c: '$base-$a', a: '$b', b: '$a' },
+        {},
+        cwd,
+      ),
+    ).rejects.toThrow(
+      /^Circular dependency: variables\.a → variables\.b → variables\.a$/,
+    );
+  });
+
   it('throws on a self-referencing variable', async () => {
     await expect(
       resolveVariablesAndEnvironment({ a: '$a' }, {}, cwd),

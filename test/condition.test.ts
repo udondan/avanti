@@ -119,6 +119,20 @@ describe('evaluateCondition', () => {
         evaluateCondition({ exists: 'exists.txt' }, () => '', tmpDir, {}),
       ).toBe(true);
     });
+
+    it('expands ~/ in exists paths', () => {
+      expect(evaluateCondition({ exists: '~/' }, () => '', tmpDir, {})).toBe(
+        true,
+      );
+      expect(
+        evaluateCondition(
+          { exists: '~/.avanti-definitely-missing-xyz' },
+          () => '',
+          tmpDir,
+          {},
+        ),
+      ).toBe(false);
+    });
   });
 
   describe('exec', () => {

@@ -365,6 +365,43 @@ describe('computeDiff — mode changes', () => {
       expect(result.modeChange).toBeUndefined();
     },
   );
+
+  it.skipIf(process.platform === 'win32')(
+    'ignores a desired mode that is not a valid octal number',
+    () => {
+      const file = path.join(tmpDir, 'script.sh');
+      fs.writeFileSync(file, '#!/bin/sh\n');
+      fs.chmodSync(file, 0o644);
+      const result = computeDiff(file, Buffer.from('#!/bin/sh\n'), 'rwx');
+      expect(result.hasChanges).toBe(false);
+      expect(result.modeChange).toBeUndefined();
+    },
+  );
+
+  it('reports no changes for identical binary content without a mode', () => {
+    const file = path.join(tmpDir, 'bin.dat');
+    const binary = Buffer.concat([Buffer.alloc(1), Buffer.from('DATA')]);
+    fs.writeFileSync(file, binary);
+    const result = computeDiff(file, binary);
+    expect(result.isBinary).toBe(true);
+    expect(result.contentChanged).toBe(false);
+    expect(result.hasChanges).toBe(false);
+  });
+
+  it.skipIf(process.platform === 'win32')(
+    'reports a mode-only change on identical binary content',
+    () => {
+      const file = path.join(tmpDir, 'bin.dat');
+      const binary = Buffer.concat([Buffer.alloc(1), Buffer.from('DATA')]);
+      fs.writeFileSync(file, binary);
+      fs.chmodSync(file, 0o644);
+      const result = computeDiff(file, binary, '0600');
+      expect(result.isBinary).toBe(true);
+      expect(result.contentChanged).toBe(false);
+      expect(result.hasChanges).toBe(true);
+      expect(result.modeChange).toEqual({ from: 0o644, to: 0o600 });
+    },
+  );
 });
 
 // ── computeSymlinkDiff / buildNewSymlinkDiff ──────────────────────────────────
@@ -443,4 +480,38 @@ describe('formatDiff — mode changes', () => {
       }
     },
   );
+});
+
+describe('formatDiff — mode changes with binary or headerless content', () => {
+  it('shows the mode lines between header and label for a changed binary file', () => {
+    const output = formatDiff({
+      targetPath: '/f.bin',
+      isNew: false,
+      hasChanges: true,
+      contentChanged: true,
+      patch: '',
+      isBinary: true,
+      modeChange: { from: 0o644, to: 0o600 },
+    });
+    const lines = output.split('\n');
+    expect(lines[0]).toContain('--- /f.bin');
+    expect(lines[1]).toContain('+++ /f.bin');
+    expect(lines[2]).toContain('-old mode 000644');
+    expect(lines[3]).toContain('+new mode 000600');
+    expect(lines[4]).toContain('binary file changed');
+  });
+
+  it('renders the patch unchanged when it has no +++ header to anchor the mode lines', () => {
+    const output = formatDiff({
+      targetPath: '/f',
+      isNew: false,
+      hasChanges: true,
+      contentChanged: true,
+      patch: '@@ -1 +1 @@\n-old\n+new',
+      modeChange: { from: 0o644, to: 0o600 },
+    });
+    expect(output).toContain('-old');
+    expect(output).toContain('+new');
+    expect(output).not.toContain('old mode');
+  });
 });

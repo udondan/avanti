@@ -121,4 +121,33 @@ describe('sortByDependencies', () => {
     const result = sortByDependencies(entries, tmpDir, vars);
     expect(result.map(([k]) => k)).toEqual(['a', 'b']);
   });
+
+  it('reports only the cycle, not entries that merely depend on it', () => {
+    const entries: [string, FileEntry][] = [
+      ['c', entry('c.txt', join(tmpDir, 'a.txt'))],
+      ['a', entry('a.txt', join(tmpDir, 'b.txt'))],
+      ['b', entry('b.txt', join(tmpDir, 'a.txt'))],
+    ];
+    expect(() => sortByDependencies(entries, tmpDir, {})).toThrow(
+      'Circular dependency detected: a → b → a',
+    );
+  });
+
+  it('matches ~/ targets against ~/ sources', () => {
+    const entries: [string, FileEntry][] = [
+      ['b', entry('b.txt', { path: '~/.avanti-deps-a.txt' })],
+      ['a', entry('~/.avanti-deps-a.txt', { raw: 'x' })],
+    ];
+    const result = sortByDependencies(entries, tmpDir, {});
+    expect(result.map(([k]) => k)).toEqual(['a', 'b']);
+  });
+
+  it('ignores targets with unresolvable variables', () => {
+    const entries: [string, FileEntry][] = [
+      ['b', entry('b.txt', join(tmpDir, 'a.txt'))],
+      ['a', entry('$missing/a.txt', { raw: 'x' })],
+    ];
+    const result = sortByDependencies(entries, tmpDir, {});
+    expect(result.map(([k]) => k)).toEqual(['b', 'a']);
+  });
 });

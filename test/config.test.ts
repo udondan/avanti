@@ -191,6 +191,21 @@ describe('resolveRelativeSrc', () => {
     ).toBe('https://example.com/configs/scripts/foo.sh?token=123');
   });
 
+  it('lets query parameters of the src override those of the HTTP config base', () => {
+    expect(
+      resolveRelativeSrc(
+        './foo.sh?token=src',
+        'https://example.com/configs/?token=base&mode=raw',
+      ),
+    ).toBe('https://example.com/configs/foo.sh?token=src&mode=raw');
+  });
+
+  it('resolves a relative src against a github: config base without a path', () => {
+    expect(resolveRelativeSrc('./foo.sh', 'github:owner/repo')).toBe(
+      'github:owner/repo:foo.sh',
+    );
+  });
+
   it('resolves a relative src against a github: config base', () => {
     expect(
       resolveRelativeSrc('./scripts/foo.sh', 'github:owner/repo:configs'),
@@ -1144,6 +1159,29 @@ files:
     on: "not an object"
 `);
     await expect(loadConfig(f)).rejects.toThrow('on: must be a mapping');
+  });
+
+  it('rejects a date as on: value', async () => {
+    const f = writeTmp(`
+files:
+  out.txt:
+    src:
+      exec: echo hi
+    on: 2026-01-01
+`);
+    await expect(loadConfig(f)).rejects.toThrow('on: must be a mapping');
+  });
+
+  // js-yaml has no timestamp type, so a Date can never reach the on: check.
+  it('rejects an explicit timestamp tag on on:', async () => {
+    const f = writeTmp(`
+files:
+  out.txt:
+    src:
+      exec: echo hi
+    on: !!timestamp 2026-01-01
+`);
+    await expect(loadConfig(f)).rejects.toThrow('unknown scalar tag');
   });
 
   it('rejects legacy post: field with migration hint', async () => {

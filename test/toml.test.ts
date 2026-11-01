@@ -239,3 +239,21 @@ describe('trailing newline', () => {
     expect(formatToml('a = 1')).toMatch(/\n$/);
   });
 });
+
+describe('mergeToml — edge cases', () => {
+  it('returns an empty string for no parts', () => {
+    expect(mergeToml([])).toBe('');
+  });
+
+  it('treats NaN values as equal', () => {
+    expect(mergeToml(['x = nan\n', 'x = nan\n'], { conflicts: 'abort' })).toBe(
+      'x = nan\n',
+    );
+  });
+
+  it('reports a conflict on an empty key at the root', () => {
+    expect(() =>
+      mergeToml(['"" = 1\n', '"" = 2\n'], { conflicts: 'abort' }),
+    ).toThrow('TOML conflict at (root)');
+  });
+});

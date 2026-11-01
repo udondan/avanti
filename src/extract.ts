@@ -64,7 +64,8 @@ async function extractTar(buffer: Buffer): Promise<Map<string, Buffer>> {
       try {
         normalized = normalizePath(entry.path);
       } catch (err) {
-        const error = err instanceof Error ? err : new Error(String(err));
+        // normalizePath only ever throws Error instances.
+        const error = err as Error;
         reject(error);
         entry.resume();
         return;

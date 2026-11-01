@@ -30,16 +30,16 @@ function deepResolveVars(
     typeof value === 'symbol' ||
     typeof value === 'function'
   ) {
-    const at = path ? ` at ${path}` : '';
     throw new Error(
-      `Variable value has unsupported type "${typeof value}"${at} — only string, number, boolean, null, array, and plain object are allowed`,
+      `Variable value has unsupported type "${typeof value}" at ${path} — only string, number, boolean, null, array, and plain object are allowed`,
     );
   }
 
   if (Array.isArray(value)) {
     if (seen.has(value)) {
-      const at = path ? ` at ${path}` : '';
-      throw new Error(`Variable value contains a circular reference${at}`);
+      throw new Error(
+        `Variable value contains a circular reference at ${path}`,
+      );
     }
     seen.add(value);
     const result = value.map((v, i) =>
@@ -51,8 +51,9 @@ function deepResolveVars(
 
   if (typeof value === 'object' && value !== null) {
     if (seen.has(value)) {
-      const at = path ? ` at ${path}` : '';
-      throw new Error(`Variable value contains a circular reference${at}`);
+      throw new Error(
+        `Variable value contains a circular reference at ${path}`,
+      );
     }
     const proto = Object.getPrototypeOf(value) as unknown;
     if (proto !== Object.prototype && proto !== null) {
@@ -95,7 +96,8 @@ export async function resolveVariableEntry(
     try {
       return resolveVars(value, resolved);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
+      // resolveVars and deepResolveVars only ever throw Error instances.
+      const msg = (err as Error).message;
       throw new Error(`variables.${name}: ${msg}`, { cause: err });
     }
   } else if (value === null) {
@@ -126,7 +128,8 @@ export async function resolveVariableEntry(
       // safe — only values without an own `src` reach this branch.
       return deepResolveVars(value as JsonValue, resolved) as VariableValue;
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
+      // resolveVars and deepResolveVars only ever throw Error instances.
+      const msg = (err as Error).message;
       throw new Error(`variables.${name}: ${msg}`, { cause: err });
     }
   } else {

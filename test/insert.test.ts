@@ -652,3 +652,400 @@ describe('INI — property order preservation', () => {
     expect(result).toContain('b = 2');
   });
 });
+
+// ── Removal edge cases ───────────────────────────────────────────────────────
+
+function insertInto(
+  file: string,
+  existing: string,
+  overrides: Partial<FileEntry>,
+  processed: string,
+  last: string | null,
+): string {
+  const targetPath = path.join(tmpDir, file);
+  fs.writeFileSync(targetPath, existing);
+  return applyInsertMode(
+    makeEntry({ target: file, ...overrides }),
+    processed,
+    last,
+    targetPath,
+  );
+}
+
+describe('JSON — removal edge cases', () => {
+  it('throws when the existing file is not valid JSON', () => {
+    expect(() =>
+      insertInto('f.json', '{ broken', { json: true }, '{}', '{}'),
+    ).toThrow('insert mode: existing file is not valid JSON/JSONC');
+  });
+
+  it('removes nested array and object items by deep equality', () => {
+    const result = insertInto(
+      'f.json',
+      JSON.stringify({ arr: [[1, 2], { b: 1, a: 2 }, 'user'] }),
+      { json: { arrays: 'concat' } },
+      '{}',
+      JSON.stringify({ arr: [[1, 2], { a: 2, b: 1 }] }),
+    );
+    expect(JSON.parse(result)).toEqual({ arr: ['user'] });
+  });
+
+  it('removes a scalar that avanti replaced with an array of the same value', () => {
+    const result = insertInto(
+      'f.json',
+      JSON.stringify({ k: [1], user: true }),
+      { json: true },
+      '{}',
+      JSON.stringify({ k: [1] }),
+    );
+    expect(JSON.parse(result)).toEqual({ user: true });
+  });
+});
+
+describe('YAML — removal edge cases', () => {
+  it('throws when the existing file is not valid YAML', () => {
+    expect(() =>
+      insertInto('f.yaml', 'a: [unclosed\n', { yaml: true }, 'b: 1\n', 'b: 1'),
+    ).toThrow('insert mode: existing file is not valid YAML');
+  });
+
+  it('removes a nested map when avanti was the sole contributor', () => {
+    const result = insertInto(
+      'f.yaml',
+      'outer:\n  k: v\nuser: 1\n',
+      { yaml: true },
+      '{}\n',
+      'outer:\n  k: v\n',
+    );
+    expect(result).toBe('user: 1\n');
+  });
+
+  it('removes contributed sequence items', () => {
+    const result = insertInto(
+      'f.yaml',
+      'arr:\n  - mine\n  - a\n  - b\nall:\n  - a\nuser: 1\n',
+      { yaml: { arrays: 'concat' } },
+      '{}\n',
+      'arr: [a, b]\nall: [a]\n',
+    );
+    expect(result).toBe('arr:\n  - mine\nuser: 1\n');
+  });
+
+  it('removes keys whose value node is empty', () => {
+    const result = insertInto(
+      'f.yaml',
+      '? k\nother: 1\n',
+      { yaml: true },
+      '{}\n',
+      'k: null\n',
+    );
+    expect(result).toBe('other: 1\n');
+  });
+
+  it('handles non-scalar keys in the existing document', () => {
+    const result = insertInto(
+      'f.yaml',
+      '? [a, b]\n: complex\nk: v\n',
+      { yaml: true },
+      'k: w\n',
+      'k: v\n',
+    );
+    expect(result).toContain('k: w');
+    expect(result).toContain('complex');
+  });
+});
+
+describe('TOML — removal edge cases', () => {
+  it('throws when the existing file is not valid TOML', () => {
+    expect(() =>
+      insertInto('f.toml', 'a = [\n', { toml: true }, 'b = 1\n', 'b = 1\n'),
+    ).toThrow('insert mode: existing file is not valid TOML');
+  });
+
+  it('removes a nested table when avanti was the sole contributor', () => {
+    const result = insertInto(
+      'f.toml',
+      'user = 1\n[outer]\nk = "v"\n',
+      { toml: true },
+      '',
+      '[outer]\nk = "v"\n',
+    );
+    expect(result.trim()).toBe('user = 1');
+  });
+
+  it('removes contributed array items', () => {
+    const result = insertInto(
+      'f.toml',
+      'arr = [0, 1, 2]\nall = [1]\nuser = 1\n',
+      { toml: { arrays: 'concat' } },
+      '',
+      'arr = [1, 2]\nall = [1]\n',
+    );
+    expect(result.trim()).toBe('arr = [ 0 ]\nuser = 1');
+  });
+});
+
+describe('INI — removal edge cases', () => {
+  it('throws when the existing file is not valid INI', () => {
+    expect(() =>
+      insertInto('f.ini', '[broken\n', { ini: true }, 'a = 1\n', 'a = 1\n'),
+    ).toThrow('insert mode: existing file is not valid INI');
+  });
+
+  it('merges without removal on first insert', () => {
+    const result = insertInto(
+      'f.ini',
+      'user = 1\n',
+      { ini: true },
+      'a = 1\n',
+      null,
+    );
+    expect(result).toBe('user = 1\na = 1\n');
+  });
+
+  it('removes global scalars and arrays avanti contributed', () => {
+    const result = insertInto(
+      'f.ini',
+      '; header\ng = 1\nlist[] = a\nlist[] = b\nmine = 2\n[s]\nx = 1\n',
+      { ini: true },
+      '',
+      'g = 1\nlist[] = a\nlist[] = b\nmissing = 1\nnope[] = 1\n',
+    );
+    expect(result).toBe('; header\nmine = 2\n[s]\nx = 1\n');
+  });
+
+  it('updates a global scalar in place', () => {
+    const result = insertInto(
+      'f.ini',
+      'g = 1\nmine = 2\n',
+      { ini: true },
+      'g = 3\n',
+      'g = 1\n',
+    );
+    expect(result).toBe('g = 3\nmine = 2\n');
+  });
+
+  it('keeps global scalars the user changed', () => {
+    const result = insertInto('f.ini', 'g = 5\n', { ini: true }, '', 'g = 1\n');
+    expect(result).toBe('g = 5\n');
+  });
+
+  it('updates a global array in place without leaving a blank line', () => {
+    const result = insertInto(
+      'f.ini',
+      'list[] = a\nmine = 1\n',
+      { ini: true },
+      'list[] = b\n',
+      'list[] = a\n',
+    );
+    expect(result).toBe('list[] = b\nmine = 1\n');
+  });
+
+  it('removes section keys and arrays together with their comments', () => {
+    const result = insertInto(
+      'f.ini',
+      '[s]\nkeep = 1\n; about k\nk = v\n\n; the list\nlist[] = a\nlist[] = b\n',
+      { ini: true },
+      '',
+      '[s]\nk = v\nlist[] = a\nlist[] = b\nmissing[] = 1\n',
+    );
+    expect(result).toBe('[s]\nkeep = 1\n');
+  });
+
+  it('updates a section array in place without leaving a blank line', () => {
+    const result = insertInto(
+      'f.ini',
+      '[s]\nlist[] = a\nmine = 1\n',
+      { ini: true },
+      '[s]\nlist[] = b\n',
+      '[s]\nlist[] = a\n',
+    );
+    expect(result).toBe('[s]\nlist[] = b\nmine = 1\n');
+  });
+
+  it.each(['concat', 'dedupe'] as const)(
+    'applies an update with repeated sections once (arrays: %s)',
+    (arrays) => {
+      const result = insertInto(
+        'f.ini',
+        '[s]\nlist[] = a\nmine = 1\n',
+        { ini: { arrays } },
+        '[s]\nlist[] = b\n[s]\nlist[] = c\n',
+        '[s]\nlist[] = a\n',
+      );
+      expect(result).toBe('[s]\nlist[] = b\nlist[] = c\nmine = 1\n');
+    },
+  );
+
+  it('updates an array repeatedly without accumulating blank lines', () => {
+    const targetPath = path.join(tmpDir, 'f.ini');
+    fs.writeFileSync(targetPath, '[s]\nlist[] = a\n');
+    const entry = makeEntry({ ini: true, target: 'f.ini' });
+    let last = '[s]\nlist[] = a\n';
+    for (const v of ['b', 'c', 'd']) {
+      const next = `[s]\nlist[] = ${v}\n`;
+      fs.writeFileSync(
+        targetPath,
+        applyInsertMode(entry, next, last, targetPath),
+      );
+      last = next;
+    }
+    expect(fs.readFileSync(targetPath, 'utf8')).toBe('[s]\nlist[] = d\n');
+  });
+
+  it('removes a subsection avanti contributed and keeps others', () => {
+    const result = insertInto(
+      'f.ini',
+      '[remote "o"]\nurl = a\n[remote "p"]\nurl = b\n',
+      { ini: true },
+      '',
+      '[remote "o"]\nurl = a\n',
+    );
+    expect(result).toBe('[remote "p"]\nurl = b\n');
+  });
+
+  it('keeps a subsection that still has user keys', () => {
+    const result = insertInto(
+      'f.ini',
+      '[remote "o"]\nurl = a\nuser = 1\n',
+      { ini: true },
+      '',
+      '[remote "o"]\nurl = a\n',
+    );
+    expect(result).toBe('[remote "o"]\nuser = 1\n');
+  });
+});
+
+describe('insert — previous contribution no longer matches the file', () => {
+  it('JSON: skips keys the user already deleted', () => {
+    const result = insertInto(
+      'f.json',
+      JSON.stringify({ user: 1 }),
+      { json: true },
+      '{}',
+      JSON.stringify({ gone: 1 }),
+    );
+    expect(JSON.parse(result)).toEqual({ user: 1 });
+  });
+
+  it('JSON: skips removal when the previous contribution is not an object', () => {
+    const result = insertInto(
+      'f.json',
+      JSON.stringify({ a: 1 }),
+      { json: true },
+      JSON.stringify({ b: 2 }),
+      '[1]',
+    );
+    expect(JSON.parse(result)).toEqual({ a: 1, b: 2 });
+  });
+
+  it('YAML: skips keys the user already deleted', () => {
+    const result = insertInto(
+      'f.yaml',
+      'user: 1\n',
+      { yaml: true },
+      'a: 2\n',
+      'gone: 1\n',
+    );
+    expect(result).toBe('user: 1\na: 2\n');
+  });
+
+  it('YAML: skips removal when the existing file is not a map', () => {
+    const result = insertInto(
+      'f.yaml',
+      '- a\n',
+      { yaml: true },
+      '- b\n',
+      'x: 1\n',
+    );
+    expect(result).toBe('- b\n');
+  });
+
+  it('YAML: skips removal when the previous contribution is invalid YAML', () => {
+    const result = insertInto(
+      'f.yaml',
+      'a: 1\nuser: 2\n',
+      { yaml: true },
+      'a: 3\n',
+      'a: [unclosed\n',
+    );
+    expect(result).toBe('a: 3\nuser: 2\n');
+  });
+
+  it('YAML: skips removal when the previous contribution is not a map', () => {
+    const result = insertInto(
+      'f.yaml',
+      'a: 1\n',
+      { yaml: true },
+      'b: 2\n',
+      '- a\n',
+    );
+    expect(result).toBe('a: 1\nb: 2\n');
+  });
+
+  it('TOML: skips keys the user already deleted', () => {
+    const result = insertInto(
+      'f.toml',
+      'user = 1\n',
+      { toml: true },
+      '',
+      'gone = 1\n',
+    );
+    expect(result.trim()).toBe('user = 1');
+  });
+
+  it('INI: keeps array items the user added to a section array', () => {
+    const result = insertInto(
+      'f.ini',
+      '[s]\nlist[] = a\nlist[] = user\n',
+      { ini: true },
+      '',
+      '[s]\nlist[] = a\n',
+    );
+    expect(result).toBe('[s]\nlist[] = user\n');
+  });
+
+  it('INI: keeps array items the user added to a global array', () => {
+    const result = insertInto(
+      'f.ini',
+      'list[] = a\nlist[] = user\n',
+      { ini: true },
+      '',
+      'list[] = a\n',
+    );
+    expect(result).toBe('list[] = user\n');
+  });
+
+  it('INI: skips section keys the user deleted or changed', () => {
+    const result = insertInto(
+      'f.ini',
+      '[s]\nk = 5\n',
+      { ini: true },
+      '',
+      '[s]\ngone = 1\nk = 1\n',
+    );
+    expect(result).toBe('[s]\nk = 5\n');
+  });
+
+  it('INI: skips sections the user deleted and leaves other sections alone', () => {
+    const result = insertInto(
+      'f.ini',
+      'top = 1\n[a]\nx = 1\n[b]\ny = 1\n',
+      { ini: true },
+      '',
+      '[a]\nx = 1\n[c]\nz = 1\n',
+    );
+    expect(result).toBe('top = 1\n[b]\ny = 1\n');
+  });
+
+  it('INI: ignores comments in the previous contribution', () => {
+    const result = insertInto(
+      'f.ini',
+      '[s]\nk = v\nuser = 1\n',
+      { ini: true },
+      '',
+      '; c\n[s]\n; d\nk = v\n',
+    );
+    expect(result).toBe('[s]\nuser = 1\n');
+  });
+});

@@ -451,3 +451,188 @@ describe('trailing newline', () => {
     expect(formatIni('[s]\na = 1')).toMatch(/\n$/);
   });
 });
+
+// ── parser edge cases ─────────────────────────────────────────────────────────
+
+describe('parseIniDoc — edge cases', () => {
+  it('rejects null bytes in section names', () => {
+    expect(() => parseIniDoc('[a\0b]\n')).toThrow(
+      'line 1: INI section name must not contain null bytes',
+    );
+  });
+
+  it('rejects null bytes in subsection names', () => {
+    expect(() => parseIniDoc('[a "b\0c"]\n')).toThrow(
+      'INI section name must not contain null bytes',
+    );
+  });
+
+  it('rejects null bytes in keys', () => {
+    expect(() => parseIniDoc('k\0ey = 1\n')).toThrow(
+      'line 1: INI key must not contain null bytes',
+    );
+  });
+
+  it('rejects null bytes in bare keys', () => {
+    expect(() => parseIniDoc('ok = 1\nbare\0key\n')).toThrow(
+      'line 2: INI key must not contain null bytes',
+    );
+  });
+
+  it('rejects malformed section headers', () => {
+    expect(() => parseIniDoc('[unterminated\n')).toThrow(
+      'line 1: malformed section header: [unterminated',
+    );
+  });
+
+  it('rejects key/value lines with an empty key', () => {
+    expect(() => parseIniDoc('= value\n')).toThrow(
+      'line 1: key/value line with empty key: = value',
+    );
+  });
+
+  it('parses bare keys (no =) as empty-string values', () => {
+    const doc = parseIniDoc('[mysqld]\nskip-name-resolve ; inline\n');
+    const section = doc.items[0];
+    expect(section.kind).toBe('section');
+    if (section.kind !== 'section') return;
+    expect(section.items[0]).toEqual({
+      kind: 'kv',
+      key: 'skip-name-resolve',
+      isArray: false,
+      value: '',
+      sep: '',
+      inlineComment: '; inline',
+    });
+  });
+
+  it('round-trips bare keys and blank lines inside sections', () => {
+    const input = '[mysqld]\nskip-name-resolve\n\nport = 3306\n';
+    expect(stringifyIniDoc(parseIniDoc(input))).toBe(input);
+  });
+});
+
+describe('formatIni — errors', () => {
+  it('wraps parse errors', () => {
+    expect(() => formatIni('[broken\n')).toThrow(
+      'invalid INI: line 1: malformed section header: [broken',
+    );
+  });
+});
+
+describe('mergeIni — edge cases', () => {
+  it('returns an empty string for no parts', () => {
+    expect(mergeIni([])).toBe('');
+  });
+
+  it('reports which source is invalid', () => {
+    expect(() => mergeIni(['a = 1\n', '[broken\n'])).toThrow(
+      '[source 1]: invalid INI: line 1: malformed section header: [broken',
+    );
+  });
+
+  it('adopts the overlay separator when a bare key gains a value', () => {
+    const result = mergeIni(['[s]\nflag\n', '[s]\nflag = 1\n']);
+    expect(result).toBe('[s]\nflag = 1\n');
+  });
+
+  it('objects:replace appends a section missing from the base', () => {
+    const result = mergeIni(['[a]\nx = 1\n', '[b]\ny = 2\n'], {
+      objects: 'replace',
+    });
+    expect(result).toBe('[a]\nx = 1\n[b]\ny = 2\n');
+  });
+
+  it('objects:replace keeps identical sections as-is', () => {
+    const a = '[db]\n; keep me\nhost = a\nport = 1\n';
+    const b = '[db]\nport = 1\nhost = a\n';
+    expect(mergeIni([a, b], { objects: 'replace' })).toBe(a);
+  });
+
+  it('objects:replace replaces sections with the same keys but other values', () => {
+    const a = '[db]\nhost = a\n';
+    const b = '[db]\nhost = b\n';
+    expect(mergeIni([a, b], { objects: 'replace' })).toBe(b);
+  });
+
+  it('objects:replace replaces sections with the same key count but other keys', () => {
+    const a = '[db]\nhost = a\n';
+    const b = '[db]\nport = 1\n';
+    expect(mergeIni([a, b], { objects: 'replace' })).toBe(b);
+  });
+
+  it('objects:replace with abort throws on differing sections', () => {
+    expect(() =>
+      mergeIni(['[remote "o"]\nurl = a\n', '[remote "o"]\nurl = b\n'], {
+        objects: 'replace',
+        conflicts: 'abort',
+      }),
+    ).toThrow('INI conflict at remote "o"');
+  });
+
+  it('objects:replace with first_wins keeps the base section', () => {
+    const a = '[db]\nhost = a\n';
+    expect(
+      mergeIni([a, '[db]\nhost = b\n'], {
+        objects: 'replace',
+        conflicts: 'first_wins',
+      }),
+    ).toBe(a);
+  });
+
+  it('objects:replace compares array keys by value', () => {
+    const a = '[s]\nlist[] = a\n';
+    expect(mergeIni([a, a], { objects: 'replace' })).toBe(a);
+    expect(mergeIni([a, '[s]\nlist[] = b\n'], { objects: 'replace' })).toBe(
+      '[s]\nlist[] = b\n',
+    );
+  });
+
+  it('writes boolean values back as true/false', () => {
+    expect(mergeIni(['a = TRUE\nb = False\n', 'c = 1\n'])).toBe(
+      'a = true\nb = false\nc = 1\n',
+    );
+  });
+
+  it('inserts a new section key after the last key, before trailing comments', () => {
+    expect(mergeIni(['[s]\na = 1\n; end\n', '[s]\nb = 2\n'])).toBe(
+      '[s]\na = 1\nb = 2\n; end\n',
+    );
+  });
+
+  it('appends a new key to a section with only comments', () => {
+    expect(mergeIni(['[s]\n; only\n', '[s]\nb = 2\n'])).toBe(
+      '[s]\n; only\nb = 2\n',
+    );
+  });
+
+  it('adopts the overlay separator when a bare key becomes an array', () => {
+    expect(mergeIni(['flag\n', 'flag[] = 1\n'])).toBe('flag[] = 1\n');
+  });
+
+  it('keeps the separator when a key=value scalar becomes an array', () => {
+    expect(mergeIni(['k=1\n', 'k[] = 1\n'])).toBe('k[]=1\n');
+  });
+
+  it('ignores comments and blank lines in overlay sections', () => {
+    expect(mergeIni(['[s]\na = 1\n', '[s]\n; note\n\nb = 2\n'])).toBe(
+      '[s]\na = 1\nb = 2\n',
+    );
+  });
+
+  it('ignores comments and blank lines at the top of the overlay', () => {
+    expect(mergeIni(['a = 1\n', '; note\n\nb = 2\n'])).toBe('a = 1\nb = 2\n');
+  });
+
+  it('inserts a new global key before the first section', () => {
+    expect(mergeIni(['a = 1\n; about s\n[s]\nx = 1\n', 'b = 2\n'])).toBe(
+      'a = 1\nb = 2\n; about s\n[s]\nx = 1\n',
+    );
+  });
+
+  it('reports conflicts in a section with an empty name by key', () => {
+    expect(() =>
+      mergeIni(['[ ]\nk = 1\n', '[ ]\nk = 2\n'], { conflicts: 'abort' }),
+    ).toThrow('INI conflict at k');
+  });
+});

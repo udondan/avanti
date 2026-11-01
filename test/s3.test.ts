@@ -1,9 +1,20 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-const { mockSend, mockDestroy } = vi.hoisted(() => ({
+const { mockSend, mockDestroy, basenameOverride } = vi.hoisted(() => ({
   mockSend: vi.fn(),
   mockDestroy: vi.fn(),
+  // When set, path.basename returns this value instead of the real result.
+  // Used to simulate keys that have no basename on some platforms (e.g. a
+  // drive-letter key like "C:" on Windows).
+  basenameOverride: { value: undefined as string | undefined },
 }));
+
+vi.mock('path', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('path')>();
+  const basename = (p: string, ext?: string) =>
+    basenameOverride.value ?? actual.basename(p, ext);
+  return { ...actual, default: { ...actual, basename }, basename };
+});
 
 vi.mock('@aws-sdk/client-s3', () => {
   class S3Client {
@@ -14,6 +25,7 @@ vi.mock('@aws-sdk/client-s3', () => {
 });
 
 import { fetchS3 } from '../src/sources/s3';
+import { setVerbose } from '../src/logger';
 
 function fakeBody(content: string) {
   return {
@@ -68,6 +80,17 @@ describe('fetchS3 — single object', () => {
       'network error',
     );
     expect(mockDestroy).toHaveBeenCalled();
+  });
+
+  it('names the file "download" when the key has no basename', async () => {
+    mockSend.mockResolvedValueOnce({ Body: fakeBody('data') });
+    basenameOverride.value = '';
+    try {
+      const result = await fetchS3('s3://my-bucket/C:');
+      expect([...result.files.keys()]).toEqual(['download']);
+    } finally {
+      basenameOverride.value = undefined;
+    }
   });
 });
 
@@ -151,6 +174,14 @@ describe('fetchS3 — directory prefix', () => {
     expect(result.files.size).toBe(0);
   });
 
+  it('treats a listing without Contents as empty', async () => {
+    mockSend.mockResolvedValueOnce({ NextContinuationToken: undefined });
+
+    const result = await fetchS3('s3://my-bucket/empty-prefix/');
+
+    expect(result.files.size).toBe(0);
+  });
+
   it('throws when an object Body is missing', async () => {
     mockSend
       .mockResolvedValueOnce({
@@ -162,5 +193,41 @@ describe('fetchS3 — directory prefix', () => {
     await expect(fetchS3('s3://my-bucket/prefix/')).rejects.toThrow(
       'No body returned',
     );
+  });
+});
+
+describe('fetchS3 — verbose logging', () => {
+  it('logs each GetObject under a prefix when verbose is enabled', async () => {
+    const stderrSpy = vi
+      .spyOn(process.stderr, 'write')
+      .mockImplementation(() => true);
+    setVerbose(true);
+    try {
+      mockSend
+        .mockResolvedValueOnce({ Contents: [{ Key: 'prefix/a.txt' }] })
+        .mockResolvedValueOnce({ Body: fakeBody('content') });
+      await fetchS3('s3://my-bucket/prefix/');
+      const output = stderrSpy.mock.calls.map((c) => String(c[0])).join('');
+      expect(output).toContain('s3 GetObject s3://my-bucket/prefix/a.txt');
+    } finally {
+      setVerbose(false);
+      stderrSpy.mockRestore();
+    }
+  });
+
+  it('logs a single-object GetObject when verbose is enabled', async () => {
+    const stderrSpy = vi
+      .spyOn(process.stderr, 'write')
+      .mockImplementation(() => true);
+    setVerbose(true);
+    try {
+      mockSend.mockResolvedValueOnce({ Body: fakeBody('content') });
+      await fetchS3('s3://my-bucket/file.txt');
+      const output = stderrSpy.mock.calls.map((c) => String(c[0])).join('');
+      expect(output).toContain('s3 GetObject s3://my-bucket/file.txt');
+    } finally {
+      setVerbose(false);
+      stderrSpy.mockRestore();
+    }
   });
 });

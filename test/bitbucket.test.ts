@@ -213,6 +213,26 @@ describe('fetchBitbucket — ref resolution', () => {
     expect(mockFetch.mock.calls[1][0] as string).toContain('/src/v1.9.0/');
   });
 
+  it('throws when the $latest tag listing request fails', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response('Forbidden', { status: 403 }),
+    );
+
+    await expect(
+      fetchBitbucket('ws', 'repo', 'file.txt', '$latest'),
+    ).rejects.toThrow('Failed to list tags for ws/repo: HTTP 403');
+  });
+
+  it('throws when the pattern tag listing request fails', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response('Forbidden', { status: 403 }),
+    );
+
+    await expect(
+      fetchBitbucket('ws', 'repo', 'file.txt', '/^v1\\./'),
+    ).rejects.toThrow('Failed to list tags for ws/repo: HTTP 403');
+  });
+
   it('throws when pattern matches no tags', async () => {
     vi.spyOn(globalThis, 'fetch').mockImplementation(() =>
       Promise.resolve(jsonResponse({ values: [{ name: 'v2.0.0' }] })),
@@ -273,6 +293,20 @@ describe('fetchBitbucket — directory fetch (trailing slash)', () => {
     expect(result.files.size).toBe(2);
     expect(result.files.get('a.txt')?.toString('utf8')).toBe('content of a');
     expect(result.files.get('b.txt')?.toString('utf8')).toBe('content of b');
+  });
+
+  it('throws when fetching a listed file fails', async () => {
+    vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(
+        jsonResponse({
+          values: [{ type: 'commit_file', path: 'docs/a.txt' }],
+        }),
+      )
+      .mockResolvedValueOnce(new Response('Not Found', { status: 404 }));
+
+    await expect(fetchBitbucket('ws', 'repo', 'docs/', 'main')).rejects.toThrow(
+      'Failed to fetch docs/a.txt from ws/repo@main: HTTP 404',
+    );
   });
 
   it('paginates through multiple pages of directory listings', async () => {
@@ -365,5 +399,47 @@ describe('fetchBitbucket — directory auto-detection', () => {
 
     expect(result.files.size).toBe(1);
     expect(result.files.get('file.txt')?.toString('utf8')).toBe('hello');
+  });
+
+  it('treats a response without a content-type as file content', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response(new Uint8Array([104, 105]), { status: 200 }),
+    );
+
+    const result = await fetchBitbucket('ws', 'repo', 'raw.bin', 'main');
+
+    expect(result.files.get('raw.bin')?.toString('utf8')).toBe('hi');
+  });
+});
+
+// ── Edge cases ────────────────────────────────────────────────────────────────
+
+describe('fetchBitbucket — edge cases', () => {
+  it('falls back to "main" when the repository has no mainbranch', async () => {
+    const mockFetch = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(jsonResponse({}))
+      .mockResolvedValueOnce(textResponse('content'));
+
+    await fetchBitbucket('ws', 'repo', 'file.txt', undefined);
+
+    expect(mockFetch.mock.calls[1][0] as string).toContain('/src/main/');
+  });
+
+  it('skips directory listing entries that are neither files nor directories', async () => {
+    vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(
+        jsonResponse({
+          values: [
+            { type: 'commit_link', path: 'dir/link' },
+            { type: 'commit_file', path: 'dir/a.txt' },
+          ],
+        }),
+      )
+      .mockResolvedValueOnce(textResponse('a'));
+
+    const result = await fetchBitbucket('ws', 'repo', 'dir/', 'main');
+
+    expect([...result.files.keys()]).toEqual(['a.txt']);
   });
 });

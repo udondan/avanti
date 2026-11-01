@@ -269,6 +269,12 @@ describe('formatJson — trailing_commas', () => {
     );
   });
 
+  it('adds no comma after an opening bracket followed only by a comment', () => {
+    expect(formatJson('{"a": [ // c\n]}', { trailingCommas: true })).toBe(
+      '{\n  "a": [ // c\n  ],\n}\n',
+    );
+  });
+
   it('does not double-comma already-trailing-comma lines', () => {
     const already = '{\n  "a": 1,\n  "b": 2\n}';
     const result = formatJson(already, { trailingCommas: true });
@@ -422,5 +428,14 @@ describe('mergeJson — three sources', () => {
       }),
     ) as { a: number };
     expect(result.a).toBe(1);
+  });
+});
+
+describe('formatJson — trailing_commas with escapes', () => {
+  it('ignores // and escaped quotes inside strings when locating comments', () => {
+    const input = '{\n  "url": "say \\"http://x\\"" // note\n}';
+    expect(formatJson(input, { trailingCommas: true })).toBe(
+      '{\n  "url": "say \\"http://x\\"", // note\n}\n',
+    );
   });
 });

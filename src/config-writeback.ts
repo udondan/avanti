@@ -18,11 +18,8 @@ export function applyUpdatedShas(
 
   let changed = false;
 
-  filesNode.items.forEach((pair) => {
-    if (!pair || typeof pair !== 'object') return;
-    const p = pair as { key?: unknown; value?: unknown };
-    const targetKey =
-      p.key != null && isScalar(p.key) ? String(p.key.value) : null;
+  filesNode.items.forEach((p) => {
+    const targetKey = isScalar(p.key) ? String(p.key.value) : null;
     if (!targetKey) return;
 
     const entryNode = p.value as {
@@ -40,7 +37,6 @@ export function applyUpdatedShas(
       srcIdx: number,
       inSeq: boolean,
     ): void => {
-      if (!item || typeof item !== 'object') return;
       const n = item as { get?: (k: string, keepScalar?: boolean) => unknown };
       if (!n.get) return;
 

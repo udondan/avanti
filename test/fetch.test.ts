@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { MockInstance } from 'vitest';
-import { fetchWithRetry, _testable } from '../src/fetch';
+import { fetchWithRetry, redactUrl, _testable } from '../src/fetch';
 import { setVerbose } from '../src/logger';
 
 function makeResponse(
@@ -115,6 +115,32 @@ describe('fetchWithRetry', () => {
     expect(delay).toBeLessThanOrEqual(10_000);
   });
 
+  it.each(['soon', '0'])(
+    'falls back to exponential backoff when Retry-After is %j',
+    async (retryAfter) => {
+      vi.spyOn(global, 'fetch')
+        .mockResolvedValueOnce(makeResponse(429, { 'Retry-After': retryAfter }))
+        .mockResolvedValue(makeResponse(200));
+
+      await fetchWithRetry('https://example.com/file');
+
+      expect(sleepSpy.mock.calls[0][0]).toBe(1_000);
+    },
+  );
+
+  it('falls back to exponential backoff when X-RateLimit-Reset is in the past', async () => {
+    const resetAt = Math.floor(Date.now() / 1000) - 10;
+    vi.spyOn(global, 'fetch')
+      .mockResolvedValueOnce(
+        makeResponse(429, { 'X-RateLimit-Reset': String(resetAt) }),
+      )
+      .mockResolvedValue(makeResponse(200));
+
+    await fetchWithRetry('https://example.com/file');
+
+    expect(sleepSpy.mock.calls[0][0]).toBe(1_000);
+  });
+
   it('stops after MAX_RETRIES (5) even if still getting 429', async () => {
     // 6 calls total: attempt 0..5 (MAX_RETRIES=5 means we try 6 times then return)
     const mockFetch = vi
@@ -203,6 +229,18 @@ describe('fetchWithRetry', () => {
       expect(output).not.toContain('-> network error: fetch failed:');
     });
 
+    it('logs a non-Error rejection when verbose is enabled', async () => {
+      setVerbose(true);
+      vi.spyOn(global, 'fetch').mockRejectedValue('socket hang up');
+
+      await expect(fetchWithRetry('https://example.com/file')).rejects.toBe(
+        'socket hang up',
+      );
+
+      const output = stderrSpy.mock.calls.map((c) => String(c[0])).join('');
+      expect(output).toContain('-> network error: socket hang up\n');
+    });
+
     it('does not log network error when verbose is disabled', async () => {
       vi.spyOn(global, 'fetch').mockRejectedValue(
         new TypeError('fetch failed', {
@@ -217,5 +255,77 @@ describe('fetchWithRetry', () => {
       const output = stderrSpy.mock.calls.map((c) => String(c[0])).join('');
       expect(output).not.toContain('network error');
     });
+  });
+});
+
+describe('fetchWithRetry — verbose retry logging', () => {
+  afterEach(() => {
+    setVerbose(false);
+  });
+
+  it('logs the retry delay when verbose is enabled', async () => {
+    const stderrSpy = vi
+      .spyOn(process.stderr, 'write')
+      .mockImplementation(() => true);
+    setVerbose(true);
+    vi.spyOn(global, 'fetch')
+      .mockResolvedValueOnce(makeResponse(503))
+      .mockResolvedValue(makeResponse(200));
+
+    await fetchWithRetry('https://example.com/file');
+
+    const output = stderrSpy.mock.calls.map((c) => String(c[0])).join('');
+    expect(output).toContain('-> retrying in 1000ms (status 503)');
+  });
+});
+
+describe('_testable.sleep', () => {
+  it('resolves after the given delay', async () => {
+    sleepSpy.mockRestore();
+    await expect(_testable.sleep(5)).resolves.toBeUndefined();
+  });
+});
+
+describe('redactUrl', () => {
+  it.each([
+    'token',
+    'access_token',
+    'api_key',
+    'key',
+    'secret',
+    'password',
+    'auth',
+    'sig',
+    'signature',
+    'TOKEN',
+  ])('redacts the generic sensitive query parameter %s', (param) => {
+    expect(redactUrl(`https://example.com/f?${param}=abc`)).toBe(
+      `https://example.com/f?${param}=***`,
+    );
+  });
+
+  it('redacts AWS and GCP pre-signed URL parameters', () => {
+    const out = redactUrl(
+      'https://example.com/f?X-Amz-Signature=a&X-Goog-Credential=b&page=2',
+    );
+    expect(out).toContain('X-Amz-Signature=***');
+    expect(out).toContain('X-Goog-Credential=***');
+    expect(out).toContain('page=2');
+  });
+
+  it('leaves non-sensitive query parameters untouched', () => {
+    expect(redactUrl('https://example.com/f?ref=main')).toBe(
+      'https://example.com/f?ref=main',
+    );
+  });
+
+  it('strips basic-auth credentials', () => {
+    expect(redactUrl('https://user:pass@example.com/f')).toBe(
+      'https://example.com/f',
+    );
+  });
+
+  it('redacts scp-style user:pass@ in strings that are not URLs', () => {
+    expect(redactUrl('user:secret@host:repo.git')).toBe('***@host:repo.git');
   });
 });

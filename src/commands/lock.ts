@@ -57,9 +57,7 @@ export function lockCommand(): Command {
         console.error(err instanceof Error ? err.message : String(err));
         process.exit(2);
       }
-      if (configPath !== undefined) {
-        vars['self'] = configPath;
-      }
+      vars['self'] = configPath;
       Object.assign(vars, buildDateVars());
       Object.assign(vars, buildSystemVars());
       vars['workingDir'] = workingDir;

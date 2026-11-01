@@ -46,7 +46,8 @@ export async function resolveEnvironmentEntry(
     try {
       return resolveVars(value, vars);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
+      // resolveVars only ever throws Error instances.
+      const msg = (err as Error).message;
       throw new Error(`environment.${name}: ${msg}`, { cause: err });
     }
   }

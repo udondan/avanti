@@ -132,12 +132,20 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITLAB_TOKEN: ${{ secrets.GITLAB_TOKEN }}
 
+      # The CLI and the privileged worker run in child processes, which write
+      # raw coverage data during the test step. This turns it into lcov.
+      - name: Convert child process coverage
+        run: bun run coverage:child
+
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         with:
           use_oidc: true
           fail_ci_if_error: false
-          files: coverage/lcov.info
+          files: coverage/lcov.info,coverage/child/lcov.info
+          # Without this, Codecov also uploads the unfiltered c8 report from
+          # coverage/child-raw, which counts comments as lines.
+          disable_search: true
 
   # Codecov reports its result as the check runs codecov/project and
   # codecov/patch. This job waits for them, so a coverage drop fails the

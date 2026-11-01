@@ -82,7 +82,7 @@ function resolveToken(host?: string): string | undefined {
     ['auth', 'status', '--show-token', ...hostnameArgs(host)],
   ];
   const configuredHost = host?.trim() || process.env.GITLAB_HOST?.trim();
-  if (hostnameArgs(host).length > 0) {
+  if (configuredHost) {
     // Fallback without --hostname in case glab uses a different key for this
     // instance (e.g. ssh.git.example.com vs git.example.com). Use --all to
     // enumerate every configured instance regardless of the current git context,
@@ -108,20 +108,17 @@ function resolveToken(host?: string): string | undefined {
     // indicating the credential is invalid. For the fallback (no --hostname with
     // --all): extract the token from the specific host section so we never return
     // a different instance's token in multi-instance configs.
+    // The fallback attempt only exists when configuredHost is set.
     const token =
-      i > 0 && configuredHost
-        ? tokenForHost(output, configuredHost)
+      i > 0
+        ? tokenForHost(output, configuredHost!)
         : res.status === 0
           ? output.match(/Token found:\s*(\S+)/)?.[1]
           : undefined;
     if (token) {
-      if (i > 0 && configuredHost) {
+      if (i > 0) {
         verbose(
           `gitlab: resolved auth token via glab auth status (no --hostname, host verified)`,
-        );
-      } else if (i > 0) {
-        verbose(
-          `gitlab: resolved auth token via glab auth status (no --hostname; token may be for a different instance)`,
         );
       } else {
         verbose(`gitlab: resolved auth token via glab auth status`);
@@ -850,19 +847,22 @@ function resolveReleaseTagViaCli(
           `Failed to list releases for ${project}: ${res.stderr.trim() || 'glab exited with status ' + res.status}`,
         );
       if (!res.stdout.trim()) break;
+      let parsed: unknown;
       try {
-        const releases = JSON.parse(res.stdout) as Array<{ tag_name: string }>;
-        if (isRecentSentinel(release)) {
-          if (releases.length) return releases[0].tag_name;
-          break;
-        }
-        const found = releases.find((r) => pattern!.test(r.tag_name));
-        if (found) return found.tag_name;
-        if (releases.length < perPage) break;
-      } catch (e) {
-        if (e instanceof SyntaxError) break;
-        throw e;
+        parsed = JSON.parse(res.stdout);
+      } catch {
+        break;
       }
+      // An unexpected payload is treated like invalid JSON.
+      if (!Array.isArray(parsed)) break;
+      const releases = parsed as Array<{ tag_name: string }>;
+      if (isRecentSentinel(release)) {
+        if (releases.length) return releases[0].tag_name;
+        break;
+      }
+      const found = releases.find((r) => pattern!.test(r.tag_name));
+      if (found) return found.tag_name;
+      if (releases.length < perPage) break;
     }
     if (pattern) {
       throw new Error(`No releases matching "${release}" found for ${project}`);

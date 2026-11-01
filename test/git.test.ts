@@ -219,6 +219,61 @@ describe('fetchGit — success paths', () => {
     ).toThrow('Path not found in repository');
   });
 
+  it('collects files from nested subdirectories', () => {
+    mockSpawnSync.mockImplementation((_cmd, args) => {
+      const repoDir = String(args[args.length - 1]);
+      const dir = path.join(repoDir, 'src', 'nested');
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, 'deep.ts'), 'deep');
+      return makeSpawnResult({ status: 0 });
+    });
+
+    const result = fetchGit('https://example.com/repo.git', 'src/', 'main');
+
+    expect(result.files.get(path.join('nested', 'deep.ts'))?.toString()).toBe(
+      'deep',
+    );
+  });
+
+  it('throws when the requested directory is empty', () => {
+    mockSpawnSync.mockImplementation((_cmd, args) => {
+      const repoDir = String(args[args.length - 1]);
+      fs.mkdirSync(path.join(repoDir, 'empty'), { recursive: true });
+      return makeSpawnResult({ status: 0 });
+    });
+
+    expect(() =>
+      fetchGit('https://example.com/repo.git', 'empty/', 'main'),
+    ).toThrow('Empty directory: empty/');
+  });
+
+  it.skipIf(process.platform === 'win32')(
+    'throws when the requested path escapes the clone via a symlink',
+    () => {
+      mockSpawnSync.mockImplementation((_cmd, args) => {
+        const repoDir = String(args[args.length - 1]);
+        fs.mkdirSync(repoDir, { recursive: true });
+        fs.symlinkSync(path.dirname(repoDir), path.join(repoDir, 'escape'));
+        return makeSpawnResult({ status: 0 });
+      });
+
+      expect(() =>
+        fetchGit('https://example.com/repo.git', 'escape', 'main'),
+      ).toThrow('Unsafe file path escapes repository root via symlink');
+    },
+  );
+
+  it('throws when the full clone for a commit hash ref fails', () => {
+    const hash = 'c'.repeat(40);
+    mockSpawnSync.mockReturnValueOnce(
+      makeSpawnResult({ status: 128, stderr: 'fatal: repository not found\n' }),
+    );
+
+    expect(() =>
+      fetchGit('https://example.com/repo.git', 'file.txt', hash),
+    ).toThrow('git clone failed: fatal: repository not found');
+  });
+
   it('does a full clone + checkout for a 40-character commit hash', () => {
     const hash = 'b'.repeat(40);
 
@@ -356,4 +411,48 @@ describe('fetchGit — ref sentinel and pattern resolution', () => {
       fetchGit('git+ssh://git@host/repo.git', 'file.txt', '$latest'),
     ).toThrow('Failed to list tags');
   });
+
+  it('ignores ls-remote lines without a tab-separated ref', () => {
+    mockSpawnSync
+      .mockReturnValueOnce(
+        makeSpawnResult({
+          stdout: `garbage\n${lsRemoteOutput(['v1.0.0'])}`,
+          status: 0,
+        }),
+      )
+      .mockReturnValueOnce(
+        makeSpawnResult({ status: 1, stderr: 'clone failed' }),
+      );
+
+    expect(() =>
+      fetchGit('git+ssh://git@host/repo.git', 'file.txt', '$recent'),
+    ).toThrow('git clone failed: clone failed');
+
+    const cloneArgs = mockSpawnSync.mock.calls[1][1] as string[];
+    expect(cloneArgs).toContain('v1.0.0');
+  });
+});
+
+describe('fetchGit — special directory entries', () => {
+  it.skipIf(process.platform === 'win32')(
+    'skips symlinks and entries that are neither files nor directories',
+    async () => {
+      const real =
+        await vi.importActual<typeof import('child_process')>('child_process');
+      mockSpawnSync.mockImplementation((_cmd, args) => {
+        const repoDir = String(args[args.length - 1]);
+        const dir = path.join(repoDir, 'src');
+        fs.mkdirSync(dir, { recursive: true });
+        fs.writeFileSync(path.join(dir, 'a.txt'), 'a');
+        fs.symlinkSync('a.txt', path.join(dir, 'link.txt'));
+        const fifo = real.spawnSync('mkfifo', [path.join(dir, 'pipe')]);
+        expect(fifo.status).toBe(0);
+        return makeSpawnResult({ status: 0 });
+      });
+
+      const result = fetchGit('https://example.com/repo.git', 'src/', 'main');
+
+      expect([...result.files.keys()]).toEqual(['a.txt']);
+    },
+  );
 });

@@ -22,6 +22,7 @@ vi.mock('@aws-sdk/client-ssm', () => {
 });
 
 import { fetchSsm } from '../src/sources/ssm';
+import { setVerbose } from '../src/logger';
 
 beforeEach(() => {
   vi.resetAllMocks();
@@ -154,5 +155,54 @@ describe('fetchSsm — path prefix', () => {
 
     expect(result.files.size).toBe(1);
     expect(result.files.get('host')?.toString('utf8')).toBe('db.example.com');
+  });
+
+  it('treats a response without a Parameters list as empty', async () => {
+    mockSend.mockResolvedValueOnce({ NextToken: undefined });
+
+    const result = await fetchSsm('/myapp/prod/');
+
+    expect(result.files.size).toBe(0);
+  });
+
+  it('keys a parameter by its basename when it has no path below the prefix', async () => {
+    mockSend.mockResolvedValueOnce({
+      Parameters: [{ Name: '/myapp/prod', Value: 'self' }],
+      NextToken: undefined,
+    });
+
+    const result = await fetchSsm('/myapp/prod/');
+
+    expect([...result.files.keys()]).toEqual(['prod']);
+  });
+});
+
+describe('fetchSsm — edge cases', () => {
+  it('names the file "parameter" when the name has no basename', async () => {
+    mockSend.mockResolvedValueOnce({ Parameter: { Name: '', Value: 'val' } });
+
+    const result = await fetchSsm('');
+
+    expect([...result.files.keys()]).toEqual(['parameter']);
+  });
+
+  it('logs GetParameter and GetParametersByPath when verbose is enabled', async () => {
+    const stderrSpy = vi
+      .spyOn(process.stderr, 'write')
+      .mockImplementation(() => true);
+    setVerbose(true);
+    try {
+      mockSend
+        .mockResolvedValueOnce({ Parameter: { Name: '/a/b', Value: 'v' } })
+        .mockResolvedValueOnce({ Parameters: [], NextToken: undefined });
+      await fetchSsm('/a/b');
+      await fetchSsm('/a/');
+      const output = stderrSpy.mock.calls.map((c) => String(c[0])).join('');
+      expect(output).toContain('ssm GetParameter /a/b');
+      expect(output).toContain('ssm GetParametersByPath /a/');
+    } finally {
+      setVerbose(false);
+      stderrSpy.mockRestore();
+    }
   });
 });
