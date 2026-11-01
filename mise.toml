@@ -12,8 +12,9 @@ description = "Install dependencies"
 run = ["bun install", "mise run install-hooks"]
 
 [tasks."install-hooks"]
-description = "Symlink tracked hooks into .git/hooks"
-run = "ln -sf ../../hooks/pre-commit .git/hooks/pre-commit"
+description = "Point git at the tracked hooks/ directory"
+# A relative hooksPath resolves against each working tree's root, so this also works in worktrees.
+run = "git config core.hooksPath hooks"
 
 [tasks.build]
 description = "Compile TypeScript to dist/"
