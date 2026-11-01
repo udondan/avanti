@@ -1,6 +1,13 @@
 import * as fs from 'fs';
 import { parse as parseJson, stringify as stringifyJson } from 'comment-json';
-import { parseDocument, isMap, isSeq, isScalar, type Pair } from 'yaml';
+import {
+  parseDocument,
+  isMap,
+  isSeq,
+  isScalar,
+  type Pair,
+  type YAMLMap,
+} from 'yaml';
 import { parse as parseToml, stringify as stringifyToml } from 'smol-toml';
 import type { FileEntry, FileSrc } from '../types';
 import { mergeJson } from './json';
@@ -113,12 +120,10 @@ function yamlNodeToJs(node: unknown): unknown {
 }
 
 function deepRemoveFromYamlMap(
-  base: ReturnType<typeof parseDocument>['contents'] & object,
+  base: YAMLMap,
   oldContrib: Record<string, unknown>,
   newContrib: Record<string, unknown> | null = null,
 ): void {
-  if (!isMap(base)) return;
-
   for (const key of Object.keys(oldContrib)) {
     const pairIdx = base.items.findIndex((p) => yamlPairKey(p) === key);
     if (pairIdx === -1) continue;
@@ -240,9 +245,8 @@ function deepRemoveFromIniSectionItems(
         : undefined;
 
     if (Array.isArray(oldVal)) {
-      const iniKey = key.startsWith(INI_ARRAY_PREFIX)
-        ? key.slice(INI_ARRAY_PREFIX.length)
-        : key;
+      // iniDocToJs prefixes every array key, so the prefix is always present.
+      const iniKey = key.slice(INI_ARRAY_PREFIX.length);
       let node: IniKeyValue | undefined;
       for (let j = items.length - 1; j >= 0; j--) {
         const it = items[j];
@@ -263,10 +267,8 @@ function deepRemoveFromIniSectionItems(
         } else {
           // Key removed or type changed to scalar: drop the node.
           const idx = items.indexOf(node);
-          if (idx !== -1) {
-            items.splice(idx, 1);
-            splicePrecedingCommentBlanks(items, idx);
-          }
+          items.splice(idx, 1);
+          splicePrecedingCommentBlanks(items, idx);
         }
       }
     } else {
@@ -284,10 +286,8 @@ function deepRemoveFromIniSectionItems(
       if (newVal !== undefined && !Array.isArray(newVal)) continue;
       if (deepEqual(node.value, oldVal)) {
         const idx = items.indexOf(node);
-        if (idx !== -1) {
-          items.splice(idx, 1);
-          splicePrecedingCommentBlanks(items, idx);
-        }
+        items.splice(idx, 1);
+        splicePrecedingCommentBlanks(items, idx);
       }
     }
   }
@@ -306,9 +306,8 @@ function deepRemoveFromIniDoc(
         : undefined;
 
     if (isPlainObject(oldVal)) {
-      const sectionName = key.startsWith(INI_SECTION_PREFIX)
-        ? key.slice(INI_SECTION_PREFIX.length)
-        : key;
+      // iniDocToJs prefixes every section key, so the prefix is always present.
+      const sectionName = key.slice(INI_SECTION_PREFIX.length);
       const subsectionMatch = /^(.+?)\s+"([^"]*)"$/.exec(sectionName);
       let section: IniSection | undefined;
       for (let j = doc.items.length - 1; j >= 0; j--) {
@@ -336,17 +335,13 @@ function deepRemoveFromIniDoc(
         section.items.filter((it) => it.kind === 'kv').length === 0 &&
         !isPlainObject(newVal)
       ) {
-        const idx = doc.items.indexOf(section);
-        if (idx !== -1) {
-          doc.items.splice(idx, 1);
-          // Do not strip preceding comment/blank nodes at the doc level —
-          // they may be file-level separators unrelated to this section.
-        }
+        // Do not strip preceding comment/blank nodes at the doc level —
+        // they may be file-level separators unrelated to this section.
+        doc.items.splice(doc.items.indexOf(section), 1);
       }
     } else if (Array.isArray(oldVal)) {
-      const iniKey = key.startsWith(INI_ARRAY_PREFIX)
-        ? key.slice(INI_ARRAY_PREFIX.length)
-        : key;
+      // iniDocToJs prefixes every array key, so the prefix is always present.
+      const iniKey = key.slice(INI_ARRAY_PREFIX.length);
       let node: IniKeyValue | undefined;
       for (let j = doc.items.length - 1; j >= 0; j--) {
         const it = doc.items[j];
@@ -364,11 +359,8 @@ function deepRemoveFromIniDoc(
           node.value = [...(newVal as IniScalar[])];
         } else {
           // Key removed or type changed to scalar/section: drop the node.
-          const idx = doc.items.indexOf(node);
-          if (idx !== -1) {
-            doc.items.splice(idx, 1);
-            // Do not strip preceding comment/blank nodes at the doc level.
-          }
+          // Do not strip preceding comment/blank nodes at the doc level.
+          doc.items.splice(doc.items.indexOf(node), 1);
         }
       }
     } else {
@@ -390,11 +382,8 @@ function deepRemoveFromIniDoc(
       )
         continue;
       if (deepEqual(node.value, oldVal)) {
-        const idx = doc.items.indexOf(node);
-        if (idx !== -1) {
-          doc.items.splice(idx, 1);
-          // Do not strip preceding comment/blank nodes at the doc level.
-        }
+        // Do not strip preceding comment/blank nodes at the doc level.
+        doc.items.splice(doc.items.indexOf(node), 1);
       }
     }
   }
@@ -458,7 +447,7 @@ function applyJsonInsert(
       >;
     } catch (err) {
       throw new Error(
-        `insert mode: existing file is not valid JSON/JSONC: ${err instanceof Error ? err.message : String(err)}`,
+        `insert mode: existing file is not valid JSON/JSONC: ${(err as Error).message}`,
         { cause: err },
       );
     }
@@ -558,7 +547,7 @@ function applyTomlInsert(
       existingParsed = parseToml(existingContent);
     } catch (err) {
       throw new Error(
-        `insert mode: existing file is not valid TOML: ${err instanceof Error ? err.message : String(err)}`,
+        `insert mode: existing file is not valid TOML: ${(err as Error).message}`,
         { cause: err },
       );
     }
@@ -605,7 +594,7 @@ function applyIniInsert(
       existingDoc = parseIniDoc(existingContent);
     } catch (err) {
       throw new Error(
-        `insert mode: existing file is not valid INI: ${err instanceof Error ? err.message : String(err)}`,
+        `insert mode: existing file is not valid INI: ${(err as Error).message}`,
         { cause: err },
       );
     }
@@ -623,8 +612,7 @@ function applyIniInsert(
       let newContrib: Record<string, unknown> | null = null;
       if (effectiveConflicts === 'last_wins') {
         try {
-          const p = iniDocToJs(parseIniDoc(processedText));
-          if (isPlainObject(p)) newContrib = p;
+          newContrib = iniDocToJs(parseIniDoc(processedText));
         } catch {
           // unparseable processedText → null (old behaviour)
         }

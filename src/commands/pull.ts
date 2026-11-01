@@ -245,9 +245,7 @@ async function runFetchLoop(
         // Skip for directory targets — resolveFollowSymlink throws on dir symlinks.
         // resolveFollowSymlink security errors (escape/directory/cycle) are
         // intentionally NOT caught here — they propagate as hard failures.
-        const resolvedTarget0 = entry.target
-          ? resolveVars(entry.target, vars)
-          : '';
+        const resolvedTarget0 = resolveVars(entry.target, vars);
         if (
           !resolvedTarget0.endsWith('/') &&
           !resolvedTarget0.endsWith(path.sep)
@@ -386,9 +384,7 @@ async function runFetchLoop(
         }
         skippedPaths.add(symlinkPath2);
         // resolveFollowSymlink security errors propagate as hard failures.
-        const resolvedTarget2 = entry.target
-          ? resolveVars(entry.target, vars)
-          : '';
+        const resolvedTarget2 = resolveVars(entry.target, vars);
         if (
           !resolvedTarget2.endsWith('/') &&
           !resolvedTarget2.endsWith(path.sep)
@@ -1087,12 +1083,8 @@ export function pullCommand(): Command {
           const t = staleToRestore[i];
           if (t.sudo) {
             const diffIdx = staleRestoreDiffIndices[i];
-            if (
-              staleDiffs[diffIdx]?.hasChanges ||
-              staleDiffs[diffIdx]?.isNew ||
-              staleDiffs[diffIdx]?.lstatFailed ||
-              staleDiffs[diffIdx]?.isUnreadable
-            ) {
+            const d = staleDiffs[diffIdx];
+            if (d.hasChanges || d.isNew || d.lstatFailed || d.isUnreadable) {
               sudoIds.add(t.sudo);
             }
           }
@@ -1196,9 +1188,9 @@ export function pullCommand(): Command {
             writeTargets[i] = { ...target, backupPath: undefined };
           } else {
             let updatedDiff: FileDiff = { ...diff, isNew, modeChange };
+            // exists is true here, so the stat-read result is present.
             if (target.symlinkTarget !== undefined) {
-              const isSymlinkAtTarget = stat ? stat.isSymlink : false;
-              if (!isSymlinkAtTarget && (stat ? stat.isDirectory : false)) {
+              if (!stat!.isSymlink && stat!.isDirectory) {
                 updatedDiff = { ...updatedDiff, isDirectory: true };
               }
             }
@@ -1318,19 +1310,17 @@ export function pullCommand(): Command {
               preRead.isSymlink &&
               preReadBuf.toString() === writeTargets[i].symlinkTarget
             ) {
-              const updatedHasChanges = allDiffs[i].modeChange !== undefined;
+              // Symlink targets carry no mode, so there is no mode drift left.
               allDiffs[i] = {
                 ...allDiffs[i],
                 contentChanged: false,
-                hasChanges: updatedHasChanges,
+                hasChanges: false,
               };
-              if (!updatedHasChanges) {
-                const hookIdx = fileHookContexts.findIndex(
-                  (ctx) => ctx.targetPath === writeTargets[i].targetPath,
-                );
-                if (hookIdx >= 0) {
-                  fileHookContexts.splice(hookIdx, 1);
-                }
+              const hookIdx = fileHookContexts.findIndex(
+                (ctx) => ctx.targetPath === writeTargets[i].targetPath,
+              );
+              if (hookIdx >= 0) {
+                fileHookContexts.splice(hookIdx, 1);
               }
             }
             continue;
@@ -1803,8 +1793,9 @@ export function pullCommand(): Command {
             AVANTI_TARGET: ctx.targetPath,
             AVANTI_IS_NEW: String(ctx.isNew),
           };
+          // At most one post-write hook runs per file (create or update), and
+          // the loop stops at the first failure.
           const runNamedPostHook = (key: string, script: string): void => {
-            if (postWriteError !== null) return;
             try {
               runHook(script, env);
             } catch (err: unknown) {

@@ -48,10 +48,10 @@ async function runDiffLoop(
   config: AvantiConfig,
   workingDir: string,
   dateVars: Variables,
-  cache?: FetchCache,
-  configPath?: string,
-  history?: HistoryManager,
-  configBase?: string,
+  cache: FetchCache,
+  configPath: string,
+  history: HistoryManager,
+  configBase: string,
 ): Promise<DiffLoopResult> {
   let vars;
   try {
@@ -66,9 +66,7 @@ async function runDiffLoop(
     console.error(err instanceof Error ? err.message : String(err));
     return { allDiffs: [], hasError: true };
   }
-  if (configPath !== undefined) {
-    vars['self'] = configPath;
-  }
+  vars['self'] = configPath;
   Object.assign(vars, dateVars);
   Object.assign(vars, buildSystemVars());
   vars['workingDir'] = workingDir;
@@ -86,10 +84,7 @@ async function runDiffLoop(
       hasSelf = evaluateConditions(
         selfEntry['if'],
         selfEntry.ifAny,
-        () =>
-          configPath !== undefined
-            ? configPath
-            : resolveTargetPath(selfEntry, '', workingDir, vars),
+        () => configPath,
         workingDir,
         vars,
       );
@@ -204,7 +199,7 @@ async function runDiffLoop(
         workingDir,
         preVars,
         cache,
-        isSelf && configPath !== undefined ? () => configPath : undefined,
+        isSelf ? () => configPath : undefined,
         pendingWrites,
         configBase,
       );
@@ -264,7 +259,7 @@ async function runDiffLoop(
             text = applyWriteHook(text, entry.on.write, entryVars);
           if (entry.strategy === 'insert' && !isSelf) {
             const lastInserted =
-              history?.getInsertedFragment(effectivePath!) ?? null;
+              history.getInsertedFragment(effectivePath!) ?? null;
             if (
               lastInserted !== null &&
               rawText === lastInserted.raw &&

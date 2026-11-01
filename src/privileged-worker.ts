@@ -744,7 +744,7 @@ export function handleWriteInPlace(
               // on an unintended root-owned file. Refuse rather than proceed with a
               // known-racy operation.
               throw new Error(
-                `writeInPlace: ${op.targetPath} is not writable (mode ${(savedMode ?? 0).toString(8)}) and no fd-based chmod path is available; ` +
+                `writeInPlace: ${op.targetPath} is not writable (mode ${mode.toString(8)}) and no fd-based chmod path is available; ` +
                   `chmod the file to at least 0200 first or use write-mv instead`,
               );
             }
@@ -811,15 +811,10 @@ export function handleWriteInPlace(
       // bits that Linux strips on O_TRUNC. Skip when neither applies — a named
       // user writing via group permission may not own the file and fchmod would
       // fail with EPERM even though the write succeeded.
-      if (
-        effectiveMode !== undefined ||
-        (savedMode !== undefined && (savedMode & 0o7000) !== 0)
-      ) {
+      if (effectiveMode !== undefined || (savedMode & 0o7000) !== 0) {
         safeFchmodSync(
           fd,
-          effectiveMode !== undefined
-            ? parseMode(effectiveMode)
-            : (savedMode ?? 0),
+          effectiveMode !== undefined ? parseMode(effectiveMode) : savedMode,
         );
       }
       fs.closeSync(fd);

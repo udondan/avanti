@@ -22,10 +22,10 @@ export function applyWriteHook(
     throw new Error(`on.write script failed to spawn: ${result.error.message}`);
   }
   if (result.status !== 0 || result.signal) {
-    const stderr = result.stderr?.trim() ?? '';
+    const stderr = result.stderr.trim();
     const detail = result.signal
       ? `killed by signal ${result.signal}`
-      : `exited with code ${result.status ?? 'null'}`;
+      : `exited with code ${result.status}`;
     throw new Error(`on.write script ${detail}${stderr ? ': ' + stderr : ''}`);
   }
   return result.stdout;
@@ -55,7 +55,7 @@ export function runHook(
   if (result.status !== 0 || result.signal) {
     const detail = result.signal
       ? `killed by signal ${result.signal}`
-      : `exited with code ${result.status ?? 'null'}`;
+      : `exited with code ${result.status}`;
     throw new Error(`hook script ${detail}`);
   }
 }

@@ -130,14 +130,13 @@ export function mergeToml(
     result = deepMerge(result, parsed[i], resolved, '');
   }
 
-  const out = stringify(result as Parameters<typeof stringify>[0]);
-  return out.endsWith('\n') ? out : out + '\n';
+  // smol-toml's stringify always ends its output with a newline.
+  return stringify(result as Parameters<typeof stringify>[0]);
 }
 
 export function formatToml(content: string): string {
   try {
-    const out = stringify(parse(content) as Parameters<typeof stringify>[0]);
-    return out.endsWith('\n') ? out : out + '\n';
+    return stringify(parse(content) as Parameters<typeof stringify>[0]);
   } catch (e) {
     throw new Error(`invalid TOML: ${(e as Error).message}`, { cause: e });
   }

@@ -369,7 +369,7 @@ function mergeKvIntoItems(
   items: (IniComment | IniBlank | IniKeyValue)[],
   overlay: IniKeyValue,
   opts: ResolvedOptions,
-  path: string,
+  path: string, // never empty: it always ends with the (non-empty) key
 ): void {
   // Match by key only (ignoring isArray) so that a scalar↔array type change on
   // the same key is handled by the conflict strategy rather than silently
@@ -401,8 +401,7 @@ function mergeKvIntoItems(
 
   // Scalar↔array type change: treat as a conflict regardless of array strategy.
   if (baseKv.isArray !== overlay.isArray) {
-    const loc = path || '(root)';
-    if (opts.conflicts === 'abort') throw new Error(`INI conflict at ${loc}`);
+    if (opts.conflicts === 'abort') throw new Error(`INI conflict at ${path}`);
     if (opts.conflicts === 'first_wins') return;
     // last_wins: replace value and type in-place.
     baseKv.value = overlay.value;
@@ -425,9 +424,8 @@ function mergeKvIntoItems(
     // replace (default) falls through to conflict handling
   }
 
-  const loc = path || '(root)';
   if (opts.conflicts === 'abort') {
-    throw new Error(`INI conflict at ${loc}`);
+    throw new Error(`INI conflict at ${path}`);
   }
   if (opts.conflicts === 'first_wins') return;
 
