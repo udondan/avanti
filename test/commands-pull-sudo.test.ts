@@ -18,7 +18,12 @@ import {
   SudoWorkerSession,
   SudoWritePartialError,
 } from '../src/writer';
-import { makeTempEnv, runCommand, TempEnv } from './commands-pull-helpers';
+import {
+  makeTempEnv,
+  runCommand,
+  TempEnv,
+  throwNonError,
+} from './commands-pull-helpers';
 
 vi.mock('../src/prompt', () => ({
   confirm: vi.fn(() => Promise.resolve(true)),
@@ -204,6 +209,16 @@ suite('pull: sudo writes', () => {
     expect(res.code).toBe(2);
     expect(res.stderr).toContain('sudo: a password is required');
   });
+
+  it('reports a session failure that is not an Error', async () => {
+    env.writeConfig(`files:\n${sudoEntry('out.txt')}`);
+    mockOpen.mockImplementation(() => {
+      throwNonError('sudo unavailable');
+    });
+    const res = await pull();
+    expect(res.code).toBe(2);
+    expect(res.stderr).toBe('sudo unavailable');
+  });
 });
 
 suite('pull: unreadable sudo targets', () => {
@@ -286,6 +301,15 @@ suite('pull: unreadable sudo targets', () => {
     unreadable('orig');
     env.writeConfig(`files:\n${sudoEntry('out.txt')}`);
     mockRead.mockRejectedValue(new Error('boom'));
+    const res = await pull();
+    expect(res.code).toBe(2);
+    expect(res.stderr).toContain('Read failed: boom');
+  });
+
+  it('reports a read failure that is not an Error', async () => {
+    unreadable('orig');
+    env.writeConfig(`files:\n${sudoEntry('out.txt')}`);
+    mockRead.mockRejectedValue('boom');
     const res = await pull();
     expect(res.code).toBe(2);
     expect(res.stderr).toContain('Read failed: boom');
@@ -424,6 +448,26 @@ suite('pull: sudo targets behind a non-searchable directory', () => {
     expect(fs.existsSync(log)).toBe(false);
   });
 
+  it('leaves an existing matching symlink without hooks alone', async () => {
+    w('real.txt', 'real');
+    env.writeConfig(`files:
+  locked/link:
+    src: ./real.txt
+    symlink: true
+    sudo: true
+`);
+    lock();
+    const link = p('locked/link');
+    mockStat.mockResolvedValue(new Map([[link, statOf({ isSymlink: true })]]));
+    mockRead.mockResolvedValue(
+      new Map([[link, { contentB64: b64(p('real.txt')), isSymlink: true }]]),
+    );
+    const res = await pull();
+    expect(res.code).toBe(0);
+    expect(res.stdout).toContain('Nothing to do.');
+    expect(mockWrite).not.toHaveBeenCalled();
+  });
+
   it('replaces an existing symlink and records it as v0', async () => {
     w('real.txt', 'real');
     env.writeConfig(`files:
@@ -449,6 +493,15 @@ suite('pull: sudo targets behind a non-searchable directory', () => {
     env.writeConfig(`files:\n${sudoEntry('locked/out.txt')}`);
     lock();
     mockStat.mockRejectedValue(new Error('denied'));
+    const res = await pull();
+    expect(res.code).toBe(2);
+    expect(res.stderr).toContain('stat-read failed: denied');
+  });
+
+  it('reports a stat-read failure that is not an Error', async () => {
+    env.writeConfig(`files:\n${sudoEntry('locked/out.txt')}`);
+    lock();
+    mockStat.mockRejectedValue('denied');
     const res = await pull();
     expect(res.code).toBe(2);
     expect(res.stderr).toContain('stat-read failed: denied');
@@ -513,6 +566,34 @@ suite('pull: sudo stale-file cleanup', () => {
     expect(res.code).toBe(0);
     expect(res.stderr).toContain('could not delete');
     expect(res.stderr).toContain('worker died');
+  });
+
+  it('warns when the session fails with a value that is not an Error', async () => {
+    await pullThenDrop();
+    execImpl = () => {
+      throwNonError('worker died');
+    };
+    const res = await pull();
+    expect(res.code).toBe(0);
+    expect(res.stderr).toContain(
+      `could not delete ${p('out.txt')}: worker died`,
+    );
+  });
+
+  it('exits 2 when reading the deletion results throws', async () => {
+    await pullThenDrop();
+    execImpl = () => [
+      {
+        get ok(): boolean {
+          return throwNonError('garbled result');
+        },
+      },
+    ];
+    const res = await pull();
+    expect(res.code).toBe(2);
+    expect(res.stderr).toContain(
+      'Privileged stale-file cleanup failed: garbled result',
+    );
   });
 
   it('exits 2 when no session exists for the identity', async () => {
@@ -602,6 +683,21 @@ suite('pull: sudo stale restore', () => {
     expect(res.code).toBe(0);
     expect(res.stdout).toContain('Nothing to do.');
     expect(history().getLastPullFiles()).toEqual([]);
+  });
+
+  it('does not open a session for a stale restore that already matches', async () => {
+    const file = await overwriteThenDrop();
+    fs.writeFileSync(file, 'orig');
+    env.writeConfig(`files:
+  other.txt:
+    src:
+      - raw: o
+`);
+    const res = await pull();
+    expect(res.code).toBe(0);
+    expect(res.stdout).toContain('Wrote 1 file(s).');
+    expect(mockOpen).toHaveBeenLastCalledWith(new Set());
+    expect(fs.readFileSync(file, 'utf8')).toBe('orig');
   });
 
   it('restores an unreadable file when the read fails or differs', async () => {

@@ -55,6 +55,19 @@ describe('resolveFollowSymlink — simulated filesystem states', () => {
     );
   });
 
+  it('stops at a regular file that realpath reports as missing', () => {
+    // e.g. a link to "missing/../c": realpath fails on "missing", while the
+    // lexically resolved endpoint is an existing regular file.
+    const a = path.join(wd, 'a');
+    const c = path.join(wd, 'c');
+    mockLinks({ [a]: 'c' });
+    const fileStat = { isSymbolicLink: () => false } as fs.Stats;
+    const linkLstat = lstat.getMockImplementation()!;
+    lstat.mockImplementation(((p: string) =>
+      p === c ? fileStat : linkLstat(p)) as typeof fs.lstatSync);
+    expect(resolveFollowSymlink(a, { followSymlink: true }, wd)).toBe(c);
+  });
+
   it('rejects an endpoint outside workingDir when no ancestor exists', () => {
     const link = path.join(wd, 'link');
     const outside = path.resolve('/avanti-mock-elsewhere/x/y');

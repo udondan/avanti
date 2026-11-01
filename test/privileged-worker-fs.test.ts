@@ -488,6 +488,20 @@ describe.skipIf(isWindows)('backups of regular files', () => {
     expect(realFs.readdirSync(bkDir)).toHaveLength(0);
     expect(realFs.readFileSync(p, 'utf8')).toBe('old');
   });
+
+  it('cleans up the staged backup when committing it fails', () => {
+    const p = path.join(tmpDir, 'f');
+    realFs.writeFileSync(p, 'old');
+    const bkDir = path.join(tmpDir, 'bk');
+    on('renameSync', () => {
+      throw errno('EXDEV');
+    });
+    expect(() => writeInPlaceWithBackup(p, path.join(bkDir, 'f.bak'))).toThrow(
+      /EXDEV/,
+    );
+    expect(realFs.readdirSync(bkDir)).toHaveLength(0);
+    expect(realFs.readFileSync(p, 'utf8')).toBe('old');
+  });
 });
 
 describe.skipIf(isWindows)('backups of symlinks', () => {
@@ -551,6 +565,23 @@ describe.skipIf(isWindows)('backups of symlinks', () => {
     expect(realFs.existsSync(backupPath)).toBe(false);
     expect(leftovers(tmpDir, '.avanti-')).toHaveLength(0);
     expect(realFs.readFileSync(p, 'utf8')).toBe('old');
+  });
+
+  it('removes the temp link when the final rename fails without a backup', () => {
+    const link = path.join(tmpDir, 'l');
+    realFs.symlinkSync('/old', link);
+    on('renameSync', () => {
+      throw errno('EXDEV');
+    });
+    expect(() =>
+      handleWriteSymlink({
+        type: 'write-symlink',
+        targetPath: link,
+        symlinkTarget: '/new/target',
+      }),
+    ).toThrow(/EXDEV/);
+    expect(leftovers(tmpDir, '.avanti-')).toHaveLength(0);
+    expect(realFs.readlinkSync(link)).toBe('/old');
   });
 });
 
@@ -710,6 +741,16 @@ describe.skipIf(isWindows)('handleWriteInPlace edge cases', () => {
       throw errno('EBADF');
     });
     expect(() => writeInPlace(p)).toThrow(/ENOSPC/);
+    expect(realFs.existsSync(p)).toBe(false);
+  });
+
+  it('propagates a failed exclusive create of a new file', () => {
+    const p = path.join(tmpDir, 'new');
+    on('openSync', (args) => {
+      if (args[0] === p && args[1] === 'wx') throw errno('EEXIST');
+      return PASS;
+    });
+    expect(() => writeInPlace(p)).toThrow(/EEXIST/);
     expect(realFs.existsSync(p)).toBe(false);
   });
 

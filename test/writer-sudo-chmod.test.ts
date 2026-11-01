@@ -139,6 +139,21 @@ describe.skipIf(isWindows)('sudoAtomicWrite — chmod targets', () => {
     ]);
   });
 
+  it('suppresses the crash sentinel after a chmod failure without an error', async () => {
+    const s = fakeSession(() =>
+      Promise.resolve([{ ok: false }, { ok: false, error: 'exit 1' }]),
+    );
+    const applied = await sudoAtomicWrite(
+      [],
+      [chmod('/etc/a.conf')],
+      sessionsOf(s),
+    );
+    expect(applied).toBe(0);
+    expect(warn.mock.calls.map((c) => String(c[0]))).toEqual([
+      'Warning: chmod failed for /etc/a.conf: unknown error',
+    ]);
+  });
+
   it('warns about a crash sentinel after all chmods succeeded', async () => {
     const s = fakeSession(() =>
       Promise.resolve([{ ok: true }, { ok: false, error: 'exit 1' }]),
@@ -237,6 +252,29 @@ describe.skipIf(isWindows)('sudoAtomicWrite — session errors', () => {
       'privileged worker op failed',
     );
   });
+
+  it('labels a write crash sentinel without an error as unknown', async () => {
+    const s = fakeSession(() => Promise.resolve([{ ok: true }, { ok: false }]));
+    const err = await sudoAtomicWrite(
+      [write('/etc/a.conf')],
+      [],
+      sessionsOf(s),
+    ).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(SudoWritePartialError);
+    expect((err as SudoWritePartialError).message).toBe(
+      'privileged worker crashed after completing all write ops: unknown',
+    );
+    expect((err as SudoWritePartialError).writtenPaths).toEqual([
+      '/etc/a.conf',
+    ]);
+  });
+
+  it('ignores a successful extra result after the write ops', async () => {
+    const s = fakeSession(() => Promise.resolve([{ ok: true }, { ok: true }]));
+    await expect(
+      sudoAtomicWrite([write('/etc/a.conf')], [], sessionsOf(s)),
+    ).resolves.toBe(0);
+  });
 });
 
 describe.skipIf(isWindows)('sudoAtomicDelete — session errors', () => {
@@ -270,5 +308,38 @@ describe.skipIf(isWindows)('sudoAtomicDelete — session errors', () => {
       sessionsOf(s),
     );
     expect([...done]).toEqual(['/etc/a.conf']);
+  });
+
+  it('labels failed and missing results as unknown errors', async () => {
+    const s = fakeSession(() => Promise.resolve([{ ok: false }]));
+    await expect(
+      sudoAtomicDelete(
+        [
+          ['/etc/a.conf', true],
+          ['/etc/b.conf', true],
+        ],
+        false,
+        sessionsOf(s),
+      ),
+    ).rejects.toThrow(
+      'privileged deletion failed:\n/etc/a.conf: unknown error\n/etc/b.conf: unknown error',
+    );
+  });
+
+  it('warns about failed and missing results in bestEffort mode', async () => {
+    const s = fakeSession(() => Promise.resolve([{ ok: false }]));
+    const done = await sudoAtomicDelete(
+      [
+        ['/etc/a.conf', true],
+        ['/etc/b.conf', true],
+      ],
+      true,
+      sessionsOf(s),
+    );
+    expect(done.size).toBe(0);
+    expect(warn.mock.calls.map((c) => String(c[0]))).toEqual([
+      'Warning: privileged operation failed: unknown error',
+      'Warning: privileged operation failed: unknown error',
+    ]);
   });
 });

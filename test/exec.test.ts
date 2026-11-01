@@ -103,4 +103,19 @@ describe('fetchExec', () => {
 
     expect(result).toEqual(Buffer.alloc(0));
   });
+
+  it('omits stderr from the error message when stderr is absent', () => {
+    mockSpawnSync.mockReturnValue({
+      stdout: Buffer.alloc(0),
+      stderr: null as unknown as Buffer,
+      status: 3,
+      pid: 0,
+      output: [],
+      signal: null,
+    });
+
+    expect(() => fetchExec('failing-command')).toThrow(
+      /^exec exited with code 3$/,
+    );
+  });
 });

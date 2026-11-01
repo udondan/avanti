@@ -579,4 +579,60 @@ describe('mergeIni — edge cases', () => {
       }),
     ).toBe(a);
   });
+
+  it('objects:replace compares array keys by value', () => {
+    const a = '[s]\nlist[] = a\n';
+    expect(mergeIni([a, a], { objects: 'replace' })).toBe(a);
+    expect(mergeIni([a, '[s]\nlist[] = b\n'], { objects: 'replace' })).toBe(
+      '[s]\nlist[] = b\n',
+    );
+  });
+
+  it('writes boolean values back as true/false', () => {
+    expect(mergeIni(['a = TRUE\nb = False\n', 'c = 1\n'])).toBe(
+      'a = true\nb = false\nc = 1\n',
+    );
+  });
+
+  it('inserts a new section key after the last key, before trailing comments', () => {
+    expect(mergeIni(['[s]\na = 1\n; end\n', '[s]\nb = 2\n'])).toBe(
+      '[s]\na = 1\nb = 2\n; end\n',
+    );
+  });
+
+  it('appends a new key to a section with only comments', () => {
+    expect(mergeIni(['[s]\n; only\n', '[s]\nb = 2\n'])).toBe(
+      '[s]\n; only\nb = 2\n',
+    );
+  });
+
+  it('adopts the overlay separator when a bare key becomes an array', () => {
+    expect(mergeIni(['flag\n', 'flag[] = 1\n'])).toBe('flag[] = 1\n');
+  });
+
+  it('keeps the separator when a key=value scalar becomes an array', () => {
+    expect(mergeIni(['k=1\n', 'k[] = 1\n'])).toBe('k[]=1\n');
+  });
+
+  it('ignores comments and blank lines in overlay sections', () => {
+    expect(mergeIni(['[s]\na = 1\n', '[s]\n; note\n\nb = 2\n'])).toBe(
+      '[s]\na = 1\nb = 2\n',
+    );
+  });
+
+  it('ignores comments and blank lines at the top of the overlay', () => {
+    expect(mergeIni(['a = 1\n', '; note\n\nb = 2\n'])).toBe('a = 1\nb = 2\n');
+  });
+
+  it('inserts a new global key before the first section', () => {
+    expect(mergeIni(['a = 1\n; about s\n[s]\nx = 1\n', 'b = 2\n'])).toBe(
+      'a = 1\nb = 2\n; about s\n[s]\nx = 1\n',
+    );
+  });
+
+  it('reports conflicts in a section with an empty name by key', () => {
+    expect(() =>
+      mergeIni(['[ ]\nk = 1\n', '[ ]\nk = 2\n'], { conflicts: 'abort' }),
+    ).toThrow('INI conflict at k');
+  });
 });

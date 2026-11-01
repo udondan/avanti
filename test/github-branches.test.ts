@@ -187,6 +187,17 @@ describe('github — request setup', () => {
       fetchGitHub('o/r', 'f.txt', 'main', undefined, 'cli'),
     ).rejects.toThrow('gh error: spawn gh ENOENT');
   });
+
+  it('treats null gh stdout and stderr as empty strings', async () => {
+    mockSpawnSync.mockReturnValue({
+      ...makeSpawnResult({ status: 1 }),
+      stdout: null,
+      stderr: null,
+    } as unknown as SpawnSyncReturns<string>);
+    await expect(
+      fetchGitHub('o/r', 'f.txt', 'main', undefined, 'cli'),
+    ).rejects.toThrow(/^Failed to fetch f\.txt from o\/r@main: $/);
+  });
 });
 
 describe('github — error details', () => {

@@ -296,3 +296,79 @@ describe('fetchVault — no CLI, no env vars', () => {
     );
   });
 });
+
+describe('fetchVault — CLI edge cases', () => {
+  it('throws when the vault kv get call fails to spawn', async () => {
+    mockSpawnSync
+      .mockReturnValueOnce(makeVaultAvailable())
+      .mockReturnValueOnce(makeSpawnResult({ error: new Error('EACCES') }));
+
+    await expect(fetchVault('secret/myapp/db', 'password')).rejects.toThrow(
+      'vault CLI error: EACCES',
+    );
+  });
+
+  it('treats null stdout and stderr as empty strings', async () => {
+    mockSpawnSync
+      .mockReturnValueOnce(makeVaultAvailable())
+      .mockReturnValueOnce({
+        ...makeSpawnResult({ status: 2 }),
+        stdout: null,
+        stderr: null,
+      } as unknown as SpawnSyncReturns<string>);
+
+    await expect(fetchVault('secret/myapp/db', 'password')).rejects.toThrow(
+      /^Failed to read secret\/myapp\/db: $/,
+    );
+  });
+
+  it('throws when the CLI JSON output has no data', async () => {
+    mockSpawnSync
+      .mockReturnValueOnce(makeVaultAvailable())
+      .mockReturnValueOnce(makeSpawnResult({ stdout: '{}', status: 0 }));
+
+    await expect(fetchVault('secret/myapp/db')).rejects.toThrow(
+      'No data found at secret/myapp/db',
+    );
+  });
+
+  it('names the file "secret" when the path has no basename', async () => {
+    mockSpawnSync
+      .mockReturnValueOnce(makeVaultAvailable())
+      .mockReturnValueOnce(
+        makeSpawnResult({ stdout: '{"data":{"k":"v"}}', status: 0 }),
+      );
+
+    const result = await fetchVault('/');
+    expect([...result.files.keys()]).toEqual(['secret']);
+  });
+});
+
+describe('fetchVault — HTTP API edge cases', () => {
+  beforeEach(() => {
+    mockSpawnSync.mockReturnValue(makeVaultUnavailable());
+    process.env.VAULT_ADDR = 'https://vault.example.com';
+    process.env.VAULT_TOKEN = 'test-token';
+  });
+
+  it('falls back to KV v1 when the v2 response is ok but has no data', async () => {
+    const mockFetch = vi
+      .spyOn(global, 'fetch')
+      .mockResolvedValueOnce(new Response('{}', { status: 200 }))
+      .mockResolvedValue(
+        new Response(JSON.stringify({ data: { apikey: 'v1key' } }), {
+          status: 200,
+        }),
+      );
+
+    const result = await fetchVault('kv/myapp/token');
+
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+    expect(mockFetch.mock.calls[1][0]).toBe(
+      'https://vault.example.com/v1/kv/myapp/token',
+    );
+    expect(JSON.parse(result.files.get('token')!.toString('utf8'))).toEqual({
+      apikey: 'v1key',
+    });
+  });
+});

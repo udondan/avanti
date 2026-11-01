@@ -191,6 +191,21 @@ describe('resolveRelativeSrc', () => {
     ).toBe('https://example.com/configs/scripts/foo.sh?token=123');
   });
 
+  it('lets query parameters of the src override those of the HTTP config base', () => {
+    expect(
+      resolveRelativeSrc(
+        './foo.sh?token=src',
+        'https://example.com/configs/?token=base&mode=raw',
+      ),
+    ).toBe('https://example.com/configs/foo.sh?token=src&mode=raw');
+  });
+
+  it('resolves a relative src against a github: config base without a path', () => {
+    expect(resolveRelativeSrc('./foo.sh', 'github:owner/repo')).toBe(
+      'github:owner/repo:foo.sh',
+    );
+  });
+
   it('resolves a relative src against a github: config base', () => {
     expect(
       resolveRelativeSrc('./scripts/foo.sh', 'github:owner/repo:configs'),

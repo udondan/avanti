@@ -269,6 +269,27 @@ describe('atomicWrite — in-place writes', () => {
     ).toThrow('EACCES');
   });
 
+  it.skipIf(isWindows)('stringifies non-Error failures', () => {
+    const dest = path.join(tmpDir, 'f');
+    fs.writeFileSync(dest, 'old');
+    mockOpen.mockImplementationOnce(() => {
+      // eslint-disable-next-line @typescript-eslint/only-throw-error -- a non-Error throw is the case under test
+      throw 'nope';
+    });
+    const err = (() => {
+      try {
+        atomicWrite([
+          { targetPath: dest, content: Buffer.from('new'), writeInPlace: true },
+        ]);
+      } catch (e) {
+        return e;
+      }
+    })();
+    expect(err).toBeInstanceOf(AtomicWritePartialError);
+    expect((err as Error).message).toBe('nope');
+    expect((err as AtomicWritePartialError).writtenPaths).toEqual([]);
+  });
+
   it.skipIf(isWindows)(
     'refuses when the opened fd is not a regular file',
     () => {

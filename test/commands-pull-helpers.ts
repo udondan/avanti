@@ -129,3 +129,10 @@ export function makeTempEnv(prefix: string): TempEnv {
     },
   };
 }
+
+/** Throws a value that is not an Error, to reach the `String(err)` arm of
+ *  the commands' catch blocks. */
+export function throwNonError(value: string): never {
+  const thrown: unknown = value;
+  throw thrown;
+}

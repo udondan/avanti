@@ -901,3 +901,137 @@ describe('INI — removal edge cases', () => {
     expect(result).toBe('[remote "o"]\nuser = 1\n');
   });
 });
+
+describe('insert — previous contribution no longer matches the file', () => {
+  it('JSON: skips keys the user already deleted', () => {
+    const result = insertInto(
+      'f.json',
+      JSON.stringify({ user: 1 }),
+      { json: true },
+      '{}',
+      JSON.stringify({ gone: 1 }),
+    );
+    expect(JSON.parse(result)).toEqual({ user: 1 });
+  });
+
+  it('JSON: skips removal when the previous contribution is not an object', () => {
+    const result = insertInto(
+      'f.json',
+      JSON.stringify({ a: 1 }),
+      { json: true },
+      JSON.stringify({ b: 2 }),
+      '[1]',
+    );
+    expect(JSON.parse(result)).toEqual({ a: 1, b: 2 });
+  });
+
+  it('YAML: skips keys the user already deleted', () => {
+    const result = insertInto(
+      'f.yaml',
+      'user: 1\n',
+      { yaml: true },
+      'a: 2\n',
+      'gone: 1\n',
+    );
+    expect(result).toBe('user: 1\na: 2\n');
+  });
+
+  it('YAML: skips removal when the existing file is not a map', () => {
+    const result = insertInto(
+      'f.yaml',
+      '- a\n',
+      { yaml: true },
+      '- b\n',
+      'x: 1\n',
+    );
+    expect(result).toBe('- b\n');
+  });
+
+  it('YAML: skips removal when the previous contribution is invalid YAML', () => {
+    const result = insertInto(
+      'f.yaml',
+      'a: 1\nuser: 2\n',
+      { yaml: true },
+      'a: 3\n',
+      'a: [unclosed\n',
+    );
+    expect(result).toBe('a: 3\nuser: 2\n');
+  });
+
+  it('YAML: skips removal when the previous contribution is not a map', () => {
+    const result = insertInto(
+      'f.yaml',
+      'a: 1\n',
+      { yaml: true },
+      'b: 2\n',
+      '- a\n',
+    );
+    expect(result).toBe('a: 1\nb: 2\n');
+  });
+
+  it('TOML: skips keys the user already deleted', () => {
+    const result = insertInto(
+      'f.toml',
+      'user = 1\n',
+      { toml: true },
+      '',
+      'gone = 1\n',
+    );
+    expect(result.trim()).toBe('user = 1');
+  });
+
+  it('INI: keeps array items the user added to a section array', () => {
+    const result = insertInto(
+      'f.ini',
+      '[s]\nlist[] = a\nlist[] = user\n',
+      { ini: true },
+      '',
+      '[s]\nlist[] = a\n',
+    );
+    expect(result).toBe('[s]\nlist[] = user\n');
+  });
+
+  it('INI: keeps array items the user added to a global array', () => {
+    const result = insertInto(
+      'f.ini',
+      'list[] = a\nlist[] = user\n',
+      { ini: true },
+      '',
+      'list[] = a\n',
+    );
+    expect(result).toBe('list[] = user\n');
+  });
+
+  it('INI: skips section keys the user deleted or changed', () => {
+    const result = insertInto(
+      'f.ini',
+      '[s]\nk = 5\n',
+      { ini: true },
+      '',
+      '[s]\ngone = 1\nk = 1\n',
+    );
+    expect(result).toBe('[s]\nk = 5\n');
+  });
+
+  it('INI: skips sections the user deleted and leaves other sections alone', () => {
+    const result = insertInto(
+      'f.ini',
+      'top = 1\n[a]\nx = 1\n[b]\ny = 1\n',
+      { ini: true },
+      '',
+      '[a]\nx = 1\n[c]\nz = 1\n',
+    );
+    expect(result).toBe('top = 1\n[b]\ny = 1\n');
+  });
+
+  it('INI: ignores comments in the previous contribution', () => {
+    const result = insertInto(
+      'f.ini',
+      '[s]\nk = v\nuser = 1\n',
+      { ini: true },
+      '',
+      '; c\n[s]\n; d\nk = v\n',
+    );
+    expect(result).toBe('[s]\nuser = 1\n');
+  });
+});

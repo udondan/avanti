@@ -28,6 +28,8 @@ interface SpawnOut {
   stderr?: string;
   status?: number | null;
   error?: Error;
+  /** Report stdout and stderr as null, as spawnSync does on some failures. */
+  nullStreams?: boolean;
 }
 
 interface SpawnCall {
@@ -44,8 +46,16 @@ function makeSpawnResult(
 ): SpawnSyncReturns<string | Buffer> {
   const stdout = opts.stdout ?? '';
   return {
-    stdout: binary && typeof stdout === 'string' ? Buffer.from(stdout) : stdout,
-    stderr: binary ? Buffer.from(opts.stderr ?? '') : (opts.stderr ?? ''),
+    stdout: opts.nullStreams
+      ? (null as unknown as string)
+      : binary && typeof stdout === 'string'
+        ? Buffer.from(stdout)
+        : stdout,
+    stderr: opts.nullStreams
+      ? (null as unknown as string)
+      : binary
+        ? Buffer.from(opts.stderr ?? '')
+        : (opts.stderr ?? ''),
     status: opts.status === undefined ? 0 : opts.status,
     pid: 0,
     output: [],
@@ -1556,5 +1566,138 @@ describe('gitlab — release downloads via glab', () => {
       'api',
     ]);
     expect(result.files.get('a.zip')?.toString()).toBe('api');
+  });
+
+  it('downloads an off-host link without rewriting it or sending the token', async () => {
+    process.env.GITLAB_TOKEN = 'tok';
+    const seen: Array<[string, string | undefined]> = [];
+    routeFetch((url, init) => {
+      seen.push([url, headerOf(init, 'PRIVATE-TOKEN')]);
+      return new Response('cdn');
+    });
+    routeSpawn(() =>
+      meta([lnk('a.zip', 'https://cdn.example.com/-/project/1/uploads/a.zip')]),
+    );
+    const result = await fetchGitLabRelease(
+      'g/p',
+      'v1.0.0',
+      'gitlab.com',
+      'cli',
+    );
+    expect(result.files.get('a.zip')?.toString()).toBe('cdn');
+    expect(seen).toEqual([
+      ['https://cdn.example.com/-/project/1/uploads/a.zip', undefined],
+    ]);
+  });
+
+  it('retries the link URL after an upload 404 when there is no direct_asset_url', async () => {
+    process.env.GITLAB_TOKEN = 'tok';
+    const seen: string[] = [];
+    routeFetch((url) => {
+      seen.push(url);
+      if (url.includes('/api/v4/projects/1/uploads/')) return status(404);
+      return new Response('web');
+    });
+    routeSpawn(() =>
+      meta([lnk('a.zip', 'https://gitlab.com/-/project/1/uploads/h/a.zip')]),
+    );
+    const result = await fetchGitLabRelease(
+      'g/p',
+      'v1.0.0',
+      'gitlab.com',
+      'cli',
+    );
+    expect(result.files.get('a.zip')?.toString()).toBe('web');
+    expect(seen).toEqual([
+      'https://gitlab.com/api/v4/projects/1/uploads/h/a.zip',
+      'https://gitlab.com/-/project/1/uploads/h/a.zip',
+    ]);
+  });
+});
+
+describe('gitlab — remaining edge cases', () => {
+  it('via: cli treats null glab output streams as empty', async () => {
+    routeSpawn(() => ({ nullStreams: true }));
+    const result = await fetchGitLab('g/p', 'f.txt', 'main', undefined, 'cli');
+    expect(result.files.get('f.txt')).toEqual(Buffer.alloc(0));
+  });
+
+  it('via: cli reports glab stdout when a GITLAB_HOST path probe fails without stderr', async () => {
+    process.env.GITLAB_HOST = 'gl.example.com';
+    routeSpawn(() => ({ stdout: 'server unreachable', status: 1 }));
+    await expect(
+      fetchGitLab('g/p', 'f.txt', 'main', undefined, 'cli'),
+    ).rejects.toThrow('gitlab: glab failed for g/p: server unreachable');
+  });
+
+  it.each([
+    ['a GITLAB_HOST path probe 404', 'gl.example.com', 'HTTP 404 Not Found'],
+    ['any path probe failure without a host', undefined, 'unexpected error'],
+  ])('via: cli treats %s as a directory', async (_name, envHost, stderr) => {
+    if (envHost) process.env.GITLAB_HOST = envHost;
+    routeSpawn((args) => {
+      const ep = endpointOf(args);
+      if (ep.includes('/repository/files/dir?')) return { stderr, status: 1 };
+      if (ep.includes('archive')) return { stdout: '' };
+      if (ep.includes('/repository/tree?'))
+        return {
+          stdout: JSON.stringify([{ type: 'blob', path: 'dir/a.txt' }]),
+        };
+      if (ep.includes('/raw?')) return { stdout: 'cli file' };
+      return undefined;
+    });
+    const result = await fetchGitLab('g/p', 'dir', 'main', undefined, 'cli');
+    expect(result.files.get('a.txt')?.toString()).toBe('cli file');
+  });
+
+  it.skipIf(process.platform === 'win32')(
+    'skips archive entries that are neither files nor directories',
+    async () => {
+      routeFetch((url) => {
+        if (url.includes('/repository/files/dir?')) return status(404);
+        if (url.includes('archive')) return new Response('tgz-bytes');
+        return unexpected(url);
+      });
+      routeSpawn(() => undefined, {
+        glabAvailable: false,
+        tar: (dir) => {
+          const sub = path.join(dir, 'p-main', 'dir');
+          fs.mkdirSync(sub, { recursive: true });
+          fs.writeFileSync(path.join(sub, 'a.txt'), 'A');
+          fs.symlinkSync('a.txt', path.join(sub, 'link.txt'));
+          return {};
+        },
+      });
+      const result = await fetchGitLab('g/p', 'dir', 'main');
+      expect(keys(result.files)).toEqual(['a.txt']);
+    },
+  );
+
+  it('retries the link URL after an API upload 404 when there is no direct_asset_url', async () => {
+    process.env.GITLAB_TOKEN = 'tok';
+    const seen: string[] = [];
+    routeFetch((url) => {
+      seen.push(url);
+      if (url === `${GL}/releases/v1.0.0`)
+        return json({
+          assets: {
+            links: [
+              {
+                name: 'a.zip',
+                url: 'https://gitlab.com/-/project/7/uploads/h/a.zip',
+                link_type: 'package',
+              },
+            ],
+          },
+        });
+      if (url.includes('/api/v4/projects/7/uploads/')) return status(404);
+      return new Response('web');
+    });
+    const result = await fetchGitLabRelease('g/p', 'v1.0.0', undefined, 'api');
+    expect(result.files.get('a.zip')?.toString()).toBe('web');
+    expect(seen.slice(1)).toEqual([
+      'https://gitlab.com/api/v4/projects/7/uploads/h/a.zip',
+      'https://gitlab.com/-/project/7/uploads/h/a.zip',
+    ]);
   });
 });

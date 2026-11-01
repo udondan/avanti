@@ -28,6 +28,52 @@ describe('applyUpdatedShas — label derivation per source type', () => {
     expect((src.github as Record<string, unknown>).sha).toBe(SHA);
   });
 
+  it('github file with and without ref', () => {
+    const withRef = applyOne(
+      `      - github:\n          repo: org/repo\n          file: a.txt\n          ref: main\n`,
+      'github:org/repo:a.txt@main',
+    );
+    expect((withRef.github as Record<string, unknown>).sha).toBe(SHA);
+    const noRef = applyOne(
+      `      - github:\n          repo: org/repo\n          file: a.txt\n`,
+      'github:org/repo:a.txt',
+    );
+    expect((noRef.github as Record<string, unknown>).sha).toBe(SHA);
+  });
+
+  it.each([
+    ['without repo', `          file: a.txt\n`, 'github::a.txt'],
+    [
+      'without file or release',
+      `          repo: org/repo\n`,
+      'github:org/repo:',
+    ],
+  ])('github %s is ignored', (_label, body, label) => {
+    expect(
+      applyUpdatedShas(
+        configWith(`      - github:\n${body}`),
+        new Map([[label, SHA]]),
+      ),
+    ).toBeNull();
+  });
+
+  it.each([
+    'github',
+    'gitlab',
+    'bitbucket',
+    'git',
+    'aws_secrets_manager',
+    'aws_systems_manager_parameter',
+    'vault',
+  ])('%s given as a scalar instead of a map is ignored', (key) => {
+    expect(
+      applyUpdatedShas(
+        configWith(`      - ${key}: org/repo\n`),
+        new Map([[`${key}:org/repo`, SHA]]),
+      ),
+    ).toBeNull();
+  });
+
   it('gitlab file with ref and host', () => {
     const src = applyOne(
       `      - gitlab:\n          project: grp/proj\n          file: a.txt\n          ref: main\n          host: gl.example.com\n`,
@@ -302,6 +348,34 @@ describe('applyUpdatedShas — label derivation per source type', () => {
     expect(
       applyUpdatedShas('variables: {}\n', new Map([['http:x', SHA]])),
     ).toBeNull();
+  });
+
+  it('returns null when there are no updates', () => {
+    expect(
+      applyUpdatedShas(configWith(`      - exec: echo hi\n`), new Map()),
+    ).toBeNull();
+  });
+
+  it('skips files entries with an empty or non-scalar key', () => {
+    const raw = `files:\n  "":\n    src:\n      - exec: echo hi\n  ? [a, b]\n  : src:\n      - exec: echo hi\n`;
+    expect(applyUpdatedShas(raw, new Map([['exec:echo hi', SHA]]))).toBeNull();
+  });
+
+  it('skips src items without a known source key', () => {
+    expect(
+      applyUpdatedShas(
+        configWith(`      - content: hi\n`),
+        new Map([['url:', SHA]]),
+      ),
+    ).toBeNull();
+  });
+
+  it('ignores non-scalar filter entries when building the label', () => {
+    const src = applyOne(
+      `      - path: ./dir\n        filter:\n          - [nested]\n          - "*.txt"\n`,
+      `path:./dir\x00filter:${JSON.stringify(['*.txt'])}`,
+    );
+    expect(src.sha).toBe(SHA);
   });
 
   it('skips scalar src items and entries without src', () => {

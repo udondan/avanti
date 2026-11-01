@@ -205,6 +205,15 @@ describe('filter — remaining edge cases', () => {
     );
   });
 
+  it('treats a comma-less brace group in a directory prefix literally', () => {
+    const braced = new Map([['{a}/b.txt', Buffer.from('x')]]);
+    expect([...applyFilter(braced, ['{a}/']).keys()]).toEqual(['{a}/b.txt']);
+  });
+
+  it('collapses consecutive glob stars into one wildcard', () => {
+    expect([...applyFilter(files, ['a**.txt']).keys()]).toEqual(['a/b.txt']);
+  });
+
   it.each([
     ['without braces', 'plain'],
     ['with an unclosed brace', 'x{abc'],

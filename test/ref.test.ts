@@ -115,5 +115,6 @@ describe('maxSemverTag', () => {
     expect(maxSemverTag(['1.2.0', '1.10.0', '1.9.5'])).toBe('1.10.0');
     expect(maxSemverTag(['v1.2.10', 'v1.2.9', 'nightly'])).toBe('v1.2.10');
     expect(maxSemverTag(['v3.0.0', 'v1.0.0'])).toBe('v3.0.0');
+    expect(maxSemverTag(['v1.2.9', 'v1.2.10'])).toBe('v1.2.10');
   });
 });

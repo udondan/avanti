@@ -76,6 +76,22 @@ describe('applyWriteHook', () => {
     }
   });
 
+  it('includes stderr in the error on non-zero exit', () => {
+    const script = isWindows
+      ? "[Console]::Error.Write('oops'); exit 3"
+      : 'echo oops 1>&2; exit 3';
+    expect(() => applyWriteHook('x', script)).toThrow(
+      'on.write script exited with code 3: oops',
+    );
+  });
+
+  it.skipIf(isWindows)('reports a script killed by a signal', () => {
+    // $$$$ is the escaped form of the shell's $$ (on.write resolves variables).
+    expect(() => applyWriteHook('x', 'kill -KILL $$$$')).toThrow(
+      'on.write script killed by signal SIGKILL',
+    );
+  });
+
   it('throws on undefined variable in script', () => {
     expect(() => applyWriteHook('x', 'echo $missing', {})).toThrow(
       'Undefined variable: $missing',
@@ -104,6 +120,12 @@ describe('runHook', () => {
 
   it('throws on non-zero exit', () => {
     expect(() => runHook('exit 1')).toThrow('hook script exited with code 1');
+  });
+
+  it.skipIf(isWindows)('reports a script killed by a signal', () => {
+    expect(() => runHook('kill -KILL $$')).toThrow(
+      'hook script killed by signal SIGKILL',
+    );
   });
 
   it('receives AVANTI_TARGET env var', () => {

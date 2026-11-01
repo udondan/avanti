@@ -373,6 +373,16 @@ describe('extractArchive — path traversal protection', () => {
     );
   });
 
+  it('skips ZIP entries that normalise to "."', async () => {
+    const buffer = makeDangerousZipBuffer([
+      { path: 'a/..', content: 'dot' },
+      { path: 'keep.txt', content: 'kept' },
+    ]);
+    const files = await extractArchive(buffer, 'archive.zip');
+    expect([...files.keys()]).toEqual(['keep.txt']);
+    expect(files.get('keep.txt')?.toString()).toBe('kept');
+  });
+
   it('rejects ZIP entries with duplicate normalized paths', async () => {
     const buffer = makeDangerousZipBuffer([
       { path: 'foo.txt', content: 'first' },

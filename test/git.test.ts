@@ -411,4 +411,48 @@ describe('fetchGit — ref sentinel and pattern resolution', () => {
       fetchGit('git+ssh://git@host/repo.git', 'file.txt', '$latest'),
     ).toThrow('Failed to list tags');
   });
+
+  it('ignores ls-remote lines without a tab-separated ref', () => {
+    mockSpawnSync
+      .mockReturnValueOnce(
+        makeSpawnResult({
+          stdout: `garbage\n${lsRemoteOutput(['v1.0.0'])}`,
+          status: 0,
+        }),
+      )
+      .mockReturnValueOnce(
+        makeSpawnResult({ status: 1, stderr: 'clone failed' }),
+      );
+
+    expect(() =>
+      fetchGit('git+ssh://git@host/repo.git', 'file.txt', '$recent'),
+    ).toThrow('git clone failed: clone failed');
+
+    const cloneArgs = mockSpawnSync.mock.calls[1][1] as string[];
+    expect(cloneArgs).toContain('v1.0.0');
+  });
+});
+
+describe('fetchGit — special directory entries', () => {
+  it.skipIf(process.platform === 'win32')(
+    'skips symlinks and entries that are neither files nor directories',
+    async () => {
+      const real =
+        await vi.importActual<typeof import('child_process')>('child_process');
+      mockSpawnSync.mockImplementation((_cmd, args) => {
+        const repoDir = String(args[args.length - 1]);
+        const dir = path.join(repoDir, 'src');
+        fs.mkdirSync(dir, { recursive: true });
+        fs.writeFileSync(path.join(dir, 'a.txt'), 'a');
+        fs.symlinkSync('a.txt', path.join(dir, 'link.txt'));
+        const fifo = real.spawnSync('mkfifo', [path.join(dir, 'pipe')]);
+        expect(fifo.status).toBe(0);
+        return makeSpawnResult({ status: 0 });
+      });
+
+      const result = fetchGit('https://example.com/repo.git', 'src/', 'main');
+
+      expect([...result.files.keys()]).toEqual(['a.txt']);
+    },
+  );
 });

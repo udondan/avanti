@@ -426,6 +426,24 @@ describe('assertBackupPathAllowed', () => {
     ).toThrow('outside the working directory');
   });
 
+  it('allows a path within a workingDir that ends with a separator', () => {
+    const wd = path.join(path.sep, 'work') + path.sep;
+    expect(() =>
+      assertBackupPathAllowed(path.join(wd, 'file.bkp'), wd, []),
+    ).not.toThrow();
+  });
+
+  it('allows a path under a filesystem-root backup_root', () => {
+    const root = path.parse(process.cwd()).root;
+    expect(() =>
+      assertBackupPathAllowed(
+        path.join(root, 'elsewhere', 'file.bkp'),
+        path.join(root, 'work'),
+        [root],
+      ),
+    ).not.toThrow();
+  });
+
   it('allows a path under a ~/expanded backup_root', () => {
     const home = os.homedir();
     expect(() =>
@@ -985,6 +1003,26 @@ describe('resolveVariableSpec — remaining edge cases', () => {
     ).rejects.toThrow(
       'Variable value contains a non-plain object (Date) at .when',
     );
+  });
+
+  it('prefixes errors from string values with the variable name', async () => {
+    await expect(
+      resolveVariableSpec({ v: '${missing.key}' }, tmpDir),
+    ).rejects.toThrow('variables.v: Undefined variable');
+  });
+
+  it('rejects a class instance as the top-level value', async () => {
+    await expect(
+      resolveVariableSpec({ v: new Date(0) } as never, tmpDir),
+    ).rejects.toThrow(
+      'variables.v: Variable value contains a non-plain object (Date) — only',
+    );
+  });
+
+  it('quotes keys with special characters in the error path', async () => {
+    await expect(
+      resolveVariableSpec({ v: { 'a.b': Symbol('x') } } as never, tmpDir),
+    ).rejects.toThrow('unsupported type "symbol" at ["a.b"]');
   });
 
   it('names objects without a constructor as unknown', async () => {

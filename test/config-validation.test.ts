@@ -328,3 +328,40 @@ describe('parseConfigContent — source validation', () => {
     expect(() => withSrc(src)).toThrow(message);
   });
 });
+
+describe('parseConfigContent — optional source fields', () => {
+  const sha = 'a'.repeat(64);
+  const conds = { if: { os: 'linux' }, ifAny: [{ os: 'darwin' }] };
+
+  it.each([
+    ['url', { url: 'https://example.com/a', ...conds }],
+    ['http', { http: 'https://example.com/a', ...conds }],
+    [
+      'aws_s3',
+      { aws_s3: 's3://bucket/prefix/', filter: ['*.txt'], sha, ...conds },
+    ],
+    [
+      'gitlab release',
+      {
+        gitlab: { project: 'g/p', release: 'v1', host: 'gl.example.com' },
+        filter: ['*.txt'],
+      },
+    ],
+    [
+      'github release',
+      {
+        github: { repo: 'o/r', release: 'v1', host: 'ghe.example.com' },
+        filter: ['*.txt'],
+      },
+    ],
+    [
+      'bitbucket',
+      {
+        bitbucket: { workspace: 'w', repo: 'r', file: 'f' },
+        filter: ['*.txt'],
+      },
+    ],
+  ])('keeps the optional fields of a %s source', (_label, src) => {
+    expect(withSrc(src).files['out.txt'].src).toEqual(src);
+  });
+});

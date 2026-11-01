@@ -21,6 +21,7 @@ vi.mock('@aws-sdk/client-secrets-manager', () => {
 });
 
 import { fetchSecretsManager } from '../src/sources/secrets-manager';
+import { setVerbose } from '../src/logger';
 
 beforeEach(() => {
   vi.resetAllMocks();
@@ -127,5 +128,31 @@ describe('fetchSecretsManager — error handling', () => {
     await fetchSecretsManager('myapp/prod/db', undefined, 'eu-west-1');
 
     expect(mockConstructor).toHaveBeenCalledWith({ region: 'eu-west-1' });
+  });
+});
+
+describe('fetchSecretsManager — edge cases', () => {
+  it('names the file "secret" when the name has no leaf segment', async () => {
+    mockSend.mockResolvedValueOnce({ SecretString: 'val' });
+
+    const result = await fetchSecretsManager(':/');
+
+    expect([...result.files.keys()]).toEqual(['secret']);
+  });
+
+  it('logs the GetSecretValue call when verbose is enabled', async () => {
+    const stderrSpy = vi
+      .spyOn(process.stderr, 'write')
+      .mockImplementation(() => true);
+    setVerbose(true);
+    try {
+      mockSend.mockResolvedValueOnce({ SecretString: 'val' });
+      await fetchSecretsManager('myapp/prod/db');
+      const output = stderrSpy.mock.calls.map((c) => String(c[0])).join('');
+      expect(output).toContain('secrets-manager GetSecretValue myapp/prod/db');
+    } finally {
+      setVerbose(false);
+      stderrSpy.mockRestore();
+    }
   });
 });
