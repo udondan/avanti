@@ -6,12 +6,15 @@
 // Vitest doesn't count are dropped here, so they don't show up as misses on
 // Codecov. Only line hits are kept: branch data of the two tools doesn't line
 // up.
+//
+// Usage: bun test/setup/merge-child-coverage.ts [coverage-dir]
 import * as fs from 'fs';
 import * as path from 'path';
 
-const VITEST = 'coverage/lcov.info';
-const RAW = 'coverage/child-raw/lcov.info';
-const OUT = 'coverage/child/lcov.info';
+const DIR = process.argv[2] ?? 'coverage';
+const VITEST = path.join(DIR, 'lcov.info');
+const RAW = path.join(DIR, 'child-raw', 'lcov.info');
+const OUT = path.join(DIR, 'child', 'lcov.info');
 
 function parse(file: string): Map<string, Map<number, number>> {
   const files = new Map<string, Map<number, number>>();
