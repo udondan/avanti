@@ -809,6 +809,30 @@ describe('INI — removal edge cases', () => {
     expect(result).toBe('[s]\nk = a\n');
   });
 
+  it('cleans up an old fragment written as is under first_wins', () => {
+    const fragment = '[s]\nk = a\n[s]\nk = b\n';
+    const result = insertInto(
+      'f.ini',
+      fragment,
+      { ini: { conflicts: 'first_wins' } },
+      '',
+      fragment,
+    );
+    expect(result).toBe('\n');
+  });
+
+  it('cleans up an old fragment merged under first_wins', () => {
+    const fragment = 'g = 1\nlist[] = a\n[s]\nk = a\n[s]\nk = b\n[t]\nj = 1\n';
+    const result = insertInto(
+      'f.ini',
+      'u = 1\ng = 1\nlist[] = a\n[s]\nx = 1\nk = a\n[t]\nj = 1\n',
+      { ini: { conflicts: 'first_wins' } },
+      '',
+      fragment,
+    );
+    expect(result).toBe('u = 1\n[s]\nx = 1\n');
+  });
+
   it('updates values the user changed when the new contribution has them', () => {
     const result = insertInto(
       'f.ini',

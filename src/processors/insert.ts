@@ -461,6 +461,32 @@ function deepRemoveFromIniDoc(
   }
 }
 
+// The values of `merged` that `fragment` does not have: scalars with another
+// value and array items beyond the fragment's (the fragment as is keeps only
+// the last section's array of a repeated key), in each section too. Both
+// come from the same fragment, so every section and array key of `merged`
+// is also in `fragment`.
+function iniContribDiff(
+  fragment: Record<string, unknown>,
+  merged: Record<string, unknown>,
+): Record<string, unknown> {
+  const out = Object.create(null) as Record<string, unknown>;
+  for (const [key, value] of Object.entries(merged)) {
+    const own = fragment[key];
+    if (isPlainObject(value)) {
+      const sub = iniContribDiff(own as Record<string, unknown>, value);
+      if (Object.keys(sub).length > 0) out[key] = sub;
+    } else if (Array.isArray(value)) {
+      const rest: unknown[] = [...(value as unknown[])];
+      removeArrayContribution(rest, own as unknown[]);
+      if (rest.length > 0) out[key] = rest;
+    } else if (!deepEqual(own, value)) {
+      out[key] = value;
+    }
+  }
+  return out;
+}
+
 // ── INI ownership (what each pull added) ─────────────────────────────────────
 
 interface IniOwnedKv {
@@ -1176,20 +1202,23 @@ function applyIniInsert(
       if (isIniOwnership(last.owned)) {
         removeIniOwnership(doc, last.owned, newContrib, newKeys, kept);
       } else {
-        // Older history only has the fragment text. Merge it into an empty
-        // file with the same options, so repeated sections in it collapse to
-        // the values that were written. Under conflicts: abort that merge
-        // rejects a fragment that repeats a key, though a missing target got
-        // it as is: use the fragment itself then.
-        let oldText: string;
+        // Older history only has the fragment text. A missing target got it
+        // as is; an existing file got it merged with the same options, which
+        // collapses repeated keys to the value that was written (the first
+        // one under conflicts: first_wins). Remove the fragment as is, then
+        // the values only the merged form has. Under conflicts: abort that
+        // merge rejects a fragment that repeats a key: only the fragment
+        // itself is used then.
+        const oldContrib = iniDocToJs(parseIniDoc(last.processed));
+        let mergedOnly: Record<string, unknown> = {};
         try {
-          oldText = mergeIni(['', last.processed], opts);
+          const merged = parseIniDoc(mergeIni(['', last.processed], opts));
+          mergedOnly = iniContribDiff(oldContrib, iniDocToJs(merged));
         } catch {
-          oldText = last.processed;
+          // abort rejected a repeated key
         }
-        const oldDoc = parseIniDoc(oldText);
-        const oldContrib = iniDocToJs(oldDoc);
         deepRemoveFromIniDoc(doc, oldContrib, newContrib, newKeys, kept);
+        deepRemoveFromIniDoc(doc, mergedOnly, newContrib, newKeys, kept);
       }
     } catch {
       // Corrupted history fragment — skip key removal, fall through to merge
