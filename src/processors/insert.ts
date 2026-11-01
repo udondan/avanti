@@ -254,13 +254,19 @@ function deepRemoveFromIniSectionItems(
       if (!node) continue;
       const curArr = node.value as IniScalar[];
       removeArrayContribution(curArr, oldVal);
-      // Remove the array node when it becomes empty and newVal is not an array
-      // (key removed or type changed to scalar).
-      if (curArr.length === 0 && !Array.isArray(newVal)) {
-        const idx = items.indexOf(node);
-        if (idx !== -1) {
-          items.splice(idx, 1);
-          splicePrecedingCommentBlanks(items, idx);
+      if (curArr.length === 0) {
+        if (Array.isArray(newVal)) {
+          // An empty array node serialises to a blank line, so pre-fill it
+          // with the new contribution: the key keeps its position and mergeIni
+          // sees identical values.
+          node.value = [...(newVal as IniScalar[])];
+        } else {
+          // Key removed or type changed to scalar: drop the node.
+          const idx = items.indexOf(node);
+          if (idx !== -1) {
+            items.splice(idx, 1);
+            splicePrecedingCommentBlanks(items, idx);
+          }
         }
       }
     } else {
@@ -352,13 +358,17 @@ function deepRemoveFromIniDoc(
       if (!node) continue;
       const curArr = node.value as IniScalar[];
       removeArrayContribution(curArr, oldVal);
-      // Remove the array node when it becomes empty and newVal is not an array
-      // (key removed or type changed to scalar/section).
-      if (curArr.length === 0 && !Array.isArray(newVal)) {
-        const idx = doc.items.indexOf(node);
-        if (idx !== -1) {
-          doc.items.splice(idx, 1);
-          // Do not strip preceding comment/blank nodes at the doc level.
+      if (curArr.length === 0) {
+        if (Array.isArray(newVal)) {
+          // See deepRemoveFromIniSectionItems: avoid a stray blank line.
+          node.value = [...(newVal as IniScalar[])];
+        } else {
+          // Key removed or type changed to scalar/section: drop the node.
+          const idx = doc.items.indexOf(node);
+          if (idx !== -1) {
+            doc.items.splice(idx, 1);
+            // Do not strip preceding comment/blank nodes at the doc level.
+          }
         }
       }
     } else {
