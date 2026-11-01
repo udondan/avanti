@@ -35,14 +35,23 @@ describe('mapWithConcurrency', () => {
   });
 
   it('rejects with the first error and starts no new calls after it', async () => {
+    // Two workers: item 1 fails while item 2 is still running. When item 2
+    // finishes, its worker must not pick up item 3.
     const started: number[] = [];
-    await expect(
-      mapWithConcurrency([1, 2, 3, 4, 5], 1, (n) => {
-        started.push(n);
-        if (n === 2) return Promise.reject(new Error('boom'));
-        return Promise.resolve(n);
-      }),
-    ).rejects.toThrow('boom');
+    let finishSecond: () => void = () => {};
+    const run = mapWithConcurrency([1, 2, 3, 4, 5], 2, (n) => {
+      started.push(n);
+      if (n === 1) return Promise.reject(new Error('boom'));
+      if (n === 2)
+        return new Promise<number>((r) => {
+          finishSecond = () => r(n);
+        });
+      return Promise.resolve(n);
+    });
+
+    await expect(run).rejects.toThrow('boom');
+    finishSecond();
+    await tick();
     expect(started).toEqual([1, 2]);
   });
 });
