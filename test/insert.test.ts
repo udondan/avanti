@@ -1301,6 +1301,48 @@ describe('INI — ownership tracking', () => {
     ).toBe('k = a\nk = a\n');
   });
 
+  it('records values the file already had with the same key', () => {
+    const { owned } = iniSteps('[s]\nk = a\nk = b\n', true, ['[s]\nk = a\n']);
+    expect(owned[0]).toMatchObject({
+      sections: [
+        { kvs: [{ key: 'k', isArray: false, value: 'a', shared: 1 }] },
+      ],
+    });
+    // Unchanged file: the contributed (last) occurrence goes.
+    expect(removeWith('[s]\nk = a\nk = a\n', '[s]\nk = a\n', owned[0])).toBe(
+      '[s]\nk = a\n',
+    );
+    // The user deleted one: it may have been ours, so the other stays.
+    expect(removeWith('[s]\nk = a\n', '[s]\nk = a\n', owned[0])).toBe(
+      '[s]\nk = a\n',
+    );
+  });
+
+  it('keeps a global the file already had when one occurrence is gone', () => {
+    const { owned } = iniSteps('k = a\nk = b\n', true, ['k = a\n']);
+    expect(owned[0]).toMatchObject({
+      globals: [{ key: 'k', value: 'a', shared: 1 }],
+    });
+    expect(removeWith('k = a\nu = 1\n', 'k = a\n', owned[0])).toBe(
+      'k = a\nu = 1\n',
+    );
+  });
+
+  it('keeps a non-finite number as text in the stored ownership', () => {
+    const { owned } = iniSteps('[s]\nlist[] = a\n', true, [
+      '[s]\nlist[] = a\nn = Infinity\nm = 1e309\n',
+    ]);
+    const stored = JSON.parse(JSON.stringify(owned[0])) as unknown;
+    expect(stored).toEqual(owned[0]);
+    expect(
+      removeWith(
+        '[s]\nlist[] = a\nn = Infinity\nm = 1e309\n',
+        '[s]\nlist[] = a\nn = Infinity\nm = 1e309\n',
+        stored,
+      ),
+    ).toBe('[s]\nlist[] = a\n');
+  });
+
   it('ignores stored scalars with array values', () => {
     const owned = {
       format: 'ini',
@@ -1812,6 +1854,22 @@ describe('INI — ownership tracking', () => {
     [
       'fractional count',
       { format: 'ini', globals: [], sections: [{ ...section, count: 1.5 }] },
+    ],
+    [
+      'negative shared',
+      {
+        format: 'ini',
+        globals: [{ key: 'k', isArray: false, value: 'v', shared: -1 }],
+        sections: [],
+      },
+    ],
+    [
+      'fractional shared',
+      {
+        format: 'ini',
+        globals: [{ key: 'k', isArray: false, value: 'v', shared: 0.5 }],
+        sections: [],
+      },
     ],
     [
       'bad others',

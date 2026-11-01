@@ -1884,6 +1884,18 @@ export function pullCommand(): Command {
                 );
               }
             }
+            // Save the inserted fragments of files that landed, so the next
+            // pull can remove what this one added. Files that did not land
+            // keep their previous fragment.
+            for (const [targetPath, fragment] of insertedFragments) {
+              if (!writtenSet.has(targetPath)) continue;
+              history.saveInsertedFragment(
+                targetPath,
+                fragment.raw,
+                fragment.processed,
+                fragment.owned,
+              );
+            }
           }
         }
         closeAllSessions(sudoSessions);

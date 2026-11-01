@@ -385,6 +385,32 @@ describe('pull: stale files', () => {
     expect(history().getLastPullFiles()).toEqual([]);
   });
 
+  it('saves the inserted fragments of files a partial write landed', async () => {
+    w('a.ini', '[s]\nx = 1\n');
+    w('b.ini', '[s]\nx = 1\n');
+    env.writeConfig(`files:
+  a.ini:
+    src:
+      - raw: "[s]\\nk = v\\n"
+    strategy: insert
+    ini: true
+  b.ini:
+    src:
+      - raw: "[s]\\nk = v\\n"
+    strategy: insert
+    ini: true
+`);
+    vi.spyOn(writer, 'atomicWrite').mockImplementation(() => {
+      throw new writer.AtomicWritePartialError('disk full', [p('a.ini')]);
+    });
+    const res = await pull('--yes');
+    expect(res.code).toBe(2);
+    expect(history().getInsertedFragment(p('a.ini'))?.owned).toMatchObject({
+      sections: [{ kvs: [{ key: 'k', value: 'v' }] }],
+    });
+    expect(history().getInsertedFragment(p('b.ini'))).toBeNull();
+  });
+
   it('records nothing when the partial write names no tracked file', async () => {
     env.writeConfig(RAW_ENTRY);
     vi.spyOn(writer, 'atomicWrite').mockImplementation(() => {

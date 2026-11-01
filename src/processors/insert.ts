@@ -467,6 +467,9 @@ interface IniOwnedKv {
   key: string;
   isArray: boolean;
   value: IniScalar | IniScalar[];
+  // Scalars only: how many nodes with the same key and value the file already
+  // had before the pull and still has.
+  shared?: number;
 }
 
 interface IniOwnedSection {
@@ -505,6 +508,8 @@ function isIniOwnedKvList(v: unknown): v is IniOwnedKv[] {
         isPlainObject(kv) &&
         typeof kv['key'] === 'string' &&
         typeof kv['isArray'] === 'boolean' &&
+        (kv['shared'] === undefined ||
+          (Number.isInteger(kv['shared']) && (kv['shared'] as number) >= 0)) &&
         (kv['isArray']
           ? Array.isArray(kv['value']) && kv['value'].every(isIniScalar)
           : isIniScalar(kv['value'])),
@@ -627,12 +632,22 @@ function computeIniOwnership(
   ): { kvs: IniOwnedKv[]; others: string[] } => {
     const kvs: IniOwnedKv[] = [];
     const others = new Set<string>();
+    // Scalar nodes the file already had with the same value, by key and value.
+    const shared = new Map<string, number>();
     for (const it of items) {
       if (it.kind !== 'kv') continue;
       const before = lookup(it);
       if (before) others.add(it.key);
       const owned = ownKv(it, before);
       if (owned) kvs.push(owned);
+      else if (before && !it.isArray) {
+        const id = iniScalarId(it.key, it.value);
+        shared.set(id, (shared.get(id) ?? 0) + 1);
+      }
+    }
+    for (const kv of kvs) {
+      const count = kv.isArray ? 0 : shared.get(iniScalarId(kv.key, kv.value));
+      if (count) kv.shared = count;
     }
     return { kvs, others: [...others] };
   };
@@ -766,14 +781,25 @@ function moveShadowedIniScalars(
   }
 }
 
-// When the file has more nodes with an owned key and value than the pull
-// owns, a user added the same value again and it is unclear which node is
-// ours: leave all of them in place.
+function iniScalarId(key: string, value: unknown): string {
+  return JSON.stringify([key, value]);
+}
+
+// The file should have as many nodes with an owned key and value as the pull
+// owns plus the ones the file already had. With more, a user added the same
+// value again; with fewer while some were the file's own, a user removed one
+// and it may have been ours. Either way it is unclear which node is ours:
+// leave all of them in place.
 function dropAmbiguousIniScalars(
   items: IniItem[],
   owned: { contrib: Record<string, unknown>; earlier: IniOwnedKv[] },
+  recorded: IniOwnedKv[],
 ): void {
-  const id = (key: string, value: unknown) => JSON.stringify([key, value]);
+  const id = iniScalarId;
+  const shared = new Map<string, number>();
+  for (const kv of recorded) {
+    if (kv.shared) shared.set(id(kv.key, kv.value), kv.shared);
+  }
   const nodes = new Map<string, number>();
   for (const it of items) {
     if (it.kind !== 'kv' || it.isArray) continue;
@@ -793,7 +819,10 @@ function dropAmbiguousIniScalars(
   }
   const ambiguous = (key: string, value: unknown) => {
     const k = id(key, value);
-    return (nodes.get(k) ?? 0) > ownedCount.get(k)!;
+    const found = nodes.get(k) ?? 0;
+    const before = shared.get(k) ?? 0;
+    const expected = ownedCount.get(k)! + before;
+    return found > expected || (before > 0 && found < expected);
   };
   for (const { key, value } of scalars) {
     if (!ambiguous(key, value)) continue;
@@ -859,7 +888,7 @@ function removeIniOwnership(
 ): void {
   const globals = iniOwnedToContrib(owned.globals);
   moveShadowedIniScalars(doc.items, globals);
-  dropAmbiguousIniScalars(doc.items, globals);
+  dropAmbiguousIniScalars(doc.items, globals, owned.globals);
   for (const key of Object.keys(globals.contrib)) {
     const newVal =
       newContrib != null && Object.hasOwn(newContrib, key)
@@ -892,7 +921,7 @@ function removeIniOwnership(
         : undefined;
     const sectionOwned = iniOwnedToContrib(s.kvs);
     moveShadowedIniScalars(target.items, sectionOwned);
-    dropAmbiguousIniScalars(target.items, sectionOwned);
+    dropAmbiguousIniScalars(target.items, sectionOwned, s.kvs);
     const { contrib, earlier } = sectionOwned;
     deepRemoveFromIniSections(
       [target],
