@@ -155,6 +155,31 @@ describe('fetchWithRetry', () => {
     expect(sleepSpy).toHaveBeenCalledTimes(5);
   });
 
+  it('gives up once the total retry wait would exceed 60s', async () => {
+    // Each Retry-After asks for 25s: 25 + 25 = 50s fits, a third wait (75s) does not
+    const mockFetch = vi
+      .spyOn(global, 'fetch')
+      .mockResolvedValue(makeResponse(429, { 'Retry-After': '25' }));
+
+    const res = await fetchWithRetry('https://example.com/file');
+
+    expect(res.status).toBe(429);
+    expect(mockFetch).toHaveBeenCalledTimes(3);
+    expect(sleepSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it('allows retries whose total wait is exactly 60s', async () => {
+    vi.spyOn(global, 'fetch')
+      .mockResolvedValueOnce(makeResponse(429, { 'Retry-After': '30' }))
+      .mockResolvedValueOnce(makeResponse(429, { 'Retry-After': '30' }))
+      .mockResolvedValue(makeResponse(200));
+
+    const res = await fetchWithRetry('https://example.com/file');
+
+    expect(res.status).toBe(200);
+    expect(sleepSpy).toHaveBeenCalledTimes(2);
+  });
+
   it('uses exponential backoff as default delay when no rate-limit headers', async () => {
     vi.spyOn(global, 'fetch')
       .mockResolvedValueOnce(makeResponse(503))
@@ -276,6 +301,23 @@ describe('fetchWithRetry — verbose retry logging', () => {
 
     const output = stderrSpy.mock.calls.map((c) => String(c[0])).join('');
     expect(output).toContain('-> retrying in 1000ms (status 503)');
+  });
+
+  it('logs when the retry budget is used up', async () => {
+    const stderrSpy = vi
+      .spyOn(process.stderr, 'write')
+      .mockImplementation(() => true);
+    setVerbose(true);
+    vi.spyOn(global, 'fetch').mockResolvedValue(
+      makeResponse(429, { 'Retry-After': '60' }),
+    );
+
+    await fetchWithRetry('https://example.com/file');
+
+    const output = stderrSpy.mock.calls.map((c) => String(c[0])).join('');
+    expect(output).toContain(
+      '-> retry budget of 60000ms used up, giving up (status 429)',
+    );
   });
 });
 

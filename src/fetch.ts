@@ -3,6 +3,9 @@ import { verbose, isVerbose } from './logger';
 const MAX_RETRIES = 5;
 const BASE_DELAY_MS = 1_000;
 const MAX_DELAY_MS = 60_000;
+// Total time one request may spend waiting between retries. Without it a
+// rate-limited request can wait about 5 minutes (5 retries x 60 s).
+const MAX_TOTAL_DELAY_MS = 60_000;
 
 // Object wrapper so tests can spy on sleep without fake timers
 export const _testable = {
@@ -81,6 +84,7 @@ export async function fetchWithRetry(
     const method = (options.method ?? 'GET').toUpperCase();
     verbose(`${method} ${redactUrl(url)}`);
   }
+  let waitedMs = 0;
   for (let attempt = 0; ; attempt++) {
     let res: Response;
     try {
@@ -100,6 +104,14 @@ export async function fetchWithRetry(
       res.status === 429 || (res.status >= 500 && res.status <= 599);
     if (!shouldRetry || attempt >= MAX_RETRIES) return res;
     const delay = retryDelayMs(attempt, res.headers);
+    if (waitedMs + delay > MAX_TOTAL_DELAY_MS) {
+      if (isVerbose())
+        verbose(
+          `  -> retry budget of ${MAX_TOTAL_DELAY_MS}ms used up, giving up (status ${res.status})`,
+        );
+      return res;
+    }
+    waitedMs += delay;
     if (isVerbose())
       verbose(`  -> retrying in ${delay}ms (status ${res.status})`);
     await _testable.sleep(delay);

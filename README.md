@@ -2025,7 +2025,7 @@ Use the `via` field on a source to control which transport is tried and in what 
 - `via: [cli, api]` — CLI first; falls back to the HTTP API if the CLI fails for any reason.
 - `via: [api, cli]` — equivalent to the default; HTTP API first, falls back to the CLI on connectivity failures and auth/access errors (401/403/404).
 
-HTTP server errors (5xx) do not trigger CLI fallback regardless of the `via` order, because the CLI hits the same API endpoint and encounters the same error. By the time a 5xx surfaces here, `fetchWithRetry` has already retried it with exponential backoff.
+HTTP server errors (5xx) do not trigger CLI fallback regardless of the `via` order, because the CLI hits the same API endpoint and encounters the same error. By the time a 5xx surfaces here, `fetchWithRetry` has already retried it with exponential backoff. A request waits at most 60 seconds in total between retries; after that the last error is returned.
 
 **Vault** uses the `vault` CLI when it is installed (picks up `VAULT_TOKEN`, `~/.vault-token`, and any other auth methods configured in the CLI). If the CLI is not available, it falls back to the HTTP API using `VAULT_ADDR` and `VAULT_TOKEN`.
 
