@@ -228,10 +228,17 @@ describe('log <file>', () => {
     const f = join(tmpDir, 'f.txt');
     // A project without pulls sorts last.
     new HistoryManager(empty, tmpDir).ensureStorageDir();
-    recordPull(configPath, [{ path: f, content: 'one\n', isNew: true }]);
-    const later = recordPull(other, [
-      { path: f, content: 'two\n', isNew: true },
-    ]);
+    // Fixed times, so both pulls never share a timestamp.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    let later: string;
+    try {
+      vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
+      recordPull(configPath, [{ path: f, content: 'one\n', isNew: true }]);
+      vi.setSystemTime(new Date('2026-01-01T00:00:01Z'));
+      later = recordPull(other, [{ path: f, content: 'two\n', isNew: true }]);
+    } finally {
+      vi.useRealTimers();
+    }
     const out = await run(['f.txt'], false);
     expect(out).toContain(`pull ${later.slice(0, 8)}`);
   });
