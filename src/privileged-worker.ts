@@ -676,9 +676,12 @@ export function handleWriteInPlace(
       } catch (e) {
         firstOpenErr = e as NodeJS.ErrnoException;
       }
-      if (firstOpenErr !== undefined) {
+      if (fd === undefined) {
+        // firstOpenErr is always set when the first write-open did not
+        // produce an fd.
+        const openErr = firstOpenErr as NodeJS.ErrnoException;
         if (
-          firstOpenErr.code === 'EACCES' &&
+          openErr.code === 'EACCES' &&
           typeof process.getuid === 'function' &&
           process.getuid() !== 0
         ) {
@@ -690,14 +693,13 @@ export function handleWriteInPlace(
           // savedMode must be defined at this point: if the O_RDONLY open
           // succeeded, fstatSync set it; if not, lstatSync set it (and any
           // other failure re-threw above rather than reaching here).
-          if (savedMode === undefined) throw firstOpenErr;
           const mode = savedMode;
           if (rfd !== undefined) {
             // fd-based path: no TOCTOU window between stat and chmod.
             try {
               safeFchmodSync(rfd, mode | 0o200);
             } catch {
-              throw firstOpenErr;
+              throw openErr;
             }
           } else {
             // rfd is undefined: O_RDONLY|O_NOFOLLOW failed with EACCES (write-only
@@ -725,7 +727,7 @@ export function handleWriteInPlace(
               try {
                 safeFchmodSync(wfd, mode | 0o200);
               } catch {
-                throw firstOpenErr;
+                throw openErr;
               } finally {
                 try {
                   fs.closeSync(wfd);
@@ -791,11 +793,9 @@ export function handleWriteInPlace(
             );
           }
         } else {
-          throw firstOpenErr;
+          throw openErr;
         }
       }
-      if (fd === undefined)
-        throw new Error('writeInPlace: internal error: fd not set');
       // fstat after the write-open as a belt-and-suspenders check: a FIFO
       // or other non-regular file could have been substituted in the window
       // between the rfd open and fd open.
@@ -1088,11 +1088,6 @@ function checkDirSafeAsRoot(
           { cause: e2 },
         );
       }
-      if (targetOwnerUid === undefined) {
-        throw new Error(
-          `privileged write: ${label} directory ${absDir} symlink target UID unknown (TOCTOU risk)`,
-        );
-      }
       if (!trustedUids.has(targetOwnerUid)) {
         throw new Error(
           `privileged write: ${label} directory ${absDir} symlink target owned by UID ${targetOwnerUid}, not trusted (TOCTOU risk)`,
@@ -1119,11 +1114,6 @@ function checkDirSafeAsRoot(
     }
   }
 
-  if (ownerUid === undefined) {
-    throw new Error(
-      `privileged write: ${label} directory ${absDir} owner UID unknown (TOCTOU risk)`,
-    );
-  }
   if (!trustedUids.has(ownerUid)) {
     throw new Error(
       `privileged write: ${label} directory ${absDir} owned by UID ${ownerUid}, not trusted (TOCTOU risk)`,

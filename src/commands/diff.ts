@@ -140,11 +140,8 @@ async function runDiffLoop(
           continue;
         }
         const targetPath = resolveTargetPath(entry, '', workingDir, vars);
-        if (Array.isArray(entry.src)) {
-          throw new Error(
-            `files["${entry.target}"].symlink: src must be a single local path, not an array`,
-          );
-        }
+        // parseConfigContent rejects symlink entries with a list of sources,
+        // so src is a single local path here.
         const rawSrc =
           typeof entry.src === 'string'
             ? entry.src

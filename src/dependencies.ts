@@ -114,29 +114,14 @@ function findCycle(
   nodes: Set<string>,
   before: Map<string, Set<string>>,
 ): string[] {
-  const visited = new Set<string>();
-  const stack: string[] = [];
-
-  function dfs(node: string): string[] | null {
-    if (stack.includes(node)) {
-      const idx = stack.indexOf(node);
-      return [...stack.slice(idx), node];
-    }
-    if (visited.has(node)) return null;
-    visited.add(node);
-    stack.push(node);
-    for (const dep of before.get(node) ?? []) {
-      if (!nodes.has(dep)) continue;
-      const cycle = dfs(dep);
-      if (cycle !== null) return cycle;
-    }
-    stack.pop();
-    return null;
+  // Every remaining node still has at least one unplaced dependency (its
+  // in-degree is non-zero), so following the first remaining dependency from
+  // any remaining node must eventually revisit a node on the current chain.
+  const chain: string[] = [];
+  let node = nodes.values().next().value!;
+  while (!chain.includes(node)) {
+    chain.push(node);
+    node = [...before.get(node)!].find((dep) => nodes.has(dep))!;
   }
-
-  for (const node of nodes) {
-    const cycle = dfs(node);
-    if (cycle !== null) return cycle;
-  }
-  return [...nodes];
+  return [...chain.slice(chain.indexOf(node)), node];
 }

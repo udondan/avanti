@@ -667,8 +667,8 @@ async function fetchOneSrc(
   src: FileSrc,
   workingDir: string,
   vars: Variables,
-  cache?: FetchCache,
-  getTargetPath: () => string = () => '',
+  cache: FetchCache | undefined,
+  getTargetPath: () => string,
   pendingWrites?: Map<string, Buffer>,
   configBase?: string,
 ): Promise<{

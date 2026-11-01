@@ -126,44 +126,28 @@ function buildNodes(
   return nodes;
 }
 
-// DFS over the still-unresolved nodes to find and report one actual cycle
-// chain, for a clear error message once the peel loop stalls.
+// Find and report one actual cycle chain among the still-unresolved nodes, for
+// a clear error message once the peel loop stalls. Every stuck node has at
+// least one dependency that is itself stuck (otherwise it would have been
+// eligible), so following the first stuck dependency from any stuck node must
+// eventually revisit a node on the current chain.
 function findCycle(stuck: Node[]): string[] {
   const byKey = new Map(stuck.map((n) => [n.key, n]));
-  const visiting = new Set<string>();
-  const visited = new Set<string>();
-  const stack: string[] = [];
 
   function label(n: Node): string {
     return n.kind === 'var' ? `variables.${n.name}` : `environment.${n.name}`;
   }
 
-  function visit(key: string): string[] | null {
-    const node = byKey.get(key);
-    if (!node) return null; // dependency outside the stuck set — not part of the cycle
-    if (visiting.has(key)) {
-      const start = stack.indexOf(key);
-      return [...stack.slice(start), key];
-    }
-    if (visited.has(key)) return null;
-    visiting.add(key);
-    stack.push(key);
-    for (const dep of node.deps) {
-      const cycle = visit(dep);
-      if (cycle) return cycle;
-    }
-    stack.pop();
-    visiting.delete(key);
-    visited.add(key);
-    return null;
+  const chain: string[] = [];
+  let key = stuck[0].key;
+  while (!chain.includes(key)) {
+    chain.push(key);
+    // Dependencies outside the stuck set are already resolved — skip them.
+    key = [...byKey.get(key)!.deps].find((dep) => byKey.has(dep))!;
   }
-
-  for (const n of stuck) {
-    const cycle = visit(n.key);
-    if (cycle) return cycle.map((k) => label(byKey.get(k)!));
-  }
-  // Should be unreachable — a stalled peel loop always contains a cycle.
-  return stuck.map(label);
+  return [...chain.slice(chain.indexOf(key)), key].map((k) =>
+    label(byKey.get(k)!),
+  );
 }
 
 // Keys previously written to process.env by this function, tracked so a

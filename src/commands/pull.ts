@@ -105,10 +105,10 @@ async function runFetchLoop(
   config: AvantiConfig,
   workingDir: string,
   dateVars: Variables,
-  cache?: FetchCache,
-  configPath?: string,
-  history?: HistoryManager,
-  configBase?: string,
+  cache: FetchCache,
+  configPath: string,
+  history: HistoryManager,
+  configBase: string,
 ): Promise<FetchLoopResult> {
   let vars;
   try {
@@ -133,9 +133,7 @@ async function runFetchLoop(
       insertedFragments: new Map(),
     };
   }
-  if (configPath !== undefined) {
-    vars['self'] = configPath;
-  }
+  vars['self'] = configPath;
   Object.assign(vars, dateVars);
   Object.assign(vars, buildSystemVars());
   vars['workingDir'] = workingDir;
@@ -166,10 +164,7 @@ async function runFetchLoop(
       hasSelf = evaluateConditions(
         selfEntry['if'],
         selfEntry.ifAny,
-        () =>
-          configPath !== undefined
-            ? configPath
-            : resolveTargetPath(selfEntry, '', workingDir, vars),
+        () => configPath,
         workingDir,
         vars,
       );
@@ -191,11 +186,7 @@ async function runFetchLoop(
     }
     // $self was condition-skipped: protect configPath from stale cleanup so a
     // previously-written config file is not restored or deleted on this run.
-    if (
-      !hasSelf &&
-      configPath !== undefined &&
-      !isRemoteConfigSpec(configPath)
-    ) {
+    if (!hasSelf && !isRemoteConfigSpec(configPath)) {
       skippedPaths.add(configPath);
     }
   }
@@ -278,11 +269,7 @@ async function runFetchLoop(
           continue;
         }
         const targetPath = resolveTargetPath(entry, '', workingDir, vars);
-        if (Array.isArray(entry.src)) {
-          throw new Error(
-            `files["${entry.target}"].symlink: src must be a single local path, not an array`,
-          );
-        }
+        // Config validation guarantees a single local src for symlink entries.
         const rawSrc =
           typeof entry.src === 'string'
             ? entry.src
@@ -381,7 +368,7 @@ async function runFetchLoop(
         workingDir,
         preVars,
         cache,
-        isSelf && configPath !== undefined ? () => configPath : undefined,
+        isSelf ? () => configPath : undefined,
         pendingWrites,
         configBase,
       );
@@ -479,7 +466,7 @@ async function runFetchLoop(
             text = applyWriteHook(text, entry.on.write, entryVars);
           if (entry.strategy === 'insert' && !isSelf) {
             const lastInserted =
-              history?.getInsertedFragment(effectivePath!) ?? null;
+              history.getInsertedFragment(effectivePath!) ?? null;
             if (
               lastInserted !== null &&
               rawText === lastInserted.raw &&
@@ -964,27 +951,14 @@ export function pullCommand(): Command {
         process.exit(2);
       }
 
-      // Fail fast if any symlink write target is a real directory: ln -sf would
-      // place the symlink inside it rather than replacing it. This first pass
-      // only covers targets whose parent directories are searchable (unprivileged
-      // lstat succeeded). Targets behind non-searchable parents (lstatFailed=true)
-      // are checked again after the stat-batch below, which runs post-confirm and
-      // post-session-open — so for those targets, a sudo password prompt may appear
-      // before the directory conflict is detected. Pulling the stat-batch earlier
-      // is not possible: reading privileged files requires an open session.
+      // Symlink write targets that are real directories are rejected in
+      // runFetchLoop when the unprivileged lstat succeeds. Targets behind
+      // non-searchable parents (lstatFailed=true) are checked after the
+      // stat-batch below, which runs post-confirm and post-session-open — so for
+      // those targets, a sudo password prompt may appear before the directory
+      // conflict is detected. Pulling the stat-batch earlier is not possible:
+      // reading privileged files requires an open session.
       let hasDirConflict = false;
-      for (const d of allDiffs) {
-        if (d.isDirectory && d.isSymlink) {
-          console.error(
-            `symlink: ${d.targetPath} is a directory; cannot replace with a symlink`,
-          );
-          hasDirConflict = true;
-        }
-      }
-      if (hasDirConflict) {
-        printDiffs([...allDiffs, ...staleDiffs]);
-        process.exit(2);
-      }
       // Sudo sessions are opened after the user confirms, not before the diff
       // is shown. Pre-reads and idempotency checks run post-confirm too, so the
       // diff may show "unreadable" for sudo targets whose parent directories are
@@ -999,8 +973,7 @@ export function pullCommand(): Command {
         string,
         { contentB64: string; isSymlink?: boolean } | null
       > = new Map();
-      // lstatFailedStats is declared at top scope so the v0-capture block below
-      // can reference lstatFailedStats.get(targetPath) after the post-confirm block.
+      // Stat-read results for lstatFailed sudo targets (filled post-confirm).
       let lstatFailedStats = new Map<
         string,
         {
@@ -1537,82 +1510,47 @@ export function pullCommand(): Command {
                       acceptedShaLabels.has(r.sourceLabel),
                   }))
                 : undefined;
-            // For a first-seen unreadable or lstatFailed sudo file, capture v0
-            // so revert-to-original works even when the invoking user cannot
-            // read the file directly. The stat-read result from the pre-read
-            // batch (isUnreadable path) or lstatFailedStats (lstatFailed path)
-            // is used here — no additional sudo calls needed.
+            // For a first-seen unreadable sudo file, capture v0 so
+            // revert-to-original works even when the invoking user cannot read
+            // the file directly. lstatFailed diffs are always isUnreadable too
+            // (until the stat-batch turns them into new-file diffs), so the
+            // pre-read batch covers both — no additional sudo calls needed.
+            // The idempotency pass above already guarantees a preReads entry
+            // for every unreadable sudo target.
             let v0Override: Buffer | undefined;
             let v0IsSymlinkOverride = false;
             const needsV0Capture =
-              (allDiffs[i].isUnreadable || allDiffs[i].lstatFailed) &&
+              allDiffs[i].isUnreadable &&
               !allDiffs[i].isNew &&
               writeTargets[i].sudo &&
               !history.getFileMeta(targetPath);
             if (needsV0Capture) {
-              // lstatFailed targets: content comes from lstatFailedStats (the
-              // stat-read op ran earlier to determine existence). isUnreadable
-              // targets: content comes from the preReads batch.
-              const preRead = allDiffs[i].isUnreadable
-                ? preReads.get(targetPath)
-                : undefined;
-
-              if (allDiffs[i].isUnreadable) {
-                if (preRead === undefined) {
-                  throw new Error(
-                    `internal: missing pre-read result for sudo v0 target ${targetPath}`,
-                  );
-                }
-                if (preRead !== null) {
-                  const preReadBuf = Buffer.from(preRead.contentB64, 'base64');
-                  if (preRead.isSymlink) {
-                    if (writeTargets[i].symlinkTarget !== undefined) {
-                      // Destination is a symlink and so is the write target — record
-                      // the existing link target as v0 for faithful revert/reset.
-                      v0Override = preReadBuf;
-                      v0IsSymlinkOverride = true;
-                    }
-                    // If the write target is a regular file but the destination is a
-                    // symlink, skip v0: reading through the symlink could capture
-                    // an unintended privileged file before write-path checks run.
-                  } else {
-                    v0Override = preReadBuf;
-                  }
-                } else {
-                  // null = the sudo worker could not read the file (e.g. EACCES on
-                  // a root-owned parent directory). v0 cannot be captured, so
-                  // "avanti revert" will not restore this file to its pre-avanti
-                  // state. Warn so the user is aware.
-                  console.warn(
-                    `avanti: cannot capture original content of ${targetPath} — ` +
-                      `the file was unreadable by the privileged worker. ` +
-                      `"avanti revert" will not be able to restore it to its pre-avanti state.`,
-                  );
-                }
-              } else if (allDiffs[i].lstatFailed) {
-                // lstatFailed: parent dir is not searchable for the invoking
-                // user but the sudo worker could still read the file. Use the
-                // content from the stat-read batch for v0 capture.
-                const stat = lstatFailedStats.get(targetPath);
-                if (stat?.contentB64 !== undefined) {
-                  const preReadBuf = Buffer.from(stat.contentB64, 'base64');
-                  if (
-                    stat.isSymlink &&
-                    writeTargets[i].symlinkTarget !== undefined
-                  ) {
+              const preRead = preReads.get(targetPath);
+              if (preRead) {
+                const preReadBuf = Buffer.from(preRead.contentB64, 'base64');
+                if (preRead.isSymlink) {
+                  if (writeTargets[i].symlinkTarget !== undefined) {
+                    // Destination is a symlink and so is the write target — record
+                    // the existing link target as v0 for faithful revert/reset.
                     v0Override = preReadBuf;
                     v0IsSymlinkOverride = true;
-                  } else if (!stat.isSymlink) {
-                    v0Override = preReadBuf;
                   }
+                  // If the write target is a regular file but the destination is a
+                  // symlink, skip v0: reading through the symlink could capture
+                  // an unintended privileged file before write-path checks run.
                 } else {
-                  console.warn(
-                    `avanti: cannot capture original content of ${targetPath} — ` +
-                      `the file was in a non-searchable directory and its content ` +
-                      `could not be read by the privileged worker. ` +
-                      `"avanti revert" will not be able to restore it to its pre-avanti state.`,
-                  );
+                  v0Override = preReadBuf;
                 }
+              } else {
+                // null = the sudo worker could not read the file (e.g. EACCES on
+                // a root-owned parent directory). v0 cannot be captured, so
+                // "avanti revert" will not restore this file to its pre-avanti
+                // state. Warn so the user is aware.
+                console.warn(
+                  `avanti: cannot capture original content of ${targetPath} — ` +
+                    `the file was unreadable by the privileged worker. ` +
+                    `"avanti revert" will not be able to restore it to its pre-avanti state.`,
+                );
               }
             }
             const { fileRef } = history.stageFileVersion(
@@ -2001,13 +1939,8 @@ export function pullCommand(): Command {
         pullId &&
         (stagedFileRefs.length > 0 || effectivelyCleaned.size > 0)
       ) {
-        // Invariant: pullId !== null ⟺ historyAvailable (set at lines 644-645).
-        // If this ever fires, the assignment logic changed without updating the
-        // invariant.
-        if (!historyAvailable)
-          throw new Error(
-            'invariant violated: pullId is set but historyAvailable is false',
-          );
+        // pullId is only set when historyAvailable is true (see openPullSession
+        // above), so history storage is usable here.
         try {
           // Preserve existing sudo on surviving refs — these files were not
           // rewritten this pull, so their on-disk ownership reflects the

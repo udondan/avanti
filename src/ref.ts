@@ -1,10 +1,10 @@
 /** Matches stable semver tags: vX.Y.Z or X.Y.Z (exactly three components). */
 export const SEMVER_PATTERN = /^v?\d+\.\d+\.\d+$/;
 
+// Only called with tags that already match SEMVER_PATTERN.
 function parseSemver(tag: string): [number, number, number] {
-  const m = /^v?(\d+)\.(\d+)\.(\d+)$/.exec(tag);
-  if (!m) return [0, 0, 0];
-  return [parseInt(m[1], 10), parseInt(m[2], 10), parseInt(m[3], 10)];
+  const [major, minor, patch] = tag.replace(/^v/, '').split('.').map(Number);
+  return [major, minor, patch];
 }
 
 /** Return the tag with the highest semver among the given list, or null if the list is empty or contains no semver tags. */

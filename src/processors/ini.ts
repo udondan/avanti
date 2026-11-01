@@ -210,30 +210,29 @@ export function parseIniDoc(text: string): IniDocument {
 
     // Bare key (no `=`): treat as empty-string value.
     // Reject lines that look like a broken section header or an empty-key
-    // assignment — those are parse errors, not bare keys.
-    if (trimmed !== '') {
-      if (trimmed.startsWith('[')) {
-        throw new Error(`line ${i + 1}: malformed section header: ${trimmed}`);
-      }
-      if (trimmed.startsWith('=')) {
-        throw new Error(
-          `line ${i + 1}: key/value line with empty key: ${trimmed}`,
-        );
-      }
-      const { value: bareKey, inlineComment: bareComment } =
-        splitValueAndComment(trimmed);
-      if (bareKey.includes('\0')) {
-        throw new Error(`line ${i + 1}: INI key must not contain null bytes`);
-      }
-      pushItem({
-        kind: 'kv',
-        key: bareKey,
-        isArray: false,
-        value: '',
-        sep: '',
-        inlineComment: bareComment,
-      });
+    // assignment — those are parse errors, not bare keys. (Blank lines were
+    // already handled above, so `trimmed` is never empty here.)
+    if (trimmed.startsWith('[')) {
+      throw new Error(`line ${i + 1}: malformed section header: ${trimmed}`);
     }
+    if (trimmed.startsWith('=')) {
+      throw new Error(
+        `line ${i + 1}: key/value line with empty key: ${trimmed}`,
+      );
+    }
+    const { value: bareKey, inlineComment: bareComment } =
+      splitValueAndComment(trimmed);
+    if (bareKey.includes('\0')) {
+      throw new Error(`line ${i + 1}: INI key must not contain null bytes`);
+    }
+    pushItem({
+      kind: 'kv',
+      key: bareKey,
+      isArray: false,
+      value: '',
+      sep: '',
+      inlineComment: bareComment,
+    });
     i++;
   }
 
@@ -347,9 +346,12 @@ function valuesEqual(
   a: IniScalar | IniScalar[],
   b: IniScalar | IniScalar[],
 ): boolean {
-  if (Array.isArray(a) && Array.isArray(b)) return arraysEqual(a, b);
-  if (!Array.isArray(a) && !Array.isArray(b)) return scalarsEqual(a, b);
-  return false;
+  // Callers only compare values of the same shape (scalar↔array changes are
+  // detected beforehand), but stay defensive about mixed shapes.
+  if (Array.isArray(a) || Array.isArray(b)) {
+    return Array.isArray(a) && Array.isArray(b) && arraysEqual(a, b);
+  }
+  return scalarsEqual(a, b);
 }
 
 function dedupeArrayValues(
