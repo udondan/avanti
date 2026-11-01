@@ -1,4 +1,8 @@
 import { posix as path } from 'path';
+import {
+  DIRECTORY_FETCH_CONCURRENCY,
+  mapWithConcurrency,
+} from '../concurrency';
 import { fetchWithRetry } from '../fetch';
 import { verbose } from '../logger';
 import {
@@ -245,11 +249,13 @@ export async function fetchBitbucket(
       `Failed to fetch ${file} from ${workspace}/${repo}@${resolvedRef} (not a file or empty directory)`,
     );
   }
-  const entries = await Promise.all(
-    paths.map(async (p): Promise<[string, Buffer]> => [
+  const entries = await mapWithConcurrency(
+    paths,
+    DIRECTORY_FETCH_CONCURRENCY,
+    async (p): Promise<[string, Buffer]> => [
       path.relative(normalizedPath, p),
       await fetchFile(workspace, repo, p, resolvedRef, host),
-    ]),
+    ],
   );
   return { files: new Map(entries) };
 }

@@ -2,6 +2,10 @@ import { spawnSync } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import {
+  DIRECTORY_FETCH_CONCURRENCY,
+  mapWithConcurrency,
+} from '../concurrency';
 import { fetchWithRetry, redactUrl } from '../fetch';
 import { compilePatterns, matchesAnyPattern } from '../filter';
 import { verbose } from '../logger';
@@ -1293,14 +1297,13 @@ export async function fetchGitLab(
       `Failed to fetch ${file} from ${project}@${resolvedRef} (not a file or empty directory)`,
     );
   }
-  const entries = await Promise.all(
-    paths.map(
-      async (p) =>
-        [
-          path.relative(normalizedPath, p),
-          await fetchFile(project, p, resolvedRef, host, transports),
-        ] as const,
-    ),
+  const entries = await mapWithConcurrency(
+    paths,
+    DIRECTORY_FETCH_CONCURRENCY,
+    async (p): Promise<[string, Buffer]> => [
+      path.relative(normalizedPath, p),
+      await fetchFile(project, p, resolvedRef, host, transports),
+    ],
   );
   return { files: new Map(entries) };
 }

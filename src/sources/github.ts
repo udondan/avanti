@@ -2,6 +2,10 @@ import { spawnSync } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import {
+  DIRECTORY_FETCH_CONCURRENCY,
+  mapWithConcurrency,
+} from '../concurrency';
 import { fetchWithRetry } from '../fetch';
 import { compilePatterns, expandBraces, matchesAnyPattern } from '../filter';
 import { verbose } from '../logger';
@@ -763,11 +767,13 @@ export async function fetchGitHub(
       `Failed to fetch ${file} from ${repo}@${resolvedRef} (not a file or empty directory)`,
     );
   }
-  const entries = await Promise.all(
-    paths.map(async (p): Promise<[string, Buffer]> => [
+  const entries = await mapWithConcurrency(
+    paths,
+    DIRECTORY_FETCH_CONCURRENCY,
+    async (p): Promise<[string, Buffer]> => [
       path.relative(normalizedPath, p),
       await fetchFile(repo, p, resolvedRef, host, transports),
-    ]),
+    ],
   );
   return { files: new Map(entries) };
 }
