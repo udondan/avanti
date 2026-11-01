@@ -553,7 +553,7 @@ files:
     src:
       gitlab:
         project: gitlab-org/cli
-        file: internal/config
+        file: internal/config/confighelp
         ref: main
 `,
         );
