@@ -258,24 +258,27 @@ describe('reset: plan building', () => {
     );
   });
 
-  it('routes sudo deletions and sudo writes through the privileged writer', async () => {
-    const created = join(tmpDir, 'created.txt');
-    const existing = join(tmpDir, 'existing.txt');
-    writeFileSync(existing, 'orig\n');
-    recordPull([
-      { path: created, content: 'new\n', isNew: true, sudo: true },
-      { path: existing, content: 'pulled\n', isNew: false, sudo: 'root' },
-    ]);
-    const r = await run(['-y']);
-    expect(r.exitCode).toBe(0);
-    expect(writer.sudoAtomicWrite).toHaveBeenCalledTimes(1);
-    expect(writer.sudoAtomicDelete).toHaveBeenCalledWith(
-      [[created, true]],
-      false,
-      expect.any(Map),
-    );
-    expect(r.stdout).toContain('Restored 1 file(s), deleted 1 file(s).');
-  });
+  posixOnly(
+    'routes sudo deletions and sudo writes through the privileged writer',
+    async () => {
+      const created = join(tmpDir, 'created.txt');
+      const existing = join(tmpDir, 'existing.txt');
+      writeFileSync(existing, 'orig\n');
+      recordPull([
+        { path: created, content: 'new\n', isNew: true, sudo: true },
+        { path: existing, content: 'pulled\n', isNew: false, sudo: 'root' },
+      ]);
+      const r = await run(['-y']);
+      expect(r.exitCode).toBe(0);
+      expect(writer.sudoAtomicWrite).toHaveBeenCalledTimes(1);
+      expect(writer.sudoAtomicDelete).toHaveBeenCalledWith(
+        [[created, true]],
+        false,
+        expect.any(Map),
+      );
+      expect(r.stdout).toContain('Restored 1 file(s), deleted 1 file(s).');
+    },
+  );
 
   it('warns that sudo files are skipped on Windows', async () => {
     const created = join(tmpDir, 'created.txt');
@@ -385,7 +388,7 @@ describe('reset: confirmation and failures', () => {
     return { sudoFile, plain };
   }
 
-  it('lists confirmed writes from a SudoWritePartialError', async () => {
+  posixOnly('lists confirmed writes from a SudoWritePartialError', async () => {
     const { sudoFile } = setupMixed();
     vi.mocked(writer.sudoAtomicWrite).mockRejectedValueOnce(
       new writer.SudoWritePartialError('boom', [sudoFile]),
@@ -397,29 +400,35 @@ describe('reset: confirmation and failures', () => {
     expect(r.stderr).toContain('Reset failed: boom');
   });
 
-  it('lists sudo and regular writes when atomicWrite fails partially after sudo', async () => {
-    const { sudoFile, plain } = setupMixed();
-    vi.mocked(writer.atomicWrite).mockImplementationOnce(() => {
-      throw new writer.AtomicWritePartialError('rename failed', [plain]);
-    });
-    const r = await run(['-y']);
-    expect(r.exitCode).toBe(2);
-    expect(r.stderr).toContain('the following 2 file(s)');
-    expect(r.stderr).toContain(`  ${sudoFile}`);
-    expect(r.stderr).toContain(`  ${plain}`);
-  });
+  posixOnly(
+    'lists sudo and regular writes when atomicWrite fails partially after sudo',
+    async () => {
+      const { sudoFile, plain } = setupMixed();
+      vi.mocked(writer.atomicWrite).mockImplementationOnce(() => {
+        throw new writer.AtomicWritePartialError('rename failed', [plain]);
+      });
+      const r = await run(['-y']);
+      expect(r.exitCode).toBe(2);
+      expect(r.stderr).toContain('the following 2 file(s)');
+      expect(r.stderr).toContain(`  ${sudoFile}`);
+      expect(r.stderr).toContain(`  ${plain}`);
+    },
+  );
 
-  it('lists only sudo writes when atomicWrite fails before renaming', async () => {
-    const { sudoFile } = setupMixed();
-    vi.mocked(writer.atomicWrite).mockImplementationOnce(() => {
-      throw new Error('staging failed');
-    });
-    const r = await run(['-y']);
-    expect(r.exitCode).toBe(2);
-    expect(r.stderr).toContain('the following 1 file(s)');
-    expect(r.stderr).toContain(`  ${sudoFile}`);
-    expect(r.stderr).toContain('Reset failed: staging failed');
-  });
+  posixOnly(
+    'lists only sudo writes when atomicWrite fails before renaming',
+    async () => {
+      const { sudoFile } = setupMixed();
+      vi.mocked(writer.atomicWrite).mockImplementationOnce(() => {
+        throw new Error('staging failed');
+      });
+      const r = await run(['-y']);
+      expect(r.exitCode).toBe(2);
+      expect(r.stderr).toContain('the following 1 file(s)');
+      expect(r.stderr).toContain(`  ${sudoFile}`);
+      expect(r.stderr).toContain('Reset failed: staging failed');
+    },
+  );
 
   it('lists regular writes from an AtomicWritePartialError without sudo', async () => {
     const a = setup();
