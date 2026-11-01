@@ -278,8 +278,7 @@ function removeEmptiedSections(
     }
     // Do not strip preceding comment/blank nodes at the doc level —
     // they may be file-level separators unrelated to this section.
-    const idx = doc.items.indexOf(section);
-    if (idx !== -1) doc.items.splice(idx, 1);
+    doc.items.splice(doc.items.indexOf(section), 1);
   }
 }
 
@@ -581,8 +580,9 @@ function snapshotIni(doc: IniDocument, kept: ReadonlySet<object>): IniSnapshot {
       const value = record(child);
       if (value) kvs.push({ key: child.key, ...value });
     }
-    if (kept.has(section)) return;
-    snap.sections.add(section);
+    // A kept section is one the previous pull created; its header still
+    // counts as added by this pull, but its values are recorded as usual.
+    if (!kept.has(section)) snap.sections.add(section);
     snap.byPosition.set(positionKey, { section, kvs });
   });
   return snap;
@@ -611,20 +611,28 @@ function computeIniOwnership(
     }
     return deepEqual(before.value, node.value) ? null : owned;
   };
+  // Returns the owned values, and the keys that had a value before the merge
+  // and still have one.
   const ownKvs = (
     items: IniItem[],
     lookup: (node: IniKeyValue) => IniValueSnapshot | undefined,
-  ): IniOwnedKv[] =>
-    items.flatMap((it) => {
-      if (it.kind !== 'kv') return [];
-      const owned = ownKv(it, lookup(it));
-      return owned ? [owned] : [];
-    });
+  ): { kvs: IniOwnedKv[]; others: string[] } => {
+    const kvs: IniOwnedKv[] = [];
+    const others = new Set<string>();
+    for (const it of items) {
+      if (it.kind !== 'kv') continue;
+      const before = lookup(it);
+      if (before) others.add(it.key);
+      const owned = ownKv(it, before);
+      if (owned) kvs.push(owned);
+    }
+    return { kvs, others: [...others] };
+  };
   const byIdentity = (node: IniKeyValue) => snap.kvs.get(node);
 
   const ownership: IniOwnership = {
     format: 'ini',
-    globals: ownKvs(doc.items, byIdentity),
+    globals: ownKvs(doc.items, byIdentity).kvs,
     sections: [],
   };
   const counts = new Map<string, number>();
@@ -635,15 +643,13 @@ function computeIniOwnership(
   forEachIniSection(doc, (section, positionKey, index) => {
     let created = !snap.sections.has(section);
     let lookup = byIdentity;
-    let others = section.items.flatMap((it) =>
-      it.kind === 'kv' && snap.kvs.has(it) ? [it.key] : [],
-    );
     const replaced = snap.byPosition.get(positionKey);
-    if (created && replaced && !doc.items.includes(replaced.section)) {
+    if (replaced && !doc.items.includes(replaced.section)) {
       // objects: replace swapped the section for a copy of the new one:
       // match each value with an unused occurrence of the same key and type
-      // in the section it replaced.
-      created = false;
+      // in the section it replaced. The header is added by this pull only if
+      // the replaced one was.
+      created = !snap.sections.has(replaced.section);
       const unused = [...replaced.kvs];
       lookup = (node) => {
         const i = unused.findIndex(
@@ -654,16 +660,15 @@ function computeIniOwnership(
         );
         return i === -1 ? undefined : unused.splice(i, 1)[0];
       };
-      others = replaced.kvs.map((kv) => kv.key);
     }
-    const kvs = ownKvs(section.items, lookup);
+    const { kvs, others } = ownKvs(section.items, lookup);
     if (!created && kvs.length === 0) return;
     ownership.sections.push({
       name: section.name,
       ...(section.subName !== undefined ? { subName: section.subName } : {}),
       index,
       count: counts.get(iniSectionKey(section.name, section.subName))!,
-      others: [...new Set(others)],
+      others,
       created,
       kvs,
     });
@@ -686,7 +691,12 @@ function iniOwnedToContrib(kvs: IniOwnedKv[]): {
   const last = new Map<string, IniOwnedKv>();
   for (const kv of kvs) {
     if (kv.isArray) {
-      contrib[INI_ARRAY_PREFIX + kv.key] = copyIniValue(kv.value);
+      // A section may hold more than one node for an array key.
+      const arrayKey = INI_ARRAY_PREFIX + kv.key;
+      contrib[arrayKey] = [
+        ...((contrib[arrayKey] as IniScalar[] | undefined) ?? []),
+        ...(kv.value as IniScalar[]),
+      ];
       continue;
     }
     const prev = last.get(kv.key);
@@ -747,9 +757,11 @@ function moveShadowedIniScalars(
 }
 
 // True when the section still holds every owned value. Each owned scalar
-// needs its own node, so repeated values are not matched by one node.
+// needs its own node and each owned array item its own item, so repeated
+// values are not matched twice by the same node or item.
 function iniSectionHolds(section: IniSection, kvs: IniOwnedKv[]): boolean {
   const used = new Set<IniKeyValue>();
+  const rest = new Map<IniKeyValue, IniScalar[]>();
   return kvs.every((kv) =>
     section.items.some((it) => {
       if (it.kind !== 'kv' || it.key !== kv.key || it.isArray !== kv.isArray)
@@ -759,10 +771,11 @@ function iniSectionHolds(section: IniSection, kvs: IniOwnedKv[]): boolean {
         used.add(it);
         return true;
       }
-      const rest = [...(it.value as IniScalar[])];
-      return (
-        removeArrayContribution(rest, kv.value as IniScalar[]).length === 0
-      );
+      const items = [...(rest.get(it) ?? (it.value as IniScalar[]))];
+      if (removeArrayContribution(items, kv.value as IniScalar[]).length > 0)
+        return false;
+      rest.set(it, items);
+      return true;
     }),
   );
 }
@@ -810,11 +823,18 @@ function removeIniOwnership(
 
   // Find every target before changing anything: removing a section shifts
   // the positions of the ones after it.
-  const targets = owned.sections.flatMap((s) => {
+  const resolved = owned.sections.flatMap((s) => {
     const group = findIniSections(doc, s.name, s.subName);
     const target = resolveOwnedIniSection(group, s);
     return target ? [{ s, target, effective: group[group.length - 1] }] : [];
   });
+  // When several owned entries match the same section (the user merged or
+  // removed sections), it is unclear which values are ours: skip them all.
+  const claims = new Map<IniSection, number>();
+  for (const { target } of resolved) {
+    claims.set(target, (claims.get(target) ?? 0) + 1);
+  }
+  const targets = resolved.filter(({ target }) => claims.get(target) === 1);
   for (const { s, target, effective } of targets) {
     const jsKey = INI_SECTION_PREFIX + iniSectionKey(s.name, s.subName);
     const newVal =

@@ -1466,12 +1466,79 @@ describe('INI — ownership tracking', () => {
     expect(removeWith(file, processed, owned[0])).toBe(file);
   });
 
-  it('removes a section once when two owned entries match it', () => {
-    const processed = '[s]\nk = a\n[s]\nk = a\n';
-    const { owned } = iniSteps(null, true, [processed]);
-    expect(removeWith('u = 1\n[s]\nk = a\n', processed, owned[0])).toBe(
-      'u = 1\n',
+  it.each([
+    ['scalars', '[s]\nk = a\n[s]\nk = a\n', 'u = 1\n[s]\nk = a\n'],
+    [
+      'array items',
+      '[s]\nlist[] = a\n[s]\nlist[] = a\n',
+      '[s]\nlist[] = a\nlist[] = a\n',
+    ],
+  ])(
+    'skips a section that two owned entries match (%s)',
+    (_, processed, file) => {
+      const { owned } = iniSteps(null, true, [processed]);
+      expect(removeWith(file, processed, owned[0])).toBe(file);
+    },
+  );
+
+  it('needs a separate item for each repeated owned array item to match a section', () => {
+    const processed = '[s]\nk[] = a\nk = b\n[s]\nk[] = a\n';
+    const { texts, owned } = iniSteps('u = 1\n', true, [processed]);
+    expect(texts[0]).toBe('u = 1\n[s]\nk[] = a\nk[] = a\n');
+    const file = 'u = 1\n[s]\nk[] = a\n[s]\nz = 1\n';
+    expect(removeWith(file, processed, owned[0])).toBe(file);
+  });
+
+  it('removes every array node the pull added for a key', () => {
+    const { texts } = iniSteps('u = 1\n', true, [
+      '[s]\nk[] = a\nk = b\n[s]\nk[] = c\n',
+      '',
+    ]);
+    expect(texts).toEqual(['u = 1\n[s]\nk[] = a\nk[] = c\n', 'u = 1\n']);
+  });
+
+  it('keeps a user key in a created section when objects: replace updates it', () => {
+    const targetPath = path.join(tmpDir, 'f.ini');
+    fs.writeFileSync(targetPath, '');
+    const entry = makeEntry({ target: 'f.ini', ini: { objects: 'replace' } });
+    const first = applyInsertModeTracked(
+      entry,
+      '[s]\nx = 1\n',
+      null,
+      targetPath,
     );
+    fs.writeFileSync(targetPath, `${first.text}u = 2\n`);
+    const second = applyInsertModeTracked(
+      entry,
+      '[s]\nx = 2\nu = 2\n',
+      { processed: '[s]\nx = 1\n', owned: first.owned },
+      targetPath,
+    );
+    expect(second.text).toBe('[s]\nx = 2\nu = 2\n');
+    expect(second.owned).toMatchObject({
+      sections: [
+        { created: true, others: ['u'], kvs: [{ key: 'x', value: 2 }] },
+      ],
+    });
+    fs.writeFileSync(targetPath, second.text);
+    const third = applyInsertModeTracked(
+      entry,
+      '',
+      { processed: '[s]\nx = 2\nu = 2\n', owned: second.owned },
+      targetPath,
+    );
+    expect(third.text).toBe('[s]\nu = 2\n');
+  });
+
+  it('records only the keys that survive objects: replace', () => {
+    const processed = '[s]\nk = v\n';
+    const { owned } = iniSteps(
+      '[s]\nu = 1\n[s]\nx = 1\n',
+      { objects: 'replace' },
+      [processed],
+    );
+    expect(owned[0]).toMatchObject({ sections: [{ index: 1, others: [] }] });
+    expect(removeWith('[s]\nk = v\n', processed, owned[0])).toBe('[s]\n');
   });
 
   it('keeps an array the user put in place of a repeated scalar key', () => {
