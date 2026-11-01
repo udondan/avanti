@@ -27,6 +27,10 @@ run = "bun run dev"
 description = "Run all tests"
 run = "bun run test"
 
+[tasks."test:coverage"]
+description = "Run all tests with coverage, including code that runs in child processes"
+run = "bun run test:coverage"
+
 [tasks."test:watch"]
 description = "Run tests in watch mode"
 run = "bun run test:watch"
