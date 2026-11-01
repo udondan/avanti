@@ -863,6 +863,20 @@ describe('INI — removal edge cases', () => {
     expect(result).toBe('[s]\nlist[] = b\nmine = 1\n');
   });
 
+  it.each(['concat', 'dedupe'] as const)(
+    'applies an update with repeated sections once (arrays: %s)',
+    (arrays) => {
+      const result = insertInto(
+        'f.ini',
+        '[s]\nlist[] = a\nmine = 1\n',
+        { ini: { arrays } },
+        '[s]\nlist[] = b\n[s]\nlist[] = c\n',
+        '[s]\nlist[] = a\n',
+      );
+      expect(result).toBe('[s]\nlist[] = b\nlist[] = c\nmine = 1\n');
+    },
+  );
+
   it('updates an array repeatedly without accumulating blank lines', () => {
     const targetPath = path.join(tmpDir, 'f.ini');
     fs.writeFileSync(targetPath, '[s]\nlist[] = a\n');

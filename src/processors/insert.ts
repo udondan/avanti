@@ -15,7 +15,6 @@ import { mergeYaml } from './yaml';
 import { mergeToml } from './toml';
 import {
   parseIniDoc,
-  stringifyIniDoc,
   mergeIni,
   type IniDocument,
   type IniItem,
@@ -258,18 +257,13 @@ function deepRemoveFromIniSectionItems(
       if (!node) continue;
       const curArr = node.value as IniScalar[];
       removeArrayContribution(curArr, oldVal);
-      if (curArr.length === 0) {
-        if (Array.isArray(newVal)) {
-          // An empty array node serialises to a blank line, so pre-fill it
-          // with the new contribution: the key keeps its position and mergeIni
-          // sees identical values.
-          node.value = [...(newVal as IniScalar[])];
-        } else {
-          // Key removed or type changed to scalar: drop the node.
-          const idx = items.indexOf(node);
-          items.splice(idx, 1);
-          splicePrecedingCommentBlanks(items, idx);
-        }
+      // An empty node stays in place when the key is still an array, so
+      // mergeIni refills it at the same position. Otherwise (key removed or
+      // type changed to scalar) the node is dropped.
+      if (curArr.length === 0 && !Array.isArray(newVal)) {
+        const idx = items.indexOf(node);
+        items.splice(idx, 1);
+        splicePrecedingCommentBlanks(items, idx);
       }
     } else {
       let node: IniKeyValue | undefined;
@@ -587,7 +581,7 @@ function applyIniInsert(
   lastProcessed: string | null,
   opts: Record<string, unknown>,
 ): string {
-  let cleanedIni: string;
+  let cleanedIni: string | IniDocument;
   if (lastProcessed !== null) {
     let existingDoc: IniDocument;
     try {
@@ -621,7 +615,8 @@ function applyIniInsert(
     } catch {
       // Corrupted history fragment — skip key removal, fall through to merge
     }
-    cleanedIni = stringifyIniDoc(existingDoc);
+    // Passed as a document, so emptied array nodes keep their position.
+    cleanedIni = existingDoc;
   } else {
     cleanedIni = existingContent;
   }

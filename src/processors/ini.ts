@@ -574,7 +574,12 @@ function mergeDocuments(
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
-export function mergeIni(parts: string[], opts: IniMergeOptions = {}): string {
+// A part may also be a parsed document, which keeps nodes that have no text of
+// their own (empty arrays) at their position.
+export function mergeIni(
+  parts: (string | IniDocument)[],
+  opts: IniMergeOptions = {},
+): string {
   const resolved: ResolvedOptions = {
     conflicts: opts.conflicts ?? 'last_wins',
     arrays: opts.arrays ?? 'replace',
@@ -584,6 +589,7 @@ export function mergeIni(parts: string[], opts: IniMergeOptions = {}): string {
   if (parts.length === 0) return '';
 
   const parsed = parts.map((p, i) => {
+    if (typeof p !== 'string') return p;
     try {
       return parseIniDoc(p);
     } catch (e) {
