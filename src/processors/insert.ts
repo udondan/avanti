@@ -203,16 +203,22 @@ function removeArrayContribution(
   existing: unknown[],
   oldItems: unknown[],
   toJs: (item: unknown) => unknown = (x) => x,
-): void {
+): unknown[] {
+  // Returns the old items that were not found, in their original order.
+  const notFound: unknown[] = [];
   for (let i = oldItems.length - 1; i >= 0; i--) {
     const target = oldItems[i];
+    let found = false;
     for (let j = existing.length - 1; j >= 0; j--) {
       if (deepEqual(toJs(existing[j]), target)) {
         existing.splice(j, 1);
+        found = true;
         break;
       }
     }
+    if (!found) notFound.unshift(target);
   }
+  return notFound;
 }
 
 // ── INI removal (AST, preserves comments on retained keys) ───────────────────
@@ -231,11 +237,36 @@ function splicePrecedingCommentBlanks(items: IniItem[], idx: number): void {
   }
 }
 
-function deepRemoveFromIniSectionItems(
-  items: IniSectionItems,
+function spliceIniNode(items: IniSectionItems, node: IniKeyValue): void {
+  const idx = items.indexOf(node);
+  items.splice(idx, 1);
+  splicePrecedingCommentBlanks(items, idx);
+}
+
+// Finds all sections with this name, in file order. A file may repeat a
+// section; mergeIni merges into the last one.
+function findIniSections(doc: IniDocument, sectionName: string): IniSection[] {
+  const subsectionMatch = /^(.+?)\s+"([^"]*)"$/.exec(sectionName);
+  return doc.items.filter(
+    (it): it is IniSection =>
+      it.kind === 'section' &&
+      (subsectionMatch
+        ? it.name === subsectionMatch[1] && it.subName === subsectionMatch[2]
+        : it.name === sectionName && it.subName === undefined),
+  );
+}
+
+// Removes the old contribution from all sections that share one name, later
+// sections first. Only in the last section (the one mergeIni merges into) may
+// nodes stay in place for the merge to refill. Returns the sections that had
+// something removed.
+function deepRemoveFromIniSections(
+  sections: IniSection[],
   oldContrib: Record<string, unknown>,
   newContrib: Record<string, unknown> | null,
-): void {
+): Set<IniSection> {
+  const touched = new Set<IniSection>();
+  const effective = sections[sections.length - 1];
   for (const key of Object.keys(oldContrib)) {
     const oldVal = oldContrib[key];
     const newVal =
@@ -246,51 +277,72 @@ function deepRemoveFromIniSectionItems(
     if (Array.isArray(oldVal)) {
       // iniDocToJs prefixes every array key, so the prefix is always present.
       const iniKey = key.slice(INI_ARRAY_PREFIX.length);
-      let node: IniKeyValue | undefined;
-      for (let j = items.length - 1; j >= 0; j--) {
-        const it = items[j];
-        if (it.kind === 'kv' && it.key === iniKey && it.isArray) {
-          node = it;
-          break;
+      const matches: { section: IniSection; node: IniKeyValue }[] = [];
+      for (let s = sections.length - 1; s >= 0; s--) {
+        const items = sections[s].items;
+        for (let j = items.length - 1; j >= 0; j--) {
+          const it = items[j];
+          if (it.kind === 'kv' && it.key === iniKey && it.isArray) {
+            matches.push({ section: sections[s], node: it });
+          }
         }
       }
-      if (!node) continue;
-      const curArr = node.value as IniScalar[];
-      removeArrayContribution(curArr, oldVal);
-      // An empty node stays in place when the key is still an array, so
-      // mergeIni refills it at the same position. Otherwise (key removed or
-      // type changed to scalar) the node is dropped.
-      if (curArr.length === 0 && !Array.isArray(newVal)) {
-        const idx = items.indexOf(node);
-        items.splice(idx, 1);
-        splicePrecedingCommentBlanks(items, idx);
+      let remaining: unknown[] = oldVal;
+      for (const { section, node } of matches) {
+        if (remaining.length === 0) break;
+        const curArr = node.value as IniScalar[];
+        const before = curArr.length;
+        remaining = removeArrayContribution(curArr, remaining);
+        if (curArr.length === before) continue;
+        touched.add(section);
+        // An empty node in the last section stays in place when the key is
+        // still an array, so mergeIni refills it at the same position.
+        // Otherwise (key removed, type changed to scalar, or an earlier
+        // section the merge never writes to) the node is dropped.
+        if (
+          curArr.length === 0 &&
+          !(section === effective && Array.isArray(newVal))
+        ) {
+          spliceIniNode(section.items, node);
+        }
       }
     } else {
-      let node: IniKeyValue | undefined;
-      for (let j = items.length - 1; j >= 0; j--) {
-        const it = items[j];
-        if (it.kind === 'kv' && it.key === key && !it.isArray) {
-          node = it;
-          break;
+      // The last node wins in INI, so only that one is compared.
+      let match: { section: IniSection; node: IniKeyValue } | undefined;
+      for (let s = sections.length - 1; s >= 0 && !match; s--) {
+        const items = sections[s].items;
+        for (let j = items.length - 1; j >= 0; j--) {
+          const it = items[j];
+          if (it.kind === 'kv' && it.key === key && !it.isArray) {
+            match = { section: sections[s], node: it };
+            break;
+          }
         }
       }
-      if (!node) continue;
-      // Skip only when newVal is the same scalar type; if it changed to an
-      // array, remove the old scalar node so mergeIni can insert the new shape.
-      if (newVal !== undefined && !Array.isArray(newVal)) continue;
-      if (deepEqual(node.value, oldVal)) {
-        const idx = items.indexOf(node);
-        items.splice(idx, 1);
-        splicePrecedingCommentBlanks(items, idx);
+      if (!match) continue;
+      // Skip only when the node is in the last section and newVal is the same
+      // scalar type, so mergeIni updates it in place. Otherwise remove it:
+      // the merge writes the new shape or value into the last section.
+      if (
+        match.section === effective &&
+        newVal !== undefined &&
+        !Array.isArray(newVal)
+      )
+        continue;
+      if (deepEqual(match.node.value, oldVal)) {
+        spliceIniNode(match.section.items, match.node);
+        touched.add(match.section);
       }
     }
   }
+  return touched;
 }
 
 function deepRemoveFromIniDoc(
   doc: IniDocument,
   oldContrib: Record<string, unknown>,
   newContrib: Record<string, unknown> | null,
+  newKeys: ReadonlySet<string>,
 ): void {
   for (const key of Object.keys(oldContrib)) {
     const oldVal = oldContrib[key];
@@ -301,34 +353,21 @@ function deepRemoveFromIniDoc(
 
     if (isPlainObject(oldVal)) {
       // iniDocToJs prefixes every section key, so the prefix is always present.
-      const sectionName = key.slice(INI_SECTION_PREFIX.length);
-      const subsectionMatch = /^(.+?)\s+"([^"]*)"$/.exec(sectionName);
-      let section: IniSection | undefined;
-      for (let j = doc.items.length - 1; j >= 0; j--) {
-        const it = doc.items[j];
-        if (it.kind !== 'section') continue;
-        if (subsectionMatch) {
-          if (
-            it.name === subsectionMatch[1] &&
-            it.subName === subsectionMatch[2]
-          ) {
-            section = it;
-            break;
-          }
-        } else if (it.name === sectionName && it.subName === undefined) {
-          section = it;
-          break;
-        }
-      }
-      if (!section) continue;
+      const sections = findIniSections(
+        doc,
+        key.slice(INI_SECTION_PREFIX.length),
+      );
+      if (sections.length === 0) continue;
+      const effective = sections[sections.length - 1];
       const nestedNew = isPlainObject(newVal) ? newVal : null;
-      deepRemoveFromIniSectionItems(section.items, oldVal, nestedNew);
-      // Remove the section when it's empty and newVal is not also a section
-      // (key removed or type changed to scalar/array).
-      if (
-        section.items.filter((it) => it.kind === 'kv').length === 0 &&
-        !isPlainObject(newVal)
-      ) {
+      const touched = deepRemoveFromIniSections(sections, oldVal, nestedNew);
+      // A contributed section without keys was written into the last section.
+      if (Object.keys(oldVal).length === 0) touched.add(effective);
+      for (const section of touched) {
+        if (section.items.some((it) => it.kind === 'kv')) continue;
+        // The last section stays when the new contribution still has it
+        // (under any conflict strategy), so the merge refills it in place.
+        if (section === effective && newKeys.has(key)) continue;
         // Do not strip preceding comment/blank nodes at the doc level —
         // they may be file-level separators unrelated to this section.
         doc.items.splice(doc.items.indexOf(section), 1);
@@ -405,16 +444,21 @@ function iniDocToJs(doc: IniDocument): Record<string, unknown> {
         item.subName !== undefined
           ? `${item.name} "${item.subName}"`
           : item.name;
-      const obj: Record<string, unknown> = Object.create(null) as Record<
-        string,
-        unknown
-      >;
+      // Repeated sections are combined: later scalars win, arrays are joined.
+      const obj =
+        (result[INI_SECTION_PREFIX + sectionKey] as
+          Record<string, unknown> | undefined) ??
+        (Object.create(null) as Record<string, unknown>);
       for (const child of item.items) {
         if (child.kind === 'kv') {
           const jsKey = child.isArray
             ? INI_ARRAY_PREFIX + child.key
             : child.key;
-          obj[jsKey] = child.value;
+          const prev = obj[jsKey];
+          obj[jsKey] =
+            child.isArray && Array.isArray(prev)
+              ? [...(prev as IniScalar[]), ...(child.value as IniScalar[])]
+              : child.value;
         }
       }
       result[INI_SECTION_PREFIX + sectionKey] = obj;
@@ -603,15 +647,16 @@ function applyIniInsert(
         rawConflicts === 'abort' || rawConflicts === 'first_wins'
           ? rawConflicts
           : 'last_wins';
-      let newContrib: Record<string, unknown> | null = null;
-      if (effectiveConflicts === 'last_wins') {
-        try {
-          newContrib = iniDocToJs(parseIniDoc(processedText));
-        } catch {
-          // unparseable processedText → null (old behaviour)
-        }
+      let newParsed: Record<string, unknown> = {};
+      try {
+        newParsed = iniDocToJs(parseIniDoc(processedText));
+      } catch {
+        // unparseable processedText → no new keys (old behaviour)
       }
-      deepRemoveFromIniDoc(existingDoc, oldContrib, newContrib);
+      const newContrib = effectiveConflicts === 'last_wins' ? newParsed : null;
+      // Which keys the new contribution has, under any conflict strategy.
+      const newKeys = new Set(Object.keys(newParsed));
+      deepRemoveFromIniDoc(existingDoc, oldContrib, newContrib, newKeys);
     } catch {
       // Corrupted history fragment — skip key removal, fall through to merge
     }

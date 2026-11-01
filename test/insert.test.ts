@@ -877,6 +877,130 @@ describe('INI — removal edge cases', () => {
     },
   );
 
+  it.each([true, { arrays: 'concat' as const }])(
+    'removes stale array values from an earlier repeated section (%o)',
+    (ini) => {
+      const result = insertInto(
+        'f.ini',
+        '[s]\nlist[] = a\n[s]\nx = 1\n',
+        { ini },
+        '[s]\nlist[] = b\n',
+        '[s]\nlist[] = a\n',
+      );
+      expect(result).toBe('[s]\nx = 1\nlist[] = b\n');
+    },
+  );
+
+  it('keeps the last repeated section header under first_wins', () => {
+    const result = insertInto(
+      'f.ini',
+      '[s]\nx = 1\n[s]\nlist[] = a\n',
+      { ini: { conflicts: 'first_wins' } },
+      '[s]\nlist[] = b\n',
+      '[s]\nlist[] = a\n',
+    );
+    expect(result).toBe('[s]\nx = 1\n[s]\nlist[] = b\n');
+  });
+
+  it('removes array values spread over repeated sections', () => {
+    const result = insertInto(
+      'f.ini',
+      '[s]\nlist[] = a\nmine = 1\n[s]\nlist[] = b\n',
+      { ini: true },
+      '',
+      '[s]\nlist[] = a\nlist[] = b\n',
+    );
+    expect(result).toBe('[s]\nmine = 1\n');
+  });
+
+  it('removes each old array value only once across repeated sections', () => {
+    const result = insertInto(
+      'f.ini',
+      '[s]\nlist[] = a\n[s]\nlist[] = a\n',
+      { ini: true },
+      '',
+      '[s]\nlist[] = a\n',
+    );
+    expect(result).toBe('[s]\nlist[] = a\n');
+  });
+
+  it('skips array nodes in later sections that do not hold old values', () => {
+    const result = insertInto(
+      'f.ini',
+      '[s]\nlist[] = a\n[s]\nlist[] = z\n',
+      { ini: true },
+      '',
+      '[s]\nlist[] = a\n',
+    );
+    expect(result).toBe('[s]\nlist[] = z\n');
+  });
+
+  it('removes an empty section avanti contributed', () => {
+    const result = insertInto(
+      'f.ini',
+      '[s]\nmine = 1\n[t]\n',
+      { ini: true },
+      '',
+      '[t]\n',
+    );
+    expect(result).toBe('[s]\nmine = 1\n');
+  });
+
+  it('removes a stale scalar from an earlier repeated section', () => {
+    const result = insertInto(
+      'f.ini',
+      '[s]\nk = v\n[s]\nx = 1\n',
+      { ini: true },
+      '',
+      '[s]\nk = v\n',
+    );
+    expect(result).toBe('[s]\nx = 1\n');
+  });
+
+  it('moves an updated scalar from an earlier repeated section to the last one', () => {
+    const result = insertInto(
+      'f.ini',
+      '[s]\nk = v\n[s]\nx = 1\n',
+      { ini: true },
+      '[s]\nk = w\n',
+      '[s]\nk = v\n',
+    );
+    expect(result).toBe('[s]\nx = 1\nk = w\n');
+  });
+
+  it('removes all values of an old contribution with repeated sections', () => {
+    const result = insertInto(
+      'f.ini',
+      '[s]\na = 1\nlist[] = x\n[s]\nb = 2\nlist[] = y\nmine = 3\n',
+      { ini: { arrays: 'concat' } },
+      '',
+      '[s]\na = 1\nlist[] = x\n[s]\nb = 2\nlist[] = y\n',
+    );
+    expect(result).toBe('[s]\nmine = 3\n');
+  });
+
+  it('keeps a repeated section it removed nothing from', () => {
+    const result = insertInto(
+      'f.ini',
+      '[s]\n; note\n[s]\nk = v\n',
+      { ini: true },
+      '',
+      '[s]\nk = v\n',
+    );
+    expect(result).toBe('[s]\n; note\n');
+  });
+
+  it('keeps a user override in a later repeated section', () => {
+    const result = insertInto(
+      'f.ini',
+      '[s]\nk = v\n[s]\nk = mine\n',
+      { ini: true },
+      '',
+      '[s]\nk = v\n',
+    );
+    expect(result).toBe('[s]\nk = v\n[s]\nk = mine\n');
+  });
+
   it('updates an array repeatedly without accumulating blank lines', () => {
     const targetPath = path.join(tmpDir, 'f.ini');
     fs.writeFileSync(targetPath, '[s]\nlist[] = a\n');
