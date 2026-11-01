@@ -1223,6 +1223,7 @@ For INI files avanti records exactly what each pull added: the keys and array it
 - Values the file already had before the pull stay, even if the source contains the same values.
 - A section header the file already had stays when the values avanti added to it are removed; sections avanti created are removed once they are empty.
 - Repeated sections (the same `[name]` more than once) are cleaned up correctly. If you add or remove sections with that name by hand, avanti looks for the one section that still holds what it added; if it can't tell which one that is, it leaves the values in place.
+- The same goes for a key you repeat with a value avanti also wrote: if it can't tell which line is yours, both stay.
 
 History written by older versions of avanti only has the previous source text. For such files the first pull falls back to removing values that match that text, and records what it added from then on.
 

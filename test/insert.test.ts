@@ -1277,6 +1277,30 @@ describe('INI — ownership tracking', () => {
     ).text;
   }
 
+  it('keeps a user override that repeats an owned value', () => {
+    const ini = { objects: 'replace' } as const;
+    const { owned } = iniSteps('[s]\nk = b\n', ini, [
+      '[s]\nk = a\nk = b\nx = 1\n',
+    ]);
+    const targetPath = path.join(tmpDir, 'f.ini');
+    fs.writeFileSync(targetPath, '[s]\nk = a\nk = b\nx = 1\nk = a\n');
+    const result = applyInsertModeTracked(
+      makeEntry({ target: 'f.ini', ini }),
+      '',
+      { processed: '[s]\nk = a\nk = b\nx = 1\n', owned: owned[0] },
+      targetPath,
+    );
+    // Which k = a is ours is unclear: both stay, and so does the override.
+    expect(result.text).toBe('[s]\nk = a\nk = b\nk = a\n');
+  });
+
+  it('keeps earlier owned occurrences a user repeated', () => {
+    const { owned } = iniSteps(null, true, ['k = a\nk = b\n']);
+    expect(
+      removeWith('k = a\nk = b\nk = a\n', 'k = a\nk = b\n', owned[0]),
+    ).toBe('k = a\nk = a\n');
+  });
+
   it('ignores stored scalars with array values', () => {
     const owned = {
       format: 'ini',

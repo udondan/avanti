@@ -764,6 +764,44 @@ function moveShadowedIniScalars(
   }
 }
 
+// When the file has more nodes with an owned key and value than the pull
+// owns, a user added the same value again and it is unclear which node is
+// ours: leave all of them in place.
+function dropAmbiguousIniScalars(
+  items: IniItem[],
+  owned: { contrib: Record<string, unknown>; earlier: IniOwnedKv[] },
+): void {
+  const id = (key: string, value: unknown) => JSON.stringify([key, value]);
+  const nodes = new Map<string, number>();
+  for (const it of items) {
+    if (it.kind !== 'kv' || it.isArray) continue;
+    const k = id(it.key, it.value);
+    nodes.set(k, (nodes.get(k) ?? 0) + 1);
+  }
+  const ownedCount = new Map<string, number>();
+  const scalars = [
+    ...owned.earlier,
+    ...Object.keys(owned.contrib)
+      .filter((key) => !Array.isArray(owned.contrib[key]))
+      .map((key) => ({ key, value: owned.contrib[key] })),
+  ];
+  for (const { key, value } of scalars) {
+    const k = id(key, value);
+    ownedCount.set(k, (ownedCount.get(k) ?? 0) + 1);
+  }
+  const ambiguous = (key: string, value: unknown) => {
+    const k = id(key, value);
+    return (nodes.get(k) ?? 0) > ownedCount.get(k)!;
+  };
+  for (const { key, value } of scalars) {
+    if (!ambiguous(key, value)) continue;
+    if (owned.contrib[key] === value) delete owned.contrib[key];
+  }
+  owned.earlier = owned.earlier.filter(
+    ({ key, value }) => !ambiguous(key, value),
+  );
+}
+
 // True when the section still holds every owned value. Each owned scalar
 // needs its own node and each owned array item its own item, so repeated
 // values are not matched twice by the same node or item.
@@ -819,6 +857,7 @@ function removeIniOwnership(
 ): void {
   const globals = iniOwnedToContrib(owned.globals);
   moveShadowedIniScalars(doc.items, globals);
+  dropAmbiguousIniScalars(doc.items, globals);
   for (const key of Object.keys(globals.contrib)) {
     const newVal =
       newContrib != null && Object.hasOwn(newContrib, key)
@@ -851,6 +890,7 @@ function removeIniOwnership(
         : undefined;
     const sectionOwned = iniOwnedToContrib(s.kvs);
     moveShadowedIniScalars(target.items, sectionOwned);
+    dropAmbiguousIniScalars(target.items, sectionOwned);
     const { contrib, earlier } = sectionOwned;
     deepRemoveFromIniSections(
       [target],
