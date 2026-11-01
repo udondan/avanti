@@ -12,7 +12,7 @@
     "dev": "tsx src/cli.ts",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:coverage": "vitest run --coverage --coverage.reporter=lcov --coverage.reporter=text-summary && bun run coverage:child",
+    "test:coverage": "tsc -p tsconfig.build.json && vitest run --coverage --coverage.reporter=lcov --coverage.reporter=text-summary && bun run coverage:child",
     "coverage:child": "c8 report && bun test/setup/merge-child-coverage.ts",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src test",
