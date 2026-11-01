@@ -1280,12 +1280,16 @@ describe('INI — ownership tracking', () => {
           {
             name: 's',
             index: 0,
+            count: 2,
+            others: [],
             created: true,
             kvs: [{ key: 'k', isArray: false, value: 'a' }],
           },
           {
             name: 's',
             index: 1,
+            count: 2,
+            others: [],
             created: true,
             kvs: [{ key: 'k', isArray: false, value: 'b' }],
           },
@@ -1311,6 +1315,8 @@ describe('INI — ownership tracking', () => {
         {
           name: 's',
           index: 0,
+          count: 1,
+          others: ['list'],
           created: false,
           kvs: [{ key: 'list', isArray: true, value: ['b'] }],
         },
@@ -1404,10 +1410,109 @@ describe('INI — ownership tracking', () => {
     expect(texts).toEqual(['u = 1\n[s "x"]\nk = v\n', 'u = 1\n']);
   });
 
-  it('falls back to the last section when an owned one was removed by hand', () => {
+  it('finds an owned section by its values when the section count changed', () => {
     const processed = '[s]\nk = a\n[s]\nk = b\n';
     const { owned } = iniSteps(null, true, [processed]);
     expect(removeWith('[s]\nk = a\n', processed, owned[0])).toBe('\n');
+  });
+
+  it('leaves a user section alone when the owned one was removed by hand', () => {
+    const processed = '[s]\nk = a\n';
+    const { texts, owned } = iniSteps('[s]\nk = a\n[s]\nx = 1\n', true, [
+      processed,
+    ]);
+    expect(texts[0]).toBe('[s]\nk = a\n[s]\nx = 1\nk = a\n');
+    expect(removeWith('[s]\nk = a\n', processed, owned[0])).toBe(
+      '[s]\nk = a\n',
+    );
+  });
+
+  it('finds the owned section after an earlier one was removed by hand', () => {
+    const processed = '[s]\nk = a\n';
+    const { owned } = iniSteps('[s]\nu = 1\n[s]\nx = 1\n', true, [processed]);
+    expect(removeWith('[s]\nx = 1\nk = a\n', processed, owned[0])).toBe(
+      '[s]\nx = 1\n',
+    );
+  });
+
+  it('finds an owned array section by its items when the section count changed', () => {
+    const processed = '[s]\nlist[] = b\n';
+    const { owned } = iniSteps('[s]\nlist[] = a\n[s]\nx = 1\n', true, [
+      processed,
+    ]);
+    expect(
+      removeWith('[s]\nx = 1\nlist[] = b\nlist[] = c\n', processed, owned[0]),
+    ).toBe('[s]\nx = 1\nlist[] = c\n');
+    expect(removeWith('[s]\nx = 1\nlist[] = c\n', processed, owned[0])).toBe(
+      '[s]\nx = 1\nlist[] = c\n',
+    );
+  });
+
+  it('skips an owned section that matches more than one section', () => {
+    const processed = '[s]\nk = a\n[s]\nk = b\n';
+    const { owned } = iniSteps(null, true, [processed]);
+    const file = '[s]\nk = a\n[s]\nk = a\n[s]\nk = a\n';
+    expect(removeWith(file, processed, owned[0])).toBe(file);
+  });
+
+  it('removes a section once when two owned entries match it', () => {
+    const processed = '[s]\nk = a\n[s]\nk = a\n';
+    const { owned } = iniSteps(null, true, [processed]);
+    expect(removeWith('u = 1\n[s]\nk = a\n', processed, owned[0])).toBe(
+      'u = 1\n',
+    );
+  });
+
+  it('keeps an array the user put in place of a repeated scalar key', () => {
+    const processed = '[s]\nk = a\nk = b\n';
+    const { owned } = iniSteps(null, true, [processed]);
+    expect(removeWith('[s]\nk[] = a\nk = b\n', processed, owned[0])).toBe(
+      '[s]\nk[] = a\n',
+    );
+  });
+
+  it('skips an empty created section when the section count changed', () => {
+    const processed = '[s]\n[s]\nk = v\n';
+    const { owned } = iniSteps(null, true, [processed]);
+    expect(removeWith('[s]\nk = v\n', processed, owned[0])).toBe('\n');
+  });
+
+  it('keeps user values when objects: replace swaps a section', () => {
+    const { texts, owned } = iniSteps('[s]\nk = 1\n', { objects: 'replace' }, [
+      '[s]\nk = 1\nx = 2\n',
+      '',
+    ]);
+    expect(texts).toEqual(['[s]\nk = 1\nx = 2\n', '[s]\nk = 1\n']);
+    expect(owned[0]).toEqual({
+      format: 'ini',
+      globals: [],
+      sections: [
+        {
+          name: 's',
+          index: 0,
+          count: 1,
+          others: ['k'],
+          created: false,
+          kvs: [{ key: 'x', isArray: false, value: 2 }],
+        },
+      ],
+    });
+  });
+
+  it('owns the whole value when objects: replace changes its type', () => {
+    const { texts } = iniSteps('[s]\nk = 1\n', { objects: 'replace' }, [
+      '[s]\nk[] = 1\n',
+      '',
+    ]);
+    expect(texts).toEqual(['[s]\nk[] = 1\n', '[s]\n']);
+  });
+
+  it.each([
+    ['in a section', '[s]\nk = a\nk = b\n'],
+    ['at the top level', 'k = a\nk = b\n'],
+  ])('removes every occurrence of a repeated scalar key (%s)', (_, ini) => {
+    const { texts } = iniSteps(null, true, [ini, '']);
+    expect(texts).toEqual([ini, '\n']);
   });
 
   it('skips owned sections that no longer exist', () => {
@@ -1436,7 +1541,14 @@ describe('INI — ownership tracking', () => {
     expect(result).toEqual({ text: '{"a": 1}' });
   });
 
-  const section = { name: 's', index: 0, created: true, kvs: [] };
+  const section = {
+    name: 's',
+    index: 0,
+    count: 1,
+    others: [],
+    created: true,
+    kvs: [],
+  };
   it.each([
     ['not an object', 'x'],
     ['wrong format', { format: 'json', globals: [], sections: [] }],
@@ -1458,6 +1570,22 @@ describe('INI — ownership tracking', () => {
     [
       'bad subName',
       { format: 'ini', globals: [], sections: [{ ...section, subName: 1 }] },
+    ],
+    [
+      'missing count',
+      {
+        format: 'ini',
+        globals: [],
+        sections: [{ ...section, count: undefined }],
+      },
+    ],
+    [
+      'bad others',
+      { format: 'ini', globals: [], sections: [{ ...section, others: 'x' }] },
+    ],
+    [
+      'bad other key',
+      { format: 'ini', globals: [], sections: [{ ...section, others: [1] }] },
     ],
     [
       'bad section kvs',

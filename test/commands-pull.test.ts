@@ -354,6 +354,8 @@ describe('pull: insert strategy', () => {
         {
           name: 's',
           index: 0,
+          count: 1,
+          others: ['list'],
           created: false,
           kvs: [{ key: 'list', isArray: true, value: ['a', 'b'] }],
         },
