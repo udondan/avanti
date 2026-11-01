@@ -1031,6 +1031,17 @@ describe('INI — removal edge cases', () => {
     expect(result).toBe('[s]\nmine = 3\n');
   });
 
+  it('removes all values of an old contribution with disjoint keys in repeated sections', () => {
+    const result = insertInto(
+      'f.ini',
+      '[s]\nmine = 3\nlist[] = a\nx = 1\n',
+      { ini: true },
+      '',
+      '[s]\nlist[] = a\n[s]\nx = 1\n',
+    );
+    expect(result).toBe('[s]\nmine = 3\n');
+  });
+
   it('removes only the array values a repeated-section contribution wrote (arrays: replace)', () => {
     // Under arrays: replace only `b` was written; the earlier `a` is the user's.
     const targetPath = path.join(tmpDir, 'f.ini');

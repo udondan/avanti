@@ -464,8 +464,9 @@ function deepRemoveFromIniDoc(
 // The values of `merged` that `fragment` does not have: scalars with another
 // value and array items beyond the fragment's (the fragment as is keeps only
 // the last section's array of a repeated key), in each section too. Both
-// come from the same fragment, so every section and array key of `merged`
-// is also in `fragment`.
+// come from the same fragment, so every section of `merged` is also in
+// `fragment`. A key can still be missing from a section: the fragment as is
+// keeps only the last of repeated sections.
 function iniContribDiff(
   fragment: Record<string, unknown>,
   merged: Record<string, unknown>,
@@ -478,7 +479,7 @@ function iniContribDiff(
       if (Object.keys(sub).length > 0) out[key] = sub;
     } else if (Array.isArray(value)) {
       const rest: unknown[] = [...(value as unknown[])];
-      removeArrayContribution(rest, own as unknown[]);
+      removeArrayContribution(rest, Array.isArray(own) ? own : []);
       if (rest.length > 0) out[key] = rest;
     } else if (!deepEqual(own, value)) {
       out[key] = value;
