@@ -157,7 +157,9 @@ describe('checkNodeVersion', () => {
   });
 });
 
-describe('resolveNodeExec', () => {
+// sudo is not used on Windows, and path.join there produces backslash paths
+// that the fake filesystem's POSIX keys would not match.
+describe.skipIf(process.platform === 'win32')('resolveNodeExec', () => {
   const realExecPath = process.execPath;
 
   // process.execPath resolves to a root-owned /usr/bin/node outside $HOME.
