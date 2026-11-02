@@ -86,7 +86,70 @@ export function sudoUserArgs(sudo: true | string): string[] {
 // does not pollute the cache for a subsequent named-user session.
 const resolvedNodeExecCache = new Map<string, string>();
 
-function resolveNodeExec(sudo: true | string): string {
+// Minimum Node.js major version that can run the compiled worker.
+// The worker is compiled to ES2022 (tsconfig.build.json target), which
+// Node.js 18+ supports fully. Using the current process's major version
+// as the threshold is wrong: when the caller runs under nvm/mise (e.g.
+// v24), a system node v18 is perfectly capable of running the ES2022
+// compiled output and would be rejected without cause.
+const WORKER_MIN_NODE_MAJOR = 18;
+
+// `node --version` is fast on a healthy system, but a cold start on a heavily
+// loaded machine (e.g. a CI runner with many parallel test workers) can take
+// several seconds. A too-short timeout kills the child, leaves stdout empty and
+// makes a valid binary look missing. The resolved path is cached per sudo
+// identity, so this cost is paid at most once per process.
+export const NODE_VERSION_CHECK_TIMEOUT_MS = 10_000;
+
+export type NodeVersionCheck =
+  { ok: true; major: number } | { ok: false; reason: string };
+
+// Runs `<realPath> --version` and checks it meets WORKER_MIN_NODE_MAJOR.
+// Retries once on timeout. Returns a human-readable reason on failure so the
+// caller can say why a candidate was rejected instead of reporting "not found".
+export function checkNodeVersion(realPath: string): NodeVersionCheck {
+  let reason = '';
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const vr = spawnSync(realPath, ['--version'], {
+      encoding: 'utf8',
+      timeout: NODE_VERSION_CHECK_TIMEOUT_MS,
+    });
+    const err: NodeJS.ErrnoException | undefined = vr.error;
+    const errCode = err?.code;
+    if (errCode === 'ETIMEDOUT' || (vr.signal && !vr.stdout)) {
+      reason =
+        errCode === 'ETIMEDOUT'
+          ? `version check timed out after ${NODE_VERSION_CHECK_TIMEOUT_MS}ms`
+          : `version check killed by ${vr.signal}`;
+      continue;
+    }
+    if (vr.error) {
+      return {
+        ok: false,
+        reason: `version check failed: ${errCode ?? vr.error.message}`,
+      };
+    }
+    const out = (vr.stdout ?? '').toString().trim();
+    const m = out.match(/^v(\d+)\./);
+    if (!m) {
+      return {
+        ok: false,
+        reason: `unrecognised version output ${JSON.stringify(out.slice(0, 40))}`,
+      };
+    }
+    const major = parseInt(m[1], 10);
+    if (major < WORKER_MIN_NODE_MAJOR) {
+      return {
+        ok: false,
+        reason: `version ${out} is older than v${WORKER_MIN_NODE_MAJOR}`,
+      };
+    }
+    return { ok: true, major };
+  }
+  return { ok: false, reason };
+}
+
+export function resolveNodeExec(sudo: true | string): string {
   // SECURITY: AVANTI_NODE_EXEC bypasses ALL root-ownership and version checks
   // on the Node binary passed to `sudo`. Any process that can set this env var
   // for avanti can redirect sudo to execute an arbitrary binary as root.
@@ -116,13 +179,14 @@ function resolveNodeExec(sudo: true | string): string {
   const cacheKey = sudo === true ? '__root__' : sudo;
   const cached = resolvedNodeExecCache.get(cacheKey);
   if (cached !== undefined) return cached;
-  // Minimum Node.js major version that can run the compiled worker.
-  // The worker is compiled to ES2022 (tsconfig.build.json target), which
-  // Node.js 18+ supports fully. Using the current process's major version
-  // as the threshold is wrong: when the caller runs under nvm/mise (e.g.
-  // v24), a system node v18 is perfectly capable of running the ES2022
-  // compiled output and would be rejected without cause.
-  const WORKER_MIN_NODE_MAJOR = 18;
+  // Candidates that exist and are root-owned but failed the version check,
+  // with the reason. Included in the final error so a timeout or old version
+  // is not mistaken for a missing binary.
+  const rejected: string[] = [];
+  // Real paths already probed. /usr/bin/node, /usr/bin/nodejs, /bin/node and
+  // process.execPath often resolve to the same file; probing it again after a
+  // failure would only repeat the same (possibly slow) result.
+  const probed = new Set<string>();
   // Require the binary to be root-owned before trusting it when running via
   // sudo — whether elevating to root or to a named user. If process.execPath
   // is user-owned (e.g. a Homebrew or nvm/fnm/mise install), the calling user
@@ -145,19 +209,14 @@ function resolveNodeExec(sudo: true | string): string {
       // Apply the same version floor as the SAFE_DIRS scan so that a stale
       // root-owned binary (e.g. v16) does not silently produce an opaque
       // SyntaxError inside the worker.
-      // Short timeout: `node --version` is instantaneous; 2s is generous enough
-      // for any working install while avoiding a 5s stall per candidate on slow
-      // systems (e.g. cold NFS mounts or heavily loaded CI boxes).
-      const vr = spawnSync(realPath, ['--version'], {
-        encoding: 'utf8',
-        timeout: 2000,
-      });
-      const m = vr.stdout?.trim().match(/^v(\d+)\./);
-      if (m && parseInt(m[1], 10) >= WORKER_MIN_NODE_MAJOR) {
+      probed.add(realPath);
+      const check = checkNodeVersion(realPath);
+      if (check.ok) {
         resolvedNodeExecCache.set(cacheKey, realPath);
         return realPath;
       }
-      // Version too old — fall through to SAFE_DIRS scan.
+      rejected.push(`${realPath}: ${check.reason}`);
+      // Fall through to SAFE_DIRS scan.
     }
   } catch {
     // ignore and fall through to SAFE_DIRS search
@@ -186,15 +245,11 @@ function resolveNodeExec(sudo: true | string): string {
         // Version check: reject binaries older than the compiled worker requires.
         // This turns an opaque "privileged worker failed (exit 1)" SyntaxError
         // into an actionable "no compatible binary found" message.
-        // Short timeout: `node --version` is instantaneous; 2s per candidate.
-        const versionResult = spawnSync(realPath, ['--version'], {
-          encoding: 'utf8',
-          timeout: 2000,
-        });
-        const match = versionResult.stdout?.trim().match(/^v(\d+)\./);
-        if (!match) continue;
-        const candidateMajor = parseInt(match[1], 10);
-        if (candidateMajor < WORKER_MIN_NODE_MAJOR) {
+        if (probed.has(realPath)) continue;
+        probed.add(realPath);
+        const check = checkNodeVersion(realPath);
+        if (!check.ok) {
+          rejected.push(`${realPath}: ${check.reason}`);
           continue;
         }
         resolvedNodeExecCache.set(cacheKey, realPath);
@@ -212,6 +267,9 @@ function resolveNodeExec(sudo: true | string): string {
   // path of any root-owned, compatible Node.js binary to bypass this scan.
   throw new Error(
     `No root-owned Node.js binary (v${WORKER_MIN_NODE_MAJOR}+) found in ${SAFE_DIRS.join(', ')} for ${sudoDesc}. ` +
+      (rejected.length > 0
+        ? `Rejected candidates: ${rejected.join('; ')}. `
+        : '') +
       `On NixOS or other non-standard distros, set the AVANTI_NODE_EXEC environment variable to the absolute ` +
       `path of a root-owned, compatible Node.js binary (e.g. AVANTI_NODE_EXEC=$(readlink -f $(which node))). ` +
       `On standard distros, install Node.js system-wide (e.g. apt install nodejs, brew install node).`,
