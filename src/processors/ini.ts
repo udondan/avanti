@@ -52,7 +52,9 @@ function unquoteValue(raw: string): IniScalar {
   if (trimmed.toLowerCase() === 'true') return true;
   if (trimmed.toLowerCase() === 'false') return false;
   const n = Number(trimmed);
-  if (trimmed !== '' && !isNaN(n)) return n;
+  // Non-finite numbers (Infinity, 1e309) stay strings: they would be written
+  // back differently and cannot be stored as JSON.
+  if (trimmed !== '' && Number.isFinite(n)) return n;
   return trimmed;
 }
 

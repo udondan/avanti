@@ -22,7 +22,7 @@ import {
 import { sortByDependencies } from '../dependencies';
 import { applyReplace } from '../processors/replace';
 import { applyWriteHook, runHook } from '../processors/on';
-import { applyInsertMode } from '../processors/insert';
+import { applyInsertModeTracked } from '../processors/insert';
 import { isBinary } from '../binary';
 import {
   buildNewFileDiff,
@@ -61,7 +61,12 @@ import {
   Variables,
 } from '../types';
 import { resolveSymlinkSrcPath } from '../sources/local';
-import { HistoryManager, PullLogFileRef, SourceShaRecord } from '../history';
+import {
+  HistoryManager,
+  InsertedFragment,
+  PullLogFileRef,
+  SourceShaRecord,
+} from '../history';
 import { confirm } from '../prompt';
 import { applyUpdatedShas, writeUpdatedShas } from '../config-writeback';
 import { resolveVariablesAndEnvironment } from '../context';
@@ -94,7 +99,7 @@ interface FetchLoopResult {
   sourceRecordsByTarget: Map<string, SourceFetchRecord[]>;
   skippedPaths: Set<string>;
   hasUnresolvableSkippedPath: boolean;
-  insertedFragments: Map<string, { raw: string; processed: string }>;
+  insertedFragments: Map<string, InsertedFragment>;
   selfContent?: string;
   selfMode?: string;
   selfSudo?: true | string;
@@ -145,10 +150,7 @@ async function runFetchLoop(
   const seenShaErrorLabels = new Set<string>();
   const sourceRecordsByTarget = new Map<string, SourceFetchRecord[]>();
   const skippedPaths = new Set<string>();
-  const insertedFragments = new Map<
-    string,
-    { raw: string; processed: string }
-  >();
+  const insertedFragments = new Map<string, InsertedFragment>();
   const pendingWrites = new Map<string, Buffer>();
   let hasUnresolvableSkippedPath = false;
   let hasError = false;
@@ -475,15 +477,17 @@ async function runFetchLoop(
               continue; // source and processed output unchanged — skip write entirely (no-op)
             }
             const processedText = text;
-            text = applyInsertMode(
+            const inserted = applyInsertModeTracked(
               entry,
               processedText,
-              lastInserted?.processed ?? null,
+              lastInserted,
               effectivePath!,
             );
+            text = inserted.text;
             insertedFragments.set(effectivePath!, {
               raw: rawText,
               processed: processedText,
+              owned: inserted.owned,
             });
           }
           content = Buffer.from(text, 'utf8');
@@ -1009,6 +1013,7 @@ export function pullCommand(): Command {
               targetPath,
               fragment.raw,
               fragment.processed,
+              fragment.owned,
             );
           }
         }
@@ -1575,6 +1580,10 @@ export function pullCommand(): Command {
       // on disk — those files need partial history even though err is a plain Error.
       // Only set when sudoAtomicWrite is actually invoked (inside the guard below).
       let sudoWriteComplete = false;
+      // Paths of regular files written, set once atomicWrite returns. A later
+      // failure (e.g. a mode-only chmod) is a plain Error, so the catch block
+      // uses this to know these files landed.
+      let regularWrittenPaths: string[] = [];
       // Collect sudo mode-only targets here (outside the try block) so that
       // modeOnlySudoPaths can be derived from the same computation and the
       // predicate (modeChange && !contentChanged && sudo) stays in one place.
@@ -1635,6 +1644,9 @@ export function pullCommand(): Command {
           sudoWriteComplete = true;
         }
         atomicWrite([...regularChanged, ...regularRestore]);
+        regularWrittenPaths = [...regularChanged, ...regularRestore].map(
+          (t) => t.targetPath,
+        );
         // Mark all active stale restores as completed (atomicWrite throws on
         // failure so if we reach here all restores were written successfully).
         for (const t of activeStaleRestore) {
@@ -1814,6 +1826,7 @@ export function pullCommand(): Command {
         //  a) SudoWritePartialError: err.writtenPaths lists confirmed sudo writes.
         //  b) AtomicWritePartialError: err.writtenPaths lists regular files whose
         //     temp→dest renames (Phase 3) or in-place writes (Phase 4) completed.
+        //     If atomicWrite itself returned, regularWrittenPaths lists them all.
         //  c) sudoWriteComplete: sudoAtomicWrite returned, so all sudo content-write
         //     targets are on disk regardless of error type.
         // Cases (b) and (c) combine when sudoAtomicWrite succeeds and atomicWrite
@@ -1824,7 +1837,9 @@ export function pullCommand(): Command {
             writtenPaths = err.writtenPaths;
           } else {
             const regularWritten =
-              err instanceof AtomicWritePartialError ? err.writtenPaths : [];
+              err instanceof AtomicWritePartialError
+                ? err.writtenPaths
+                : regularWrittenPaths;
             if (sudoWriteComplete || regularWritten.length > 0) {
               writtenPaths = [
                 ...(sudoWriteComplete
@@ -1879,6 +1894,18 @@ export function pullCommand(): Command {
                 );
               }
             }
+            // Save the inserted fragments of files that landed, so the next
+            // pull can remove what this one added. Files that did not land
+            // keep their previous fragment.
+            for (const [targetPath, fragment] of insertedFragments) {
+              if (!writtenSet.has(targetPath)) continue;
+              history.saveInsertedFragment(
+                targetPath,
+                fragment.raw,
+                fragment.processed,
+                fragment.owned,
+              );
+            }
           }
         }
         closeAllSessions(sudoSessions);
@@ -1903,6 +1930,7 @@ export function pullCommand(): Command {
             targetPath,
             fragment.raw,
             fragment.processed,
+            fragment.owned,
           );
         }
       }
