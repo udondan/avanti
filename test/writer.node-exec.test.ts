@@ -161,14 +161,19 @@ describe('checkNodeVersion', () => {
 // that the fake filesystem's POSIX keys would not match.
 describe.skipIf(process.platform === 'win32')('resolveNodeExec', () => {
   const realExecPath = process.execPath;
+  // A fake path that cannot collide with any SAFE_DIRS candidate, whatever
+  // the real process.execPath is on the machine running the tests.
+  const fakeExecPath = '/opt/avanti-test/bin/node';
 
   // process.execPath resolves to a root-owned /usr/bin/node outside $HOME.
   beforeEach(() => {
-    fakeLinks.set(realExecPath, '/usr/bin/node');
+    process.execPath = fakeExecPath;
+    fakeLinks.set(fakeExecPath, '/usr/bin/node');
     fakeFiles.set('/usr/bin/node', { uid: 0 });
   });
 
   afterEach(() => {
+    process.execPath = realExecPath;
     fakeLinks.clear();
     fakeFiles.clear();
   });
