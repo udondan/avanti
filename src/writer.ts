@@ -149,7 +149,7 @@ export function checkNodeVersion(realPath: string): NodeVersionCheck {
   return { ok: false, reason };
 }
 
-function resolveNodeExec(sudo: true | string): string {
+export function resolveNodeExec(sudo: true | string): string {
   // SECURITY: AVANTI_NODE_EXEC bypasses ALL root-ownership and version checks
   // on the Node binary passed to `sudo`. Any process that can set this env var
   // for avanti can redirect sudo to execute an arbitrary binary as root.
@@ -183,6 +183,10 @@ function resolveNodeExec(sudo: true | string): string {
   // with the reason. Included in the final error so a timeout or old version
   // is not mistaken for a missing binary.
   const rejected: string[] = [];
+  // Real paths already probed. /usr/bin/node, /usr/bin/nodejs, /bin/node and
+  // process.execPath often resolve to the same file; probing it again after a
+  // failure would only repeat the same (possibly slow) result.
+  const probed = new Set<string>();
   // Require the binary to be root-owned before trusting it when running via
   // sudo — whether elevating to root or to a named user. If process.execPath
   // is user-owned (e.g. a Homebrew or nvm/fnm/mise install), the calling user
@@ -205,6 +209,7 @@ function resolveNodeExec(sudo: true | string): string {
       // Apply the same version floor as the SAFE_DIRS scan so that a stale
       // root-owned binary (e.g. v16) does not silently produce an opaque
       // SyntaxError inside the worker.
+      probed.add(realPath);
       const check = checkNodeVersion(realPath);
       if (check.ok) {
         resolvedNodeExecCache.set(cacheKey, realPath);
@@ -240,11 +245,11 @@ function resolveNodeExec(sudo: true | string): string {
         // Version check: reject binaries older than the compiled worker requires.
         // This turns an opaque "privileged worker failed (exit 1)" SyntaxError
         // into an actionable "no compatible binary found" message.
+        if (probed.has(realPath)) continue;
+        probed.add(realPath);
         const check = checkNodeVersion(realPath);
         if (!check.ok) {
-          const entry = `${realPath}: ${check.reason}`;
-          // /usr/bin/node and /usr/bin/nodejs often resolve to the same file.
-          if (!rejected.includes(entry)) rejected.push(entry);
+          rejected.push(`${realPath}: ${check.reason}`);
           continue;
         }
         resolvedNodeExecCache.set(cacheKey, realPath);
