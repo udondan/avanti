@@ -1,0 +1,1960 @@
+import { Command } from 'commander';
+import * as fs from 'fs';
+import * as path from 'path';
+import type { WriteOp, WorkerResult } from '../privileged-worker';
+import {
+  deriveConfigBase,
+  isRemoteConfigSpec,
+  loadConfig,
+  normalizeConfigKey,
+  parseConfigContent,
+  parseVia,
+  resolveConfigPath,
+  SELF_KEY,
+} from '../config';
+import { evaluateConditions } from '../condition';
+import {
+  fetchSource,
+  FetchCache,
+  SourceFetchRecord,
+  formatSourceLabel,
+} from '../sources';
+import { sortByDependencies } from '../dependencies';
+import { applyReplace } from '../processors/replace';
+import { applyWriteHook, runHook } from '../processors/on';
+import { applyInsertMode } from '../processors/insert';
+import { isBinary } from '../binary';
+import {
+  buildNewFileDiff,
+  buildNewSymlinkDiff,
+  computeDiff,
+  computeDeleteDiff,
+  computeSymlinkDiff,
+  FileDiff,
+  printDiffs,
+} from '../diff';
+import {
+  atomicWrite,
+  AtomicWritePartialError,
+  closeAllSessions,
+  openPrivilegedSessions,
+  sudoAtomicRead,
+  sudoAtomicWrite,
+  sudoStatBatch,
+  SudoChmodTarget,
+  SudoWorkerSession,
+  SudoWritePartialError,
+  SudoWriteTarget,
+  WriteTarget,
+} from '../writer';
+import {
+  buildEntryPreVars,
+  expandTilde,
+  resolveFollowSymlink,
+  resolveTargetPath,
+} from '../paths';
+import {
+  AvantiConfig,
+  FileEntry,
+  LocalSrc,
+  OnHooks,
+  Variables,
+} from '../types';
+import { resolveSymlinkSrcPath } from '../sources/local';
+import { HistoryManager, PullLogFileRef, SourceShaRecord } from '../history';
+import { confirm } from '../prompt';
+import { applyUpdatedShas, writeUpdatedShas } from '../config-writeback';
+import { resolveVariablesAndEnvironment } from '../context';
+import {
+  buildDateVars,
+  buildFileVars,
+  buildSystemVars,
+  resolveBackupPath,
+  resolveVars,
+} from '../variables';
+
+interface ShaError {
+  sourceLabel: string;
+  expectedSha: string;
+  observedSha: string;
+}
+
+interface FileHookContext {
+  targetPath: string;
+  hooks: OnHooks;
+  isNew: boolean;
+}
+
+interface FetchLoopResult {
+  writeTargets: WriteTarget[];
+  allDiffs: FileDiff[];
+  fileHookContexts: FileHookContext[];
+  hasError: boolean;
+  shaErrors: ShaError[];
+  sourceRecordsByTarget: Map<string, SourceFetchRecord[]>;
+  skippedPaths: Set<string>;
+  hasUnresolvableSkippedPath: boolean;
+  insertedFragments: Map<string, { raw: string; processed: string }>;
+  selfContent?: string;
+  selfMode?: string;
+  selfSudo?: true | string;
+  selfSourceRecords?: SourceFetchRecord[];
+}
+
+async function runFetchLoop(
+  config: AvantiConfig,
+  workingDir: string,
+  dateVars: Variables,
+  cache: FetchCache,
+  configPath: string,
+  history: HistoryManager,
+  configBase: string,
+): Promise<FetchLoopResult> {
+  let vars;
+  try {
+    ({ vars } = await resolveVariablesAndEnvironment(
+      config.variables ?? {},
+      config.environment ?? {},
+      workingDir,
+      cache,
+      configBase,
+    ));
+  } catch (err: unknown) {
+    console.error(err instanceof Error ? err.message : String(err));
+    return {
+      writeTargets: [],
+      allDiffs: [],
+      fileHookContexts: [],
+      hasError: true,
+      shaErrors: [],
+      sourceRecordsByTarget: new Map(),
+      skippedPaths: new Set(),
+      hasUnresolvableSkippedPath: false,
+      insertedFragments: new Map(),
+    };
+  }
+  vars['self'] = configPath;
+  Object.assign(vars, dateVars);
+  Object.assign(vars, buildSystemVars());
+  vars['workingDir'] = workingDir;
+  vars['cwd'] = workingDir;
+  const writeTargets: WriteTarget[] = [];
+  const allDiffs: FileDiff[] = [];
+  const fileHookContexts: FileHookContext[] = [];
+  const shaErrors: ShaError[] = [];
+  const seenShaErrorLabels = new Set<string>();
+  const sourceRecordsByTarget = new Map<string, SourceFetchRecord[]>();
+  const skippedPaths = new Set<string>();
+  const insertedFragments = new Map<
+    string,
+    { raw: string; processed: string }
+  >();
+  const pendingWrites = new Map<string, Buffer>();
+  let hasUnresolvableSkippedPath = false;
+  let hasError = false;
+  let selfContent: string | undefined;
+  let selfMode: string | undefined;
+  let selfSudo: true | string | undefined;
+  let selfSourceRecords: SourceFetchRecord[] | undefined;
+
+  let hasSelf = SELF_KEY in config.files;
+  if (hasSelf) {
+    const selfEntry = config.files[SELF_KEY];
+    try {
+      hasSelf = evaluateConditions(
+        selfEntry['if'],
+        selfEntry.ifAny,
+        () => configPath,
+        workingDir,
+        vars,
+      );
+    } catch (err: unknown) {
+      console.error(
+        `Error processing ${SELF_KEY}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return {
+        writeTargets,
+        allDiffs,
+        fileHookContexts,
+        hasError: true,
+        shaErrors,
+        sourceRecordsByTarget,
+        skippedPaths,
+        hasUnresolvableSkippedPath,
+        insertedFragments,
+      };
+    }
+    // $self was condition-skipped: protect configPath from stale cleanup so a
+    // previously-written config file is not restored or deleted on this run.
+    if (!hasSelf && !isRemoteConfigSpec(configPath)) {
+      skippedPaths.add(configPath);
+    }
+  }
+  const nonSelfEntries = Object.entries(config.files).filter(
+    ([k]) => k !== SELF_KEY,
+  );
+  let sortedEntries: [string, FileEntry][];
+  try {
+    sortedEntries = sortByDependencies(nonSelfEntries, workingDir, vars);
+  } catch (err: unknown) {
+    console.error(err instanceof Error ? err.message : String(err));
+    return {
+      writeTargets: [],
+      allDiffs: [],
+      fileHookContexts: [],
+      hasError: true,
+      shaErrors: [],
+      sourceRecordsByTarget: new Map(),
+      skippedPaths: new Set(),
+      hasUnresolvableSkippedPath: false,
+      insertedFragments: new Map(),
+    };
+  }
+  const entriesToProcess: [string, FileEntry][] = hasSelf
+    ? [[SELF_KEY, config.files[SELF_KEY]], ...sortedEntries]
+    : sortedEntries;
+
+  for (const [key, entry] of entriesToProcess) {
+    const isSelf = key === SELF_KEY;
+    if (hasSelf !== isSelf) continue;
+    try {
+      const preVars = buildEntryPreVars(entry, isSelf, workingDir, vars);
+      if (
+        !isSelf &&
+        !evaluateConditions(
+          entry['if'],
+          entry.ifAny,
+          () => resolveTargetPath(entry, '', workingDir, vars),
+          workingDir,
+          preVars,
+        )
+      ) {
+        let symlinkPath: string;
+        try {
+          symlinkPath = resolveTargetPath(entry, '', workingDir, vars);
+        } catch {
+          console.warn(
+            `Warning: skipped entry has an unresolvable target path — stale cleanup disabled for this run.`,
+          );
+          hasUnresolvableSkippedPath = true;
+          continue;
+        }
+        skippedPaths.add(symlinkPath);
+        // Also skip the resolved real path so stale cleanup doesn't treat
+        // the symlink target as unmanaged when followSymlink is in use.
+        // Skip for directory targets — resolveFollowSymlink throws on dir symlinks.
+        // resolveFollowSymlink security errors (escape/directory/cycle) are
+        // intentionally NOT caught here — they propagate as hard failures.
+        const resolvedTarget0 = resolveVars(entry.target, vars);
+        if (
+          !resolvedTarget0.endsWith('/') &&
+          !resolvedTarget0.endsWith(path.sep)
+        ) {
+          const realPath = resolveFollowSymlink(symlinkPath, entry, workingDir);
+          if (realPath !== symlinkPath) skippedPaths.add(realPath);
+        }
+        continue;
+      }
+
+      // Symlink entries: resolve src path and create a symlink instead of
+      // fetching and writing file content.
+      if (!isSelf && entry.symlink) {
+        if (process.platform === 'win32') {
+          console.error(
+            `Error processing ${JSON.stringify(entry.src)}: symlink entries are not supported on Windows; use an \`if: { os: [linux, mac] }\` condition to gate symlink entries in cross-platform configs`,
+          );
+          hasError = true;
+          continue;
+        }
+        const targetPath = resolveTargetPath(entry, '', workingDir, vars);
+        // Config validation guarantees a single local src for symlink entries.
+        const rawSrc =
+          typeof entry.src === 'string'
+            ? entry.src
+            : (entry.src as LocalSrc).path;
+
+        // Honor optional: true — skip when the local source does not exist.
+        const isOptionalSrc =
+          !Array.isArray(entry.src) &&
+          typeof entry.src !== 'string' &&
+          !!(entry.src as LocalSrc).optional;
+        if (isOptionalSrc) {
+          const absSrc = resolveSymlinkSrcPath(
+            rawSrc,
+            workingDir,
+            preVars,
+            true,
+            targetPath,
+          );
+          if (!fs.existsSync(absSrc)) {
+            // Mark the target as skipped so stale cleanup does not treat a
+            // previously-managed path as unmanaged and delete/restore it.
+            skippedPaths.add(targetPath);
+            continue;
+          }
+        }
+
+        const symlinkTarget = resolveSymlinkSrcPath(
+          rawSrc,
+          workingDir,
+          preVars,
+          entry.symlink,
+          targetPath,
+        );
+        const diff = computeSymlinkDiff(targetPath, symlinkTarget);
+        // Symlinks cannot replace existing directories — error early so the
+        // write batch is not attempted and EISDIR is not thrown at rename time.
+        // Do not push to allDiffs here: allDiffs and writeTargets are parallel
+        // arrays; pushing diff without a matching writeTargets entry would
+        // misalign subsequent index-based lookups.
+        if (diff.isDirectory) {
+          console.error(
+            `Error processing ${JSON.stringify(entry.src)}: symlink: ${targetPath} is a directory; cannot replace with a symlink`,
+          );
+          hasError = true;
+          continue;
+        }
+        allDiffs.push(diff);
+        const symlinkContent = Buffer.from(symlinkTarget, 'utf8');
+        const symlinkBackupPath =
+          entry.backup && diff.hasChanges && !diff.isNew
+            ? resolveBackupPath(
+                entry.backup,
+                targetPath,
+                workingDir,
+                vars,
+                config.backup_roots ?? [],
+              )
+            : undefined;
+        writeTargets.push({
+          targetPath,
+          content: symlinkContent,
+          symlinkTarget,
+          backupPath: symlinkBackupPath,
+          sudo: entry.sudo,
+        });
+        if (entry.on && diff.hasChanges) {
+          fileHookContexts.push({
+            targetPath,
+            hooks: entry.on,
+            isNew: diff.isNew,
+          });
+        }
+        // Register the resolved src content (not the symlink target string) in
+        // pendingWrites so subsequent local entries that read through this symlink
+        // path see the actual file bytes, not the raw symlink target path.
+        const absSymlinkSrc = resolveSymlinkSrcPath(
+          rawSrc,
+          workingDir,
+          preVars,
+          true,
+          targetPath,
+        );
+        try {
+          const srcStat = fs.statSync(absSymlinkSrc, { throwIfNoEntry: false });
+          if (srcStat?.isFile()) {
+            pendingWrites.set(targetPath, fs.readFileSync(absSymlinkSrc));
+          }
+        } catch {
+          // src not readable — omit from pendingWrites
+        }
+        continue;
+      }
+
+      const result = await fetchSource(
+        entry,
+        workingDir,
+        preVars,
+        cache,
+        isSelf ? () => configPath : undefined,
+        pendingWrites,
+        configBase,
+      );
+
+      if (result.allSkipped && !isSelf) {
+        let symlinkPath2: string;
+        try {
+          symlinkPath2 = resolveTargetPath(entry, '', workingDir, vars);
+        } catch {
+          console.warn(
+            `Warning: skipped entry has an unresolvable target path — stale cleanup disabled for this run.`,
+          );
+          hasUnresolvableSkippedPath = true;
+          continue;
+        }
+        skippedPaths.add(symlinkPath2);
+        // resolveFollowSymlink security errors propagate as hard failures.
+        const resolvedTarget2 = resolveVars(entry.target, vars);
+        if (
+          !resolvedTarget2.endsWith('/') &&
+          !resolvedTarget2.endsWith(path.sep)
+        ) {
+          const realPath = resolveFollowSymlink(
+            symlinkPath2,
+            entry,
+            workingDir,
+          );
+          if (realPath !== symlinkPath2) skippedPaths.add(realPath);
+        }
+        continue;
+      }
+
+      for (const rec of result.sourceRecords) {
+        if (!rec.matched && !seenShaErrorLabels.has(rec.sourceLabel)) {
+          seenShaErrorLabels.add(rec.sourceLabel);
+          shaErrors.push({
+            sourceLabel: rec.sourceLabel,
+            expectedSha: rec.expectedSha!,
+            observedSha: rec.observedSha,
+          });
+        }
+      }
+
+      if (isSelf && result.files.size !== 1) {
+        throw new Error(
+          `$self must resolve to exactly one file, got ${result.files.size}. Use yaml: true or json: true to merge multiple sources into one.`,
+        );
+      }
+
+      const applyTemplate =
+        entry.template !== undefined
+          ? (await import('../processors/template')).applyTemplate
+          : undefined;
+      for (const [relPath, rawContent] of result.files) {
+        // Compute the target path early so per-file vars ($path, $filename,
+        // $basename, $ext, $dirname, $basedir) are available in processors.
+        // For $self the path resolution would fail (config path is absolute),
+        // so we skip it and fall back to the base vars.
+        const targetPath = isSelf
+          ? undefined
+          : resolveTargetPath(entry, relPath, workingDir, vars);
+        const entryVars =
+          targetPath !== undefined
+            ? Object.assign(
+                Object.create(null) as typeof vars,
+                vars,
+                buildFileVars(targetPath),
+              )
+            : vars;
+        // Resolve any symlink on the target path early so insert-mode tracking
+        // and all subsequent operations use the real file path consistently.
+        const effectivePath =
+          targetPath !== undefined
+            ? resolveFollowSymlink(targetPath, entry, workingDir)
+            : undefined;
+
+        let content = rawContent;
+        if (!isBinary(content)) {
+          // Processors only operate on text; binary files are passed through unchanged.
+          const rawText = content.toString('utf8');
+          let text = rawText;
+          if (applyTemplate !== undefined) {
+            text = await applyTemplate(
+              text,
+              entry.template!,
+              entryVars,
+              relPath || undefined,
+            );
+          }
+          if (entry.replace?.length)
+            text = applyReplace(text, entry.replace, entryVars);
+          if (entry.on?.write)
+            text = applyWriteHook(text, entry.on.write, entryVars);
+          if (entry.strategy === 'insert' && !isSelf) {
+            const lastInserted =
+              history.getInsertedFragment(effectivePath!) ?? null;
+            if (
+              lastInserted !== null &&
+              rawText === lastInserted.raw &&
+              text === lastInserted.processed &&
+              fs.existsSync(effectivePath!)
+            ) {
+              skippedPaths.add(targetPath!); // keep stale detection from treating this as missing
+              if (effectivePath !== targetPath!)
+                skippedPaths.add(effectivePath!);
+              continue; // source and processed output unchanged — skip write entirely (no-op)
+            }
+            const processedText = text;
+            text = applyInsertMode(
+              entry,
+              processedText,
+              lastInserted?.processed ?? null,
+              effectivePath!,
+            );
+            insertedFragments.set(effectivePath!, {
+              raw: rawText,
+              processed: processedText,
+            });
+          }
+          content = Buffer.from(text, 'utf8');
+        }
+        if (isSelf) {
+          selfContent = content.toString('utf8');
+          selfMode = entry.mode;
+          selfSudo = entry.sudo || undefined;
+          if (result.sourceRecords.length > 0)
+            selfSourceRecords = result.sourceRecords;
+          continue;
+        }
+        // effectivePath is always defined here: isSelf is false (we continued above),
+        // so targetPath was defined, and effectivePath = resolveFollowSymlink(targetPath, ...).
+        const ep = effectivePath!;
+        const diff = computeDiff(ep, content, entry.mode);
+        allDiffs.push(diff);
+        const backupPath =
+          entry.backup && diff.hasChanges && !diff.isNew
+            ? resolveBackupPath(
+                entry.backup,
+                ep,
+                workingDir,
+                vars,
+                config.backup_roots ?? [],
+              )
+            : undefined;
+        writeTargets.push({
+          targetPath: ep,
+          content,
+          mode: entry.mode,
+          backupPath,
+          writeInPlace: entry.writeInPlace,
+          sudo: entry.sudo,
+        });
+        if (entry.on && diff.hasChanges) {
+          fileHookContexts.push({
+            targetPath: ep,
+            hooks: entry.on,
+            isNew: diff.isNew,
+          });
+        }
+        pendingWrites.set(ep, content);
+        // Also index under the original symlink path so local source lookups
+        // using the symlink path (not the resolved real path) still find the
+        // pending content within the same fetch loop.
+        if (ep !== targetPath!) {
+          pendingWrites.set(targetPath!, content);
+          // Mark the symlink path as covered so stale detection doesn't treat
+          // a previously-tracked symlink path as stale when followSymlink is
+          // enabled on an entry that was first pulled without it.
+          skippedPaths.add(targetPath!);
+        }
+        if (result.sourceRecords.length > 0) {
+          sourceRecordsByTarget.set(ep, result.sourceRecords);
+        }
+      }
+    } catch (err: unknown) {
+      console.error(
+        `Error processing ${JSON.stringify(entry.src)}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      hasError = true;
+    }
+  }
+
+  return {
+    writeTargets,
+    allDiffs,
+    fileHookContexts,
+    hasError,
+    shaErrors,
+    sourceRecordsByTarget,
+    skippedPaths,
+    hasUnresolvableSkippedPath,
+    insertedFragments,
+    selfContent,
+    selfMode,
+    selfSudo,
+    selfSourceRecords,
+  };
+}
+
+function printShaErrors(errors: ShaError[]): void {
+  for (const e of errors) {
+    console.error(
+      `SHA mismatch for ${formatSourceLabel(e.sourceLabel)}\n` +
+        `  expected: ${e.expectedSha}\n` +
+        `  got:      ${e.observedSha}`,
+    );
+  }
+}
+
+// Merges new file refs into the surviving refs from the last pull.
+// Paths in excludePaths and paths already present in newRefs are dropped from
+// lastFiles so the three caller sites (stale-only, success, partial-failure)
+// share one definition of "surviving refs" rather than duplicating the logic.
+function mergeLastPullRefs(
+  lastFiles: PullLogFileRef[],
+  excludePaths: Set<string>,
+  newRefs: PullLogFileRef[],
+): PullLogFileRef[] {
+  const newPaths = new Set(newRefs.map((r) => r.absolutePath));
+  return [
+    ...lastFiles.filter(
+      (r) => !excludePaths.has(r.absolutePath) && !newPaths.has(r.absolutePath),
+    ),
+    ...newRefs,
+  ];
+}
+
+export function pullCommand(): Command {
+  return new Command('pull')
+    .description('Pull remote sources and write to local files')
+    .option('-y, --yes', 'skip confirmation prompt')
+    .option(
+      '--accept-changes',
+      'accept SHA mismatches, update SHA values in config, and apply changes',
+    )
+    .action(async (options: unknown, cmd: Command) => {
+      const opts = options as { yes?: boolean; acceptChanges?: boolean };
+      const configPath = resolveConfigPath(
+        cmd.parent?.opts().config as string | undefined,
+      );
+      const rawWorkingDir = cmd.parent?.opts().workingDir as string | undefined;
+      const workingDir = rawWorkingDir
+        ? path.resolve(expandTilde(rawWorkingDir))
+        : process.cwd();
+      const via = parseVia(
+        cmd.parent?.opts().via as string | undefined,
+        '--via',
+      );
+
+      let config;
+      try {
+        config = await loadConfig(configPath, via);
+      } catch (err: unknown) {
+        console.error(err instanceof Error ? err.message : String(err));
+        process.exit(2);
+      }
+
+      const history = new HistoryManager(
+        normalizeConfigKey(configPath),
+        workingDir,
+      );
+      const historyAvailable = history.ensureStorageDir();
+      const pullId = historyAvailable ? history.openPullSession() : null;
+
+      const fetchCache: FetchCache = new Map();
+      const dateVars = buildDateVars();
+      const configBase = deriveConfigBase(configPath);
+      const firstPass = await runFetchLoop(
+        config,
+        workingDir,
+        dateVars,
+        fetchCache,
+        configPath,
+        history,
+        configBase,
+      );
+      let { writeTargets, allDiffs, sourceRecordsByTarget } = firstPass;
+      let fileHookContexts = firstPass.fileHookContexts;
+      let insertedFragments = firstPass.insertedFragments;
+      let skippedPaths = firstPass.skippedPaths;
+      let hasUnresolvableSkippedPath = firstPass.hasUnresolvableSkippedPath;
+
+      if (firstPass.hasError) {
+        console.error('Aborting due to errors.');
+        process.exit(2);
+      }
+
+      // SHA validation — abort unless --accept-changes
+      if (firstPass.shaErrors.length > 0 && !opts.acceptChanges) {
+        printShaErrors(firstPass.shaErrors);
+        console.error(
+          '\nRun `avanti pull --accept-changes` to review the diff and update SHA values.',
+        );
+        process.exit(2);
+      }
+
+      // $self stabilization loop: keep fetching $self until content converges,
+      // then fetch all non-$self file entries from the stable config.
+      if (firstPass.selfContent !== undefined) {
+        let prevSelfContent: string | undefined;
+        let currentSelfContent = firstPass.selfContent;
+        let currentSelfMode = firstPass.selfMode;
+        let currentSelfSudo = firstPass.selfSudo;
+        let currentSelfSourceRecords = firstPass.selfSourceRecords;
+        let stableConfig: AvantiConfig | undefined;
+
+        while (stableConfig === undefined) {
+          let currentConfig: AvantiConfig;
+          try {
+            currentConfig = parseConfigContent(currentSelfContent);
+          } catch (err: unknown) {
+            console.error(
+              `$self config is invalid: ${err instanceof Error ? err.message : String(err)}`,
+            );
+            process.exit(2);
+          }
+
+          // Stable when: merged config has no $self, or fetching $self produced
+          // the same content as the previous iteration (fixed point reached).
+          if (
+            !(SELF_KEY in currentConfig.files) ||
+            currentSelfContent === prevSelfContent
+          ) {
+            stableConfig = currentConfig;
+            break;
+          }
+
+          console.log(
+            '$self config resolved; re-evaluating with merged config...',
+          );
+          const next = await runFetchLoop(
+            currentConfig,
+            workingDir,
+            dateVars,
+            fetchCache,
+            configPath,
+            history,
+            configBase,
+          );
+
+          if (next.hasError) {
+            console.error(
+              'Aborting due to errors in $self re-evaluated config.',
+            );
+            process.exit(2);
+          }
+          if (next.shaErrors.length > 0 && !opts.acceptChanges) {
+            printShaErrors(next.shaErrors);
+            console.error(
+              '\nRun `avanti pull --accept-changes` to review the diff and update SHA values.',
+            );
+            process.exit(2);
+          }
+          const seenInLoop = new Set(
+            firstPass.shaErrors.map((e) => e.sourceLabel),
+          );
+          for (const e of next.shaErrors) {
+            if (!seenInLoop.has(e.sourceLabel)) firstPass.shaErrors.push(e);
+          }
+
+          if (next.selfContent === undefined) {
+            stableConfig = currentConfig;
+            break;
+          }
+
+          prevSelfContent = currentSelfContent;
+          currentSelfContent = next.selfContent;
+          currentSelfMode = next.selfMode;
+          currentSelfSudo = next.selfSudo;
+          currentSelfSourceRecords = next.selfSourceRecords;
+        }
+
+        if (stableConfig !== undefined) {
+          // Fetch all non-$self entries from the stable config.
+          // Use Object.create(null) to preserve the null-prototype invariant
+          // established by parseConfigContent and avoid prototype pollution.
+          const filesWithoutSelf = Object.create(
+            null,
+          ) as typeof stableConfig.files;
+          for (const [k, v] of Object.entries(stableConfig.files)) {
+            if (k !== SELF_KEY) filesWithoutSelf[k] = v;
+          }
+          if (Object.keys(filesWithoutSelf).length > 0) {
+            const second = await runFetchLoop(
+              { ...stableConfig, files: filesWithoutSelf },
+              workingDir,
+              dateVars,
+              fetchCache,
+              configPath,
+              history,
+              configBase,
+            );
+            if (second.hasError) {
+              console.error('Aborting due to errors.');
+              process.exit(2);
+            }
+            if (second.shaErrors.length > 0 && !opts.acceptChanges) {
+              printShaErrors(second.shaErrors);
+              console.error(
+                '\nRun `avanti pull --accept-changes` to review the diff and update SHA values.',
+              );
+              process.exit(2);
+            }
+            writeTargets = second.writeTargets;
+            allDiffs = second.allDiffs;
+            fileHookContexts = second.fileHookContexts;
+            sourceRecordsByTarget = second.sourceRecordsByTarget;
+            insertedFragments = second.insertedFragments;
+            skippedPaths = second.skippedPaths;
+            if (second.hasUnresolvableSkippedPath)
+              hasUnresolvableSkippedPath = true;
+            const seenInSecond = new Set(
+              firstPass.shaErrors.map((e) => e.sourceLabel),
+            );
+            for (const e of second.shaErrors) {
+              if (!seenInSecond.has(e.sourceLabel)) firstPass.shaErrors.push(e);
+            }
+          }
+          // For local configs, write the stable $self content back to disk.
+          // If the stable config also declares a file entry for configPath,
+          // replace it with the stabilized $self content so the on-disk config
+          // always matches what was actually used for this run.
+          if (!isRemoteConfigSpec(configPath)) {
+            const selfBuf = Buffer.from(currentSelfContent, 'utf8');
+            const existingIdx = writeTargets.findIndex(
+              (t) => t.targetPath === configPath,
+            );
+            if (existingIdx === -1) {
+              writeTargets.push({
+                targetPath: configPath,
+                content: selfBuf,
+                mode: currentSelfMode,
+                sudo: currentSelfSudo,
+              });
+              allDiffs.push(computeDiff(configPath, selfBuf, currentSelfMode));
+            } else {
+              const resolvedSelfMode =
+                currentSelfMode ?? writeTargets[existingIdx].mode;
+              writeTargets[existingIdx] = {
+                ...writeTargets[existingIdx],
+                content: selfBuf,
+                mode: resolvedSelfMode,
+                // Fall back to the existing target's sudo identity when $self
+                // doesn't specify one, so a privileged config file keeps its
+                // write privileges after $self stabilization.
+                sudo: currentSelfSudo ?? writeTargets[existingIdx].sudo,
+              };
+              allDiffs[existingIdx] = computeDiff(
+                configPath,
+                selfBuf,
+                resolvedSelfMode,
+              );
+            }
+            // Content comes from $self — attribute the config file write to the
+            // $self sources so history reflects the actual origin.
+            if (currentSelfSourceRecords !== undefined) {
+              sourceRecordsByTarget.set(configPath, currentSelfSourceRecords);
+            } else {
+              sourceRecordsByTarget.delete(configPath);
+            }
+          }
+        }
+      }
+
+      // Detect stale files: present in last pull but no longer in current source fetch
+      const staleToDelete: string[] = [];
+      // Maps path → sudo identity for stale files that need privileged deletion
+      const staleDeleteSudo = new Map<string, true | string>();
+      // Maps path → staleDiffs index so we can check hasChanges before auth/write
+      const staleDeleteDiffIndex = new Map<string, number>();
+      const staleToRestore: WriteTarget[] = [];
+      const staleDiffs: FileDiff[] = [];
+      // Parallel array: staleDiffs index for each staleToRestore entry
+      const staleRestoreDiffIndices: number[] = [];
+      let staleHasError = false;
+
+      if (historyAvailable && !hasUnresolvableSkippedPath) {
+        const lastFiles = history.getLastPullFiles();
+        const currentPaths = new Set(writeTargets.map((t) => t.targetPath));
+        const skippedPathsArr = [...skippedPaths];
+        for (const ref of lastFiles) {
+          if (currentPaths.has(ref.absolutePath)) continue;
+          // Files covered by a skipped (condition-gated) entry should not be
+          // treated as stale — the entry is still in the config, it just didn't
+          // run this time. Exact match for file entries; prefix match for
+          // directory entries (whose resolved base path is the directory itself).
+          const coveredBySkipped = skippedPathsArr.some(
+            (sp) =>
+              ref.absolutePath === sp ||
+              ref.absolutePath.startsWith(sp + path.sep),
+          );
+          if (coveredBySkipped) continue;
+          const meta = history.getFileMeta(ref.absolutePath);
+          if (!meta) continue;
+          if (meta.existedBeforeAvanti) {
+            const original = history.readVersion(ref.absolutePath, 0);
+            if (original !== null) {
+              if (meta.v0IsSymlink) {
+                if (process.platform === 'win32') {
+                  console.error(
+                    `symlink: ${ref.absolutePath}: cannot restore pre-avanti symlink on Windows`,
+                  );
+                  staleHasError = true;
+                  // Show the actual stored target so the user knows what cannot
+                  // be restored. No staleRestoreDiffIndices push — there is no
+                  // corresponding staleToRestore entry for error-only diffs.
+                  const symlinkTarget = original.toString('utf8');
+                  const warnDiff = buildNewSymlinkDiff(
+                    ref.absolutePath,
+                    symlinkTarget,
+                  );
+                  staleDiffs.push({ ...warnDiff, hasChanges: true });
+                } else {
+                  const symlinkTarget = original.toString('utf8');
+                  const staleDiff = computeSymlinkDiff(
+                    ref.absolutePath,
+                    symlinkTarget,
+                  );
+                  if (staleDiff.isDirectory) {
+                    console.error(
+                      `symlink: ${ref.absolutePath} is a directory; cannot restore symlink over directory`,
+                    );
+                    staleHasError = true;
+                    // No staleRestoreDiffIndices push — no corresponding
+                    // staleToRestore entry for this error-only diff.
+                    staleDiffs.push(staleDiff);
+                  } else if (staleDiff.hasChanges) {
+                    staleToRestore.push({
+                      targetPath: ref.absolutePath,
+                      content: original,
+                      symlinkTarget,
+                      sudo: meta.sudo,
+                    });
+                    staleRestoreDiffIndices.push(staleDiffs.length);
+                    staleDiffs.push(staleDiff);
+                  }
+                }
+              } else {
+                staleToRestore.push({
+                  targetPath: ref.absolutePath,
+                  content: original,
+                  sudo: meta.sudo,
+                });
+                staleRestoreDiffIndices.push(staleDiffs.length);
+                const staleDiff = computeDiff(ref.absolutePath, original);
+                // A missing file with empty v0 produces isNew=true but
+                // hasChanges=false and an empty patch, so formatDiff returns ''.
+                // Rebuild as a proper new-file diff so the confirmation output
+                // shows the recreate action and the patch is consistent.
+                staleDiffs.push(
+                  staleDiff.isNew
+                    ? buildNewFileDiff(ref.absolutePath, original)
+                    : staleDiff,
+                );
+              }
+            } else {
+              console.warn(
+                `Warning: cannot restore original for ${ref.absolutePath} — v0 was never captured (file was unreadable at first pull). Leaving file unchanged.`,
+              );
+            }
+          } else {
+            staleToDelete.push(ref.absolutePath);
+            if (meta.sudo) staleDeleteSudo.set(ref.absolutePath, meta.sudo);
+            staleDeleteDiffIndex.set(ref.absolutePath, staleDiffs.length);
+            staleDiffs.push(computeDeleteDiff(ref.absolutePath));
+          }
+        }
+      }
+
+      // Windows does not have sudo; fail before any authentication attempt.
+      if (
+        process.platform === 'win32' &&
+        (writeTargets.some((t) => t.sudo) ||
+          staleToRestore.some((t) => t.sudo) ||
+          staleDeleteSudo.size > 0)
+      ) {
+        console.error('sudo is not supported on Windows');
+        process.exit(2);
+      }
+
+      // Symlink write targets that are real directories are rejected in
+      // runFetchLoop when the unprivileged lstat succeeds. Targets behind
+      // non-searchable parents (lstatFailed=true) are checked after the
+      // stat-batch below, which runs post-confirm and post-session-open — so for
+      // those targets, a sudo password prompt may appear before the directory
+      // conflict is detected. Pulling the stat-batch earlier is not possible:
+      // reading privileged files requires an open session.
+      let hasDirConflict = false;
+      // Sudo sessions are opened after the user confirms, not before the diff
+      // is shown. Pre-reads and idempotency checks run post-confirm too, so the
+      // diff may show "unreadable" for sudo targets whose parent directories are
+      // non-searchable or whose content cannot be read by the invoking user.
+      // This is the conservative, correct order: the password prompt never
+      // appears before the user has reviewed the intended changes.
+      const sudoSessions = new Map<true | string, SudoWorkerSession>();
+
+      // Declare preReads here so it is in scope for the post-confirm block and
+      // the v0 capture below (both reference preReads.get(targetPath)).
+      let preReads: Map<
+        string,
+        { contentB64: string; isSymlink?: boolean } | null
+      > = new Map();
+      // Stat-read results for lstatFailed sudo targets (filled post-confirm).
+      let lstatFailedStats = new Map<
+        string,
+        {
+          exists: boolean;
+          isSymlink: boolean;
+          isDirectory: boolean;
+          isSpecialFile: boolean;
+          mode?: string;
+          contentB64?: string;
+        }
+      >();
+
+      const hasChanges =
+        allDiffs.some(
+          (d) => d.hasChanges || d.isNew || d.lstatFailed || d.isUnreadable,
+        ) ||
+        staleDiffs.some(
+          (d) => d.hasChanges || d.isNew || d.lstatFailed || d.isUnreadable,
+        );
+      printDiffs([...allDiffs, ...staleDiffs]);
+
+      if (staleHasError) {
+        closeAllSessions(sudoSessions);
+        process.exit(2);
+      }
+
+      // Show SHA mismatch summary when using --accept-changes
+      if (opts.acceptChanges && firstPass.shaErrors.length > 0) {
+        console.error('');
+        printShaErrors(firstPass.shaErrors);
+      }
+
+      if (!hasChanges && firstPass.shaErrors.length === 0) {
+        if (historyAvailable && insertedFragments.size > 0) {
+          for (const [targetPath, fragment] of insertedFragments) {
+            history.saveInsertedFragment(
+              targetPath,
+              fragment.raw,
+              fragment.processed,
+            );
+          }
+        }
+        // Prune no-op stale refs from the pull log. When all diffs are clean,
+        // every stale entry (delete or restore) was already resolved outside of
+        // avanti (file manually deleted, or content already matches v0). Without
+        // this, those refs remain in the last-pull log and can incorrectly flag
+        // a future file at the same path as stale.
+        if (
+          pullId &&
+          historyAvailable &&
+          (staleToDelete.length > 0 || staleToRestore.length > 0)
+        ) {
+          const noopStalePaths = new Set<string>([
+            ...staleToDelete,
+            ...staleToRestore.map((t) => t.targetPath),
+          ]);
+          // Preserve existing sudo on surviving refs — no file was written, so
+          // the on-disk ownership reflects the previous write identity, not the
+          // current config. Overwriting here would let stale cleanup run with
+          // the wrong privileges for a file it never re-wrote.
+          history.closePullSession(
+            pullId,
+            normalizeConfigKey(configPath),
+            mergeLastPullRefs(history.getLastPullFiles(), noopStalePaths, []),
+          );
+        }
+        closeAllSessions(sudoSessions);
+        console.log('Nothing to do.');
+        process.exit(0);
+      }
+
+      const yes: boolean = opts.yes ?? false;
+      if (!yes) {
+        const promptMsg =
+          opts.acceptChanges && firstPass.shaErrors.length > 0
+            ? 'Accept new SHA values and apply changes? [y/N] '
+            : 'Apply changes? [y/N] ';
+        let ok: boolean;
+        try {
+          ok = await confirm(promptMsg);
+        } catch (err) {
+          closeAllSessions(sudoSessions);
+          throw err;
+        }
+        if (!ok) {
+          closeAllSessions(sudoSessions);
+          console.log('Aborted.');
+          process.exit(0);
+        }
+      }
+
+      // Open one persistent sudo worker session per distinct sudo identity,
+      // after the user has confirmed. All sudo operations (stat-reads, pre-reads,
+      // idempotency checks, and writes) share these sessions so the password
+      // prompt appears at most once per identity, after the diff is reviewed.
+      if (process.platform !== 'win32') {
+        const sudoIds = new Set<true | string>();
+        for (let i = 0; i < writeTargets.length; i++) {
+          const t = writeTargets[i];
+          if (
+            t.sudo &&
+            (allDiffs[i].hasChanges ||
+              allDiffs[i].isNew ||
+              allDiffs[i].lstatFailed ||
+              allDiffs[i].isUnreadable)
+          ) {
+            sudoIds.add(t.sudo);
+          }
+        }
+        for (let i = 0; i < staleToRestore.length; i++) {
+          const t = staleToRestore[i];
+          if (t.sudo) {
+            const diffIdx = staleRestoreDiffIndices[i];
+            const d = staleDiffs[diffIdx];
+            if (d.hasChanges || d.isNew || d.lstatFailed || d.isUnreadable) {
+              sudoIds.add(t.sudo);
+            }
+          }
+        }
+        // Mode-only sudo targets (content already matches, only permissions
+        // drifted): hasChanges=true but contentChanged=false. Include them so
+        // sudoAtomicWrite shares the same session as content writes.
+        for (let i = 0; i < writeTargets.length; i++) {
+          const t = writeTargets[i];
+          if (t.sudo && allDiffs[i].modeChange && !allDiffs[i].contentChanged) {
+            sudoIds.add(t.sudo);
+          }
+        }
+        // Delete-only identities — only when the stale file still exists.
+        for (const [p, sv] of staleDeleteSudo) {
+          const idx = staleDeleteDiffIndex.get(p);
+          if (idx !== undefined && staleDiffs[idx]?.hasChanges) {
+            sudoIds.add(sv);
+          }
+        }
+        try {
+          for (const [id, session] of openPrivilegedSessions(sudoIds))
+            sudoSessions.set(id, session);
+        } catch (err) {
+          closeAllSessions(sudoSessions);
+          console.error(err instanceof Error ? err.message : String(err));
+          process.exit(2);
+        }
+      }
+
+      // For entries where lstatSync failed (parent directory not searchable),
+      // batch one stat-read op per sudo identity to determine existence, type,
+      // and mode without spawning separate sudo processes.
+      const lstatFailedBatch: Array<{ filePath: string; sudo: true | string }> =
+        [
+          ...writeTargets
+            .filter((t, i) => allDiffs[i].lstatFailed && t.sudo)
+            .map((t) => ({ filePath: t.targetPath, sudo: t.sudo! })),
+          ...staleToRestore
+            .filter((t, i) => {
+              const diffIdx = staleRestoreDiffIndices[i];
+              return staleDiffs[diffIdx]?.lstatFailed && t.sudo;
+            })
+            .map((t) => ({ filePath: t.targetPath, sudo: t.sudo! })),
+        ];
+      if (lstatFailedBatch.length > 0) {
+        try {
+          lstatFailedStats = await sudoStatBatch(
+            lstatFailedBatch,
+            sudoSessions,
+          );
+        } catch (err) {
+          closeAllSessions(sudoSessions);
+          console.error(
+            `stat-read failed: ${err instanceof Error ? err.message : String(err)}`,
+          );
+          process.exit(2);
+        }
+      }
+      for (let i = 0; i < writeTargets.length; i++) {
+        const target = writeTargets[i];
+        const diff = allDiffs[i];
+        if (diff.lstatFailed && target.sudo) {
+          const stat = lstatFailedStats.get(target.targetPath);
+          if (stat?.isSpecialFile) {
+            console.warn(
+              `Warning: ${target.targetPath} is a special file (FIFO/socket/device); skipping write`,
+            );
+            allDiffs[i] = { ...diff, hasChanges: false, isNew: false };
+            writeTargets[i] = { ...target, backupPath: undefined };
+            continue;
+          }
+          const exists = stat ? stat.exists : false;
+          const isNew = !exists;
+          const modeChange = (() => {
+            const desiredMode = target.mode;
+            const actualModeStr = stat?.mode;
+            if (desiredMode && actualModeStr && !isNew) {
+              const desired = parseInt(desiredMode.replace(/^0[oO]/, ''), 8);
+              const current = parseInt(actualModeStr, 8);
+              if (!isNaN(desired) && !isNaN(current) && desired !== current) {
+                return { from: current, to: desired };
+              }
+              return undefined;
+            }
+            return diff.modeChange;
+          })();
+          if (isNew) {
+            if (target.symlinkTarget !== undefined) {
+              allDiffs[i] = buildNewSymlinkDiff(
+                diff.targetPath,
+                target.symlinkTarget,
+              );
+            } else {
+              allDiffs[i] = buildNewFileDiff(
+                diff.targetPath,
+                target.content,
+                modeChange,
+              );
+            }
+            writeTargets[i] = { ...target, backupPath: undefined };
+          } else {
+            let updatedDiff: FileDiff = { ...diff, isNew, modeChange };
+            // exists is true here, so the stat-read result is present.
+            if (target.symlinkTarget !== undefined) {
+              if (!stat!.isSymlink && stat!.isDirectory) {
+                updatedDiff = { ...updatedDiff, isDirectory: true };
+              }
+            }
+            allDiffs[i] = updatedDiff;
+          }
+          const hookIdx = fileHookContexts.findIndex(
+            (ctx) => ctx.targetPath === target.targetPath,
+          );
+          if (hookIdx >= 0) {
+            fileHookContexts[hookIdx] = { ...fileHookContexts[hookIdx], isNew };
+          }
+        }
+      }
+      for (let i = 0; i < staleToRestore.length; i++) {
+        const diffIdx = staleRestoreDiffIndices[i];
+        if (staleDiffs[diffIdx]?.lstatFailed && staleToRestore[i].sudo) {
+          const stat = lstatFailedStats.get(staleToRestore[i].targetPath);
+          if (!stat) continue;
+          const entry = staleToRestore[i];
+          if (!stat.exists) {
+            if (entry.symlinkTarget !== undefined) {
+              staleDiffs[diffIdx] = buildNewSymlinkDiff(
+                entry.targetPath,
+                entry.symlinkTarget,
+              );
+            } else {
+              staleDiffs[diffIdx] = buildNewFileDiff(
+                entry.targetPath,
+                entry.content,
+                staleDiffs[diffIdx]?.modeChange,
+              );
+            }
+            staleToRestore[i] = { ...entry, backupPath: undefined };
+          } else if (entry.symlinkTarget !== undefined) {
+            const isDirectory = !stat.isSymlink && stat.isDirectory;
+            if (isDirectory) {
+              staleDiffs[diffIdx] = {
+                ...staleDiffs[diffIdx],
+                isDirectory: true,
+              };
+            }
+          }
+        }
+      }
+      // Second conflict pass: detect directory conflicts surfaced by the stat-reads
+      // above (lstatFailed targets whose parent was non-searchable). By this point
+      // sessions are open and the user has confirmed — aborting here is correct but
+      // happens after the sudo password prompt, unlike the first pass above.
+      for (const d of [...allDiffs, ...staleDiffs]) {
+        if (d?.isDirectory && d?.isSymlink) {
+          console.error(
+            `symlink: ${d.targetPath} is a directory; cannot replace with a symlink`,
+          );
+          hasDirConflict = true;
+        }
+      }
+      if (hasDirConflict) {
+        closeAllSessions(sudoSessions);
+        process.exit(2);
+      }
+
+      // Pre-reads for unreadable sudo targets: read the current file content via
+      // the sudo session for idempotency (skip write when content already matches)
+      // and v0 capture (record original content before overwrite).
+      const preReadRequests: Array<{
+        filePath: string;
+        sudo: true | string;
+        type: 'stat-read';
+      }> = [];
+      for (let i = 0; i < writeTargets.length; i++) {
+        if (allDiffs[i].isUnreadable && writeTargets[i].sudo) {
+          preReadRequests.push({
+            filePath: writeTargets[i].targetPath,
+            sudo: writeTargets[i].sudo!,
+            type: 'stat-read',
+          });
+        }
+      }
+      for (let i = 0; i < staleToRestore.length; i++) {
+        const diffIdx = staleRestoreDiffIndices[i];
+        if (staleDiffs[diffIdx]?.isUnreadable && staleToRestore[i].sudo) {
+          preReadRequests.push({
+            filePath: staleToRestore[i].targetPath,
+            sudo: staleToRestore[i].sudo!,
+            type: 'stat-read',
+          });
+        }
+      }
+      if (preReadRequests.length > 0) {
+        try {
+          preReads = await sudoAtomicRead(preReadRequests, sudoSessions);
+        } catch (err) {
+          closeAllSessions(sudoSessions);
+          console.error(
+            `Read failed: ${err instanceof Error ? err.message : String(err)}`,
+          );
+          process.exit(2);
+        }
+      }
+
+      // Idempotency: compare current file content via sudo against the desired
+      // content. Suppress the write when they already match.
+      for (let i = 0; i < writeTargets.length; i++) {
+        if (allDiffs[i].isUnreadable && writeTargets[i].sudo) {
+          const preRead = preReads.get(writeTargets[i].targetPath);
+          if (preRead === undefined) {
+            closeAllSessions(sudoSessions);
+            throw new Error(
+              `internal: missing pre-read result for sudo target ${writeTargets[i].targetPath}`,
+            );
+          }
+          if (preRead === null) continue;
+          const preReadBuf = Buffer.from(preRead.contentB64, 'base64');
+
+          if (writeTargets[i].symlinkTarget !== undefined) {
+            if (
+              preRead.isSymlink &&
+              preReadBuf.toString() === writeTargets[i].symlinkTarget
+            ) {
+              // Symlink targets carry no mode, so there is no mode drift left.
+              allDiffs[i] = {
+                ...allDiffs[i],
+                contentChanged: false,
+                hasChanges: false,
+              };
+              const hookIdx = fileHookContexts.findIndex(
+                (ctx) => ctx.targetPath === writeTargets[i].targetPath,
+              );
+              if (hookIdx >= 0) {
+                fileHookContexts.splice(hookIdx, 1);
+              }
+            }
+            continue;
+          }
+          if (preRead.isSymlink) continue;
+
+          const current = preReadBuf;
+          if (current.equals(writeTargets[i].content)) {
+            const updatedHasChanges = allDiffs[i].modeChange !== undefined;
+            allDiffs[i] = {
+              ...allDiffs[i],
+              contentChanged: false,
+              hasChanges: updatedHasChanges,
+            };
+            if (!updatedHasChanges) {
+              const hookIdx = fileHookContexts.findIndex(
+                (ctx) => ctx.targetPath === writeTargets[i].targetPath,
+              );
+              if (hookIdx >= 0) {
+                fileHookContexts.splice(hookIdx, 1);
+              }
+            }
+          }
+        }
+      }
+      for (let i = 0; i < staleToRestore.length; i++) {
+        const diffIdx = staleRestoreDiffIndices[i];
+        if (staleDiffs[diffIdx]?.isUnreadable && staleToRestore[i].sudo) {
+          const preRead = preReads.get(staleToRestore[i].targetPath);
+          if (preRead === undefined) {
+            closeAllSessions(sudoSessions);
+            throw new Error(
+              `internal: missing pre-read result for sudo stale-restore target ${staleToRestore[i].targetPath}`,
+            );
+          }
+          if (preRead === null) continue;
+          if (preRead.isSymlink) continue;
+          const current = Buffer.from(preRead.contentB64, 'base64');
+          if (current.equals(staleToRestore[i].content)) {
+            staleDiffs[diffIdx] = {
+              ...staleDiffs[diffIdx],
+              contentChanged: false,
+              hasChanges: staleDiffs[diffIdx].modeChange !== undefined,
+            };
+          }
+        }
+      }
+
+      // Warn when --accept-changes is used with a remote config: SHA values
+      // cannot be written back, so the mismatch will recur on the next pull.
+      if (
+        opts.acceptChanges &&
+        firstPass.shaErrors.length > 0 &&
+        isRemoteConfigSpec(configPath)
+      ) {
+        console.warn(
+          'Warning: config is remote; SHA values cannot be written back. ' +
+            'Mismatches accepted for this session only.',
+        );
+      }
+
+      // Pre-apply SHA updates to the config write target in-memory so that both
+      // history and the on-disk file reflect the final pinned state in one pass.
+      const shaUpdates =
+        opts.acceptChanges &&
+        firstPass.shaErrors.length > 0 &&
+        !isRemoteConfigSpec(configPath)
+          ? new Map(
+              firstPass.shaErrors.map((e) => [e.sourceLabel, e.observedSha]),
+            )
+          : null;
+      let configShaPreApplied = false;
+      if (shaUpdates !== null) {
+        const configTargetIdx = writeTargets.findIndex(
+          (t) => t.targetPath === configPath,
+        );
+        if (configTargetIdx !== -1) {
+          const patched = applyUpdatedShas(
+            writeTargets[configTargetIdx].content.toString('utf8'),
+            shaUpdates,
+          );
+          if (patched !== null) {
+            const patchedBuf = Buffer.from(patched, 'utf8');
+            writeTargets[configTargetIdx] = {
+              ...writeTargets[configTargetIdx],
+              content: patchedBuf,
+            };
+            // Recompute diff so staging and atomicWrite both see SHA-patched content,
+            // even when the original content diff was empty.
+            allDiffs[configTargetIdx] = computeDiff(
+              writeTargets[configTargetIdx].targetPath,
+              patchedBuf,
+            );
+            configShaPreApplied = true;
+          }
+        }
+      }
+
+      for (const ctx of fileHookContexts) {
+        const env = {
+          AVANTI_TARGET: ctx.targetPath,
+          AVANTI_IS_NEW: String(ctx.isNew),
+        };
+        const runNamedHook = (key: string, script: string): void => {
+          try {
+            runHook(script, env);
+          } catch (err: unknown) {
+            closeAllSessions(sudoSessions);
+            console.error(
+              `Hook ${key} failed for ${ctx.targetPath}: ${err instanceof Error ? err.message : String(err)}`,
+            );
+            process.exit(2);
+          }
+        };
+        if (ctx.hooks.beforeWrite)
+          runNamedHook('beforeWrite', ctx.hooks.beforeWrite);
+        if (ctx.isNew && ctx.hooks.beforeCreate)
+          runNamedHook('beforeCreate', ctx.hooks.beforeCreate);
+        if (!ctx.isNew && ctx.hooks.beforeUpdate)
+          runNamedHook('beforeUpdate', ctx.hooks.beforeUpdate);
+      }
+
+      // Compute write batches and authenticate before staging so that sudo is
+      // available for v0 capture of unreadable first-seen files (history must
+      // record the original content before it is overwritten).
+      // Also include isNew entries: a new file with empty content produces
+      // hasChanges=false ('' !== '' is false) but still needs to be created.
+      // Exclude mode-only targets (sudo or not): they have hasChanges=true (due
+      // to the mode drift) but contentChanged=false. These flow through the
+      // chmod paths — including them here would cause a redundant full-file
+      // rewrite and double-count them in the final "Wrote N file(s)." tally.
+      const changedTargets = writeTargets.filter(
+        (t, i) =>
+          (allDiffs[i].hasChanges || allDiffs[i].isNew) &&
+          !(allDiffs[i].contentChanged === false && !!allDiffs[i].modeChange),
+      );
+      // Only include stale restore targets whose diff still has changes (not
+      // suppressed by the idempotency check above). Also include diffs where
+      // isNew is true: a missing file with empty v0 produces hasChanges=false
+      // ('' !== '' = false) but still needs to be written.
+      const activeStaleRestoreIndices = staleToRestore
+        .map((_, i) => i)
+        .filter((i) => {
+          const d = staleDiffs[staleRestoreDiffIndices[i]];
+          return d?.hasChanges || d?.isNew;
+        });
+      const activeStaleRestore = activeStaleRestoreIndices.map(
+        (i) => staleToRestore[i],
+      );
+
+      // Stage history versions before atomicWrite so v0 is captured before overwrite
+      const stagedFileRefs: PullLogFileRef[] = [];
+      if (pullId) {
+        const acceptedShaLabels = new Set(
+          firstPass.shaErrors.map((e) => e.sourceLabel),
+        );
+        for (let i = 0; i < writeTargets.length; i++) {
+          const targetPath = writeTargets[i].targetPath;
+          const records = sourceRecordsByTarget.get(targetPath);
+          const hasAcceptedSha =
+            opts.acceptChanges &&
+            records?.some(
+              (r) => !r.matched && acceptedShaLabels.has(r.sourceLabel),
+            );
+          if (!allDiffs[i].hasChanges && !allDiffs[i].isNew && !hasAcceptedSha)
+            continue;
+          try {
+            const sourceShaRecords: SourceShaRecord[] | undefined =
+              records !== undefined
+                ? records.map((r) => ({
+                    label: r.sourceLabel,
+                    observedSha: r.observedSha,
+                    expectedSha: r.expectedSha,
+                    accepted:
+                      !r.matched &&
+                      (opts.acceptChanges ?? false) &&
+                      acceptedShaLabels.has(r.sourceLabel),
+                  }))
+                : undefined;
+            // For a first-seen unreadable sudo file, capture v0 so
+            // revert-to-original works even when the invoking user cannot read
+            // the file directly. lstatFailed diffs are always isUnreadable too
+            // (until the stat-batch turns them into new-file diffs), so the
+            // pre-read batch covers both — no additional sudo calls needed.
+            // The idempotency pass above already guarantees a preReads entry
+            // for every unreadable sudo target.
+            let v0Override: Buffer | undefined;
+            let v0IsSymlinkOverride = false;
+            const needsV0Capture =
+              allDiffs[i].isUnreadable &&
+              !allDiffs[i].isNew &&
+              writeTargets[i].sudo &&
+              !history.getFileMeta(targetPath);
+            if (needsV0Capture) {
+              const preRead = preReads.get(targetPath);
+              if (preRead) {
+                const preReadBuf = Buffer.from(preRead.contentB64, 'base64');
+                if (preRead.isSymlink) {
+                  if (writeTargets[i].symlinkTarget !== undefined) {
+                    // Destination is a symlink and so is the write target — record
+                    // the existing link target as v0 for faithful revert/reset.
+                    v0Override = preReadBuf;
+                    v0IsSymlinkOverride = true;
+                  }
+                  // If the write target is a regular file but the destination is a
+                  // symlink, skip v0: reading through the symlink could capture
+                  // an unintended privileged file before write-path checks run.
+                } else {
+                  v0Override = preReadBuf;
+                }
+              } else {
+                // null = the sudo worker could not read the file (e.g. EACCES on
+                // a root-owned parent directory). v0 cannot be captured, so
+                // "avanti revert" will not restore this file to its pre-avanti
+                // state. Warn so the user is aware.
+                console.warn(
+                  `avanti: cannot capture original content of ${targetPath} — ` +
+                    `the file was unreadable by the privileged worker. ` +
+                    `"avanti revert" will not be able to restore it to its pre-avanti state.`,
+                );
+              }
+            }
+            const { fileRef } = history.stageFileVersion(
+              pullId,
+              targetPath,
+              writeTargets[i].content,
+              allDiffs[i].isNew,
+              sourceShaRecords,
+              writeTargets[i].sudo,
+              v0Override,
+              !!writeTargets[i].symlinkTarget,
+              v0IsSymlinkOverride,
+            );
+            stagedFileRefs.push(fileRef);
+          } catch {
+            console.warn(
+              `Warning: could not record history for ${writeTargets[i].targetPath}`,
+            );
+          }
+        }
+      }
+
+      let postWriteError: string | null = null;
+      const effectivelyDeleted = new Set<string>();
+      const effectivelyRestored = new Set<string>();
+      // Tracks all stale paths fully resolved this pull — including no-ops
+      // (file already gone, or already matches v0). Used to prune old refs
+      // from history so stale cleanup does not repeat on subsequent pulls.
+      const effectivelyCleaned = new Set<string>();
+      // Set to true once sudoAtomicWrite returns without throwing. Used in the
+      // catch block to detect when atomicWrite threw after all sudo files landed
+      // on disk — those files need partial history even though err is a plain Error.
+      // Only set when sudoAtomicWrite is actually invoked (inside the guard below).
+      let sudoWriteComplete = false;
+      // Collect sudo mode-only targets here (outside the try block) so that
+      // modeOnlySudoPaths can be derived from the same computation and the
+      // predicate (modeChange && !contentChanged && sudo) stays in one place.
+      // Also needed inside the try block where it is passed to sudoAtomicWrite.
+      const modeOnlySudoTargets: SudoChmodTarget[] =
+        process.platform !== 'win32'
+          ? writeTargets.flatMap((t, i) => {
+              const d = allDiffs[i];
+              return d.modeChange && !d.contentChanged && t.sudo
+                ? [
+                    {
+                      targetPath: t.targetPath,
+                      mode: d.modeChange.to.toString(8).padStart(4, '0'),
+                      sudo: t.sudo,
+                    },
+                  ]
+                : [];
+            })
+          : [];
+      // Paths of chmod-only sudo targets — content was NOT changed for these,
+      // so they must be excluded from writtenPaths in the sudoWriteComplete catch
+      // path (content-write tracking only, no chmod tracking).
+      // Derived from modeOnlySudoTargets so the filter predicate stays in one place.
+      const modeOnlySudoPaths = new Set(
+        modeOnlySudoTargets.map((t) => t.targetPath),
+      );
+      try {
+        // Content writes go first so that if atomicWrite throws, no permissions
+        // have been changed yet (minimises partial-apply surface).
+        const isSudoTarget = (t: WriteTarget): t is SudoWriteTarget => !!t.sudo;
+        const regularChanged = changedTargets.filter((t) => !t.sudo);
+        const sudoChanged = changedTargets.filter(isSudoTarget);
+        // Only restore entries whose diff still has changes (no-op restores filtered out)
+        const regularRestore = activeStaleRestore.filter((t) => !t.sudo);
+        const sudoRestore = activeStaleRestore.filter(isSudoTarget);
+        const regularDelete = staleToDelete.filter(
+          (p) => !staleDeleteSudo.has(p),
+        );
+
+        // Privileged writes first: if sudo fails, unprivileged files have not
+        // yet changed, keeping the working tree in a consistent state.
+        // Sessions are passed so reads and writes share the same worker process
+        // (one sudo prompt total per identity). Chmod-only targets are batched
+        // into the same per-identity exec as content writes so the ordering
+        // guarantee extends to mode changes too.
+        let modeOnlyCount = 0;
+        if (
+          sudoChanged.length + sudoRestore.length > 0 ||
+          modeOnlySudoTargets.length > 0
+        ) {
+          modeOnlyCount = await sudoAtomicWrite(
+            [...sudoChanged, ...sudoRestore],
+            modeOnlySudoTargets,
+            sudoSessions,
+          );
+          // Only mark complete when sudoAtomicWrite was actually called so that
+          // the catch block can distinguish "never ran" from "ran and succeeded".
+          sudoWriteComplete = true;
+        }
+        atomicWrite([...regularChanged, ...regularRestore]);
+        // Mark all active stale restores as completed (atomicWrite throws on
+        // failure so if we reach here all restores were written successfully).
+        for (const t of activeStaleRestore) {
+          effectivelyRestored.add(t.targetPath);
+          effectivelyCleaned.add(t.targetPath);
+        }
+        // No-op stale restores (file already matches v0) are also cleaned —
+        // mark them so their refs are removed from history and the cleanup
+        // does not repeat on subsequent pulls.
+        const activeStaleRestorePaths = new Set(
+          activeStaleRestore.map((t) => t.targetPath),
+        );
+        for (const t of staleToRestore) {
+          if (!activeStaleRestorePaths.has(t.targetPath)) {
+            effectivelyCleaned.add(t.targetPath);
+          }
+        }
+        // Deletions are deferred until both write batches succeed so that
+        // stale files are not removed if a later write batch fails.
+        for (const p of regularDelete) {
+          const idx = staleDeleteDiffIndex.get(p);
+          if (idx === undefined) continue;
+          if (!staleDiffs[idx].hasChanges) {
+            // File is already gone — no-op, but still clean up its history ref.
+            effectivelyCleaned.add(p);
+            continue;
+          }
+          try {
+            fs.rmSync(p, { force: true });
+            effectivelyDeleted.add(p);
+            effectivelyCleaned.add(p);
+          } catch (err) {
+            console.warn(
+              `Warning: could not delete ${p}: ${err instanceof Error ? err.message : String(err)}`,
+            );
+          }
+        }
+        const sudoDeletionBatch: Array<[string, true | string]> = [];
+        for (const [p, sv] of staleDeleteSudo) {
+          const idx = staleDeleteDiffIndex.get(p);
+          if (idx === undefined) continue;
+          if (!staleDiffs[idx]?.hasChanges) {
+            // File is already gone — no-op, but still clean up its history ref.
+            effectivelyCleaned.add(p);
+          } else {
+            sudoDeletionBatch.push([p, sv]);
+          }
+        }
+        try {
+          if (sudoDeletionBatch.length > 0) {
+            // Group by sudo identity; use the pre-created session if available
+            const byDeleteId = new Map<true | string, string[]>();
+            for (const [p, sv] of sudoDeletionBatch) {
+              if (!byDeleteId.has(sv)) byDeleteId.set(sv, []);
+              byDeleteId.get(sv)!.push(p);
+            }
+            for (const [sv, paths] of byDeleteId) {
+              const session = sudoSessions.get(sv);
+              if (session) {
+                const deleteOps: WriteOp[] = paths.map((p) => ({
+                  type: 'delete' as const,
+                  targetPath: p,
+                }));
+                // Stale cleanup is best-effort: a session-level failure (worker
+                // crash, auth error) is treated as a warning, not a fatal error.
+                let deleteResults: WorkerResult[] = [];
+                try {
+                  deleteResults = await session.exec(deleteOps, true);
+                } catch (sessionErr) {
+                  for (const p of paths)
+                    console.warn(
+                      `Warning: could not delete ${p}: ${sessionErr instanceof Error ? sessionErr.message : String(sessionErr)}`,
+                    );
+                  continue;
+                }
+                for (let di = 0; di < paths.length; di++) {
+                  if (deleteResults[di]?.ok && !deleteResults[di]?.skipped) {
+                    effectivelyDeleted.add(paths[di]);
+                    effectivelyCleaned.add(paths[di]);
+                  } else if (
+                    deleteResults[di]?.ok &&
+                    deleteResults[di]?.skipped
+                  ) {
+                    // File was already absent — clean up its history ref so we
+                    // don't re-attempt the deletion on every subsequent pull.
+                    effectivelyCleaned.add(paths[di]);
+                  } else if (
+                    deleteResults[di] &&
+                    !deleteResults[di].ok &&
+                    deleteResults[di].error
+                  ) {
+                    console.warn(
+                      `Warning: could not delete ${paths[di]}: ${deleteResults[di].error}`,
+                    );
+                  }
+                }
+                // Crash sentinel: the worker appends an extra result at index
+                // paths.length when it exits non-zero mid-batch (continueOnError).
+                const crashSentinel = deleteResults[paths.length];
+                if (crashSentinel && !crashSentinel.ok) {
+                  console.warn(
+                    `Warning: privileged worker crashed during stale-file cleanup: ${crashSentinel.error ?? 'worker exited unexpectedly'}`,
+                  );
+                }
+              } else {
+                // Phase 2 opens a session for every identity in deferredIds,
+                // which includes all identities that reach this deletion loop.
+                // A missing session means Phase 2 has a bug — surface it loudly
+                // rather than masking it with a silent fallback invocation.
+                throw new Error(
+                  `no privileged session for sudo identity "${String(sv)}" during stale-file cleanup`,
+                );
+              }
+            }
+          }
+        } catch (cleanupErr: unknown) {
+          closeAllSessions(sudoSessions);
+          console.error(
+            `Privileged stale-file cleanup failed: ${cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr)}`,
+          );
+          process.exit(2);
+        }
+
+        // Non-sudo mode-only changes (POSIX only). Sudo mode-only changes are
+        // handled above via sudoAtomicWrite (chmodTargets argument).
+        if (process.platform !== 'win32') {
+          for (let i = 0; i < writeTargets.length; i++) {
+            const d = allDiffs[i];
+            if (d.modeChange && !d.contentChanged && !writeTargets[i].sudo) {
+              const lst = fs.lstatSync(writeTargets[i].targetPath, {
+                throwIfNoEntry: false,
+              });
+              if (lst && !lst.isSymbolicLink()) {
+                fs.chmodSync(writeTargets[i].targetPath, d.modeChange.to);
+                modeOnlyCount++;
+              }
+            }
+          }
+        }
+        const deletedCount = effectivelyDeleted.size;
+        const written =
+          changedTargets.length +
+          activeStaleRestore.length +
+          deletedCount +
+          modeOnlyCount;
+        if (written === 0) {
+          // Idempotency checks cleared all diffs after the user confirmed —
+          // every target already matches its desired state.
+          console.log('Nothing to do.');
+        } else {
+          console.log(`Wrote ${written} file(s).`);
+        }
+        for (const ctx of fileHookContexts) {
+          if (postWriteError !== null) break;
+          const env = {
+            AVANTI_TARGET: ctx.targetPath,
+            AVANTI_IS_NEW: String(ctx.isNew),
+          };
+          // At most one post-write hook runs per file (create or update), and
+          // the loop stops at the first failure.
+          const runNamedPostHook = (key: string, script: string): void => {
+            try {
+              runHook(script, env);
+            } catch (err: unknown) {
+              postWriteError = `Hook ${key} failed for ${ctx.targetPath}: ${err instanceof Error ? err.message : String(err)}`;
+            }
+          };
+          if (ctx.isNew && ctx.hooks.create)
+            runNamedPostHook('create', ctx.hooks.create);
+          if (!ctx.isNew && ctx.hooks.update)
+            runNamedPostHook('update', ctx.hooks.update);
+        }
+      } catch (err: unknown) {
+        // Record partial pull history when files landed on disk before the failure
+        // so `revert` can see them even though the pull did not complete.
+        // Three cases (combinable):
+        //  a) SudoWritePartialError: err.writtenPaths lists confirmed sudo writes.
+        //  b) AtomicWritePartialError: err.writtenPaths lists regular files whose
+        //     temp→dest renames (Phase 3) or in-place writes (Phase 4) completed.
+        //  c) sudoWriteComplete: sudoAtomicWrite returned, so all sudo content-write
+        //     targets are on disk regardless of error type.
+        // Cases (b) and (c) combine when sudoAtomicWrite succeeds and atomicWrite
+        // later throws mid-batch.
+        if (pullId) {
+          let writtenPaths: string[] | null = null;
+          if (err instanceof SudoWritePartialError) {
+            writtenPaths = err.writtenPaths;
+          } else {
+            const regularWritten =
+              err instanceof AtomicWritePartialError ? err.writtenPaths : [];
+            if (sudoWriteComplete || regularWritten.length > 0) {
+              writtenPaths = [
+                ...(sudoWriteComplete
+                  ? [
+                      // Exclude chmod-only targets — they went through sudoAtomicWrite
+                      // as chmodOps (no content write), so no new version was staged.
+                      ...stagedFileRefs
+                        .filter(
+                          (r) =>
+                            r.sudo && !modeOnlySudoPaths.has(r.absolutePath),
+                        )
+                        .map((r) => r.absolutePath),
+                      ...activeStaleRestore
+                        .filter((t) => t.sudo)
+                        .map((t) => t.targetPath),
+                    ]
+                  : []),
+                ...regularWritten,
+              ];
+            }
+          }
+          if (writtenPaths !== null && writtenPaths.length > 0) {
+            const writtenSet = new Set(writtenPaths);
+            const partialRefs = stagedFileRefs.filter((r) =>
+              writtenSet.has(r.absolutePath),
+            );
+            // Stale restores also go through sudoAtomicWrite, so writtenPaths
+            // may include paths from activeStaleRestore that are not in
+            // stagedFileRefs. Track them so they can be excluded from lastFiles
+            // (they are now restored to their pre-avanti state and no longer
+            // tracked), and so the history update is not skipped when only
+            // restores succeeded and partialRefs is empty.
+            const restoredPaths = new Set(
+              activeStaleRestore
+                .map((t) => t.targetPath)
+                .filter((p) => writtenSet.has(p)),
+            );
+            if (partialRefs.length > 0 || restoredPaths.size > 0) {
+              try {
+                history.closePullSession(
+                  pullId,
+                  normalizeConfigKey(configPath),
+                  mergeLastPullRefs(
+                    history.getLastPullFiles(),
+                    restoredPaths,
+                    partialRefs,
+                  ),
+                );
+              } catch {
+                console.warn(
+                  'Warning: could not save partial pull history; avanti revert may not see the partially-written files.',
+                );
+              }
+            }
+          }
+        }
+        closeAllSessions(sudoSessions);
+        console.error(
+          `Write failed: ${err instanceof Error ? err.message : String(err)}`,
+        );
+        process.exit(2);
+      }
+      // Close worker sessions — stdin close signals the worker to exit cleanly.
+      closeAllSessions(sudoSessions);
+
+      // meta.sudo is updated by stageFileVersion for every file that was
+      // actually written. No extra sync needed here: updating meta.sudo for
+      // no-op targets would overwrite the privilege identity from the last
+      // real write with a config value that was never applied to the file,
+      // causing stale cleanup to run with the wrong credentials.
+
+      // Save inserted fragments to history for future idempotency detection
+      if (historyAvailable && insertedFragments.size > 0) {
+        for (const [targetPath, fragment] of insertedFragments) {
+          history.saveInsertedFragment(
+            targetPath,
+            fragment.raw,
+            fragment.processed,
+          );
+        }
+      }
+
+      // SHA writeback: write updated sha values into config file after all writes complete.
+      // Skipped when config was a write target and already patched in-memory above.
+      if (shaUpdates !== null && !configShaPreApplied) {
+        try {
+          const pinned = writeUpdatedShas(configPath, shaUpdates);
+          if (pinned)
+            console.log(`Updated ${shaUpdates.size} SHA pin(s) in config.`);
+        } catch (err: unknown) {
+          console.warn(
+            `Warning: could not update SHA values in config: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      }
+
+      // Record to pulls.jsonl when files were staged OR stale files were
+      // deleted/restored. For stale-only runs, merge surviving refs from the
+      // last pull so the cleaned-up paths are no longer listed — without this,
+      // subsequent pulls see the same stale files in the last-pull log and
+      // attempt the same delete/restore again on every run.
+      if (
+        pullId &&
+        (stagedFileRefs.length > 0 || effectivelyCleaned.size > 0)
+      ) {
+        // pullId is only set when historyAvailable is true (see openPullSession
+        // above), so history storage is usable here.
+        try {
+          // Preserve existing sudo on surviving refs — these files were not
+          // rewritten this pull, so their on-disk ownership reflects the
+          // previous write identity. Replacing with the current config value
+          // would let stale cleanup run with the wrong privileges.
+          const refsToRecord = mergeLastPullRefs(
+            history.getLastPullFiles(),
+            effectivelyCleaned,
+            stagedFileRefs,
+          );
+          history.closePullSession(
+            pullId,
+            normalizeConfigKey(configPath),
+            refsToRecord,
+          );
+        } catch {
+          console.warn('Warning: could not save pull history.');
+        }
+      }
+
+      if (postWriteError !== null) {
+        console.error(postWriteError);
+        process.exit(2);
+      }
+    });
+}

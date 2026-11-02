@@ -1,0 +1,86 @@
+{
+  "name": "@udondan/avanti",
+  "version": "0.29.2",
+  "description": "Assemble local files from any source via a declarative YAML spec",
+  "bin": {
+    "avanti": "dist/cli.js"
+  },
+  "main": "./dist/cli.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json && chmod +x dist/cli.js",
+    "prepare": "node -e \"var f=require('fs'),cp=require('child_process');if(!f.existsSync('dist/cli.js')){cp.execSync('bunx tsc -p tsconfig.build.json',{stdio:'inherit'});if(process.platform!=='win32')cp.execSync('chmod +x dist/cli.js')}\"",
+    "dev": "tsx src/cli.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "tsc -p tsconfig.build.json && vitest run --coverage --coverage.reporter=lcov --coverage.reporter=text-summary && bun run coverage:child",
+    "coverage:child": "c8 report && bun test/setup/merge-child-coverage.ts",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src test",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
+  },
+  "keywords": [
+    "cli",
+    "sync",
+    "files",
+    "yaml"
+  ],
+  "author": {
+    "name": "Daniel Schroeder",
+    "email": "deemes79@googlemail.com",
+    "url": "https://udondan.com/"
+  },
+  "funding": {
+    "type": "github",
+    "url": "https://github.com/sponsors/udondan"
+  },
+  "files": [
+    "dist",
+    "LICENSE"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/udondan/avanti.git"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "3.1160.0",
+    "@aws-sdk/client-secrets-manager": "3.1160.0",
+    "@aws-sdk/client-ssm": "3.1160.0",
+    "chalk": "6.0.1",
+    "commander": "15.0.0",
+    "comment-json": "5.0.0",
+    "diff": "9.0.0",
+    "ejs": "7.0.2",
+    "eta": "4.6.0",
+    "handlebars": "4.7.10",
+    "js-yaml": "5.5.0",
+    "liquidjs": "10.30.1",
+    "mustache": "4.2.0",
+    "nunjucks": "3.2.4",
+    "smol-toml": "1.9.1",
+    "tar": "7.5.22",
+    "unzipper": "0.12.5",
+    "yaml": "2.9.1"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@types/diff": "8.0.0",
+    "@types/ejs": "3.1.5",
+    "@types/js-yaml": "4.0.9",
+    "@types/mustache": "4.2.6",
+    "@types/node": "26.6.6",
+    "@types/nunjucks": "3.2.6",
+    "@types/tar": "7.0.87",
+    "@types/unzipper": "0.10.11",
+    "@vitest/coverage-v8": "5.0.5",
+    "c8": "12.0.0",
+    "eslint": "10.13.0",
+    "eslint-config-prettier": "10.1.8",
+    "prettier": "3.9.10",
+    "tsx": "4.23.15",
+    "typescript": "7.0.2",
+    "typescript-eslint": "8.72.1",
+    "vitest": "5.0.5"
+  }
+}
