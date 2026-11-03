@@ -5,9 +5,9 @@
     "": {
       "name": "@udondan/avanti",
       "dependencies": {
-        "@aws-sdk/client-s3": "3.1160.0",
-        "@aws-sdk/client-secrets-manager": "3.1160.0",
-        "@aws-sdk/client-ssm": "3.1160.0",
+        "@aws-sdk/client-s3": "3.1161.0",
+        "@aws-sdk/client-secrets-manager": "3.1161.0",
+        "@aws-sdk/client-ssm": "3.1161.0",
         "chalk": "6.0.1",
         "commander": "15.0.0",
         "comment-json": "5.0.0",
@@ -49,11 +49,11 @@
   "packages": {
     "@aws-sdk/checksums": ["@aws-sdk/checksums@3.1002.1", "", { "dependencies": { "@aws-sdk/core": "^3.979.1", "@aws-sdk/types": "^3.975.0", "@smithy/core": "^3.38.0", "@smithy/types": "^4.19.0", "tslib": "^2.6.2" } }, "sha512-CXNESwkQC9jdrUG6cKXBfudVt1frGcYQykcCYbNclVrsewuGMbo3PlFjRteMe4OftNAqhyc3xC2jTz7SUqLasQ=="],
 
-    "@aws-sdk/client-s3": ["@aws-sdk/client-s3@3.1160.0", "", { "dependencies": { "@aws-sdk/checksums": "^3.1002.0", "@aws-sdk/core": "^3.979.0", "@aws-sdk/credential-provider-node": "^3.972.91", "@aws-sdk/middleware-sdk-s3": "^3.972.84", "@aws-sdk/signature-v4-multi-region": "^3.996.50", "@aws-sdk/types": "^3.975.0", "@smithy/core": "^3.37.0", "@smithy/fetch-http-handler": "^5.8.0", "@smithy/node-http-handler": "^4.13.0", "@smithy/types": "^4.19.0", "tslib": "^2.6.2" } }, "sha512-547MvuVvH0s2mcrQ0G+F3Q6STJp54JyI9IS40Hx2JYljkjJpoijT2TG0M8XsgFyuqbQAKWHESYXD/7hmdUNAvQ=="],
+    "@aws-sdk/client-s3": ["@aws-sdk/client-s3@3.1161.0", "", { "dependencies": { "@aws-sdk/checksums": "^3.1002.1", "@aws-sdk/core": "^3.979.1", "@aws-sdk/credential-provider-node": "^3.972.92", "@aws-sdk/middleware-sdk-s3": "^3.972.85", "@aws-sdk/signature-v4-multi-region": "^3.996.51", "@aws-sdk/types": "^3.975.0", "@smithy/core": "^3.38.0", "@smithy/fetch-http-handler": "^5.8.0", "@smithy/node-http-handler": "^4.14.0", "@smithy/types": "^4.19.0", "tslib": "^2.6.2" } }, "sha512-iRZGMsJnYRrI98O+U6o5fHeLPQTP+Dc/w0mWLcBLQcEQ10DA06+XQj0WmdRiCM7vIso7QEtN1fsj9Vzo5/R3LQ=="],
 
-    "@aws-sdk/client-secrets-manager": ["@aws-sdk/client-secrets-manager@3.1160.0", "", { "dependencies": { "@aws-sdk/core": "^3.979.0", "@aws-sdk/credential-provider-node": "^3.972.91", "@aws-sdk/types": "^3.975.0", "@smithy/core": "^3.37.0", "@smithy/fetch-http-handler": "^5.8.0", "@smithy/node-http-handler": "^4.13.0", "@smithy/types": "^4.19.0", "tslib": "^2.6.2" } }, "sha512-/+0E57CeexKNiaYn8C0TSyP4u1sxlPnjAsUav+qrUXy68hySOutr6lETj9zfYTuKYhq8qoN1b/VKkQwkfccCJg=="],
+    "@aws-sdk/client-secrets-manager": ["@aws-sdk/client-secrets-manager@3.1161.0", "", { "dependencies": { "@aws-sdk/core": "^3.979.1", "@aws-sdk/credential-provider-node": "^3.972.92", "@aws-sdk/types": "^3.975.0", "@smithy/core": "^3.38.0", "@smithy/fetch-http-handler": "^5.8.0", "@smithy/node-http-handler": "^4.14.0", "@smithy/types": "^4.19.0", "tslib": "^2.6.2" } }, "sha512-eSS+aK9GC/ZiL6OMuIoIUFCeVw60kpSR7dytSO8B6hkz6ghxnT6CWIUe6GOsyfrbezc41DjiiyhZlSYmM0g9kQ=="],
 
-    "@aws-sdk/client-ssm": ["@aws-sdk/client-ssm@3.1160.0", "", { "dependencies": { "@aws-sdk/core": "^3.979.0", "@aws-sdk/credential-provider-node": "^3.972.91", "@aws-sdk/types": "^3.975.0", "@smithy/core": "^3.37.0", "@smithy/fetch-http-handler": "^5.8.0", "@smithy/node-http-handler": "^4.13.0", "@smithy/types": "^4.19.0", "tslib": "^2.6.2" } }, "sha512-xz86vxk5UOiHEG9SsO8GiYU2iQuBIKq2HmMo1d6r3rqRB0pItMghcH++ifPsJF54FhDDbjeECpa7bBXSv52UmQ=="],
+    "@aws-sdk/client-ssm": ["@aws-sdk/client-ssm@3.1161.0", "", { "dependencies": { "@aws-sdk/core": "^3.979.1", "@aws-sdk/credential-provider-node": "^3.972.92", "@aws-sdk/types": "^3.975.0", "@smithy/core": "^3.38.0", "@smithy/fetch-http-handler": "^5.8.0", "@smithy/node-http-handler": "^4.14.0", "@smithy/types": "^4.19.0", "tslib": "^2.6.2" } }, "sha512-UVO4TLYKtkEC3Rme+xiOZn8FzyvAUmufDtkzFtAccGTuGBBeG53Or09UaGwmDBAps/pN0sZ8pYn36Pa/ocJn3w=="],
 
     "@aws-sdk/core": ["@aws-sdk/core@3.979.1", "", { "dependencies": { "@aws-sdk/types": "^3.975.0", "@aws-sdk/xml-builder": "^3.972.42", "@aws/lambda-invoke-store": "^0.3.0", "@smithy/core": "^3.38.0", "@smithy/signature-v4": "^5.7.5", "@smithy/types": "^4.19.0", "bowser": "^2.11.0", "tslib": "^2.6.2" } }, "sha512-ayOlV1VhLNMiq8PW9ZkVobG4gkldnUoHjG69yy2b8j+VYFlhz/uAL7ZdYQAoQ+eShtGUdNDnnG5rxDg6yUJrOg=="],
 
