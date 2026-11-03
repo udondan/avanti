@@ -41,25 +41,25 @@ jobs:
   # Renovate PRs, exhaust them and make the tests fail, so only one run at a
   # time may run the tests, including the runs on main. Runs that skip the
   # tests, e.g. when only the README changes, don't queue.
-  priority-boarding:
+  boarding-gate:
     needs: [changes]
     if: ${{ !cancelled() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && (needs.changes.result == 'skipped' || (needs.changes.result == 'success' && needs.changes.outputs.src == 'true')) }}
     permissions:
       actions: read
-      contents: write # lock refs under refs/priority-boarding/
+      contents: write # lock refs under refs/boarding-gate/
       pull-requests: read # labels for label-weights
       statuses: write # queue position as commit status
     # Queue order, the concurrency group that cancels outdated waiting runs and
     # the rebase of branches that are behind main: see
-    # https://github.com/udondan/priority-boarding#reusable-workflow
+    # https://github.com/udondan/boarding-gate#reusable-workflow
     # The rebase needs OVERRIDE_TOKEN: pushes with github.token don't start new runs.
-    uses: udondan/priority-boarding/.github/workflows/priority-boarding.yml@v1
+    uses: udondan/boarding-gate/.github/workflows/boarding-gate.yml@v1
     secrets:
       update-token: ${{ secrets.OVERRIDE_TOKEN }}
 
   test:
     runs-on: ${{ matrix.os }}
-    needs: [changes, priority-boarding]
+    needs: [changes, boarding-gate]
     # Pull requests from forks can't take the turn and skip the wait, as they
     # don't get the secrets. The first step fails if the wait failed or was
     # cancelled.
@@ -73,7 +73,7 @@ jobs:
         os: [ubuntu-latest, windows-2022]
     steps:
       - name: Check turn
-        if: needs.priority-boarding.result == 'failure' || needs.priority-boarding.result == 'cancelled'
+        if: needs.boarding-gate.result == 'failure' || needs.boarding-gate.result == 'cancelled'
         run: exit 1
 
       - uses: actions/checkout@v7
@@ -312,7 +312,7 @@ jobs:
     runs-on: ubuntu-latest
     needs:
       - changes
-      - priority-boarding
+      - boarding-gate
       - actions
       - test
       - coverage
