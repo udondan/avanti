@@ -1,0 +1,53 @@
+[tools]
+node = "lts"
+bun = "1.4.4"
+# Used by the actions job in test.yml.
+actionlint = "1.7.12"
+# The runner's own shellcheck is older and reports differently. actionlint runs it over every `run:` block.
+shellcheck = "0.11.0"
+zizmor = "1.31.1"
+
+[tasks.install]
+description = "Install dependencies"
+run = ["bun install", "mise run install-hooks"]
+
+[tasks."install-hooks"]
+description = "Point git at the tracked hooks/ directory"
+# A relative hooksPath resolves against each working tree's root, so this also works in worktrees.
+run = "git config core.hooksPath hooks"
+
+[tasks.build]
+description = "Compile TypeScript to dist/"
+run = "bun run build"
+
+[tasks.dev]
+description = "Watch mode — recompile on changes"
+run = "bun run dev"
+
+[tasks.test]
+description = "Run all tests"
+run = "bun run test"
+
+[tasks."test:coverage"]
+description = "Run all tests with coverage, including code that runs in child processes"
+run = "bun run test:coverage"
+
+[tasks."test:watch"]
+description = "Run tests in watch mode"
+run = "bun run test:watch"
+
+[tasks.typecheck]
+description = "Type-check without emitting files"
+run = "bun run typecheck"
+
+[tasks.lint]
+description = "Run ESLint"
+run = "bun run lint"
+
+[tasks.format]
+description = "Format all files with Prettier"
+run = "bun run format"
+
+[tasks."format:check"]
+description = "Check formatting without writing"
+run = "bun run format:check"

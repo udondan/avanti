@@ -1,0 +1,10 @@
+.env
+node_modules/
+dist/
+*.js.map
+.claude
+.avanti.yml
+test-run/
+.DS_Store
+**/.DS_Store
+coverage/

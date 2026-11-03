@@ -1,0 +1,10 @@
+{
+  "tempDirectory": "coverage/tmp-child",
+  "reportsDir": "coverage/child-raw",
+  "reporter": ["lcov"],
+  "src": ["src", "dist"],
+  "include": ["src/**/*.ts", "dist/privileged-worker.js"],
+  "exclude": ["src/types.ts"],
+  "excludeNodeModules": true,
+  "all": false
+}

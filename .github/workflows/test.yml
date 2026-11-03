@@ -1,0 +1,324 @@
+---
+name: Test
+
+on:
+  workflow_dispatch:
+  pull_request:
+  # Codecov compares pull requests against the coverage of main.
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    permissions:
+      contents: read
+      pull-requests: read # paths-filter lists the PR's files via the API
+    outputs:
+      src: ${{ steps.filter.outputs.src }}
+    steps:
+      - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        id: filter
+        with:
+          filters: |
+            src:
+              - src/**
+              - test/**
+              - package.json
+              - bun.lock
+              - tsconfig*.json
+              - eslint.config.mjs
+              - prettier.config.mjs
+              - .github/workflows/test.yml
+
+  # The tests call the live GitHub, GitLab and Bitbucket APIs, whose rate
+  # limits are shared by all runs. Many parallel runs, for example of several
+  # Renovate PRs, exhaust them and make the tests fail, so only one run at a
+  # time may run the tests, including the runs on main. Runs that skip the
+  # tests, e.g. when only the README changes, don't queue.
+  priority-boarding:
+    needs: [changes]
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && (needs.changes.result == 'skipped' || (needs.changes.result == 'success' && needs.changes.outputs.src == 'true')) }}
+    permissions:
+      actions: read
+      contents: write # lock refs under refs/priority-boarding/
+      pull-requests: read # labels for label-weights
+      statuses: write # queue position as commit status
+    # Queue order, the concurrency group that cancels outdated waiting runs and
+    # the rebase of branches that are behind main: see
+    # https://github.com/udondan/priority-boarding#reusable-workflow
+    # The rebase needs OVERRIDE_TOKEN: pushes with github.token don't start new runs.
+    uses: udondan/priority-boarding/.github/workflows/priority-boarding.yml@v1
+    secrets:
+      update-token: ${{ secrets.OVERRIDE_TOKEN }}
+
+  test:
+    runs-on: ${{ matrix.os }}
+    needs: [changes, priority-boarding]
+    # Pull requests from forks can't take the turn and skip the wait, as they
+    # don't get the secrets. The first step fails if the wait failed or was
+    # cancelled.
+    if: ${{ !cancelled() && (needs.changes.result == 'skipped' || (needs.changes.result == 'success' && needs.changes.outputs.src == 'true')) }}
+    permissions:
+      contents: read
+      id-token: write # Codecov upload via OIDC
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-2022]
+    steps:
+      - name: Check turn
+        if: needs.priority-boarding.result == 'failure' || needs.priority-boarding.result == 'cancelled'
+        run: exit 1
+
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: '1.4.4'
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: lts/*
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      # Build, lint, and format checks only run on Linux.
+      # The build script uses chmod which is not available on Windows,
+      # and code-quality gates only need to run once.
+      - name: Build
+        if: runner.os != 'Windows'
+        run: bun run build
+
+      - name: Type check
+        if: runner.os != 'Windows'
+        run: bun run typecheck
+
+      - name: Lint
+        if: runner.os != 'Windows'
+        run: bun run lint
+
+      - name: Format check
+        if: runner.os != 'Windows'
+        run: bun run format:check
+
+      # Ubuntu runners have passwordless sudo — set up a root-owned directory
+      # for the sudo integration tests and inject a counting wrapper that logs
+      # every sudo invocation before delegating to the real sudo.
+      - name: Set up sudo integration test environment
+        if: runner.os == 'Linux'
+        env:
+          SUDO_TEST_DIR: ${{ runner.temp }}/avanti-sudo-test
+          SUDO_BIN_DIR: ${{ runner.temp }}/sudo-bin
+          SUDO_CALL_LOG_PATH: ${{ runner.temp }}/sudo-call-log.txt
+          SUDO_NAMED_USER: testwriter
+        run: |
+          sudo rm -rf "$SUDO_TEST_DIR"
+          sudo mkdir -p "$SUDO_TEST_DIR"
+          sudo chmod 700 "$SUDO_TEST_DIR"
+          mkdir -p "$SUDO_BIN_DIR"
+          # Capture the real sudo path before injecting the wrapper into PATH.
+          # Using 'exec sudo' in the wrapper would recurse into itself since
+          # SUDO_BIN_DIR is prepended to PATH.
+          REAL_SUDO=$(command -v sudo)
+          cat > "$SUDO_BIN_DIR/sudo" << WRAPPER
+          #!/bin/sh
+          echo "sudo: \$*" >> "\$AVANTI_SUDO_CALL_LOG"
+          exec $REAL_SUDO "\$@"
+          WRAPPER
+          chmod +x "$SUDO_BIN_DIR/sudo"
+          echo "$SUDO_BIN_DIR" >> "$GITHUB_PATH"
+          echo "AVANTI_SUDO_TEST_DIR=$SUDO_TEST_DIR" >> "$GITHUB_ENV"
+          echo "AVANTI_SUDO_CALL_LOG=$SUDO_CALL_LOG_PATH" >> "$GITHUB_ENV"
+
+          # Named-user sudo: create a dedicated user and a world-readable temp
+          # directory owned by that user so the named-user integration test can
+          # write there via sudo -u.
+          # Use /tmp (1777, world-traversable) so testwriter can reach the dir;
+          # runner.temp lives under runner's home which testwriter cannot traverse.
+          sudo useradd -m "$SUDO_NAMED_USER" || [ "$?" -eq 9 ]
+          SUDO_NAMED_USER_DIR=$(mktemp -d /tmp/avanti-named-XXXXXX)
+          sudo chown "$SUDO_NAMED_USER:$SUDO_NAMED_USER" "$SUDO_NAMED_USER_DIR"
+          sudo chmod 755 "$SUDO_NAMED_USER_DIR"
+          echo "AVANTI_SUDO_NAMED_USER=$SUDO_NAMED_USER" >> "$GITHUB_ENV"
+          echo "AVANTI_SUDO_NAMED_USER_DIR=$SUDO_NAMED_USER_DIR" >> "$GITHUB_ENV"
+
+      - name: Test
+        # No `if: runner.os == 'Linux'` guard: sudo integration tests only run
+        # on Linux (env vars are unset on Windows), and other tests run on all
+        # platforms. A single step covers both cases.
+        run: bun run test -- --coverage --coverage.reporter=lcov --coverage.reporter=text
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # No GITLAB_TOKEN on purpose. The GitLab tests only read public
+          # projects. Authenticated requests from a free-plan account share one
+          # budget of 100 requests per minute across all CI jobs and branches
+          # (burst_traffic_per_user_free_plan). Unauthenticated requests get
+          # 500 per minute per runner IP instead (see #516).
+
+      # The CLI and the privileged worker run in child processes, which write
+      # raw coverage data during the test step. This turns it into lcov.
+      - name: Convert child process coverage
+        run: bun run coverage:child
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
+        with:
+          use_oidc: true
+          fail_ci_if_error: false
+          files: coverage/lcov.info,coverage/child/lcov.info
+          # Without this, Codecov also uploads the unfiltered c8 report from
+          # coverage/child-raw, which counts comments as lines.
+          disable_search: true
+
+  # Codecov reports its result as the check runs codecov/project and
+  # codecov/patch. This job waits for them, so a coverage drop fails the
+  # required job. It is skipped along with the tests, e.g. when only the README
+  # changes, and passes with a warning if Codecov doesn't report in time.
+  coverage:
+    name: Coverage
+    runs-on: ubuntu-latest
+    needs: [test]
+    if: github.event_name == 'pull_request' && needs.test.result == 'success'
+    timeout-minutes: 10
+    permissions:
+      checks: read
+    steps:
+      - name: Wait for Codecov
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          for _ in $(seq 30); do
+            checks=$(gh api --paginate --slurp "repos/$REPO/commits/$SHA/check-runs?per_page=100" | jq -c '
+              [.[].check_runs[] | select(.app.slug == "codecov" and (.name == "codecov/project" or .name == "codecov/patch"))]
+              | group_by(.name) | map(max_by(.id))')
+            if [[ $(jq '[.[] | select(.status == "completed")] | length' <<<"$checks") == 2 ]]; then
+              jq -r '.[] | "\(.name): \(.conclusion) (\(.output.title))"' <<<"$checks"
+              failed=$(jq -r '.[] | select(.conclusion != "success" and .conclusion != "neutral") | .name' <<<"$checks")
+              if [[ -n "$failed" ]]; then
+                echo "::error::Coverage check failed: ${failed//$'\n'/, }. Details are linked in the checks of this pull request."
+                exit 1
+              fi
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "::warning::Codecov didn't report within 5 minutes, coverage is not checked."
+
+  integration-tests-vault:
+    runs-on: ubuntu-latest
+    needs: [changes]
+    # On push to main only the tests run, for the coverage report of main.
+    if: always() && github.event_name != 'push' && (needs.changes.result == 'skipped' || (needs.changes.result == 'success' && needs.changes.outputs.src == 'true'))
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: '1.4.4'
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: lts/*
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Start Vault, seed secrets and run integration tests
+        uses: nick-invision/retry@ad984534de44a9489a53aefd81eb77f87c70dc60 # v4.0.0
+        with:
+          max_attempts: 3
+          timeout_minutes: 10
+          retry_wait_seconds: 15
+          command: |
+            set -eu
+            docker rm -f vault 2>/dev/null || true
+            docker run -d \
+              --name vault \
+              --cap-add IPC_LOCK \
+              -p 8200:8200 \
+              -e VAULT_DEV_ROOT_TOKEN_ID=root \
+              -e VAULT_DEV_LISTEN_ADDRESS=0.0.0.0:8200 \
+              hashicorp/vault:2.0.1
+            for i in $(seq 1 30); do
+              if curl -sf http://127.0.0.1:8200/v1/sys/health; then
+                echo "Vault is ready"
+                break
+              fi
+              if [ "$i" -eq 30 ]; then
+                echo "Vault failed to start after 60s"
+                docker logs vault
+                exit 1
+              fi
+              sleep 2
+            done
+            curl -sf -X POST http://127.0.0.1:8200/v1/secret/data/myapp/db \
+              -H "X-Vault-Token: root" -H "Content-Type: application/json" \
+              -d '{"data":{"username":"admin","password":"s3cr3t"}}'
+            curl -sf -X POST http://127.0.0.1:8200/v1/sys/mounts/kv1 \
+              -H "X-Vault-Token: root" -H "Content-Type: application/json" \
+              -d '{"type":"kv","options":{"version":"1"}}'
+            curl -sf -X POST http://127.0.0.1:8200/v1/kv1/myapp/token \
+              -H "X-Vault-Token: root" -H "Content-Type: application/json" \
+              -d '{"apikey":"v1key123"}'
+            POLICY=$(printf 'path "secret/data/myapp/*" { capabilities = ["read"] }\npath "secret/myapp/*" { capabilities = ["read"] }\npath "kv1/myapp/*" { capabilities = ["read"] }')
+            curl -sf -X PUT http://127.0.0.1:8200/v1/sys/policies/acl/avanti-read \
+              -H "X-Vault-Token: root" -H "Content-Type: application/json" \
+              -d "$(jq -n --arg p "$POLICY" '{"policy":$p}')"
+            VAULT_TOKEN=$(curl -sf -X POST http://127.0.0.1:8200/v1/auth/token/create \
+              -H "X-Vault-Token: root" -H "Content-Type: application/json" \
+              -d '{"policies":["avanti-read"],"ttl":"1h"}' | jq -e -r '.auth.client_token')
+            export VAULT_TOKEN
+            : "${VAULT_TOKEN:?token creation failed}"
+            bunx vitest run test/vault-integration.test.ts
+        env:
+          VAULT_ADDR: http://127.0.0.1:8200
+
+  actions:
+    runs-on: ubuntu-latest
+    if: github.event_name != 'push'
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: jdx/mise-action@6be3c7ed4c21d4f76b208d351d95aac273ebb76d # v5.2.4
+        with:
+          install_args: actionlint shellcheck zizmor
+
+      # Also runs shellcheck over every `run:` block.
+      - name: actionlint
+        run: actionlint
+
+      - name: zizmor
+        run: zizmor .
+        env:
+          GH_TOKEN: ${{ github.token }} # zizmor checks the actions online
+
+  # The only test check the ruleset requires, whatever jobs are added later.
+  required:
+    runs-on: ubuntu-latest
+    needs:
+      - changes
+      - priority-boarding
+      - actions
+      - test
+      - coverage
+      - integration-tests-vault
+    if: always()
+    steps:
+      - name: Check result
+        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+        run: exit 1
