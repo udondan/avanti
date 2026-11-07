@@ -57,8 +57,9 @@ globs = ["**/bun.lock"]
 # radarlint sometimes loses type information and then reports required
 # assertions as unnecessary. ESLint's no-unnecessary-type-assertion enforces
 # the same rule with full type information.
-[[ignore]]
-rules = ["radarlint-js:typescript:S4325"]
+[[triage]]
+match.rules = ["radarlint-js:typescript:S4325"]
+set.ignored = true
 
 [[source]]
 name = "default"
