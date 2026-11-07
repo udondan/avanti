@@ -2,7 +2,7 @@ import { ReplaceRule, Variables } from '../types';
 import { resolveVars } from '../variables';
 
 function parseFrom(from: string): string | RegExp {
-  const match = from.match(/^\/(.+)\/([gimsuy]*)$/);
+  const match = /^\/(.+)\/([gimsuy]*)$/.exec(from);
   if (match) {
     return new RegExp(match[1], match[2]);
   }

@@ -59,24 +59,25 @@ function readDirRecursive(
   }
 }
 
+const NON_LOCAL_PREFIXES = [
+  'http://',
+  'https://',
+  'file://',
+  'exec:',
+  'git+',
+  'ssh://',
+  's3://',
+  'github:',
+  'gitlab:',
+  'bitbucket:',
+  'raw:',
+  'vault:',
+  'aws_secrets_manager:',
+  'aws_systems_manager_parameter:',
+];
+
 export function isNonLocalSrcString(s: string): boolean {
-  return (
-    s.startsWith('http://') ||
-    s.startsWith('https://') ||
-    s.startsWith('file://') ||
-    s.startsWith('exec:') ||
-    isGitRemoteUrl(s) ||
-    s.startsWith('git+') ||
-    s.startsWith('ssh://') ||
-    s.startsWith('s3://') ||
-    s.startsWith('github:') ||
-    s.startsWith('gitlab:') ||
-    s.startsWith('bitbucket:') ||
-    s.startsWith('raw:') ||
-    s.startsWith('vault:') ||
-    s.startsWith('aws_secrets_manager:') ||
-    s.startsWith('aws_systems_manager_parameter:')
-  );
+  return isGitRemoteUrl(s) || NON_LOCAL_PREFIXES.some((p) => s.startsWith(p));
 }
 
 export function resolveSymlinkSrcPath(

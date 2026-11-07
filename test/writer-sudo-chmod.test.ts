@@ -25,6 +25,11 @@ const mockSpawnSync = spawnSync as unknown as MockInstance<
 >;
 
 const isWindows = process.platform === 'win32';
+
+// A thrown value that is not an Error, for the String(err) fallback paths.
+function nonError(value: string): unknown {
+  return value;
+}
 const currentUid = typeof process.getuid === 'function' ? process.getuid() : 0;
 
 type ExecFn = (ops: unknown[], continueOnError?: boolean) => Promise<unknown>;
@@ -116,8 +121,11 @@ describe.skipIf(isWindows)('sudoAtomicWrite — chmod targets', () => {
   });
 
   it('stringifies non-Error rejections from the chmod session', async () => {
-    // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors -- a non-Error rejection is the case under test
-    const s = fakeSession(() => Promise.reject('boom'));
+    const s = fakeSession(() =>
+      Promise.resolve().then(() => {
+        throw nonError('boom');
+      }),
+    );
     await sudoAtomicWrite([], [chmod('/etc/a.conf')], sessionsOf(s));
     expect(String(warn.mock.calls[0][0])).toContain(': boom.');
   });
@@ -231,8 +239,11 @@ describe.skipIf(isWindows)('sudoAtomicWrite — session errors', () => {
   });
 
   it('stringifies non-Error write session rejections', async () => {
-    // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors -- a non-Error rejection is the case under test
-    const s = fakeSession(() => Promise.reject('gone'));
+    const s = fakeSession(() =>
+      Promise.resolve().then(() => {
+        throw nonError('gone');
+      }),
+    );
     const err = await sudoAtomicWrite(
       [write('/etc/a.conf')],
       [],

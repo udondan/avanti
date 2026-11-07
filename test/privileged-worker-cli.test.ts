@@ -87,6 +87,54 @@ function parse(stdout: string): WorkerResponse {
   return JSON.parse(stdout.trim().split('\n')[0]) as WorkerResponse;
 }
 
+// Collects every line the worker sends; once the nonce line arrives, replies
+// with a batch one op larger than the worker accepts.
+function replyWithOversizedBatch(socket: net.Socket, lines: string[]): void {
+  const rl = readline.createInterface({ input: socket });
+  rl.on('line', (line) => {
+    lines.push(line);
+    if (lines.length === 1) {
+      socket.write(
+        JSON.stringify({
+          ops: Array.from({ length: 10_001 }, () => ({})),
+        }) + '\n',
+      );
+    }
+  });
+}
+
+function spawnSocketWorker(
+  socketPath: string,
+  nonce: string,
+  resolve: (code: number | null) => void,
+  reject: (err: Error) => void,
+): void {
+  const proc = spawn('node', [WORKER, `--socket-path=${socketPath}`], {
+    env: { ...process.env, AVANTI_WORKER_NONCE: nonce },
+    stdio: ['ignore', 'ignore', 'pipe'],
+  });
+  proc.on('error', reject);
+  proc.on('close', resolve);
+}
+
+// Listens on socketPath, spawns a worker connecting to it and resolves with
+// the worker's exit code; every line the worker sends is collected in lines.
+function serveOversizedBatch(
+  server: net.Server,
+  socketPath: string,
+  nonce: string,
+  lines: string[],
+): Promise<number | null> {
+  return new Promise<number | null>((resolve, reject) => {
+    server.on('connection', (socket) => {
+      replyWithOversizedBatch(socket, lines);
+    });
+    server.listen(socketPath, () => {
+      spawnSocketWorker(socketPath, nonce, resolve, reject);
+    });
+  });
+}
+
 describe.skipIf(isWindows || !workerExists)('worker entry point', () => {
   describe('stdin mode', () => {
     it('refuses to read ops from a TTY', () => {
@@ -358,30 +406,7 @@ describe.skipIf(isWindows || !workerExists)('worker entry point', () => {
       const nonce = crypto.randomBytes(16).toString('hex');
       const lines: string[] = [];
       const server = net.createServer();
-      const done = new Promise<number | null>((resolve, reject) => {
-        server.on('connection', (socket) => {
-          const rl = readline.createInterface({ input: socket });
-          rl.on('line', (line) => {
-            lines.push(line);
-            if (lines.length === 1) {
-              socket.write(
-                JSON.stringify({
-                  ops: Array.from({ length: 10_001 }, () => ({})),
-                }) + '\n',
-              );
-            }
-          });
-        });
-        server.listen(socketPath, () => {
-          const proc = spawn('node', [WORKER, `--socket-path=${socketPath}`], {
-            env: { ...process.env, AVANTI_WORKER_NONCE: nonce },
-            stdio: ['ignore', 'ignore', 'pipe'],
-          });
-          proc.on('error', reject);
-          proc.on('close', resolve);
-        });
-      });
-      const code = await done;
+      const code = await serveOversizedBatch(server, socketPath, nonce, lines);
       server.close();
       expect(code).toBe(1);
       expect(lines[0]).toBe(nonce);

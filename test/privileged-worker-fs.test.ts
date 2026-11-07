@@ -109,6 +109,90 @@ const isPlainWrite = (f: unknown): boolean =>
   isNum(f) && (f & C.O_WRONLY) !== 0 && (f & C.O_TRUNC) === 0;
 const isOPath = (f: unknown): boolean =>
   isNum(f) && (f & (ORIGINAL_O_PATH ?? FAKE_O_PATH)) !== 0;
+const denyReadWrite = (f: unknown): boolean => isReadOnly(f) || isPlainWrite(f);
+
+// Handler (or O_PATH open stand-in) that always fails with `code`.
+const failWith = (code: string) => (): never => {
+  throw errno(code);
+};
+
+// Handler that fails only the nth intercepted call with `code`.
+const failNthCall =
+  (nth: number, code: string): Handler =>
+  (_a, n) => {
+    if (n === nth) throw errno(code);
+    return PASS;
+  };
+
+// O_PATH open stand-in that opens `target` read-only instead.
+const openInstead = (target: string) => (): number =>
+  realFs.openSync(target, 'r');
+
+// closeSync handler: closes for real, then reports a failure.
+const closeThenFail: Handler = (args) => {
+  callReal('closeSync', args);
+  throw errno('EBADF');
+};
+
+// openSync handler: a symlink appears before the write-only open, and the
+// read and truncating opens are denied.
+function raceSymlinkBeforeWriteOnlyOpen(p: string): Handler {
+  return (args) => {
+    if (args[0] !== p) return PASS;
+    if (isPlainWrite(args[1])) throw errno('ELOOP');
+    if (isReadOnly(args[1]) || isTruncWrite(args[1])) throw errno('EACCES');
+    return PASS;
+  };
+}
+
+// openSync handler: every flag-based open of `p` is denied.
+function denyFlagOpens(p: string): Handler {
+  return (args) => {
+    if (args[0] === p && typeof args[1] === 'number') {
+      throw errno('EACCES');
+    }
+    return PASS;
+  };
+}
+
+// openSync handler: read and truncating opens of `p` are denied; a read fd
+// stands in for the write-only fd (fchmod works on either).
+function readFdForWriteOnlyOpen(p: string): Handler {
+  return (args) => {
+    if (args[0] !== p) return PASS;
+    if (isReadOnly(args[1]) || isTruncWrite(args[1])) throw errno('EACCES');
+    if (isPlainWrite(args[1])) return realFs.openSync(p, 'r');
+    return PASS;
+  };
+}
+
+// openSync handler for the chmod op: the O_PATH open of `p` is answered by
+// `onOPath`, read and write opens are denied.
+function opathOpen(p: string, onOPath: () => unknown): void {
+  on('openSync', (args) => {
+    if (args[0] === p && isOPath(args[1])) return onOPath();
+    if (args[0] === p && denyReadWrite(args[1])) throw errno('EACCES');
+    return PASS;
+  });
+}
+
+// chmodSync handler: /proc/self/fd chmods are applied to `p`.
+function chmodProcFdOnto(p: string): Handler {
+  return (args) => {
+    if (String(args[0]).startsWith('/proc/self/fd/')) {
+      return realFs.chmodSync(p, args[1] as number);
+    }
+    return PASS;
+  };
+}
+
+// chmodSync handler: procfs is unavailable.
+const failProcFdChmod: Handler = (args) => {
+  if (String(args[0]).startsWith('/proc/self/fd/')) {
+    throw errno('ENOENT');
+  }
+  return PASS;
+};
 
 function b64(content: string): string {
   return Buffer.from(content).toString('base64');
@@ -717,6 +801,8 @@ describe.skipIf(isWindows)('handleWriteInPlace edge cases', () => {
       ...extra,
     });
   }
+  // Defers the write so expect(...).toThrow can observe its error.
+  const deferWriteInPlace = (p: string) => (): void => writeInPlace(p);
 
   function existing(name = 'f', mode = 0o644): string {
     const p = path.join(tmpDir, name);
@@ -871,25 +957,14 @@ describe.skipIf(isWindows)('handleWriteInPlace edge cases', () => {
 
       it('refuses when a symlink was raced in before the write-only open', () => {
         const p = existing();
-        on('openSync', (args) => {
-          if (args[0] !== p) return PASS;
-          if (isPlainWrite(args[1])) throw errno('ELOOP');
-          if (isReadOnly(args[1]) || isTruncWrite(args[1]))
-            throw errno('EACCES');
-          return PASS;
-        });
-        expect(() => writeInPlace(p)).toThrow(/is a symlink/);
+        on('openSync', raceSymlinkBeforeWriteOnlyOpen(p));
+        expect(deferWriteInPlace(p)).toThrow(/is a symlink/);
       });
 
       it('refuses when no fd-based chmod is possible', () => {
         const p = existing();
-        on('openSync', (args) => {
-          if (args[0] === p && typeof args[1] === 'number') {
-            throw errno('EACCES');
-          }
-          return PASS;
-        });
-        expect(() => writeInPlace(p)).toThrow(
+        on('openSync', denyFlagOpens(p));
+        expect(deferWriteInPlace(p)).toThrow(
           /is not writable \(mode 644\) and no fd-based chmod path/,
         );
       });
@@ -897,31 +972,16 @@ describe.skipIf(isWindows)('handleWriteInPlace edge cases', () => {
       it('surfaces the original error when the write-only fd grant fails', () => {
         const p = existing();
         denyFirstTruncOpen(p, true);
-        on('fchmodSync', () => {
-          throw errno('EPERM');
-        });
-        on('closeSync', (args) => {
-          callReal('closeSync', args);
-          throw errno('EBADF');
-        });
-        expect(() => writeInPlace(p)).toThrow(/EACCES/);
+        on('fchmodSync', failWith('EPERM'));
+        on('closeSync', closeThenFail);
+        expect(deferWriteInPlace(p)).toThrow(/EACCES/);
       });
 
       it('restores the mode via path when the retried open fails', () => {
         const p = existing('f', 0o444);
-        on('openSync', (args) => {
-          if (args[0] !== p) return PASS;
-          if (isReadOnly(args[1]) || isTruncWrite(args[1]))
-            throw errno('EACCES');
-          // A read fd stands in for the write-only fd: fchmod works on either.
-          if (isPlainWrite(args[1])) return realFs.openSync(p, 'r');
-          return PASS;
-        });
-        on('chmodSync', (_a, n) => {
-          if (n === 2) throw errno('EPERM');
-          return PASS;
-        });
-        expect(() => writeInPlace(p)).toThrow(/EACCES/);
+        on('openSync', readFdForWriteOnlyOpen(p));
+        on('chmodSync', failNthCall(2, 'EPERM'));
+        expect(deferWriteInPlace(p)).toThrow(/EACCES/);
         expect(modeOf(p)).toBe(0o444);
       });
     });
@@ -1044,6 +1104,8 @@ describe.skipIf(isWindows)('chmod op', () => {
   function chmod(p: string, mode = '0600'): unknown {
     return dispatch({ type: 'chmod', targetPath: p, mode });
   }
+  // Defers the chmod so expect(...).toThrow can observe its error.
+  const deferChmod = (p: string) => (): unknown => chmod(p);
 
   function existing(): string {
     const p = path.join(tmpDir, 'f');
@@ -1058,9 +1120,6 @@ describe.skipIf(isWindows)('chmod op', () => {
       return PASS;
     });
   }
-
-  const denyReadWrite = (f: unknown): boolean =>
-    isReadOnly(f) || isPlainWrite(f);
 
   it('skips a missing file', () => {
     expect(chmod(path.join(tmpDir, 'missing'))).toEqual({ kind: 'skipped' });
@@ -1134,23 +1193,10 @@ describe.skipIf(isWindows)('chmod op', () => {
         realFs.writeFileSync(decoy, 'decoy');
       });
 
-      function opathOpen(p: string, onOPath: () => unknown): void {
-        on('openSync', (args) => {
-          if (args[0] === p && isOPath(args[1])) return onOPath();
-          if (args[0] === p && denyReadWrite(args[1])) throw errno('EACCES');
-          return PASS;
-        });
-      }
-
       it('chmods through /proc/self/fd', () => {
         const p = existing();
-        opathOpen(p, () => realFs.openSync(decoy, 'r'));
-        on('chmodSync', (args) => {
-          if (String(args[0]).startsWith('/proc/self/fd/')) {
-            return realFs.chmodSync(p, args[1] as number);
-          }
-          return PASS;
-        });
+        opathOpen(p, openInstead(decoy));
+        on('chmodSync', chmodProcFdOnto(p));
         expect(chmod(p)).toEqual({ kind: 'ok' });
         expect(modeOf(p)).toBe(0o600);
         expect(modeOf(decoy)).not.toBe(0o600);
@@ -1158,39 +1204,30 @@ describe.skipIf(isWindows)('chmod op', () => {
 
       it('falls back to a path-based chmod when procfs is unavailable', () => {
         const p = existing();
-        opathOpen(p, () => realFs.openSync(decoy, 'r'));
-        on('chmodSync', (args) => {
-          if (String(args[0]).startsWith('/proc/self/fd/')) {
-            throw errno('ENOENT');
-          }
-          return PASS;
-        });
+        opathOpen(p, openInstead(decoy));
+        on('chmodSync', failProcFdChmod);
         expect(chmod(p)).toEqual({ kind: 'ok' });
         expect(modeOf(p)).toBe(0o600);
       });
 
       it('falls back to a path-based chmod when O_PATH is not supported', () => {
         const p = existing();
-        opathOpen(p, () => {
-          throw errno('ENOTSUP');
-        });
+        opathOpen(p, failWith('ENOTSUP'));
         expect(chmod(p)).toEqual({ kind: 'ok' });
         expect(modeOf(p)).toBe(0o600);
       });
 
       it('propagates resource errors from the O_PATH open', () => {
         const p = existing();
-        opathOpen(p, () => {
-          throw errno('EMFILE');
-        });
-        expect(() => chmod(p)).toThrow(/EMFILE/);
+        opathOpen(p, failWith('EMFILE'));
+        expect(deferChmod(p)).toThrow(/EMFILE/);
         expect(modeOf(p)).toBe(0o644);
       });
 
       it('refuses when the O_PATH fd is not a regular file', () => {
         const p = existing();
-        opathOpen(p, () => realFs.openSync(tmpDir, 'r'));
-        expect(() => chmod(p)).toThrow(/is not a regular file/);
+        opathOpen(p, openInstead(tmpDir));
+        expect(deferChmod(p)).toThrow(/is not a regular file/);
         expect(modeOf(p)).toBe(0o644);
       });
     });

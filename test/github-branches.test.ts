@@ -13,6 +13,7 @@ vi.mock('child_process', () => ({
 
 import { spawnSync, type SpawnSyncReturns } from 'child_process';
 import type { MockInstance } from 'vitest';
+import { byCodeUnit } from './sort-helpers';
 
 const mockSpawnSync = spawnSync as unknown as MockInstance<
   (
@@ -30,10 +31,11 @@ interface SpawnOut {
 }
 
 function makeSpawnResult(opts: SpawnOut): SpawnSyncReturns<string> {
+  const { status = 0 } = opts;
   return {
     stdout: opts.stdout ?? '',
     stderr: opts.stderr ?? '',
-    status: opts.status === undefined ? 0 : opts.status,
+    status,
     pid: 0,
     output: [],
     signal: null,
@@ -106,7 +108,7 @@ function fileJson(content: string): Response {
 }
 
 function keys(files: Map<string, Buffer>): string[] {
-  return [...files.keys()].map((k) => k.replace(/\\/g, '/')).sort();
+  return [...files.keys()].map((k) => k.replace(/\\/g, '/')).sort(byCodeUnit);
 }
 
 function tagPage(names: string[]): Array<{ name: string }> {
@@ -871,7 +873,10 @@ describe('github — releases via gh', () => {
       'ghe.example.com',
       'cli',
     );
-    expect([...result.files.keys()].sort()).toEqual(['a.zip', 'b.zip']);
+    expect([...result.files.keys()].sort(byCodeUnit)).toEqual([
+      'a.zip',
+      'b.zip',
+    ]);
     expect(result.files.get('a.zip')?.toString()).toBe('data:a.zip');
     expect(calls[0]).toContain('--hostname');
     expect(fs.existsSync(dirArg(calls[0]))).toBe(false);
@@ -890,7 +895,7 @@ describe('github — releases via gh', () => {
       'tool-arm64.tgz',
       '*.md',
     ]);
-    expect([...result.files.keys()].sort()).toEqual([
+    expect([...result.files.keys()].sort(byCodeUnit)).toEqual([
       'tool-amd64.tgz',
       'tool-arm64.tgz',
     ]);

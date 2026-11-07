@@ -32,13 +32,9 @@ function recordPull(config: string, specs: StageSpec[]): string {
   const refs: PullLogFileRef[] = [];
   for (const s of specs) {
     refs.push(
-      h.stageFileVersion(
-        pullId,
-        s.path,
-        Buffer.from(s.content),
-        s.isNew,
-        s.sources,
-      ).fileRef,
+      h.stageFileVersion(pullId, s.path, Buffer.from(s.content), s.isNew, {
+        sources: s.sources,
+      }).fileRef,
     );
   }
   h.closePullSession(pullId, config, refs);
@@ -48,9 +44,9 @@ function recordPull(config: string, specs: StageSpec[]): string {
 
 async function run(args: string[], withConfig = true): Promise<string> {
   const out: string[] = [];
-  const log = vi
-    .spyOn(console, 'log')
-    .mockImplementation((...a) => void out.push(a.join(' ')));
+  const log = vi.spyOn(console, 'log').mockImplementation((...a) => {
+    out.push(a.join(' '));
+  });
   const program = new Command()
     .exitOverride()
     .option('-c, --config <path>')

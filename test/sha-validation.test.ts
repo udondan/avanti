@@ -446,7 +446,7 @@ describe('HistoryManager.stageFileVersion with SHA records', () => {
       targetPath,
       Buffer.from('new content', 'utf8'),
       false,
-      sources,
+      { sources },
     );
 
     expect(fileRef.sources).toHaveLength(1);
@@ -477,7 +477,7 @@ describe('HistoryManager.stageFileVersion with SHA records', () => {
       targetPath,
       Buffer.from('changed', 'utf8'),
       false,
-      sources,
+      { sources },
     );
 
     expect(fileRef.sources![0].accepted).toBe(true);
@@ -506,7 +506,7 @@ describe('HistoryManager.stageFileVersion with SHA records', () => {
       targetPath,
       Buffer.from('v1', 'utf8'),
       false,
-      sources,
+      { sources },
     );
     h.closePullSession(pullId, '/project/.avanti.yml', [fileRef]);
 

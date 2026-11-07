@@ -5,8 +5,16 @@ import { describe, it, expect, vi } from 'vitest';
 // ever gains !!set or !!timestamp). Simulate such a loader result here.
 const MARKER = '# avanti-test: non-plain variables';
 
-class Custom {}
+class Custom {
+  readonly kind = 'custom';
+}
 const NullCtor = Object.create(Object.create(null) as object) as object;
+
+function nonPlainValue(which: string): unknown {
+  if (which === 'set') return { list: [1, new Set(['a'])] };
+  if (which === 'custom') return { 'a.b': { c: new Custom() } };
+  return { x: NullCtor };
+}
 
 vi.mock('js-yaml', async (importOriginal) => {
   const actual = await importOriginal<typeof import('js-yaml')>();
@@ -15,13 +23,7 @@ vi.mock('js-yaml', async (importOriginal) => {
     load: (content: string, ...rest: unknown[]) => {
       if (content.startsWith(MARKER)) {
         const which = content.slice(MARKER.length).trim();
-        const value =
-          which === 'set'
-            ? { list: [1, new Set(['a'])] }
-            : which === 'custom'
-              ? { 'a.b': { c: new Custom() } }
-              : { x: NullCtor };
-        return { files: {}, variables: { v: value } };
+        return { files: {}, variables: { v: nonPlainValue(which) } };
       }
       return (actual.load as (c: string, ...r: unknown[]) => unknown)(
         content,

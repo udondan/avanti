@@ -39,13 +39,13 @@ describe('mapWithConcurrency', () => {
     // finishes, its worker must not pick up item 3.
     const started: number[] = [];
     let finishSecond: () => void = () => {};
+    const second = new Promise<number>((r) => {
+      finishSecond = () => r(2);
+    });
     const run = mapWithConcurrency([1, 2, 3, 4, 5], 2, (n) => {
       started.push(n);
       if (n === 1) return Promise.reject(new Error('boom'));
-      if (n === 2)
-        return new Promise<number>((r) => {
-          finishSecond = () => r(n);
-        });
+      if (n === 2) return second;
       return Promise.resolve(n);
     });
 

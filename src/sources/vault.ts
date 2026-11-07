@@ -58,6 +58,42 @@ function fetchVaultViaCli(secretPath: string, field?: string): VaultResult {
   return { files: new Map([[filename, buf(JSON.stringify(data, null, 2))]]) };
 }
 
+// Builds the result for a KV secret: the whole secret as JSON, or one field.
+function kvFiles(
+  data: Record<string, unknown>,
+  secretPath: string,
+  field?: string,
+): VaultResult {
+  const filename = secretFilename(secretPath, field);
+  if (!field) {
+    return {
+      files: new Map([[filename, buf(JSON.stringify(data, null, 2))]]),
+    };
+  }
+  if (!(field in data))
+    throw new Error(`Field "${field}" not found at ${secretPath}`);
+  return { files: new Map([[filename, buf(String(data[field]))]]) };
+}
+
+// Reads a KV v2 secret's data; undefined when the request fails. The data
+// itself may still be missing, so callers check it before use.
+async function readKvV2(
+  addr: string,
+  secretPath: string,
+  headers: Record<string, string>,
+): Promise<Record<string, unknown> | undefined> {
+  const parts = secretPath.split('/');
+  const mount = parts[0];
+  const subpath = parts.slice(1).join('/');
+  const v2Res = await fetchWithRetry(`${addr}/v1/${mount}/data/${subpath}`, {
+    headers,
+  });
+  if (!v2Res.ok) return undefined;
+  const json = (await v2Res.json()) as Record<string, unknown>;
+  return (json?.data as Record<string, unknown>)?.data as
+    Record<string, unknown> | undefined;
+}
+
 async function fetchVaultViaApi(
   addr: string,
   token: string,
@@ -71,33 +107,11 @@ async function fetchVaultViaApi(
   const namespace = process.env.VAULT_NAMESPACE;
   if (namespace) headers['X-Vault-Namespace'] = namespace;
 
-  const filename = secretFilename(secretPath, field);
-  const parts = secretPath.split('/');
-  const mount = parts[0];
-  const subpath = parts.slice(1).join('/');
-
-  verbose(`vault HTTP API: ${secretPath}${field ? `#${field}` : ''}`);
+  const fieldSuffix = field ? `#${field}` : '';
+  verbose(`vault HTTP API: ${secretPath}${fieldSuffix}`);
   // Try KV v2 path first
-  const v2Res = await fetchWithRetry(`${addr}/v1/${mount}/data/${subpath}`, {
-    headers,
-  });
-  if (v2Res.ok) {
-    const json = (await v2Res.json()) as Record<string, unknown>;
-    const data = (json?.data as Record<string, unknown>)?.data as Record<
-      string,
-      unknown
-    >;
-    if (data) {
-      if (field) {
-        if (!(field in data))
-          throw new Error(`Field "${field}" not found at ${secretPath}`);
-        return { files: new Map([[filename, buf(String(data[field]))]]) };
-      }
-      return {
-        files: new Map([[filename, buf(JSON.stringify(data, null, 2))]]),
-      };
-    }
-  }
+  const v2Data = await readKvV2(addr, secretPath, headers);
+  if (v2Data) return kvFiles(v2Data, secretPath, field);
 
   // Fall back to KV v1 path
   const v1Res = await fetchWithRetry(`${addr}/v1/${secretPath}`, { headers });
@@ -107,12 +121,7 @@ async function fetchVaultViaApi(
   const json = (await v1Res.json()) as Record<string, unknown>;
   const data = json?.data as Record<string, unknown>;
   if (!data) throw new Error(`No data found at ${secretPath}`);
-  if (field) {
-    if (!(field in data))
-      throw new Error(`Field "${field}" not found at ${secretPath}`);
-    return { files: new Map([[filename, buf(String(data[field]))]]) };
-  }
-  return { files: new Map([[filename, buf(JSON.stringify(data, null, 2))]]) };
+  return kvFiles(data, secretPath, field);
 }
 
 export async function fetchVault(

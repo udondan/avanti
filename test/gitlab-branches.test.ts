@@ -14,6 +14,7 @@ vi.mock('child_process', () => ({
 
 import { spawnSync, type SpawnSyncReturns } from 'child_process';
 import type { MockInstance } from 'vitest';
+import { byCodeUnit } from './sort-helpers';
 
 const mockSpawnSync = spawnSync as unknown as MockInstance<
   (
@@ -40,23 +41,28 @@ interface SpawnCall {
 
 type SpawnHandler = (args: string[], call: SpawnCall) => SpawnOut | undefined;
 
+function spawnStdout(opts: SpawnOut, binary: boolean): string | Buffer {
+  if (opts.nullStreams) return null as unknown as string;
+  const stdout = opts.stdout ?? '';
+  if (binary && typeof stdout === 'string') return Buffer.from(stdout);
+  return stdout;
+}
+
+function spawnStderr(opts: SpawnOut, binary: boolean): string | Buffer {
+  if (opts.nullStreams) return null as unknown as string;
+  const stderr = opts.stderr ?? '';
+  return binary ? Buffer.from(stderr) : stderr;
+}
+
 function makeSpawnResult(
   opts: SpawnOut,
   binary: boolean,
 ): SpawnSyncReturns<string | Buffer> {
-  const stdout = opts.stdout ?? '';
+  const { status = 0 } = opts;
   return {
-    stdout: opts.nullStreams
-      ? (null as unknown as string)
-      : binary && typeof stdout === 'string'
-        ? Buffer.from(stdout)
-        : stdout,
-    stderr: opts.nullStreams
-      ? (null as unknown as string)
-      : binary
-        ? Buffer.from(opts.stderr ?? '')
-        : (opts.stderr ?? ''),
-    status: opts.status === undefined ? 0 : opts.status,
+    stdout: spawnStdout(opts, binary),
+    stderr: spawnStderr(opts, binary),
+    status,
     pid: 0,
     output: [],
     signal: null,
@@ -152,7 +158,7 @@ function endpointOf(args: string[]): string {
 }
 
 function keys(files: Map<string, Buffer>): string[] {
-  return [...files.keys()].map((k) => k.replace(/\\/g, '/')).sort();
+  return [...files.keys()].map((k) => k.replace(/\\/g, '/')).sort(byCodeUnit);
 }
 
 function names(list: string[]): Array<{ name: string }> {
@@ -461,7 +467,7 @@ describe('gitlab — directories', () => {
   });
 
   it('throws non-fallback tree errors', async () => {
-    routeFetch((url) => (url.includes('archive') ? status(422) : status(422)));
+    routeFetch(() => status(422));
     await expect(fetchGitLab('g/p', 'dir/', 'main')).rejects.toThrow(
       'Failed to list tree dir in g/p@main: HTTP 422',
     );
@@ -594,7 +600,9 @@ describe('gitlab — ref resolution via API', () => {
 
   it('$latest: falls back to glab on a network error', async () => {
     routeFetch((url) =>
-      url.startsWith(tagsUrl) ? networkError() : fileRoutes(url)!,
+      url.startsWith(tagsUrl)
+        ? networkError()
+        : (fileRoutes(url) ?? unexpected(url)),
     );
     routeSpawn(() => ({ stdout: JSON.stringify(names(['v1.0.0'])) }));
     const result = await fetchGitLab('g/p', 'f.txt', '$latest');
@@ -610,7 +618,9 @@ describe('gitlab — ref resolution via API', () => {
 
   it('pattern: falls back to glab on a network error', async () => {
     routeFetch((url) =>
-      url.startsWith(tagsUrl) ? networkError() : fileRoutes(url)!,
+      url.startsWith(tagsUrl)
+        ? networkError()
+        : (fileRoutes(url) ?? unexpected(url)),
     );
     routeSpawn(() => ({ stdout: JSON.stringify(names(['v1.4.0'])) }));
     const result = await fetchGitLab('g/p', 'f.txt', '/^v1\\./');
@@ -619,7 +629,9 @@ describe('gitlab — ref resolution via API', () => {
 
   it('pattern: falls back to glab on 401', async () => {
     routeFetch((url) =>
-      url.startsWith(tagsUrl) ? status(401) : fileRoutes(url)!,
+      url.startsWith(tagsUrl)
+        ? status(401)
+        : (fileRoutes(url) ?? unexpected(url)),
     );
     routeSpawn(() => ({ stdout: JSON.stringify(names(['v1.4.0'])) }));
     const result = await fetchGitLab('g/p', 'f.txt', '/^v1\\./');
@@ -636,7 +648,9 @@ describe('gitlab — ref resolution via API', () => {
 
   it('$recent: falls back to glab on a network error', async () => {
     routeFetch((url) =>
-      url.startsWith(tagsUrl) ? networkError() : fileRoutes(url)!,
+      url.startsWith(tagsUrl)
+        ? networkError()
+        : (fileRoutes(url) ?? unexpected(url)),
     );
     routeSpawn(() => ({ stdout: JSON.stringify(names(['nightly'])) }));
     const result = await fetchGitLab('g/p', 'f.txt', '$recent');
@@ -652,7 +666,9 @@ describe('gitlab — ref resolution via API', () => {
 
   it('$recent: falls back to glab on 404', async () => {
     routeFetch((url) =>
-      url.startsWith(tagsUrl) ? status(404) : fileRoutes(url)!,
+      url.startsWith(tagsUrl)
+        ? status(404)
+        : (fileRoutes(url) ?? unexpected(url)),
     );
     routeSpawn(() => ({ stdout: JSON.stringify(names(['nightly'])) }));
     const result = await fetchGitLab('g/p', 'f.txt', '$recent');
@@ -1249,7 +1265,7 @@ describe('gitlab — release downloads via API', () => {
     await expect(
       fetchGitLabRelease('g/p', 'v1.0.0', undefined, 'api'),
     ).rejects.toThrow(
-      /Failed to download release asset "(a|b)\.zip" from g\/p@v1\.0\.0: HTTP 404/,
+      /Failed to download release asset "[ab]\.zip" from g\/p@v1\.0\.0: HTTP 404/,
     );
   });
 

@@ -37,11 +37,26 @@ const mocks = [
   mockRm,
   mockLstat,
 ];
-const realImpls = new Map(
-  mocks.map((m) => [m, m.getMockImplementation()!] as const),
-);
+type Impl = NonNullable<ReturnType<MockInstance['getMockImplementation']>>;
+const realImpls = new Map<MockInstance, Impl>();
+for (const m of mocks) {
+  const impl = m.getMockImplementation();
+  if (impl) realImpls.set(m, impl);
+}
+
+// The real fs implementation a mock delegates to by default.
+function realImpl(m: MockInstance): Impl {
+  const impl = realImpls.get(m);
+  if (!impl) throw new Error('mock has no real implementation');
+  return impl;
+}
 
 const isWindows = process.platform === 'win32';
+
+// A thrown value that is not an Error, for the String(err) fallback paths.
+function nonError(value: string): unknown {
+  return value;
+}
 const originalPlatform = process.platform;
 const realONoFollow = (fs.constants as Record<string, number>).O_NOFOLLOW;
 
@@ -68,7 +83,7 @@ afterEach(() => {
   if (realONoFollow !== undefined) {
     (fs.constants as Record<string, number>).O_NOFOLLOW = realONoFollow;
   }
-  for (const m of mocks) m.mockImplementation(realImpls.get(m)!);
+  for (const m of mocks) m.mockImplementation(realImpl(m));
   vi.restoreAllMocks();
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
@@ -91,7 +106,7 @@ describe('atomicWrite — symlink staging', () => {
   });
 
   it.skipIf(isWindows)('retries a temp-link name collision (EEXIST)', () => {
-    const real = realImpls.get(mockSymlink)!;
+    const real = realImpl(mockSymlink);
     mockSymlink
       .mockImplementationOnce(() => {
         throw errno('EEXIST');
@@ -129,7 +144,7 @@ describe('atomicWrite — backups', () => {
     const backupPath = path.join(tmpDir, 'bak', 'f');
     // Pretend dest is a symlink and we run on Windows: the backup is skipped
     // with a warning and no backup directory is created.
-    const realLstat = realImpls.get(mockLstat) as typeof fs.lstatSync;
+    const realLstat = realImpl(mockLstat) as typeof fs.lstatSync;
     mockLstat.mockImplementation(((p: fs.PathLike, o?: fs.StatOptions) => {
       const st = realLstat(p, o as fs.StatOptions & { bigint?: false });
       if (p === dest && st) {
@@ -159,7 +174,7 @@ describe('atomicWrite — backups', () => {
     const dest = path.join(tmpDir, 'l');
     fs.symlinkSync('old-target', dest);
     const backupPath = path.join(tmpDir, 'l.bak');
-    const real = realImpls.get(mockSymlink)!;
+    const real = realImpl(mockSymlink);
     mockSymlink
       .mockImplementationOnce(() => {
         throw errno('EEXIST');
@@ -193,7 +208,7 @@ describe('atomicWrite — backups', () => {
     const dest = path.join(tmpDir, 'f');
     fs.writeFileSync(dest, 'old');
     const backupPath = path.join(tmpDir, 'f.bak');
-    const real = realImpls.get(mockCopyFile)!;
+    const real = realImpl(mockCopyFile);
     mockCopyFile
       .mockImplementationOnce(() => {
         throw errno('EEXIST');
@@ -273,8 +288,7 @@ describe('atomicWrite — in-place writes', () => {
     const dest = path.join(tmpDir, 'f');
     fs.writeFileSync(dest, 'old');
     mockOpen.mockImplementationOnce(() => {
-      // eslint-disable-next-line @typescript-eslint/only-throw-error -- a non-Error throw is the case under test
-      throw 'nope';
+      throw nonError('nope');
     });
     const err = (() => {
       try {
@@ -343,7 +357,7 @@ describe('atomicWrite — in-place writes', () => {
         fs.writeFileSync(path.join(tmpDir, 'real'), 'r');
         // The pre-validation lstat sees a regular file; the Phase 4 lstat sees
         // the symlink that replaced it.
-        const realLstat = realImpls.get(mockLstat) as typeof fs.lstatSync;
+        const realLstat = realImpl(mockLstat) as typeof fs.lstatSync;
         let calls = 0;
         mockLstat.mockImplementation(((p: fs.PathLike, o?: fs.StatOptions) => {
           if (p === dest) {
@@ -370,7 +384,7 @@ describe('atomicWrite — deletions', () => {
     const b = path.join(tmpDir, 'b');
     fs.writeFileSync(a, '');
     fs.writeFileSync(b, '');
-    const real = realImpls.get(mockRm)!;
+    const real = realImpl(mockRm);
     mockRm.mockImplementation((p: string, o: unknown) => {
       if (p === a) throw new Error('busy');
       real(p, o);
@@ -385,8 +399,7 @@ describe('atomicWrite — deletions', () => {
   it('stringifies non-Error deletion failures', () => {
     const a = path.join(tmpDir, 'a');
     mockRm.mockImplementationOnce(() => {
-      // eslint-disable-next-line @typescript-eslint/only-throw-error -- a non-Error throw is the case under test
-      throw 'nope';
+      throw nonError('nope');
     });
     atomicWrite([], [a]);
     expect(String(warn.mock.calls[0][0])).toBe(

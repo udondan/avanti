@@ -14,7 +14,7 @@ import {
 // In CI the directory is /usr/local/avanti-sudo-test (created by the workflow step).
 // Locally: sudo mkdir -p /usr/local/avanti-sudo-test && sudo chmod 700 /usr/local/avanti-sudo-test
 //           AVANTI_SUDO_TEST_DIR=/usr/local/avanti-sudo-test bun test test/privileged-worker.sudo-integration.test.ts
-const sudoTestDir = process.env.AVANTI_SUDO_TEST_DIR;
+const sudoTestDir = process.env.AVANTI_SUDO_TEST_DIR ?? '';
 const sudoCallLog = process.env.AVANTI_SUDO_CALL_LOG;
 
 // Named-user sudo integration: AVANTI_SUDO_NAMED_USER is a non-root Unix user
@@ -23,8 +23,8 @@ const sudoCallLog = process.env.AVANTI_SUDO_CALL_LOG;
 // readable by the test runner (so assertions can read the output files).
 // In CI: sudo useradd -m testwriter && sudo -u testwriter mkdir /tmp/avanti-named-test
 //         AVANTI_SUDO_NAMED_USER=testwriter AVANTI_SUDO_NAMED_USER_DIR=/tmp/avanti-named-test
-const sudoNamedUser = process.env.AVANTI_SUDO_NAMED_USER;
-const sudoNamedUserDir = process.env.AVANTI_SUDO_NAMED_USER_DIR;
+const sudoNamedUser = process.env.AVANTI_SUDO_NAMED_USER ?? '';
+const sudoNamedUserDir = process.env.AVANTI_SUDO_NAMED_USER_DIR ?? '';
 
 describe.skipIf(!sudoTestDir || !sudoCallLog || process.platform === 'win32')(
   'privileged worker — real sudo',
@@ -39,17 +39,17 @@ describe.skipIf(!sudoTestDir || !sudoCallLog || process.platform === 'win32')(
       const runId = crypto.randomBytes(4).toString('hex');
       const targets: SudoWriteTarget[] = [
         {
-          targetPath: path.join(sudoTestDir!, `a-${runId}.txt`),
+          targetPath: path.join(sudoTestDir, `a-${runId}.txt`),
           content: Buffer.from(`content-a-${runId}`),
           sudo: true,
         },
         {
-          targetPath: path.join(sudoTestDir!, `b-${runId}.txt`),
+          targetPath: path.join(sudoTestDir, `b-${runId}.txt`),
           content: Buffer.from(`content-b-${runId}`),
           sudo: true,
         },
         {
-          targetPath: path.join(sudoTestDir!, `c-${runId}.txt`),
+          targetPath: path.join(sudoTestDir, `c-${runId}.txt`),
           content: Buffer.from(`content-c-${runId}`),
           sudo: true,
         },
@@ -95,17 +95,17 @@ describe.skipIf(!sudoTestDir || !sudoCallLog || process.platform === 'win32')(
       const runId = crypto.randomBytes(4).toString('hex');
       const targets: SudoWriteTarget[] = [
         {
-          targetPath: path.join(sudoTestDir!, `sess-a-${runId}.txt`),
+          targetPath: path.join(sudoTestDir, `sess-a-${runId}.txt`),
           content: Buffer.from(`session-a-${runId}`),
           sudo: true,
         },
         {
-          targetPath: path.join(sudoTestDir!, `sess-b-${runId}.txt`),
+          targetPath: path.join(sudoTestDir, `sess-b-${runId}.txt`),
           content: Buffer.from(`session-b-${runId}`),
           sudo: true,
         },
         {
-          targetPath: path.join(sudoTestDir!, `sess-c-${runId}.txt`),
+          targetPath: path.join(sudoTestDir, `sess-c-${runId}.txt`),
           content: Buffer.from(`session-c-${runId}`),
           sudo: true,
         },
@@ -167,14 +167,14 @@ describe.skipIf(
     // from PATH instead of process.execPath. Neither of these paths is covered
     // by the root-sudo test above.
     const runId = crypto.randomBytes(4).toString('hex');
-    const targetPath = path.join(sudoNamedUserDir!, `named-${runId}.txt`);
+    const targetPath = path.join(sudoNamedUserDir, `named-${runId}.txt`);
     const content = `named-user-content-${runId}`;
 
     const targets: SudoWriteTarget[] = [
       {
         targetPath,
         content: Buffer.from(content),
-        sudo: sudoNamedUser!,
+        sudo: sudoNamedUser,
       },
     ];
 
@@ -198,7 +198,7 @@ describe.skipIf(
       body = fs.readFileSync(targetPath, 'utf8');
     } catch {
       const reads = await sudoAtomicRead([
-        { filePath: targetPath, sudo: sudoNamedUser! },
+        { filePath: targetPath, sudo: sudoNamedUser },
       ]);
       const r = reads.get(targetPath);
       if (r) body = Buffer.from(r.contentB64, 'base64').toString('utf8');

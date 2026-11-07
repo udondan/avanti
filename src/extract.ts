@@ -5,14 +5,19 @@ import unzipper from 'unzipper';
 
 export type ArchiveFormat = 'zip' | 'tar' | 'tar.gz' | 'tar.bz2' | 'tar.xz';
 
+const ARCHIVE_SUFFIXES: readonly (readonly [string, ArchiveFormat])[] = [
+  ['.zip', 'zip'],
+  ['.tar.gz', 'tar.gz'],
+  ['.tgz', 'tar.gz'],
+  ['.tar.bz2', 'tar.bz2'],
+  ['.tar.xz', 'tar.xz'],
+  ['.tar', 'tar'],
+];
+
 export function detectArchiveFormat(filename: string): ArchiveFormat | null {
   const lower = filename.toLowerCase();
-  if (lower.endsWith('.zip')) return 'zip';
-  if (lower.endsWith('.tar.gz') || lower.endsWith('.tgz')) return 'tar.gz';
-  if (lower.endsWith('.tar.bz2')) return 'tar.bz2';
-  if (lower.endsWith('.tar.xz')) return 'tar.xz';
-  if (lower.endsWith('.tar')) return 'tar';
-  return null;
+  const match = ARCHIVE_SUFFIXES.find(([suffix]) => lower.endsWith(suffix));
+  return match ? match[1] : null;
 }
 
 function normalizePath(p: string): string | null {

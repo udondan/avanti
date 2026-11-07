@@ -11,9 +11,9 @@ let prevHistoryDir: string | undefined;
 
 async function loadCli(args: string[]): Promise<string> {
   const out: string[] = [];
-  const log = vi
-    .spyOn(console, 'log')
-    .mockImplementation((...a) => void out.push(a.join(' ')));
+  const log = vi.spyOn(console, 'log').mockImplementation((...a) => {
+    out.push(a.join(' '));
+  });
   process.argv = ['node', 'avanti', ...args];
   vi.resetModules();
   try {

@@ -21,7 +21,7 @@ export async function fetchSecretsManager(
     );
 
     // ARNs use ':' as separator; split on both ':' and '/' to get the leaf name
-    const filename = name.split(/[:/]/).filter(Boolean).pop() || 'secret';
+    const filename = name.split(/[:/]/).filter(Boolean).pop() ?? 'secret';
 
     if (response.SecretBinary) {
       if (key !== undefined) {
@@ -49,7 +49,7 @@ export async function fetchSecretsManager(
       if (
         typeof parsed !== 'object' ||
         parsed === null ||
-        !Object.prototype.hasOwnProperty.call(parsed, key)
+        !Object.hasOwn(parsed, key)
       ) {
         throw new Error(
           `aws_secrets_manager: key "${key}" not found in secret "${name}"`,

@@ -24,6 +24,7 @@ import {
   TempEnv,
   throwNonError,
 } from './commands-pull-helpers';
+import { byCodeUnit } from './sort-helpers';
 
 vi.mock('../src/prompt', () => ({
   confirm: vi.fn(() => Promise.resolve(true)),
@@ -231,9 +232,8 @@ suite('pull: unreadable sudo targets', () => {
   it('skips the write when the privileged read matches', async () => {
     const file = unreadable('x');
     const log = p('hooks.log');
-    env.writeConfig(
-      `files:\n${sudoEntry('out.txt', `    on:\n      update: echo update >> ${log}\n`)}`,
-    );
+    const hooks = `    on:\n      update: echo update >> ${log}\n`;
+    env.writeConfig(`files:\n${sudoEntry('out.txt', hooks)}`);
     mockRead.mockResolvedValue(new Map([[file, { contentB64: b64('x') }]]));
     const res = await pull();
     expect(res.code).toBe(0);
@@ -343,9 +343,8 @@ suite('pull: sudo targets behind a non-searchable directory', () => {
 
   it('creates a file the stat-read reports as missing', async () => {
     const log = p('hooks.log');
-    env.writeConfig(
-      `files:\n${sudoEntry('locked/out.txt', `    on:\n      create: echo create-$AVANTI_IS_NEW >> ${log}\n`)}`,
-    );
+    const hooks = `    on:\n      create: echo create-$AVANTI_IS_NEW >> ${log}\n`;
+    env.writeConfig(`files:\n${sudoEntry('locked/out.txt', hooks)}`);
     lock();
     mockStat.mockResolvedValue(new Map([[target, statOf({ exists: false })]]));
     const res = await pull();
@@ -644,11 +643,11 @@ suite('pull: sudo stale restore', () => {
     await overwriteThenDrop();
     // Report win32 only from the stale-file scan on, after the fetch loop
     // resolved paths with the real platform.
-    const desc = Object.getOwnPropertyDescriptor(process, 'platform')!;
+    const desc = { ...Object.getOwnPropertyDescriptor(process, 'platform') };
     const orig = Object.getOwnPropertyDescriptor(
       HistoryManager.prototype,
       'getLastPullFiles',
-    )!.value as (this: HistoryManager) => PullLogFileRef[];
+    )?.value as (this: HistoryManager) => PullLogFileRef[];
     vi.spyOn(HistoryManager.prototype, 'getLastPullFiles').mockImplementation(
       function (this: HistoryManager) {
         Object.defineProperty(process, 'platform', { value: 'win32' });
@@ -811,7 +810,7 @@ suite('pull: write failures', () => {
     return history()
       .getLastPullFiles()
       .map((f) => f.absolutePath)
-      .sort();
+      .sort(byCodeUnit);
   }
 
   it('records partial history for a partial regular write', async () => {

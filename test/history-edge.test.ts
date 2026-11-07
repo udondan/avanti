@@ -77,16 +77,9 @@ describe('stageFileVersion — original capture', () => {
     h.closePullSession(id1, 'cfg', [r1.fileRef]);
 
     const id2 = h.openPullSession();
-    const r2 = h.stageFileVersion(
-      id2,
-      target,
-      buf('link-target'),
-      false,
-      undefined,
-      undefined,
-      undefined,
-      true,
-    );
+    const r2 = h.stageFileVersion(id2, target, buf('link-target'), false, {
+      isSymlink: true,
+    });
     expect(r2.fileRef.isSymlink).toBe(true);
     expect(h.getFileMeta(target)?.isSymlink).toBe(true);
   });
@@ -99,16 +92,9 @@ describe('stageFileVersion — original capture', () => {
       const target = path.join(tmpDir, 'link');
       fs.symlinkSync('old-target', target);
       const id = h.openPullSession();
-      h.stageFileVersion(
-        id,
-        target,
-        buf('new-target'),
-        false,
-        undefined,
-        undefined,
-        undefined,
-        true,
-      );
+      h.stageFileVersion(id, target, buf('new-target'), false, {
+        isSymlink: true,
+      });
       const meta = h.getFileMeta(target)!;
       expect(meta.v0IsSymlink).toBe(true);
       expect(meta.isSymlink).toBe(true);
@@ -122,16 +108,7 @@ describe('stageFileVersion — original capture', () => {
     const target = path.join(tmpDir, 'file');
     fs.writeFileSync(target, 'original');
     const id = h.openPullSession();
-    h.stageFileVersion(
-      id,
-      target,
-      buf('t'),
-      false,
-      undefined,
-      undefined,
-      undefined,
-      true,
-    );
+    h.stageFileVersion(id, target, buf('t'), false, { isSymlink: true });
     expect(h.getFileMeta(target)?.existedBeforeAvanti).toBe(true);
     expect(h.readVersion(target, 0)?.toString()).toBe('original');
   });
@@ -142,16 +119,7 @@ describe('stageFileVersion — original capture', () => {
     const target = path.join(tmpDir, 'adir');
     fs.mkdirSync(target);
     const id = h.openPullSession();
-    h.stageFileVersion(
-      id,
-      target,
-      buf('t'),
-      false,
-      undefined,
-      undefined,
-      undefined,
-      true,
-    );
+    h.stageFileVersion(id, target, buf('t'), false, { isSymlink: true });
     expect(h.getFileMeta(target)?.existedBeforeAvanti).toBe(false);
     expect(h.readVersion(target, 0)).toBeNull();
   });
@@ -192,17 +160,12 @@ describe('stageFileVersion — original capture', () => {
     fs.writeFileSync(target, 'x');
     failReadFor(target, 'EPERM');
     const id = h.openPullSession();
-    h.stageFileVersion(
-      id,
-      target,
-      buf('new'),
-      false,
-      undefined,
-      'root',
-      buf('sudo-read-original'),
-      false,
-      true,
-    );
+    h.stageFileVersion(id, target, buf('new'), false, {
+      sudo: 'root',
+      v0Override: buf('sudo-read-original'),
+      isSymlink: false,
+      v0IsSymlinkOverride: true,
+    });
     mockReadFile.mockImplementation(realReadFile);
     const meta = h.getFileMeta(target)!;
     expect(meta.v0IsSymlink).toBe(true);
@@ -216,15 +179,10 @@ describe('stageFileVersion — original capture', () => {
     fs.writeFileSync(target, 'x');
     failReadFor(target, 'EACCES');
     const id = h.openPullSession();
-    h.stageFileVersion(
-      id,
-      target,
-      buf('new'),
-      false,
-      undefined,
-      true,
-      buf('orig'),
-    );
+    h.stageFileVersion(id, target, buf('new'), false, {
+      sudo: true,
+      v0Override: buf('orig'),
+    });
     mockReadFile.mockImplementation(realReadFile);
     expect(h.getFileMeta(target)?.v0IsSymlink).toBeUndefined();
     expect(h.readVersion(target, 0)?.toString()).toBe('orig');
