@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.29.4](https://github.com/udondan/avanti/compare/v0.29.3...v0.29.4) (2026-11-07)
+
+
+### Bug Fixes
+
+* handle readline error on privileged worker IPC socket ([#544](https://github.com/udondan/avanti/issues/544)) ([e2ee6d4](https://github.com/udondan/avanti/commit/e2ee6d4e72b5fd0ccfb993c9379612f6defddeb0)), closes [#540](https://github.com/udondan/avanti/issues/540)
+
+
+### Dependencies
+
+* **deps:** update dependency glob to v14.0.3 ([#541](https://github.com/udondan/avanti/issues/541)) ([4da930f](https://github.com/udondan/avanti/commit/4da930fd930bcae2a2f02c24df43e503dba7350c))
+* **deps:** update dependency minimatch to v11.0.4 ([#542](https://github.com/udondan/avanti/issues/542)) ([54d57fa](https://github.com/udondan/avanti/commit/54d57faeba5bf241a5a2bd2a0682e4902f0917c7))
+* **deps:** update dependency zizmor to v1.32.0 ([#537](https://github.com/udondan/avanti/issues/537)) ([5171f50](https://github.com/udondan/avanti/commit/5171f508fef939db8476f7d35060d0e9a3c275c6))
+* **deps:** update jdx/mise-action action to v5.2.6 ([#534](https://github.com/udondan/avanti/issues/534)) ([66cad38](https://github.com/udondan/avanti/commit/66cad38fd61db919e14bfaa2b8df7442392ee64a))
+* **deps:** update vitest monorepo to v5.1.0 ([#535](https://github.com/udondan/avanti/issues/535)) ([d794b2b](https://github.com/udondan/avanti/commit/d794b2b58953aa0d68d03849a47080aceac506ca))
+
 ## [0.29.3](https://github.com/udondan/avanti/compare/v0.29.2...v0.29.3) (2026-11-03)
 
 
