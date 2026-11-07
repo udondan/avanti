@@ -37,6 +37,7 @@ import { confirm } from '../src/prompt';
 import * as writer from '../src/writer';
 import { HistoryManager, PullLogFileRef } from '../src/history';
 import { revertCommand } from '../src/commands/revert';
+import { mergeLastPullRefs } from '../src/commands/pull/history-record';
 import { computeContentSha256 } from '../src/sha';
 
 const posixOnly = it.skipIf(process.platform === 'win32');
@@ -70,8 +71,11 @@ interface StageSpec {
   isSymlink?: boolean;
 }
 
-/** Records one pull in history, then writes the pulled content to disk. */
-function recordPull(specs: StageSpec[]): string {
+/**
+ * Records one pull in history, then writes the pulled content to disk. With
+ * carryOver, refs from the previous pull entry are kept, as a real pull does.
+ */
+function recordPull(specs: StageSpec[], carryOver = false): string {
   const h = history();
   h.ensureStorageDir();
   const pullId = h.openPullSession();
@@ -86,7 +90,11 @@ function recordPull(specs: StageSpec[]): string {
     );
     refs.push(fileRef);
   }
-  h.closePullSession(pullId, configPath, refs);
+  h.closePullSession(
+    pullId,
+    configPath,
+    carryOver ? mergeLastPullRefs(h.getLastPullFiles(), new Set(), refs) : refs,
+  );
   for (const s of specs) {
     rmSync(s.path, { force: true, recursive: true });
     if (s.isSymlink) symlinkSync(s.content, s.path);
@@ -255,6 +263,37 @@ describe('revert: plan building', () => {
       { path: a, content: 'a2\n', isNew: false },
       { path: b, content: 'b\n', isNew: true },
     ]);
+    const r = await run(['-y']);
+    expect(r.exitCode).toBe(0);
+    expect(readFileSync(a, 'utf8')).toBe('a1\n');
+    expect(existsSync(b)).toBe(false);
+  });
+
+  it('keeps files the last pull did not touch (#538)', async () => {
+    const hello = join(tmpDir, 'hello.txt');
+    const exec = join(tmpDir, 'exec.txt');
+    recordPull([
+      { path: hello, content: 'one\n', isNew: true },
+      { path: exec, content: 'hi\n', isNew: true },
+    ]);
+    recordPull([{ path: hello, content: 'two\n', isNew: false }], true);
+    const r = await run(['-y']);
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toContain('Reverted 1 file(s).');
+    expect(r.stdout).not.toContain('deleted');
+    expect(readFileSync(hello, 'utf8')).toBe('one\n');
+    expect(readFileSync(exec, 'utf8')).toBe('hi\n');
+  });
+
+  it('drops a carried file that the last pull re-created', async () => {
+    const a = join(tmpDir, 'a.txt');
+    const b = join(tmpDir, 'b.txt');
+    recordPull([
+      { path: a, content: 'a1\n', isNew: true },
+      { path: b, content: 'b1\n', isNew: true },
+    ]);
+    // b was deleted by hand, so the second pull creates it from scratch.
+    recordPull([{ path: b, content: 'b2\n', isNew: true }], true);
     const r = await run(['-y']);
     expect(r.exitCode).toBe(0);
     expect(readFileSync(a, 'utf8')).toBe('a1\n');
