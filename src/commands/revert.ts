@@ -51,10 +51,12 @@ function targetSnapshot(
   // A file with wasNew=true in the last pull was created from scratch (it
   // did not exist on disk before that pull ran). Even if an earlier pull
   // also created it, the correct "before last pull" state is: not present.
+  // Refs the last pull did not rewrite are carried over from the previous
+  // entry with the same version; those keep their prior state.
   for (const ref of pulls[0].files) {
-    if (ref.wasNew) {
-      snapshot.delete(ref.absolutePath);
-    }
+    if (!ref.wasNew) continue;
+    if (snapshot.get(ref.absolutePath)?.version === ref.version) continue;
+    snapshot.delete(ref.absolutePath);
   }
   return snapshot;
 }
