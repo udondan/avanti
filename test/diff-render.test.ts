@@ -4,8 +4,13 @@ import { stripVTControlCharacters } from 'util';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { MockInstance } from 'vitest';
 
+const realFs = vi.hoisted(() => ({
+  lstatSync: undefined as unknown as typeof import('fs').lstatSync,
+}));
+
 vi.mock('fs', async (importOriginal) => {
   const actual = await importOriginal<typeof import('fs')>();
+  realFs.lstatSync = actual.lstatSync;
   return {
     ...actual,
     lstatSync: vi.fn(actual.lstatSync),
@@ -165,10 +170,11 @@ describe('diff edge cases', () => {
       () => {
         const p = path.join(tmpDir, 'f');
         fs.writeFileSync(p, 'same');
-        const real = mockLstat.getMockImplementation()!;
-        mockLstat.mockImplementationOnce(real).mockImplementationOnce(() => {
-          throw errno('EACCES');
-        });
+        mockLstat
+          .mockImplementationOnce(realFs.lstatSync)
+          .mockImplementationOnce(() => {
+            throw errno('EACCES');
+          });
         const d = computeDiff(p, Buffer.from('same'), '0600');
         expect(d.modeChange).toBeUndefined();
         expect(d.hasChanges).toBe(false);
@@ -180,10 +186,11 @@ describe('diff edge cases', () => {
       () => {
         const p = path.join(tmpDir, 'f');
         fs.writeFileSync(p, 'same');
-        const real = mockLstat.getMockImplementation()!;
-        mockLstat.mockImplementationOnce(real).mockImplementationOnce(() => {
-          throw errno('EIO');
-        });
+        mockLstat
+          .mockImplementationOnce(realFs.lstatSync)
+          .mockImplementationOnce(() => {
+            throw errno('EIO');
+          });
         expect(() => computeDiff(p, Buffer.from('same'), '0600')).toThrow(
           'EIO',
         );
