@@ -25,6 +25,25 @@ function isPlainObject(v: unknown): v is Record<string, TomlValue> {
   );
 }
 
+function objectsEqual(
+  a: Record<string, TomlValue>,
+  b: Record<string, TomlValue>,
+): boolean {
+  const aKeys = Object.keys(a);
+  const bKeys = Object.keys(b);
+  return (
+    aKeys.length === bKeys.length &&
+    aKeys.every((k) => Object.hasOwn(b, k) && valuesEqual(a[k], b[k]))
+  );
+}
+
+function containersEqual(a: TomlValue, b: TomlValue): boolean {
+  if (Array.isArray(a) && Array.isArray(b)) {
+    return a.length === b.length && a.every((v, i) => valuesEqual(v, b[i]));
+  }
+  return isPlainObject(a) && isPlainObject(b) && objectsEqual(a, b);
+}
+
 function valuesEqual(a: TomlValue, b: TomlValue): boolean {
   if (a === b) return true;
   if (typeof a === 'number' && typeof b === 'number') {
@@ -33,18 +52,7 @@ function valuesEqual(a: TomlValue, b: TomlValue): boolean {
   if (a instanceof Date && b instanceof Date) {
     return a.getTime() === b.getTime();
   }
-  if (Array.isArray(a) && Array.isArray(b)) {
-    return a.length === b.length && a.every((v, i) => valuesEqual(v, b[i]));
-  }
-  if (isPlainObject(a) && isPlainObject(b)) {
-    const aKeys = Object.keys(a);
-    const bKeys = Object.keys(b);
-    return (
-      aKeys.length === bKeys.length &&
-      aKeys.every((k) => Object.hasOwn(b, k) && valuesEqual(a[k], b[k]))
-    );
-  }
-  return false;
+  return containersEqual(a, b);
 }
 
 function dedupeArrays(a: TomlValue[], b: TomlValue[]): TomlValue[] {
@@ -57,6 +65,33 @@ function dedupeArrays(a: TomlValue[], b: TomlValue[]): TomlValue[] {
   return result;
 }
 
+function mergeArrays(
+  a: TomlValue[],
+  b: TomlValue[],
+  arrays: ResolvedOptions['arrays'],
+): TomlValue | undefined {
+  if (arrays === 'concat') return [...a, ...b];
+  if (arrays === 'dedupe') return dedupeArrays(a, b);
+  return undefined;
+}
+
+// Merges two arrays or two tables per the options; undefined when the values
+// conflict instead.
+function mergeContainers(
+  path: string,
+  a: TomlValue,
+  b: TomlValue,
+  opts: ResolvedOptions,
+): TomlValue | undefined {
+  if (Array.isArray(a) && Array.isArray(b)) {
+    return mergeArrays(a, b, opts.arrays);
+  }
+  if (isPlainObject(a) && isPlainObject(b) && opts.objects === 'merge') {
+    return deepMerge(a, b, opts, path);
+  }
+  return undefined;
+}
+
 function mergeValues(
   path: string,
   a: TomlValue,
@@ -65,19 +100,14 @@ function mergeValues(
 ): TomlValue {
   if (valuesEqual(a, b)) return a;
 
-  if (Array.isArray(a) && Array.isArray(b)) {
-    if (opts.arrays === 'concat') return [...a, ...b];
-    if (opts.arrays === 'dedupe') return dedupeArrays(a, b);
-  } else if (isPlainObject(a) && isPlainObject(b)) {
-    if (opts.objects === 'merge') return deepMerge(a, b, opts, path);
-  }
+  const merged = mergeContainers(path, a, b, opts);
+  if (merged !== undefined) return merged;
 
   const loc = path || '(root)';
   if (opts.conflicts === 'abort') {
     throw new Error(`TOML conflict at ${loc}`);
   }
-  if (opts.conflicts === 'first_wins') return a;
-  return b;
+  return opts.conflicts === 'first_wins' ? a : b;
 }
 
 function deepMerge(
@@ -136,7 +166,7 @@ export function mergeToml(
 
 export function formatToml(content: string): string {
   try {
-    return stringify(parse(content) as Parameters<typeof stringify>[0]);
+    return stringify(parse(content));
   } catch (e) {
     throw new Error(`invalid TOML: ${(e as Error).message}`, { cause: e });
   }

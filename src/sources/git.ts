@@ -10,7 +10,7 @@ import {
   parseRefPattern,
 } from '../ref';
 
-export interface GitResult {
+interface GitResult {
   files: Map<string, Buffer>;
 }
 
@@ -150,7 +150,7 @@ function resolveGitRef(
   throw new Error(`No tags matching "${ref}" found for ${redactGitUrl(repo)}`);
 }
 
-export function fetchGit(repo: string, file: string, ref?: string): GitResult {
+function assertPathInsideRepo(file: string): void {
   const normalized = path.normalize(file);
   if (
     path.isAbsolute(file) ||
@@ -159,72 +159,100 @@ export function fetchGit(repo: string, file: string, ref?: string): GitResult {
   ) {
     throw new Error(`Unsafe file path escapes repository root: ${file}`);
   }
+}
+
+// Resolves $latest/$recent/pattern refs via ls-remote; other refs pass through.
+function resolveFetchRef(
+  repo: string,
+  ref: string | undefined,
+): string | undefined {
+  // Neither '' nor 'undefined' is a /pattern/, so a missing ref parses to null.
+  const refPattern = parseRefPattern(String(ref));
+  return ref && (isLatestSentinel(ref) || isRecentSentinel(ref) || refPattern)
+    ? resolveGitRef(repo, ref, refPattern)
+    : ref;
+}
+
+// ['--branch', ref] when a ref is given, [] otherwise.
+function branchArgs(ref: string | undefined): string[] {
+  return [ref]
+    .filter((r): r is string => Boolean(r))
+    .flatMap((r) => ['--branch', r]);
+}
+
+function runGitOrThrow(
+  args: string[],
+  failure: string,
+  opts: { cwd?: string } = {},
+): void {
+  const res = run('git', args, opts);
+  if (res.status !== 0) {
+    throw new Error(`${failure}: ${res.stderr.trim()}`);
+  }
+}
+
+function cloneRepo(
+  repo: string,
+  repoDir: string,
+  resolvedRef: string | undefined,
+): void {
+  if (!resolvedRef || !looksLikeCommitHash(resolvedRef)) {
+    const args = ['clone', '--depth', '1', ...branchArgs(resolvedRef)];
+    verbose(`git ${args.join(' ')} ${redactGitUrl(repo)} <tmpdir>`);
+    args.push(repo, repoDir);
+    runGitOrThrow(args, 'git clone failed');
+    return;
+  }
+  verbose(`git clone ${redactGitUrl(repo)} <tmpdir>`);
+  runGitOrThrow(['clone', repo, repoDir], 'git clone failed');
+  verbose(`git checkout ${resolvedRef}`);
+  runGitOrThrow(
+    ['checkout', resolvedRef],
+    `git checkout ${resolvedRef} failed`,
+    { cwd: repoDir },
+  );
+}
+
+function readRepoPath(repoDir: string, file: string): Map<string, Buffer> {
+  const normalizedFile = file.replace(/\/$/, '');
+  const fullPath = path.join(repoDir, normalizedFile);
+
+  if (!fs.existsSync(fullPath)) {
+    throw new Error(`Path not found in repository: ${file}`);
+  }
+
+  const realRepoDir = fs.realpathSync(repoDir);
+  const realFullPath = fs.realpathSync(fullPath);
+  if (
+    realFullPath !== realRepoDir &&
+    !realFullPath.startsWith(realRepoDir + path.sep)
+  ) {
+    throw new Error(
+      `Unsafe file path escapes repository root via symlink: ${file}`,
+    );
+  }
+
+  const files = new Map<string, Buffer>();
+  const stat = fs.statSync(fullPath);
+  if (stat.isDirectory() || file.endsWith('/')) {
+    collectFiles(fullPath, fullPath, files);
+    if (!files.size) {
+      throw new Error(`Empty directory: ${file}`);
+    }
+  } else {
+    files.set(path.basename(normalizedFile), fs.readFileSync(fullPath));
+  }
+  return files;
+}
+
+export function fetchGit(repo: string, file: string, ref?: string): GitResult {
+  assertPathInsideRepo(file);
 
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'avanti-git-'));
   try {
     const repoDir = path.join(tmpDir, 'repo');
-
-    const refPattern = ref ? parseRefPattern(ref) : null;
-    const resolvedRef =
-      ref && (isLatestSentinel(ref) || isRecentSentinel(ref) || refPattern)
-        ? resolveGitRef(repo, ref, refPattern)
-        : ref;
-
-    if (!resolvedRef || !looksLikeCommitHash(resolvedRef)) {
-      const args = ['clone', '--depth', '1'];
-      if (resolvedRef) args.push('--branch', resolvedRef);
-      verbose(`git ${args.join(' ')} ${redactGitUrl(repo)} <tmpdir>`);
-      args.push(repo, repoDir);
-      const res = run('git', args);
-      if (res.status !== 0) {
-        throw new Error(`git clone failed: ${res.stderr.trim()}`);
-      }
-    } else {
-      verbose(`git clone ${redactGitUrl(repo)} <tmpdir>`);
-      const cloneRes = run('git', ['clone', repo, repoDir]);
-      if (cloneRes.status !== 0) {
-        throw new Error(`git clone failed: ${cloneRes.stderr.trim()}`);
-      }
-      verbose(`git checkout ${resolvedRef}`);
-      const checkoutRes = run('git', ['checkout', resolvedRef], {
-        cwd: repoDir,
-      });
-      if (checkoutRes.status !== 0) {
-        throw new Error(
-          `git checkout ${resolvedRef} failed: ${checkoutRes.stderr.trim()}`,
-        );
-      }
-    }
-
-    const normalizedFile = file.replace(/\/$/, '');
-    const fullPath = path.join(repoDir, normalizedFile);
-
-    if (!fs.existsSync(fullPath)) {
-      throw new Error(`Path not found in repository: ${file}`);
-    }
-
-    const realRepoDir = fs.realpathSync(repoDir);
-    const realFullPath = fs.realpathSync(fullPath);
-    if (
-      realFullPath !== realRepoDir &&
-      !realFullPath.startsWith(realRepoDir + path.sep)
-    ) {
-      throw new Error(
-        `Unsafe file path escapes repository root via symlink: ${file}`,
-      );
-    }
-
-    const files = new Map<string, Buffer>();
-    const stat = fs.statSync(fullPath);
-    if (stat.isDirectory() || file.endsWith('/')) {
-      collectFiles(fullPath, fullPath, files);
-      if (!files.size) {
-        throw new Error(`Empty directory: ${file}`);
-      }
-    } else {
-      files.set(path.basename(normalizedFile), fs.readFileSync(fullPath));
-    }
-    return { files };
+    cloneRepo(repo, repoDir, resolveFetchRef(repo, ref));
+    return { files: readRepoPath(repoDir, file) };
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }

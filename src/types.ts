@@ -24,7 +24,7 @@ export interface ReplaceRule {
   to: string;
 }
 
-export interface GitLabFileSrc {
+interface GitLabFileSrc {
   gitlab: {
     project: string;
     file: string;
@@ -39,7 +39,7 @@ export interface GitLabFileSrc {
   ifAny?: Condition[];
 }
 
-export interface GitLabReleaseSrc {
+interface GitLabReleaseSrc {
   gitlab: {
     project: string;
     /** Tag name, `$latest` (newest semver release; falls back to semver tag scan if releases/latest is non-semver), `$recent` (newest by date), or `/pattern/[flags]`. */
@@ -55,7 +55,7 @@ export interface GitLabReleaseSrc {
 
 export type GitLabSrc = GitLabFileSrc | GitLabReleaseSrc;
 
-export interface GitHubFileSrc {
+interface GitHubFileSrc {
   github: {
     repo: string;
     file: string;
@@ -70,7 +70,7 @@ export interface GitHubFileSrc {
   ifAny?: Condition[];
 }
 
-export interface GitHubReleaseSrc {
+interface GitHubReleaseSrc {
   github: {
     repo: string;
     /** Tag name, `$latest` (newest stable semver tag), `$recent` (most recently created tag), or `/pattern/[flags]`. */

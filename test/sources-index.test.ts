@@ -52,6 +52,7 @@ import { fetchExec } from '../src/sources/exec';
 import { fetchGit } from '../src/sources/git';
 import { fetchHttp, inferFilenameFromUrl } from '../src/sources/http';
 import { extractArchive } from '../src/extract';
+import { byCodeUnit } from './sort-helpers';
 
 const { srcFilename } = _testable;
 
@@ -500,7 +501,7 @@ describe('fetchSource — per-source-type labels, cache keys and dispatch', () =
     ],
   ])('%s', async (_desc, src, label, cacheKey, assertCall) => {
     const cache: FetchCache = new Map();
-    const result = await fetchSource(entry(src), tmpDir, vars, cache);
+    const result = await fetchSource(entry(src), tmpDir, vars, { cache });
     assertCall();
     expect(result.sourceRecords).toHaveLength(1);
     const [record] = result.sourceRecords;
@@ -546,7 +547,7 @@ describe('fetchSource — per-source-type labels, cache keys and dispatch', () =
     const cache: FetchCache = new Map([
       [JSON.stringify(src), { files: ONE_FILE().files }],
     ]);
-    const result = await fetchSource(entry(src), tmpDir, {}, cache);
+    const result = await fetchSource(entry(src), tmpDir, {}, { cache });
     expect(result.sourceRecords[0]).toMatchObject({
       sourceLabel: '{"unknown":1}',
       expectedSha: undefined,
@@ -556,12 +557,9 @@ describe('fetchSource — per-source-type labels, cache keys and dispatch', () =
 
   it('keys raw sources by their resolved content and records nothing', async () => {
     const cache: FetchCache = new Map();
-    const result = await fetchSource(
-      entry({ raw: 'hello $v' }),
-      tmpDir,
-      vars,
+    const result = await fetchSource(entry({ raw: 'hello $v' }), tmpDir, vars, {
       cache,
-    );
+    });
     expect([...cache.keys()]).toEqual(['raw:hello X']);
     expect(result.sourceRecords).toEqual([]);
     expect(result.files.get('output')?.toString()).toBe('hello X');
@@ -626,8 +624,8 @@ describe('fetchSource — verbose logging', () => {
       .mockImplementation(() => true);
     setVerbose(true);
     const cache: FetchCache = new Map();
-    await fetchSource(entry({ raw: 'x' }), tmpDir, {}, cache);
-    await fetchSource(entry({ raw: 'x' }), tmpDir, {}, cache);
+    await fetchSource(entry({ raw: 'x' }), tmpDir, {}, { cache });
+    await fetchSource(entry({ raw: 'x' }), tmpDir, {}, { cache });
     const output = stderrSpy.mock.calls.map((c) => String(c[0])).join('');
     expect(output).toContain('fetching source: raw');
     expect(output).toContain('cache hit: raw');
@@ -673,9 +671,7 @@ describe('fetchSource — pending writes path resolution', () => {
       entry('rel.txt'),
       tmpDir,
       {},
-      undefined,
-      undefined,
-      pending,
+      { pendingWrites: pending },
     );
     expect(result.files.get('rel.txt')?.toString()).toBe('p');
   });
@@ -687,9 +683,7 @@ describe('fetchSource — pending writes path resolution', () => {
       entry({ path: `~/${name}` }),
       tmpDir,
       {},
-      undefined,
-      undefined,
-      pending,
+      { pendingWrites: pending },
     );
     expect(result.files.get(name)?.toString()).toBe('home');
   });
@@ -700,9 +694,7 @@ describe('fetchSource — pending writes path resolution', () => {
         entry('$undefinedVar'),
         tmpDir,
         {},
-        undefined,
-        undefined,
-        new Map(),
+        { pendingWrites: new Map() },
       ),
     ).rejects.toThrow('Undefined variable');
   });
@@ -830,7 +822,10 @@ describe('fetchSource — extract', () => {
       { src: archive, target: 'out/', extract: true },
       tmpDir,
     );
-    expect([...result.files.keys()].sort()).toEqual(['README.md', 'bin/tool']);
+    expect([...result.files.keys()].sort(byCodeUnit)).toEqual([
+      'README.md',
+      'bin/tool',
+    ]);
     expect(extractArchive).toHaveBeenCalledWith(
       Buffer.from('archive bytes'),
       'tool.tar.gz',

@@ -81,10 +81,7 @@ function recordPull(specs: StageSpec[]): string {
       s.path,
       Buffer.from(s.content),
       s.isNew,
-      undefined,
-      s.sudo,
-      undefined,
-      s.isSymlink,
+      { sudo: s.sudo, isSymlink: s.isSymlink },
     );
     refs.push(fileRef);
   }
@@ -111,18 +108,23 @@ function removeVersion(absPath: string, version: number): void {
   );
 }
 
+// Throws a non-Error value to cover the non-Error branches of the error handling.
+function throwNonError(value: unknown): never {
+  throw value;
+}
+
 async function run(args: string[]): Promise<RunResult> {
   const out: string[] = [];
   const err: string[] = [];
-  const log = vi
-    .spyOn(console, 'log')
-    .mockImplementation((...a) => void out.push(a.join(' ')));
-  const error = vi
-    .spyOn(console, 'error')
-    .mockImplementation((...a) => void err.push(a.join(' ')));
-  const warn = vi
-    .spyOn(console, 'warn')
-    .mockImplementation((...a) => void err.push(a.join(' ')));
+  const log = vi.spyOn(console, 'log').mockImplementation((...a) => {
+    out.push(a.join(' '));
+  });
+  const error = vi.spyOn(console, 'error').mockImplementation((...a) => {
+    err.push(a.join(' '));
+  });
+  const warn = vi.spyOn(console, 'warn').mockImplementation((...a) => {
+    err.push(a.join(' '));
+  });
   const exit = vi.spyOn(process, 'exit').mockImplementation((code) => {
     throw new ExitSignal(Number(code ?? 0));
   });
@@ -153,7 +155,7 @@ async function run(args: string[]): Promise<RunResult> {
 }
 
 function withPlatform<T>(platform: string, fn: () => Promise<T>): Promise<T> {
-  const original = Object.getOwnPropertyDescriptor(process, 'platform')!;
+  const original = { ...Object.getOwnPropertyDescriptor(process, 'platform') };
   Object.defineProperty(process, 'platform', { value: platform });
   return fn().finally(() =>
     Object.defineProperty(process, 'platform', original),
@@ -198,9 +200,9 @@ describe('reset: preconditions', () => {
 
   it('resolves the default config path when --config is omitted', async () => {
     const out: string[] = [];
-    const log = vi
-      .spyOn(console, 'log')
-      .mockImplementation((...a) => void out.push(a.join(' ')));
+    const log = vi.spyOn(console, 'log').mockImplementation((...a) => {
+      out.push(a.join(' '));
+    });
     const exit = vi.spyOn(process, 'exit').mockImplementation((code) => {
       throw new ExitSignal(Number(code ?? 0));
     });
@@ -368,8 +370,7 @@ describe('reset: confirmation and failures', () => {
   it('exits 2 with a non-Error session failure', async () => {
     setup(true);
     vi.mocked(writer.openPrivilegedSessions).mockImplementationOnce(() => {
-      // eslint-disable-next-line @typescript-eslint/only-throw-error -- covers the non-Error branch
-      throw 'plain string';
+      throwNonError('plain string');
     });
     const r = await run(['-y']);
     expect(r.exitCode).toBe(2);
@@ -443,8 +444,7 @@ describe('reset: confirmation and failures', () => {
   it('reports a plain failure without a partial-write warning', async () => {
     setup();
     vi.mocked(writer.atomicWrite).mockImplementationOnce(() => {
-      // eslint-disable-next-line @typescript-eslint/only-throw-error -- covers the non-Error branch
-      throw 'weird';
+      throwNonError('weird');
     });
     const r = await run(['-y']);
     expect(r.exitCode).toBe(2);

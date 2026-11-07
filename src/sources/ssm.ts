@@ -6,7 +6,7 @@ import {
 import * as path from 'path';
 import { verbose, isVerbose } from '../logger';
 
-export interface SsmResult {
+interface SsmResult {
   files: Map<string, Buffer>;
 }
 

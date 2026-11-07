@@ -12,15 +12,16 @@ import {
   parseRefPattern,
 } from '../ref';
 
-export interface BitbucketResult {
+interface BitbucketResult {
   files: Map<string, Buffer>;
 }
 
 function getApiBase(override?: string): string {
+  // First non-empty (after trimming) of override and $BITBUCKET_HOST.
   const host =
-    override?.trim() ||
-    process.env.BITBUCKET_HOST?.trim() ||
-    'api.bitbucket.org';
+    [override, process.env.BITBUCKET_HOST]
+      .map((v) => v?.trim())
+      .find(Boolean) ?? 'api.bitbucket.org';
   return `https://${host}/2.0`;
 }
 
@@ -30,7 +31,8 @@ function apiHeaders(): Record<string, string> {
   const email = process.env.BITBUCKET_EMAIL?.trim();
   if (token && email) {
     // Atlassian API token (created in Atlassian account settings): Basic auth with email:token
-    headers.Authorization = `Basic ${Buffer.from(`${email}:${token}`).toString('base64')}`;
+    const credentials = Buffer.from(`${email}:${token}`).toString('base64');
+    headers.Authorization = `Basic ${credentials}`;
     return headers;
   }
   if (token) {
@@ -40,95 +42,125 @@ function apiHeaders(): Record<string, string> {
   return headers;
 }
 
+interface RepoCoords {
+  workspace: string;
+  repo: string;
+  host?: string;
+}
+
+interface TagPage {
+  values: Array<{ name: string }>;
+  next?: string;
+}
+
+function repoUrl(r: RepoCoords): string {
+  return `${getApiBase(r.host)}/repositories/${r.workspace}/${r.repo}`;
+}
+
+async function getTagPage(r: RepoCoords, url: string): Promise<TagPage> {
+  const res = await fetchWithRetry(url, { headers: apiHeaders() });
+  if (!res.ok)
+    throw new Error(
+      `Failed to list tags for ${r.workspace}/${r.repo}: HTTP ${res.status}`,
+    );
+  return (await res.json()) as TagPage;
+}
+
+// Walks the paginated tag list until `visit` returns a tag name.
+async function findInTagPages(
+  r: RepoCoords,
+  query: string,
+  visit: (names: string[]) => string | undefined,
+): Promise<string | undefined> {
+  let url: string | null = `${repoUrl(r)}/refs/tags?${query}`;
+  while (url) {
+    const page = await getTagPage(r, url);
+    const found = visit(page.values.map((t) => t.name));
+    if (found !== undefined) return found;
+    url = page.next ?? null;
+  }
+  return undefined;
+}
+
+// No ref: return default branch
+async function resolveDefaultBranch(r: RepoCoords): Promise<string> {
+  const repoRes = await fetchWithRetry(repoUrl(r), { headers: apiHeaders() });
+  if (!repoRes.ok) {
+    throw new Error(
+      `Failed to resolve ref for ${r.workspace}/${r.repo}: HTTP ${repoRes.status}`,
+    );
+  }
+  const repoData = (await repoRes.json()) as {
+    mainbranch?: { name: string };
+  };
+  return repoData.mainbranch?.name ?? 'main';
+}
+
+function higherSemver(best: string | null, candidate: string | null) {
+  return candidate && (!best || maxSemverTag([best, candidate]) === candidate)
+    ? candidate
+    : best;
+}
+
+// $latest: paginate tags and track the highest semver incrementally
+async function resolveLatestTag(r: RepoCoords): Promise<string> {
+  const state = { best: null as string | null };
+  await findInTagPages(r, 'sort=-name&pagelen=100', (names) => {
+    state.best = higherSemver(state.best, maxSemverTag(names));
+    return undefined;
+  });
+  if (state.best) return state.best;
+  throw new Error(
+    `No semver tags found for ${r.workspace}/${r.repo} (needed to resolve $latest)`,
+  );
+}
+
+// $recent: most recently committed tag (sort by target commit date)
+async function resolveRecentTag(r: RepoCoords): Promise<string> {
+  const tagsRes = await fetchWithRetry(
+    `${repoUrl(r)}/refs/tags?sort=-target.date&pagelen=1`,
+    { headers: apiHeaders() },
+  );
+  if (!tagsRes.ok)
+    throw new Error(
+      `Failed to resolve $recent for ${r.workspace}/${r.repo}: HTTP ${tagsRes.status}`,
+    );
+  const data = (await tagsRes.json()) as TagPage;
+  if (data.values.length > 0) return data.values[0].name;
+  throw new Error(
+    `No tags found for ${r.workspace}/${r.repo} (needed to resolve $recent)`,
+  );
+}
+
+// Pattern: paginate tags sorted by target date, short-circuit on first match
+async function resolvePatternTag(
+  r: RepoCoords,
+  ref: string,
+  pattern: RegExp,
+): Promise<string> {
+  const found = await findInTagPages(
+    r,
+    'sort=-target.date&pagelen=100',
+    (names) => names.find((n) => pattern.test(n)),
+  );
+  if (found !== undefined) return found;
+  throw new Error(
+    `No tags matching "${ref}" found for ${r.workspace}/${r.repo}`,
+  );
+}
+
 async function resolveRef(
   workspace: string,
   repo: string,
   ref: string | undefined,
   host?: string,
 ): Promise<string> {
-  const pattern = ref ? parseRefPattern(ref) : null;
-  if (!isLatestSentinel(ref) && !isRecentSentinel(ref) && !pattern && ref) {
-    return ref;
-  }
-
-  if (!ref) {
-    // No ref: return default branch
-    const repoRes = await fetchWithRetry(
-      `${getApiBase(host)}/repositories/${workspace}/${repo}`,
-      { headers: apiHeaders() },
-    );
-    if (!repoRes.ok) {
-      throw new Error(
-        `Failed to resolve ref for ${workspace}/${repo}: HTTP ${repoRes.status}`,
-      );
-    }
-    const repoData = (await repoRes.json()) as {
-      mainbranch?: { name: string };
-    };
-    return repoData.mainbranch?.name ?? 'main';
-  }
-
-  // $latest: paginate tags and track the highest semver incrementally
-  if (isLatestSentinel(ref)) {
-    let best: string | null = null;
-    let url: string | null =
-      `${getApiBase(host)}/repositories/${workspace}/${repo}/refs/tags?sort=-name&pagelen=100`;
-    while (url) {
-      const res = await fetchWithRetry(url, { headers: apiHeaders() });
-      if (!res.ok)
-        throw new Error(
-          `Failed to list tags for ${workspace}/${repo}: HTTP ${res.status}`,
-        );
-      const data = (await res.json()) as {
-        values: Array<{ name: string }>;
-        next?: string;
-      };
-      const candidate = maxSemverTag(data.values.map((t) => t.name));
-      if (candidate && (!best || maxSemverTag([best, candidate]) === candidate))
-        best = candidate;
-      url = data.next ?? null;
-    }
-    if (best) return best;
-    throw new Error(
-      `No semver tags found for ${workspace}/${repo} (needed to resolve $latest)`,
-    );
-  }
-
-  // $recent: most recently committed tag (sort by target commit date)
-  if (isRecentSentinel(ref)) {
-    const tagsRes = await fetchWithRetry(
-      `${getApiBase(host)}/repositories/${workspace}/${repo}/refs/tags?sort=-target.date&pagelen=1`,
-      { headers: apiHeaders() },
-    );
-    if (!tagsRes.ok)
-      throw new Error(
-        `Failed to resolve $recent for ${workspace}/${repo}: HTTP ${tagsRes.status}`,
-      );
-    const data = (await tagsRes.json()) as { values: Array<{ name: string }> };
-    if (data.values.length > 0) return data.values[0].name;
-    throw new Error(
-      `No tags found for ${workspace}/${repo} (needed to resolve $recent)`,
-    );
-  }
-
-  // Pattern: paginate tags sorted by target date, short-circuit on first match
-  let patternUrl: string | null =
-    `${getApiBase(host)}/repositories/${workspace}/${repo}/refs/tags?sort=-target.date&pagelen=100`;
-  while (patternUrl) {
-    const res = await fetchWithRetry(patternUrl, { headers: apiHeaders() });
-    if (!res.ok)
-      throw new Error(
-        `Failed to list tags for ${workspace}/${repo}: HTTP ${res.status}`,
-      );
-    const data = (await res.json()) as {
-      values: Array<{ name: string }>;
-      next?: string;
-    };
-    const found = data.values.find((t) => pattern!.test(t.name));
-    if (found) return found.name;
-    patternUrl = data.next ?? null;
-  }
-  throw new Error(`No tags matching "${ref}" found for ${workspace}/${repo}`);
+  const r: RepoCoords = { workspace, repo, host };
+  if (!ref) return resolveDefaultBranch(r);
+  if (isLatestSentinel(ref)) return resolveLatestTag(r);
+  if (isRecentSentinel(ref)) return resolveRecentTag(r);
+  const pattern = parseRefPattern(ref);
+  return pattern ? resolvePatternTag(r, ref, pattern) : ref;
 }
 
 // Returns file content, or null if the path is a directory.

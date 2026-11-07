@@ -1,10 +1,16 @@
 import * as os from 'os';
 import * as path from 'path';
+import { stripVTControlCharacters } from 'util';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { MockInstance } from 'vitest';
 
+const realFs = vi.hoisted(() => ({
+  lstatSync: undefined as unknown as typeof import('fs').lstatSync,
+}));
+
 vi.mock('fs', async (importOriginal) => {
   const actual = await importOriginal<typeof import('fs')>();
+  realFs.lstatSync = actual.lstatSync;
   return {
     ...actual,
     lstatSync: vi.fn(actual.lstatSync),
@@ -34,8 +40,17 @@ function errno(code: string): NodeJS.ErrnoException {
   return e;
 }
 
-// eslint-disable-next-line no-control-regex
-const strip = (s: string): string => s.replace(/\x1b\[[0-9;]*m/g, '');
+const strip = (s: string): string => stripVTControlCharacters(s);
+
+/** lstat result for a target that is neither a symlink, directory nor file. */
+function specialFileStat(real: fs.Stats): fs.Stats {
+  return {
+    ...real,
+    isSymbolicLink: () => false,
+    isDirectory: () => false,
+    isFile: () => false,
+  };
+}
 
 describe('diff edge cases', () => {
   let tmpDir: string;
@@ -155,10 +170,11 @@ describe('diff edge cases', () => {
       () => {
         const p = path.join(tmpDir, 'f');
         fs.writeFileSync(p, 'same');
-        const real = mockLstat.getMockImplementation()!;
-        mockLstat.mockImplementationOnce(real).mockImplementationOnce(() => {
-          throw errno('EACCES');
-        });
+        mockLstat
+          .mockImplementationOnce(realFs.lstatSync)
+          .mockImplementationOnce(() => {
+            throw errno('EACCES');
+          });
         const d = computeDiff(p, Buffer.from('same'), '0600');
         expect(d.modeChange).toBeUndefined();
         expect(d.hasChanges).toBe(false);
@@ -170,10 +186,11 @@ describe('diff edge cases', () => {
       () => {
         const p = path.join(tmpDir, 'f');
         fs.writeFileSync(p, 'same');
-        const real = mockLstat.getMockImplementation()!;
-        mockLstat.mockImplementationOnce(real).mockImplementationOnce(() => {
-          throw errno('EIO');
-        });
+        mockLstat
+          .mockImplementationOnce(realFs.lstatSync)
+          .mockImplementationOnce(() => {
+            throw errno('EIO');
+          });
         expect(() => computeDiff(p, Buffer.from('same'), '0600')).toThrow(
           'EIO',
         );
@@ -240,12 +257,7 @@ describe('diff edge cases', () => {
         const p = path.join(tmpDir, 'fake');
         fs.writeFileSync(p, '');
         const real = fs.lstatSync(p);
-        mockLstat.mockImplementationOnce(() => ({
-          ...real,
-          isSymbolicLink: () => false,
-          isDirectory: () => false,
-          isFile: () => false,
-        }));
+        mockLstat.mockImplementationOnce(() => specialFileStat(real));
         const d = computeSymlinkDiff(p, 't');
         expect(d.patch).toContain('[special file]');
       },

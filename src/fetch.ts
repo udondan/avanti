@@ -31,6 +31,11 @@ function retryDelayMs(attempt: number, headers: Headers): number {
   return Math.min(BASE_DELAY_MS * 2 ** attempt, MAX_DELAY_MS);
 }
 
+// Orders strings by UTF-16 code units, like the default Array#sort.
+function compareCodeUnits(a: string, b: string): number {
+  return Number(a > b) - Number(a < b);
+}
+
 // Collects the headers that tell which rate limit was hit (e.g. GitLab's
 // RateLimit-Name, GitHub's X-RateLimit-Resource). Returns '' when there are none.
 function rateLimitHeaders(headers: Headers): string {
@@ -39,7 +44,8 @@ function rateLimitHeaders(headers: Headers): string {
     if (/^(x-)?ratelimit-|^retry-after$/i.test(name))
       parts.push(`${name}=${value}`);
   });
-  return parts.sort().join(', ');
+  parts.sort(compareCodeUnits);
+  return parts.join(', ');
 }
 
 function isSensitiveParam(k: string): boolean {
@@ -87,6 +93,52 @@ export function redactUrl(raw: string): string {
   return result.replace(/(?<!\/\/)([^/:@\s]+:[^/:@\s]+)@/g, '***@');
 }
 
+function logNetworkError(e: unknown): void {
+  const err = e instanceof Error ? e : new Error(String(e));
+  const cause = 'cause' in err && err.cause instanceof Error ? err.cause : null;
+  const causeMsg = cause ? `: ${cause.message}` : '';
+  verbose(`  -> network error: ${err.message}${causeMsg}`);
+}
+
+async function fetchOnce(url: string, options: RequestInit): Promise<Response> {
+  try {
+    return await fetch(url, options);
+  } catch (e) {
+    if (isVerbose()) logNetworkError(e);
+    throw e;
+  }
+}
+
+function logResponse(res: Response): void {
+  verbose(`  -> HTTP ${res.status}`);
+  if (res.status !== 429) return;
+  const info = rateLimitHeaders(res.headers);
+  if (info) verbose(`  -> rate limit headers: ${info}`);
+}
+
+function isRetryableStatus(status: number): boolean {
+  return status === 429 || (status >= 500 && status <= 599);
+}
+
+// Delay before the next attempt, or null when the response is final (not
+// retryable, out of retries, or the total retry budget would be exceeded).
+function nextRetryDelay(
+  res: Response,
+  attempt: number,
+  waitedMs: number,
+): number | null {
+  if (!isRetryableStatus(res.status) || attempt >= MAX_RETRIES) return null;
+  const delay = retryDelayMs(attempt, res.headers);
+  if (waitedMs + delay > MAX_TOTAL_DELAY_MS) {
+    if (isVerbose())
+      verbose(
+        `  -> retry budget of ${MAX_TOTAL_DELAY_MS}ms used up, giving up (status ${res.status})`,
+      );
+    return null;
+  }
+  return delay;
+}
+
 export async function fetchWithRetry(
   url: string,
   options: RequestInit = {},
@@ -97,37 +149,10 @@ export async function fetchWithRetry(
   }
   let waitedMs = 0;
   for (let attempt = 0; ; attempt++) {
-    let res: Response;
-    try {
-      res = await fetch(url, options);
-    } catch (e) {
-      if (isVerbose()) {
-        const err = e instanceof Error ? e : new Error(String(e));
-        const cause =
-          'cause' in err && err.cause instanceof Error ? err.cause : null;
-        const causeMsg = cause ? `: ${cause.message}` : '';
-        verbose(`  -> network error: ${err.message}${causeMsg}`);
-      }
-      throw e;
-    }
-    if (isVerbose()) {
-      verbose(`  -> HTTP ${res.status}`);
-      if (res.status === 429) {
-        const info = rateLimitHeaders(res.headers);
-        if (info) verbose(`  -> rate limit headers: ${info}`);
-      }
-    }
-    const shouldRetry =
-      res.status === 429 || (res.status >= 500 && res.status <= 599);
-    if (!shouldRetry || attempt >= MAX_RETRIES) return res;
-    const delay = retryDelayMs(attempt, res.headers);
-    if (waitedMs + delay > MAX_TOTAL_DELAY_MS) {
-      if (isVerbose())
-        verbose(
-          `  -> retry budget of ${MAX_TOTAL_DELAY_MS}ms used up, giving up (status ${res.status})`,
-        );
-      return res;
-    }
+    const res = await fetchOnce(url, options);
+    if (isVerbose()) logResponse(res);
+    const delay = nextRetryDelay(res, attempt, waitedMs);
+    if (delay === null) return res;
     waitedMs += delay;
     if (isVerbose())
       verbose(`  -> retrying in ${delay}ms (status ${res.status})`);

@@ -42,8 +42,9 @@ async function run(args: string[] = []): Promise<RunResult> {
   const err: string[] = [];
   const collect =
     (into: string[]) =>
-    (...a: unknown[]): void =>
-      void into.push(a.map(String).join(' '));
+    (...a: unknown[]): void => {
+      into.push(a.map(String).join(' '));
+    };
   const spies = [
     vi.spyOn(console, 'log').mockImplementation(collect(out)),
     vi.spyOn(console, 'error').mockImplementation(collect(err)),
@@ -91,16 +92,9 @@ function recordPull(specs: StageSpec[]): string {
   const refs: PullLogFileRef[] = [];
   for (const s of specs) {
     refs.push(
-      h.stageFileVersion(
-        pullId,
-        s.path,
-        Buffer.from(s.content),
-        s.isNew,
-        undefined,
-        undefined,
-        undefined,
-        s.isSymlink,
-      ).fileRef,
+      h.stageFileVersion(pullId, s.path, Buffer.from(s.content), s.isNew, {
+        isSymlink: s.isSymlink,
+      }).fileRef,
     );
   }
   h.closePullSession(pullId, configPath, refs);
@@ -297,7 +291,9 @@ describe('diff: symlink entries', () => {
   posixOnly('errors on Windows', async () => {
     w('target.txt', 't');
     writeConfig(`files:\n  link:\n    src: ./target.txt\n    symlink: true\n`);
-    const original = Object.getOwnPropertyDescriptor(process, 'platform')!;
+    const original = {
+      ...Object.getOwnPropertyDescriptor(process, 'platform'),
+    };
     Object.defineProperty(process, 'platform', { value: 'win32' });
     let r: RunResult;
     try {

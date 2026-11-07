@@ -17,7 +17,7 @@ export function maxSemverTag(tags: string[]): string | null {
     if (tMaj !== bMaj) return tMaj > bMaj ? tag : best;
     if (tMin !== bMin) return tMin > bMin ? tag : best;
     return tPatch > bPatch ? tag : best;
-  });
+  }, valid[0]);
 }
 
 export function isLatestSentinel(ref: string | undefined): boolean {

@@ -5,12 +5,10 @@ import { Liquid } from 'liquidjs';
 import * as ejs from 'ejs';
 import Mustache from 'mustache';
 import { Eta } from 'eta';
-import { Variables, TemplateEngine, VALID_TEMPLATE_ENGINES } from '../types';
+import { Variables, TemplateEngine } from '../types';
 
 // avanti renders config files, not HTML — disable all engine HTML escaping
 Mustache.escape = String;
-
-export { VALID_TEMPLATE_ENGINES };
 
 const EXTENSION_MAP: Record<string, TemplateEngine> = {
   '.hbs': 'handlebars',
@@ -31,26 +29,52 @@ let nunjucksEnv: nunjucks.Environment | undefined;
 let eta: Eta | undefined;
 
 function getLiquid(): Liquid {
-  return (liquid ??= new Liquid({
+  liquid ??= new Liquid({
     strictVariables: true,
     strictFilters: true,
-  }));
+  });
+  return liquid;
 }
 
 function getNunjucksEnv(): nunjucks.Environment {
-  return (nunjucksEnv ??= new nunjucks.Environment(null, {
+  nunjucksEnv ??= new nunjucks.Environment(null, {
     throwOnUndefined: true,
     autoescape: false,
-  }));
+  });
+  return nunjucksEnv;
 }
 
 function getEta(): Eta {
-  return (eta ??= new Eta({
+  eta ??= new Eta({
     useWith: true,
     autoTrim: false,
     autoEscape: false,
-  }));
+  });
+  return eta;
 }
+
+type Renderer = (content: string, vars: Variables) => string | Promise<string>;
+
+const RENDERERS = new Map<string, Renderer>([
+  [
+    'handlebars',
+    (content, vars) =>
+      Handlebars.compile(content, { strict: true, noEscape: true })(vars),
+  ],
+  ['nunjucks', (content, vars) => getNunjucksEnv().renderString(content, vars)],
+  [
+    'liquidjs',
+    async (content, vars) =>
+      String(await getLiquid().parseAndRender(content, vars)),
+  ],
+  ['ejs', (content, vars) => ejs.render(content, vars, { escape: String })],
+  ['mustache', (content, vars) => Mustache.render(content, vars)],
+  [
+    'eta',
+    async (content, vars) =>
+      String(await getEta().renderStringAsync(content, vars)),
+  ],
+]);
 
 function resolveEngine(
   spec: TemplateEngine | true,
@@ -77,22 +101,9 @@ export async function applyTemplate(
   srcPath?: string,
 ): Promise<string> {
   const engine = resolveEngine(spec, srcPath);
-  switch (engine) {
-    case 'handlebars':
-      return Handlebars.compile(content, { strict: true, noEscape: true })(
-        vars,
-      );
-    case 'nunjucks':
-      return getNunjucksEnv().renderString(content, vars);
-    case 'liquidjs':
-      return String(await getLiquid().parseAndRender(content, vars));
-    case 'ejs':
-      return ejs.render(content, vars, { escape: String });
-    case 'mustache':
-      return Mustache.render(content, vars);
-    case 'eta':
-      return String(await getEta().renderStringAsync(content, vars));
-    default:
-      throw new Error(`Unsupported template engine: ${engine as string}`);
+  const render = RENDERERS.get(engine);
+  if (!render) {
+    throw new Error(`Unsupported template engine: ${engine}`);
   }
+  return render(content, vars);
 }

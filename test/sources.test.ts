@@ -7,6 +7,13 @@ import { fetchHttp } from '../src/sources/http';
 import { _testable } from '../src/fetch';
 import { fetchSource, _testable as sourcesTestable } from '../src/sources';
 import * as gitModule from '../src/sources/git';
+import { byCodeUnit } from './sort-helpers';
+
+function fileText(files: Map<string, Buffer>, name: string): string {
+  const content = files.get(name);
+  if (content === undefined) throw new Error(`missing file ${name}`);
+  return content.toString('utf8');
+}
 
 describe('fetchLocal — ~/  expansion', () => {
   it('expands ~/ to os.homedir()', () => {
@@ -79,9 +86,7 @@ describe('fetchSource — pendingWrites', () => {
       { src: filePath, target: 'new.txt' },
       tmpDir,
       {},
-      undefined,
-      undefined,
-      pendingWrites,
+      { pendingWrites },
     );
     expect(result.files.get('new.txt')?.toString('utf8')).toBe(
       'pending content',
@@ -96,9 +101,7 @@ describe('fetchSource — pendingWrites', () => {
       { src: filePath, target: 'existing.txt' },
       tmpDir,
       {},
-      undefined,
-      undefined,
-      pendingWrites,
+      { pendingWrites },
     );
     expect(result.files.get('existing.txt')?.toString('utf8')).toBe(
       'pending content',
@@ -112,9 +115,7 @@ describe('fetchSource — pendingWrites', () => {
       { src: filePath, target: 'real.txt' },
       tmpDir,
       {},
-      undefined,
-      undefined,
-      new Map(),
+      { pendingWrites: new Map() },
     );
     expect(result.files.get('real.txt')?.toString('utf8')).toBe('disk content');
   });
@@ -126,9 +127,7 @@ describe('fetchSource — pendingWrites', () => {
       { src: { path: filePath }, target: 'out.txt' },
       tmpDir,
       {},
-      undefined,
-      undefined,
-      pendingWrites,
+      { pendingWrites },
     );
     expect(result.files.get('path-style.txt')?.toString('utf8')).toBe(
       'path style',
@@ -147,9 +146,7 @@ describe('fetchSource — pendingWrites', () => {
       { src: dirPath, target: 'out/' },
       tmpDir,
       {},
-      undefined,
-      undefined,
-      pendingWrites,
+      { pendingWrites },
     );
     expect(result.files.get('a.txt')?.toString('utf8')).toBe('content a');
     expect(result.files.get('b.txt')?.toString('utf8')).toBe('content b');
@@ -217,7 +214,7 @@ describe('fetchSource — local directory → single file target', () => {
 
       expect(result.files.size).toBe(1);
       expect(result.files.has('docker-compose.yaml')).toBe(true);
-      const content = result.files.get('docker-compose.yaml')!.toString('utf8');
+      const content = fileText(result.files, 'docker-compose.yaml');
       const { parseDocument } = await import('yaml');
       const parsed = parseDocument(content).toJSON() as unknown;
       expect(parsed).toMatchObject({
@@ -240,7 +237,7 @@ describe('fetchSource — local directory → single file target', () => {
       expect(result.files.size).toBe(1);
       const { parseDocument } = await import('yaml');
       const parsed = parseDocument(
-        result.files.get('out.yml')!.toString('utf8'),
+        fileText(result.files, 'out.yml'),
       ).toJSON() as unknown;
       expect(parsed).toEqual({ x: 1, y: 2 });
     });
@@ -259,7 +256,7 @@ describe('fetchSource — local directory → single file target', () => {
 
       const { parseDocument } = await import('yaml');
       const parsed = parseDocument(
-        result.files.get('out.yml')!.toString('utf8'),
+        fileText(result.files, 'out.yml'),
       ).toJSON() as {
         key: string;
       };
@@ -281,7 +278,7 @@ describe('fetchSource — local directory → single file target', () => {
       expect(result.files.size).toBe(1);
       const { parseDocument } = await import('yaml');
       const parsed = parseDocument(
-        result.files.get('out.yaml')!.toString('utf8'),
+        fileText(result.files, 'out.yaml'),
       ).toJSON() as unknown;
       expect(parsed).toMatchObject({ from: 'a', extra: 1 });
     });
@@ -316,7 +313,7 @@ describe('fetchSource — local directory → single file target', () => {
 
       expect(result.files.size).toBe(1);
       const parsed = JSON.parse(
-        result.files.get('merged.json')!.toString('utf8'),
+        fileText(result.files, 'merged.json'),
       ) as unknown;
       expect(parsed).toMatchObject({ a: 1, b: 2 });
     });
@@ -334,7 +331,7 @@ describe('fetchSource — local directory → single file target', () => {
 
       expect(result.files.size).toBe(1);
       const parsed = JSON.parse(
-        result.files.get('merged.json')!.toString('utf8'),
+        fileText(result.files, 'merged.json'),
       ) as unknown;
       expect(parsed).toMatchObject({ x: 1, y: 2 });
     });
@@ -531,13 +528,13 @@ describe('FetchCache — cross-target deduplication', () => {
       { src: 'https://example.com/shared.txt', target: 'a.txt' },
       tmpdir(),
       {},
-      cache,
+      { cache },
     );
     await fetchSource(
       { src: 'https://example.com/shared.txt', target: 'b.txt' },
       tmpdir(),
       {},
-      cache,
+      { cache },
     );
 
     expect(mockFetch).toHaveBeenCalledTimes(1);
@@ -726,7 +723,7 @@ describe('fetchSource — filter on local directory', () => {
       },
       tmpDir,
     );
-    expect([...result.files.keys()].sort()).toEqual([
+    expect([...result.files.keys()].sort(byCodeUnit)).toEqual([
       'also-keep.yml',
       'keep.txt',
     ]);

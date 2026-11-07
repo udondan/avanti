@@ -15,7 +15,7 @@
     "test:coverage": "tsc -p tsconfig.build.json && vitest run --coverage --coverage.reporter=lcov --coverage.reporter=text-summary && bun run coverage:child",
     "coverage:child": "c8 report && bun test/setup/merge-child-coverage.ts",
     "typecheck": "tsc --noEmit",
-    "lint": "eslint src test",
+    "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check ."
   },
@@ -65,13 +65,10 @@
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
-    "@types/diff": "8.0.0",
     "@types/ejs": "3.1.5",
-    "@types/js-yaml": "4.0.9",
     "@types/mustache": "4.2.6",
     "@types/node": "26.6.6",
     "@types/nunjucks": "3.2.6",
-    "@types/tar": "7.0.87",
     "@types/unzipper": "0.10.11",
     "@vitest/coverage-v8": "5.1.0",
     "c8": "12.0.0",
@@ -82,5 +79,9 @@
     "typescript": "6.0.3",
     "typescript-eslint": "8.72.1",
     "vitest": "5.1.0"
+  },
+  "overrides": {
+    "glob": "14.0.2",
+    "minimatch": "11.0.1"
   }
 }

@@ -13,6 +13,7 @@ import {
   SELF_KEY,
 } from '../src/config';
 import { parseGitRemoteSpec } from '../src/sources/git';
+import { byCodeUnit } from './sort-helpers';
 
 function writeTmp(content: string): string {
   const f = path.join(os.tmpdir(), `avanti-test-${Date.now()}.yml`);
@@ -2795,7 +2796,7 @@ files:
     src: https://example.com/file
 `);
     const config = parseConfigContent(fs.readFileSync(f, 'utf8'));
-    expect(Object.keys(config.files).sort()).toEqual([
+    expect(Object.keys(config.files).sort(byCodeUnit)).toEqual([
       'some/path/bar',
       'some/path/foo',
     ]);

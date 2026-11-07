@@ -352,7 +352,7 @@ function runWorkerOverSocket(
         }
       });
 
-      socket.on('error', (err) => {
+      socket.on('error', (err: Error) => {
         if (
           !err.message.includes('ECONNRESET') &&
           !err.message.includes('ERR_STREAM_DESTROYED')

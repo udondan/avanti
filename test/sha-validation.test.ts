@@ -446,13 +446,15 @@ describe('HistoryManager.stageFileVersion with SHA records', () => {
       targetPath,
       Buffer.from('new content', 'utf8'),
       false,
-      sources,
+      { sources },
     );
 
     expect(fileRef.sources).toHaveLength(1);
-    expect(fileRef.sources![0].label).toBe('github:org/repo:file.txt');
-    expect(fileRef.sources![0].observedSha).toBe('a'.repeat(64));
-    expect(fileRef.sources![0].accepted).toBe(false);
+    expect(fileRef.sources?.[0]).toMatchObject({
+      label: 'github:org/repo:file.txt',
+      observedSha: 'a'.repeat(64),
+      accepted: false,
+    });
   });
 
   it('marks accepted=true on accepted mismatched SHA records', () => {
@@ -477,11 +479,13 @@ describe('HistoryManager.stageFileVersion with SHA records', () => {
       targetPath,
       Buffer.from('changed', 'utf8'),
       false,
-      sources,
+      { sources },
     );
 
-    expect(fileRef.sources![0].accepted).toBe(true);
-    expect(fileRef.sources![0].expectedSha).toBe('c'.repeat(64));
+    expect(fileRef.sources?.[0]).toMatchObject({
+      accepted: true,
+      expectedSha: 'c'.repeat(64),
+    });
   });
 
   it('persists source SHA records to pulls.jsonl via closePullSession', () => {
@@ -506,16 +510,17 @@ describe('HistoryManager.stageFileVersion with SHA records', () => {
       targetPath,
       Buffer.from('v1', 'utf8'),
       false,
-      sources,
+      { sources },
     );
     h.closePullSession(pullId, '/project/.avanti.yml', [fileRef]);
 
     const pulls = h.listPulls();
     expect(pulls).toHaveLength(1);
     const ref = pulls[0].files[0];
-    expect(ref.sources).toBeDefined();
-    expect(ref.sources![0].label).toBe('gitlab:group/proj:config.yml@v1');
-    expect(ref.sources![0].observedSha).toBe('d'.repeat(64));
+    expect(ref.sources?.[0]).toMatchObject({
+      label: 'gitlab:group/proj:config.yml@v1',
+      observedSha: 'd'.repeat(64),
+    });
   });
 
   it('omits sources field from fileRef when no sources provided', () => {

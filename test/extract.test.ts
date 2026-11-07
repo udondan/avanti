@@ -9,6 +9,7 @@ import {
   extractArchive,
 } from '../src/extract';
 import { applyFilter } from '../src/filter';
+import { byCodeUnit } from './sort-helpers';
 
 // Minimal ZIP containing subdir/ (dir), subdir/nested.txt ("nested\n"), hello.txt ("hello world\n")
 const TEST_ZIP_BASE64 =
@@ -109,7 +110,7 @@ describe('extractArchive — ZIP', () => {
   it('extracts file entries', async () => {
     const buffer = Buffer.from(TEST_ZIP_BASE64, 'base64');
     const files = await extractArchive(buffer, 'test.zip');
-    expect([...files.keys()].sort()).toEqual([
+    expect([...files.keys()].sort(byCodeUnit)).toEqual([
       'hello.txt',
       'subdir/nested.txt',
     ]);
@@ -137,7 +138,10 @@ describe('extractArchive — tar.gz', () => {
       'subdir/b.txt': 'world',
     });
     const files = await extractArchive(buffer, 'release.tar.gz');
-    expect([...files.keys()].sort()).toEqual(['a.txt', 'subdir/b.txt']);
+    expect([...files.keys()].sort(byCodeUnit)).toEqual([
+      'a.txt',
+      'subdir/b.txt',
+    ]);
   });
 
   it('returns correct file contents', async () => {
@@ -151,7 +155,7 @@ describe('extractArchive — tar', () => {
   it('extracts all files', async () => {
     const buffer = await makeTar({ 'x.txt': 'x', 'y.txt': 'y' });
     const files = await extractArchive(buffer, 'archive.tar');
-    expect([...files.keys()].sort()).toEqual(['x.txt', 'y.txt']);
+    expect([...files.keys()].sort(byCodeUnit)).toEqual(['x.txt', 'y.txt']);
   });
 });
 
@@ -174,7 +178,7 @@ describe('extractArchive — with applyFilter', () => {
     });
     const files = await extractArchive(buffer, 'release.tgz');
     const filtered = applyFilter(files, ['assets/']);
-    expect([...filtered.keys()].sort()).toEqual([
+    expect([...filtered.keys()].sort(byCodeUnit)).toEqual([
       'assets/img.png',
       'assets/logo.svg',
     ]);
@@ -206,7 +210,10 @@ describe('applyFilter — prefix pattern', () => {
       'other/c.txt': '',
     });
     const result = applyFilter(files, ['assets/']);
-    expect([...result.keys()].sort()).toEqual(['assets/a.png', 'assets/b.png']);
+    expect([...result.keys()].sort(byCodeUnit)).toEqual([
+      'assets/a.png',
+      'assets/b.png',
+    ]);
   });
 
   it('does not match files outside the prefix', () => {
@@ -225,7 +232,10 @@ describe('applyFilter — prefix pattern', () => {
       'a/other.txt': '',
     });
     const result = applyFilter(files, ['a/b/']);
-    expect([...result.keys()].sort()).toEqual(['a/b/c.txt', 'a/b/d.txt']);
+    expect([...result.keys()].sort(byCodeUnit)).toEqual([
+      'a/b/c.txt',
+      'a/b/d.txt',
+    ]);
   });
 
   it('combines prefix with other pattern types', () => {
@@ -236,7 +246,7 @@ describe('applyFilter — prefix pattern', () => {
       'other/x.js': '',
     });
     const result = applyFilter(files, ['assets/', '/\\.md$/', 'exact.txt']);
-    expect([...result.keys()].sort()).toEqual([
+    expect([...result.keys()].sort(byCodeUnit)).toEqual([
       'assets/img.png',
       'docs/readme.md',
       'exact.txt',

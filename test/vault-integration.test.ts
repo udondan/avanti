@@ -91,7 +91,7 @@ describe.skipIf(!hasVaultCreds)('Vault integration — HTTP API', () => {
       expect(result.files.size).toBe(1);
       const content = result.files.get('db')?.toString();
       expect(content).toBeDefined();
-      const parsed: unknown = JSON.parse(content!);
+      const parsed: unknown = JSON.parse(String(content));
       expect(parsed).toEqual({ username: 'admin', password: 's3cr3t' });
     });
 
@@ -120,7 +120,7 @@ describe.skipIf(!hasVaultCreds)('Vault integration — HTTP API', () => {
       expect(result.files.size).toBe(1);
       const content = result.files.get('token')?.toString();
       expect(content).toBeDefined();
-      const parsed: unknown = JSON.parse(content!);
+      const parsed: unknown = JSON.parse(String(content));
       expect(parsed).toEqual({ apikey: 'v1key123' });
     });
 

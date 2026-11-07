@@ -38,7 +38,7 @@ function r(rel: string): string {
 
 /** Runs fn with process.platform reporting win32. */
 async function asWindows<T>(fn: () => Promise<T>): Promise<T> {
-  const desc = Object.getOwnPropertyDescriptor(process, 'platform')!;
+  const desc = { ...Object.getOwnPropertyDescriptor(process, 'platform') };
   Object.defineProperty(process, 'platform', { value: 'win32' });
   try {
     return await fn();
@@ -160,11 +160,11 @@ describe('pull: simulated Windows', () => {
   /** Reports win32 from the stale-file scan on, i.e. after the fetch loop
    *  resolved all paths with the real platform. */
   function windowsAfterFetch(): void {
-    const desc = Object.getOwnPropertyDescriptor(process, 'platform')!;
+    const desc = { ...Object.getOwnPropertyDescriptor(process, 'platform') };
     const orig = Object.getOwnPropertyDescriptor(
       HistoryManager.prototype,
       'getLastPullFiles',
-    )!.value as (this: HistoryManager) => PullLogFileRef[];
+    )?.value as (this: HistoryManager) => PullLogFileRef[];
     vi.spyOn(HistoryManager.prototype, 'getLastPullFiles').mockImplementation(
       function (this: HistoryManager) {
         Object.defineProperty(process, 'platform', { value: 'win32' });

@@ -82,7 +82,7 @@ jobs:
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
-          bun-version: '1.4.4'
+          bun-version: 1.4.4
 
       - uses: actions/setup-node@v7
         with:
@@ -227,7 +227,7 @@ jobs:
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
-          bun-version: '1.4.4'
+          bun-version: 1.4.4
 
       - uses: actions/setup-node@v7
         with:
@@ -307,6 +307,57 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }} # zizmor checks the actions online
 
+  # Linters, security scanners and code smells (complexity, duplication,
+  # nesting) via Qlty, configured in .qlty/qlty.toml. Smells are git-aware:
+  # only smells introduced by the PR compared to main fail the job.
+  qlty:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      # The type-aware rules of eslint, knip and radarlint-js need the
+      # project's dependencies to resolve types.
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.4.4
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: lts/*
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Install qlty
+        uses: qltysh/qlty-action/install@ebcd284bf32e36a030afe15f1e136c7be08b9506 # v2.5.0
+
+      - name: Lint via qlty plugins
+        run: qlty check --all
+
+      - name: Report code smells
+        if: github.event_name != 'pull_request'
+        run: qlty smells --all --no-snippets
+
+      - name: Report new code smells
+        if: github.event_name == 'pull_request'
+        run: qlty smells --upstream origin/main --no-snippets
+
+      - name: Fail on new code smells
+        if: github.event_name == 'pull_request'
+        run: |
+          count=$(qlty smells --upstream origin/main --json --quiet 2>/dev/null | jq length)
+          if [ "$count" -gt 0 ]; then
+            echo "::error::qlty found $count new code smell(s) compared to main"
+            exit 1
+          fi
+
   # The only test check the ruleset requires, whatever jobs are added later.
   required:
     runs-on: ubuntu-latest
@@ -314,6 +365,7 @@ jobs:
       - changes
       - boarding-gate
       - actions
+      - qlty
       - test
       - coverage
       - integration-tests-vault

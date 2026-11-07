@@ -4,21 +4,42 @@ import { FileEntry, FileSrc, Variables } from './types';
 import { resolveVars } from './variables';
 import { isGitRemoteUrl } from './sources/git';
 
+type Entry = [string, FileEntry];
+
+function absoluteLocal(resolved: string, workingDir: string): string {
+  if (resolved.startsWith('~/'))
+    return path.resolve(os.homedir(), resolved.slice(2));
+  if (path.isAbsolute(resolved)) return path.resolve(resolved);
+  return path.resolve(workingDir, resolved);
+}
+
 function resolveEntryTarget(
   entry: FileEntry,
   workingDir: string,
   vars: Variables,
 ): string | null {
   try {
-    const target = resolveVars(entry.target, vars);
-    if (target.startsWith('~/')) {
-      return path.resolve(os.homedir(), target.slice(2));
-    }
-    if (path.isAbsolute(target)) return path.resolve(target);
-    return path.resolve(workingDir, target);
+    return absoluteLocal(resolveVars(entry.target, vars), workingDir);
   } catch {
     return null;
   }
+}
+
+function isRemoteString(resolved: string): boolean {
+  return (
+    resolved.startsWith('http://') ||
+    resolved.startsWith('https://') ||
+    isGitRemoteUrl(resolved)
+  );
+}
+
+/** The unresolved local path a src refers to, or null for non-local sources. */
+function localSrcString(s: FileSrc, vars: Variables): string | null {
+  if (typeof s === 'string') {
+    const resolved = resolveVars(s, vars);
+    return isRemoteString(resolved) ? null : resolved;
+  }
+  return 'path' in s ? resolveVars(s.path, vars) : null;
 }
 
 function localSourcePaths(
@@ -30,19 +51,8 @@ function localSourcePaths(
   const results: string[] = [];
   for (const s of srcs) {
     try {
-      if (typeof s === 'string') {
-        const resolved = resolveVars(s, vars);
-        if (
-          resolved.startsWith('http://') ||
-          resolved.startsWith('https://') ||
-          isGitRemoteUrl(resolved)
-        ) {
-          continue;
-        }
-        results.push(absoluteLocal(resolved, workingDir));
-      } else if ('path' in s) {
-        results.push(absoluteLocal(resolveVars(s.path, vars), workingDir));
-      }
+      const local = localSrcString(s, vars);
+      if (local !== null) results.push(absoluteLocal(local, workingDir));
     } catch {
       // Unresolvable variable — skip edge
     }
@@ -50,18 +60,12 @@ function localSourcePaths(
   return results;
 }
 
-function absoluteLocal(resolved: string, workingDir: string): string {
-  if (resolved.startsWith('~/'))
-    return path.resolve(os.homedir(), resolved.slice(2));
-  if (path.isAbsolute(resolved)) return path.resolve(resolved);
-  return path.resolve(workingDir, resolved);
-}
-
-export function sortByDependencies(
-  entries: [string, FileEntry][],
+/** before[key] = set of keys that must be placed before key. */
+function buildBeforeMap(
+  entries: Entry[],
   workingDir: string,
   vars: Variables,
-): [string, FileEntry][] {
+): Map<string, Set<string>> {
   // Map from resolved absolute target path → entry key
   const targetToKey = new Map<string, string>();
   for (const [key, entry] of entries) {
@@ -69,7 +73,6 @@ export function sortByDependencies(
     if (target !== null) targetToKey.set(target, key);
   }
 
-  // before[key] = set of keys that must be placed before key
   const before = new Map<string, Set<string>>();
   for (const [key] of entries) before.set(key, new Set());
   for (const [key, entry] of entries) {
@@ -78,32 +81,58 @@ export function sortByDependencies(
       if (dep !== undefined && dep !== key) before.get(key)!.add(dep);
     }
   }
+  return before;
+}
+
+interface SortState {
+  entries: Entry[];
+  before: Map<string, Set<string>>;
+  remaining: Set<string>;
+  deg: Map<string, number>;
+}
+
+function nextWave(state: SortState): string[] {
+  const wave: string[] = [];
+  for (const [key] of state.entries) {
+    if (state.remaining.has(key) && state.deg.get(key) === 0) wave.push(key);
+  }
+  if (wave.length === 0) {
+    const cycle = findCycle(state.remaining, state.before);
+    throw new Error(`Circular dependency detected: ${cycle.join(' → ')}`);
+  }
+  return wave;
+}
+
+function place(state: SortState, key: string): void {
+  state.remaining.delete(key);
+  for (const [k] of state.entries) {
+    if (state.remaining.has(k) && state.before.get(k)!.has(key)) {
+      state.deg.set(k, state.deg.get(k)! - 1);
+    }
+  }
+}
+
+export function sortByDependencies(
+  entries: Entry[],
+  workingDir: string,
+  vars: Variables,
+): Entry[] {
+  const before = buildBeforeMap(entries, workingDir, vars);
 
   // Kahn's algorithm — preserves original order within each wave
   const entryMap = new Map(entries);
-  const remaining = new Set(entries.map(([k]) => k));
-  const deg = new Map<string, number>(
-    entries.map(([k]) => [k, before.get(k)!.size]),
-  );
-  const sorted: [string, FileEntry][] = [];
+  const state: SortState = {
+    entries,
+    before,
+    remaining: new Set(entries.map(([k]) => k)),
+    deg: new Map(entries.map(([k]) => [k, before.get(k)!.size])),
+  };
+  const sorted: Entry[] = [];
 
-  while (remaining.size > 0) {
-    const wave: string[] = [];
-    for (const [key] of entries) {
-      if (remaining.has(key) && deg.get(key) === 0) wave.push(key);
-    }
-    if (wave.length === 0) {
-      const cycle = findCycle(remaining, before);
-      throw new Error(`Circular dependency detected: ${cycle.join(' → ')}`);
-    }
-    for (const key of wave) {
+  while (state.remaining.size > 0) {
+    for (const key of nextWave(state)) {
       sorted.push([key, entryMap.get(key)!]);
-      remaining.delete(key);
-      for (const [k] of entries) {
-        if (remaining.has(k) && before.get(k)!.has(key)) {
-          deg.set(k, deg.get(k)! - 1);
-        }
-      }
+      place(state, key);
     }
   }
 

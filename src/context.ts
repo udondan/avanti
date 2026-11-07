@@ -3,6 +3,7 @@ import { TOKEN } from './variables';
 import { resolveVariableEntry } from './variables-remote';
 import { resolveEnvironmentEntry } from './environment';
 import { FetchCache } from './sources';
+import { FetchContext } from './variables/source-text';
 import { verbose } from './logger';
 
 type NodeKind = 'var' | 'env';
@@ -30,45 +31,48 @@ interface Node {
 // value (e.g. `obj.self = obj`) — the scan phase must not throw or infinite-
 // loop on these; that validation is deepResolveVars's job at actual
 // resolution time, so a re-visited object is silently skipped here.
+interface RefIndex {
+  nodeKeyByName: Map<string, string>;
+  envNodeKeyByName: Map<string, string>;
+}
+
+const LEADING_NAME = /^[A-Za-z_]\w*/;
+
+function referencedNodeKey(
+  m: RegExpExecArray | RegExpMatchArray,
+  index: RefIndex,
+): string | undefined {
+  const [match, envName, bracedExpr, varName] = m;
+  if (match === '$$') return undefined;
+  if (envName !== undefined) return index.envNodeKeyByName.get(envName);
+  const name =
+    bracedExpr !== undefined
+      ? LEADING_NAME.exec(bracedExpr.trim())?.[0]
+      : varName;
+  return name !== undefined ? index.nodeKeyByName.get(name) : undefined;
+}
+
 function collectReferences(
   value: unknown,
-  nodeKeyByName: Map<string, string>,
-  envNodeKeyByName: Map<string, string>,
+  index: RefIndex,
   deps: Set<string>,
   seen: WeakSet<object> = new WeakSet(),
 ): void {
   if (typeof value === 'string') {
     for (const m of value.matchAll(TOKEN)) {
-      const [match, envName, bracedExpr, varName] = m;
-      if (match === '$$') continue;
-      if (envName !== undefined) {
-        const key = envNodeKeyByName.get(envName);
-        if (key !== undefined) deps.add(key);
-        continue;
-      }
-      const name =
-        bracedExpr !== undefined
-          ? bracedExpr.trim().match(/^[A-Za-z_][A-Za-z0-9_]*/)?.[0]
-          : varName;
-      const key = name !== undefined ? nodeKeyByName.get(name) : undefined;
+      const key = referencedNodeKey(m, index);
       if (key !== undefined) deps.add(key);
     }
     return;
   }
-  if (Array.isArray(value)) {
-    if (seen.has(value)) return;
-    seen.add(value);
-    for (const item of value) {
-      collectReferences(item, nodeKeyByName, envNodeKeyByName, deps, seen);
-    }
-    return;
-  }
-  if (value !== null && typeof value === 'object') {
-    if (seen.has(value)) return;
-    seen.add(value);
-    for (const v of Object.values(value)) {
-      collectReferences(v, nodeKeyByName, envNodeKeyByName, deps, seen);
-    }
+  if (value === null || typeof value !== 'object') return;
+  if (seen.has(value)) return;
+  seen.add(value);
+  const children: unknown[] = Array.isArray(value)
+    ? value
+    : Object.values(value);
+  for (const child of children) {
+    collectReferences(child, index, deps, seen);
   }
 }
 
@@ -102,26 +106,18 @@ function buildNodes(
   for (const name of Object.keys(environment))
     envNodeKeyByName.set(name, `env:${name}`);
 
+  const index: RefIndex = { nodeKeyByName, envNodeKeyByName };
+  const makeNode = (kind: NodeKind, name: string, value: unknown): Node => {
+    const deps = new Set<string>();
+    collectReferences(dependencySurface(value), index, deps);
+    return { kind, name, key: `${kind}:${name}`, value, deps };
+  };
   const nodes: Node[] = [];
   for (const [name, value] of Object.entries(variables)) {
-    const deps = new Set<string>();
-    collectReferences(
-      dependencySurface(value),
-      nodeKeyByName,
-      envNodeKeyByName,
-      deps,
-    );
-    nodes.push({ kind: 'var', name, key: `var:${name}`, value, deps });
+    nodes.push(makeNode('var', name, value));
   }
   for (const [name, value] of Object.entries(environment)) {
-    const deps = new Set<string>();
-    collectReferences(
-      dependencySurface(value),
-      nodeKeyByName,
-      envNodeKeyByName,
-      deps,
-    );
-    nodes.push({ kind: 'env', name, key: `env:${name}`, value, deps });
+    nodes.push(makeNode('env', name, value));
   }
   return nodes;
 }
@@ -156,6 +152,38 @@ function findCycle(stuck: Node[]): string[] {
 // between iterations must not leak its old value forward.
 let previouslyInjectedEnvKeys = new Set<string>();
 
+interface ResolveState {
+  resolved: Variables;
+  env: Record<string, string>;
+  workingDir: string;
+  ctx: FetchContext;
+}
+
+async function resolveNode(node: Node, state: ResolveState): Promise<void> {
+  const { resolved, workingDir, ctx } = state;
+  if (node.kind === 'var') {
+    resolved[node.name] = await resolveVariableEntry(
+      node.name,
+      node.value as VariableSpec[string],
+      resolved,
+      workingDir,
+      ctx,
+    );
+    return;
+  }
+  const value = await resolveEnvironmentEntry(
+    node.name,
+    node.value as EnvironmentSpec[string],
+    resolved,
+    workingDir,
+    ctx,
+  );
+  resolved[node.name] = value;
+  state.env[node.name] = value;
+  process.env[node.name] = value;
+  previouslyInjectedEnvKeys.add(node.name);
+}
+
 export async function resolveVariablesAndEnvironment(
   variables: VariableSpec,
   environment: EnvironmentSpec,
@@ -168,14 +196,14 @@ export async function resolveVariablesAndEnvironment(
   }
   previouslyInjectedEnvKeys = new Set<string>();
 
-  const nodes = buildNodes(variables, environment);
-  const resolved: Variables = Object.create(null) as Variables;
-  const env: Record<string, string> = Object.create(null) as Record<
-    string,
-    string
-  >;
+  const state: ResolveState = {
+    resolved: Object.create(null) as Variables,
+    env: Object.create(null) as Record<string, string>,
+    workingDir,
+    ctx: { cache, configBase },
+  };
   const done = new Set<string>();
-  let remaining = nodes;
+  let remaining = buildNodes(variables, environment);
 
   while (remaining.length > 0) {
     const eligible = remaining.filter((n) =>
@@ -186,38 +214,17 @@ export async function resolveVariablesAndEnvironment(
       throw new Error(`Circular dependency: ${cycle.join(' → ')}`);
     }
     for (const node of eligible) {
-      if (node.kind === 'var') {
-        resolved[node.name] = await resolveVariableEntry(
-          node.name,
-          node.value as VariableSpec[string],
-          resolved,
-          workingDir,
-          cache,
-          configBase,
-        );
-      } else {
-        const value = await resolveEnvironmentEntry(
-          node.name,
-          node.value as EnvironmentSpec[string],
-          resolved,
-          workingDir,
-          cache,
-          configBase,
-        );
-        resolved[node.name] = value;
-        env[node.name] = value;
-        process.env[node.name] = value;
-        previouslyInjectedEnvKeys.add(node.name);
-      }
+      await resolveNode(node, state);
       done.add(node.key);
     }
     const eligibleKeys = new Set(eligible.map((n) => n.key));
     remaining = remaining.filter((n) => !eligibleKeys.has(n.key));
   }
 
-  if (Object.keys(env).length > 0) {
-    verbose(`environment: resolved ${Object.keys(env).join(', ')}`);
+  const envKeys = Object.keys(state.env);
+  if (envKeys.length > 0) {
+    verbose(`environment: resolved ${envKeys.join(', ')}`);
   }
 
-  return { vars: resolved, env };
+  return { vars: state.resolved, env: state.env };
 }

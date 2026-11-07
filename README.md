@@ -3,6 +3,7 @@
 [![npm](https://img.shields.io/npm/v/@udondan/avanti)](https://www.npmjs.com/package/@udondan/avanti)
 [![CI](https://github.com/udondan/avanti/actions/workflows/test.yml/badge.svg?branch=main)](https://github.com/udondan/avanti/actions/workflows/test.yml)
 [![codecov](https://codecov.io/gh/udondan/avanti/graph/badge.svg)](https://codecov.io/gh/udondan/avanti)
+[![Maintainability](https://qlty.sh/gh/udondan/projects/avanti/maintainability.svg)](https://qlty.sh/gh/udondan/projects/avanti)
 [![License](https://img.shields.io/github/license/udondan/avanti)](LICENSE)
 
 A stateful package manager for arbitrary text files. Declare what you need and

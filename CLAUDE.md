@@ -53,12 +53,18 @@ mise exec -- bunx vitest run test/config.test.ts
 | `revert` | Restore files to a past pull state; no arg = undo last pull         |
 | `reset`  | Restore all tracked files to their pre-avanti state                 |
 
+### Module layout
+
+Larger modules are split into a directory of focused files next to a thin barrel with the old name (e.g. `config.ts` re-exports from `config/`, likewise `writer.ts`/`writer/`, `history.ts`/`history/`, `diff.ts`/`diff/`, `variables.ts`/`variables/`, `commands/pull.ts`/`commands/pull/`, `sources/github.ts`/`sources/github/`). Import from the barrel path; tests mock and spy on those barrels. `sources/dispatch/` holds the per-source-type handlers used by `sources/index.ts`; `sources/forge/` holds code shared by the GitHub and GitLab sources.
+
+The privileged worker (`privileged-worker.ts` plus helpers in `privileged-worker/`) runs as root via sudo. It and its helpers import only Node built-ins, because `writer/worker-staging.ts` copies the compiled entry and `dist/privileged-worker/*.js` into a private temp directory before executing them.
+
 ### Data flow
 
 1. `cli.ts` — Commander.js entry point; global flags: `--config`, `--working-dir`
-2. `config.ts` — Resolves and parses the config file; auto-detects `.avanti.yml`, `.avanti.yaml`, `avanti.yml`, `avanti.yaml` (case-insensitive) when no explicit `--config` path is given; exports `deriveConfigBase()` (called by command layers to compute the config directory/prefix) and `resolveRelativeSrc()` (called by `sources/index.ts` at fetch time)
+2. `config.ts` — Resolves and parses the config file; auto-detects `.avanti.yml`, `.avanti.yaml`, `avanti.yml`, `avanti.yaml` (case-insensitive) when no explicit `--config` path is given; exports `deriveConfigBase()` (called by command layers to compute the config directory/prefix) and `resolveRelativeSrc()` (called by `sources/dispatch/` at fetch time)
 3. `variables.ts` — Validates and resolves `$varname` (config variables) and `$env:NAME` (env vars) in strings; `$latest` and `$recent` are reserved variable names (alongside `$self`); `/pattern/` is a ref syntax form handled by `ref.ts` and the per-source resolvers, not a variable name
-4. `sources/index.ts` — Orchestrates fetching across all source types; resolves relative plain-string `src:` paths against `configBase` via `resolveRelativeSrc()` before dispatching; `path:` object sources always resolve against `workingDir`
+4. `sources/index.ts` — Orchestrates fetching across all source types (per-type handlers in `sources/dispatch/`); resolves relative plain-string `src:` paths against `configBase` via `resolveRelativeSrc()` before dispatching; `path:` object sources always resolve against `workingDir`
 5. `processors/` — Transforms fetched content (replacements, shell pipes, JSON/YAML merge)
 6. `diff.ts` — Computes and renders git-diff-style output
 7. `writer.ts` — Stages writes to a temp dir, then atomically commits
@@ -67,10 +73,10 @@ mise exec -- bunx vitest run test/config.test.ts
 ### Source types (`src/sources/`)
 
 - **`http.ts`** (plain URL) — `fetch` with retry/rate-limit backoff
-- **`local.ts`** (plain path) — `fs` with recursive directory traversal; `~/` supported; always receives an already-resolved path (relative-path resolution against `configBase` or `workingDir` is handled upstream in `sources/index.ts` before dispatch)
+- **`local.ts`** (plain path) — `fs` with recursive directory traversal; `~/` supported; always receives an already-resolved path (relative-path resolution against `configBase` or `workingDir` is handled upstream in `sources/dispatch/` before the source is fetched)
 - **`exec.ts`** (`exec:`) — `child_process.execSync`
-- **`gitlab.ts`** (`gitlab:`) — shells out to `glab` CLI
-- **`github.ts`** (`github:`) — shells out to `gh` CLI
+- **`gitlab/`** (`gitlab:`) — shells out to `glab` CLI
+- **`github/`** (`github:`) — shells out to `gh` CLI
 - **`bitbucket.ts`** (`bitbucket:`) — Bitbucket REST API; auth via `BITBUCKET_TOKEN` or `BITBUCKET_USERNAME`+`BITBUCKET_APP_PASSWORD`
 - **`git.ts`** (`git:`) — `git clone --depth 1` into a temp dir
 - **`s3.ts`** (`s3:`) — `aws s3 cp` / `aws s3 sync` CLI

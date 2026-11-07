@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { applyFilter, expandBraces } from '../src/filter';
+import { byCodeUnit } from './sort-helpers';
 
 function buf(s: string): Buffer {
   return Buffer.from(s, 'utf8');
@@ -53,7 +54,7 @@ describe('applyFilter — exact match', () => {
   it('keeps multiple exact-matched files', () => {
     const files = mapOf({ 'a.txt': 'a', 'b.txt': 'b', 'c.txt': 'c' });
     const result = applyFilter(files, ['a.txt', 'c.txt']);
-    expect([...result.keys()].sort()).toEqual(['a.txt', 'c.txt']);
+    expect([...result.keys()].sort(byCodeUnit)).toEqual(['a.txt', 'c.txt']);
   });
 });
 
@@ -66,7 +67,10 @@ describe('applyFilter — brace expansion', () => {
       'file-d.yml': 'd',
     });
     const result = applyFilter(files, ['file-{a,b}.yml']);
-    expect([...result.keys()].sort()).toEqual(['file-a.yml', 'file-b.yml']);
+    expect([...result.keys()].sort(byCodeUnit)).toEqual([
+      'file-a.yml',
+      'file-b.yml',
+    ]);
   });
 });
 
@@ -79,7 +83,10 @@ describe('applyFilter — regex', () => {
       'some-image.jpg': '',
     });
     const result = applyFilter(files, ['/\\.jpg$/']);
-    expect([...result.keys()].sort()).toEqual(['photo.jpg', 'some-image.jpg']);
+    expect([...result.keys()].sort(byCodeUnit)).toEqual([
+      'photo.jpg',
+      'some-image.jpg',
+    ]);
   });
 
   it('matches anchored regex', () => {
@@ -95,7 +102,7 @@ describe('applyFilter — regex', () => {
       'other.txt': '',
     });
     const result = applyFilter(files, ['/config\\.yml$/']);
-    expect([...result.keys()].sort()).toEqual([
+    expect([...result.keys()].sort(byCodeUnit)).toEqual([
       'config.yml',
       'subdir/config.yml',
     ]);
@@ -124,7 +131,10 @@ describe('applyFilter — glob', () => {
       'file-ab.txt': '',
     });
     const result = applyFilter(files, ['file-?.txt']);
-    expect([...result.keys()].sort()).toEqual(['file-a.txt', 'file-b.txt']);
+    expect([...result.keys()].sort(byCodeUnit)).toEqual([
+      'file-a.txt',
+      'file-b.txt',
+    ]);
   });
 
   it('does not treat . as a regex wildcard', () => {
@@ -146,7 +156,7 @@ describe('applyFilter — glob', () => {
       'other-file.txt': '',
     });
     const result = applyFilter(files, ['tool-{amd64,arm64}-*.tar.gz']);
-    expect([...result.keys()].sort()).toEqual([
+    expect([...result.keys()].sort(byCodeUnit)).toEqual([
       'tool-amd64-1.0.0.tar.gz',
       'tool-arm64-2.0.0.tar.gz',
     ]);
@@ -167,7 +177,7 @@ describe('applyFilter — mixed patterns', () => {
       'file-{a,b}.yml',
       '/\\.jpg$/',
     ]);
-    expect([...result.keys()].sort()).toEqual([
+    expect([...result.keys()].sort(byCodeUnit)).toEqual([
       'exact.png',
       'file-a.yml',
       'file-b.yml',

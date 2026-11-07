@@ -45,8 +45,8 @@ describe('fetchBitbucket — auth headers', () => {
 
     expect(mockFetch.mock.calls.length).toBeGreaterThan(0);
     for (const [, opts] of mockFetch.mock.calls) {
-      const headers = (opts as RequestInit).headers as Record<string, string>;
-      expect(headers['Authorization']).toBe(expected);
+      const headers = new Headers(opts?.headers);
+      expect(headers.get('Authorization')).toBe(expected);
     }
   });
 
@@ -59,8 +59,8 @@ describe('fetchBitbucket — auth headers', () => {
     await fetchBitbucket('ws', 'repo', 'file.txt', 'main');
 
     for (const [, opts] of mockFetch.mock.calls) {
-      const headers = (opts as RequestInit).headers as Record<string, string>;
-      expect(headers['Authorization']).toBe('Bearer repo-access-tok');
+      const headers = new Headers(opts?.headers);
+      expect(headers.get('Authorization')).toBe('Bearer repo-access-tok');
     }
   });
 
@@ -72,8 +72,8 @@ describe('fetchBitbucket — auth headers', () => {
     await fetchBitbucket('ws', 'repo', 'file.txt', 'main');
 
     for (const [, opts] of mockFetch.mock.calls) {
-      const headers = (opts as RequestInit).headers as Record<string, string>;
-      expect(headers).not.toHaveProperty('Authorization');
+      const headers = new Headers(opts?.headers);
+      expect(headers.has('Authorization')).toBe(false);
     }
   });
 });
