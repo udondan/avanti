@@ -73,13 +73,21 @@ name = "checkov"
 
 # typescript is needed so typescript-eslint can resolve types. Without it,
 # every typed rule reports types that could not be resolved.
+#
+# ESLint and knip need the project's dependencies installed: the typed rules
+# resolve imported types from node_modules, and knip loads the tool configs
+# and maps binaries to packages. Qlty Cloud builds ("build" trigger) don't
+# install dependencies, so both run everywhere except there; the CI qlty job
+# installs dependencies and runs them.
 [[plugin]]
 name = "eslint"
 package_file = "package.json"
 package_filters = ["eslint", "prettier", "typescript"]
+triggers = ["manual", "ide", "agent", "pre-commit", "pre-push"]
 
 [[plugin]]
 name = "knip"
+triggers = ["manual", "ide", "agent", "pre-commit", "pre-push"]
 
 [[plugin]]
 name = "markdownlint"
