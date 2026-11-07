@@ -335,7 +335,7 @@ const _HANDLERS_KEY = Symbol.for('avanti.writer.exitHandlersRegistered');
 if (!_proc[_HANDLERS_KEY]) {
   _proc[_HANDLERS_KEY] = true;
   process.on('exit', () => {
-    for (const d of [...stagedWorkerDirs]) {
+    for (const d of Array.from(stagedWorkerDirs)) {
       cleanupWorkerDir(d);
     }
   });
@@ -344,7 +344,7 @@ if (!_proc[_HANDLERS_KEY]) {
   // SIGINT/SIGTERM when no sessions are active and hangs instead of exiting.
   const teardown = (signal: string): void => {
     const hadSessions = activeSudoSessions.size > 0;
-    for (const s of [...activeSudoSessions]) {
+    for (const s of Array.from(activeSudoSessions)) {
       try {
         s.close();
       } catch {

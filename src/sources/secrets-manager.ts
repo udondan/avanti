@@ -4,7 +4,7 @@ import {
 } from '@aws-sdk/client-secrets-manager';
 import { verbose, isVerbose } from '../logger';
 
-export interface SecretsManagerResult {
+interface SecretsManagerResult {
   files: Map<string, Buffer>;
 }
 

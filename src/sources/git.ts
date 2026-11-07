@@ -10,7 +10,7 @@ import {
   parseRefPattern,
 } from '../ref';
 
-export interface GitResult {
+interface GitResult {
   files: Map<string, Buffer>;
 }
 

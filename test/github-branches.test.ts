@@ -146,9 +146,9 @@ describe('github — request setup', () => {
     expect(urlOf(url)).toBe(
       'https://ghe.example.com/api/v3/repos/o/r/contents/a%20b/f.txt?ref=main',
     );
-    expect((init?.headers as Record<string, string>).Authorization).toBe(
-      'Bearer tok',
-    );
+    expect(
+      (init?.headers as Record<string, string> | undefined)?.Authorization,
+    ).toBe('Bearer tok');
   });
 
   it('uses GITHUB_HOST and defaults the ref to HEAD', async () => {
@@ -802,9 +802,9 @@ describe('github — releases via API', () => {
     expect([...result.files.keys()]).toEqual(['tool-linux.tar.gz']);
     expect(fetchSpy).toHaveBeenCalledTimes(2);
     const dlInit = fetchSpy.mock.calls[1][1];
-    expect((dlInit?.headers as Record<string, string>).Accept).toBe(
-      'application/octet-stream',
-    );
+    expect(
+      (dlInit?.headers as Record<string, string> | undefined)?.Accept,
+    ).toBe('application/octet-stream');
   });
 
   it('returns an empty map when the pre-filter matches nothing', async () => {

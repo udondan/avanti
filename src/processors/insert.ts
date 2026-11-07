@@ -1255,7 +1255,7 @@ export interface InsertHistory {
   owned?: unknown;
 }
 
-export interface InsertResult {
+interface InsertResult {
   text: string;
   /** What this insert added; store it in history for the next insert. */
   owned?: unknown;

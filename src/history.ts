@@ -4,7 +4,7 @@ import * as path from 'path';
 import * as crypto from 'crypto';
 import { computeContentSha256 } from './sha';
 
-export interface FileHistoryMeta {
+interface FileHistoryMeta {
   absolutePath: string;
   slug: string;
   firstSeenAt: string;
@@ -47,14 +47,14 @@ export interface PullLogFileRef {
   isSymlink?: boolean;
 }
 
-export interface FileVersionInfo {
+interface FileVersionInfo {
   version: number;
   isOriginal: boolean;
   pulledAt: string | null;
   pullId: string | null;
 }
 
-export interface FileHistory {
+interface FileHistory {
   absolutePath: string;
   existedBeforeAvanti: boolean;
   currentVersion: number;

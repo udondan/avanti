@@ -8,7 +8,7 @@ import { expandTilde } from '../paths';
 import { resolveVars } from '../variables';
 import type { Variables } from '../types';
 
-export interface LocalResult {
+interface LocalResult {
   files: Map<string, Buffer>;
   missing?: boolean;
 }

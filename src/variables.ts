@@ -4,7 +4,7 @@ import * as path from 'path';
 import { JsonValue, Variables, VariableSpec } from './types';
 
 // $latest and $recent are special sentinels for resolving tags across all git-hosting sources.
-export const RESERVED_VARS = new Set(['latest', 'recent']);
+const RESERVED_VARS = new Set(['latest', 'recent']);
 
 // Names users cannot define as variables (passthrough-reserved + system-injected).
 export const RESERVED_VAR_NAMES = new Set([

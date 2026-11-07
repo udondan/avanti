@@ -1384,7 +1384,11 @@ describe('INI — ownership tracking', () => {
       globals: [],
       sections: [
         {
-          ...{ name: 's', index: 0, count: 1, others: [], created: false },
+          name: 's',
+          index: 0,
+          count: 1,
+          others: [],
+          created: false,
           kvs: [{ key: 'list', isArray: false, value: ['a'] }],
         },
       ],

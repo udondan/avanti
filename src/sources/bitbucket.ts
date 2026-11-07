@@ -12,7 +12,7 @@ import {
   parseRefPattern,
 } from '../ref';
 
-export interface BitbucketResult {
+interface BitbucketResult {
   files: Map<string, Buffer>;
 }
 

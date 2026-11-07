@@ -26,7 +26,7 @@ function normalizeVia(via?: Via | Via[]): Via[] {
   return [via];
 }
 
-export interface GitLabResult {
+interface GitLabResult {
   /** Map of relative path → content */
   files: Map<string, Buffer>;
 }

@@ -5,12 +5,10 @@ import { Liquid } from 'liquidjs';
 import * as ejs from 'ejs';
 import Mustache from 'mustache';
 import { Eta } from 'eta';
-import { Variables, TemplateEngine, VALID_TEMPLATE_ENGINES } from '../types';
+import { Variables, TemplateEngine } from '../types';
 
 // avanti renders config files, not HTML — disable all engine HTML escaping
 Mustache.escape = String;
-
-export { VALID_TEMPLATE_ENGINES };
 
 const EXTENSION_MAP: Record<string, TemplateEngine> = {
   '.hbs': 'handlebars',

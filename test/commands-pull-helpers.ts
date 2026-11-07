@@ -7,13 +7,13 @@ import * as os from 'os';
 import * as path from 'path';
 import { vi } from 'vitest';
 
-export class ExitError extends Error {
+class ExitError extends Error {
   constructor(readonly code: number) {
     super(`process.exit(${code})`);
   }
 }
 
-export interface RunResult {
+interface RunResult {
   /** Code of the first process.exit() call; 0 when the action returned,
    *  2 when it threw anything else. */
   code: number;

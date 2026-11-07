@@ -3,7 +3,7 @@ import * as path from 'path';
 import { fetchWithRetry } from '../fetch';
 import { verbose } from '../logger';
 
-export interface VaultResult {
+interface VaultResult {
   files: Map<string, Buffer>;
 }
 

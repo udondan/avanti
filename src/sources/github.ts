@@ -27,7 +27,7 @@ function normalizeVia(via?: Via | Via[]): Via[] {
   return [via];
 }
 
-export interface GitHubResult {
+interface GitHubResult {
   files: Map<string, Buffer>;
 }
 

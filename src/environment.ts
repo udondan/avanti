@@ -10,11 +10,11 @@ import { isBinary } from './binary';
 
 // avanti injects these itself for `on:` write hooks — a user-defined
 // environment: block must not be able to shadow them.
-export const RESERVED_ENV_KEYS = new Set(['AVANTI_TARGET', 'AVANTI_IS_NEW']);
+const RESERVED_ENV_KEYS = new Set(['AVANTI_TARGET', 'AVANTI_IS_NEW']);
 
 // Required so $env:NAME (which only accepts this grammar) can reference any
 // key declared here.
-export const ENV_KEY_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
+const ENV_KEY_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 export function validateEnvironmentNames(spec: EnvironmentSpec): void {
   for (const name of Object.keys(spec)) {

@@ -7,7 +7,7 @@ import * as path from 'path';
 import { verbose, isVerbose } from '../logger';
 import { redactUrl } from '../fetch';
 
-export interface S3Result {
+interface S3Result {
   files: Map<string, Buffer>;
 }
 
