@@ -86,6 +86,11 @@ export function acceptConnection(socket: net.Socket, host: IpcHost): void {
     input: socket,
     crlfDelay: Infinity,
   });
+  // readline re-emits input errors on the interface. The socket's own
+  // 'error' handler above already aborts the session or drops the
+  // connection, so only swallow the duplicate here; without a listener it
+  // would be thrown as an uncaught exception.
+  rl.on('error', () => {});
   const conn: Connection = {
     socket,
     rl,

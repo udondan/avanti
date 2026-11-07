@@ -107,11 +107,9 @@ describe('acceptConnection', () => {
   it('destroys a pre-handshake connection on a socket error', () => {
     const { socket, destroy } = fakeSocket();
     acceptConnection(socket, host);
-    // readline forwards input errors to its interface, which has no 'error'
-    // listener, so the emit rethrows after the session's handler ran.
-    expect(() => socket.emit('error', new Error('ECONNRESET'))).toThrow(
-      'ECONNRESET',
-    );
+    // readline forwards the input error to its interface; that must not
+    // turn into an uncaught exception.
+    expect(() => socket.emit('error', new Error('ECONNRESET'))).not.toThrow();
     expect(destroy).toHaveBeenCalled();
     expect(host.abort).not.toHaveBeenCalled();
   });
@@ -123,8 +121,8 @@ describe('acceptConnection', () => {
     await flush();
     expect(host.promote).toHaveBeenCalledTimes(1);
     const err = new Error('ECONNRESET');
-    // See above: readline rethrows the input error after the handler ran.
-    expect(() => socket.emit('error', err)).toThrow('ECONNRESET');
+    expect(() => socket.emit('error', err)).not.toThrow();
+    expect(host.abort).toHaveBeenCalledTimes(1);
     expect(host.abort).toHaveBeenCalledWith(err);
   });
 
