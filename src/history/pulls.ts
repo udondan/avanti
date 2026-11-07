@@ -28,13 +28,28 @@ export function parsePullLog(content: string): PullLogEntry[] {
   return entries;
 }
 
+/**
+ * Refs the pull wrote itself. Each entry also carries over the refs of files
+ * it did not rewrite; those keep their version, so a ref with the same path
+ * and version as in the previous entry was not written by this pull.
+ */
+export function writtenRefs(
+  entry: PullLogEntry,
+  previous: PullLogEntry | undefined,
+): PullLogFileRef[] {
+  if (!previous) return entry.files;
+  const key = (r: PullLogFileRef): string => `${r.absolutePath}\0${r.version}`;
+  const carried = new Set(previous.files.map(key));
+  return entry.files.filter((r) => !carried.has(key(r)));
+}
+
 function buildVersionMap(
   chronologicalPulls: PullLogEntry[],
   absolutePath: string,
 ): Map<number, VersionPullInfo> {
   const versionMap = new Map<number, VersionPullInfo>();
-  for (const pull of chronologicalPulls) {
-    for (const ref of pull.files) {
+  for (const [i, pull] of chronologicalPulls.entries()) {
+    for (const ref of writtenRefs(pull, chronologicalPulls[i - 1])) {
       if (ref.absolutePath === absolutePath) {
         versionMap.set(ref.version, {
           pulledAt: pull.timestamp,

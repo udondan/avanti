@@ -11,6 +11,7 @@ import {
   SourceShaRecord,
 } from '../src/history';
 import { logCommand } from '../src/commands/log';
+import { mergeLastPullRefs } from '../src/commands/pull/history-record';
 import { computeContentSha256 } from '../src/sha';
 
 let tmpDir: string;
@@ -25,7 +26,13 @@ interface StageSpec {
   sources?: SourceShaRecord[];
 }
 
-function recordPull(config: string, specs: StageSpec[]): string {
+// Like a real pull, carryOver keeps the refs of files this pull did not
+// rewrite in the new log entry.
+function recordPull(
+  config: string,
+  specs: StageSpec[],
+  carryOver = false,
+): string {
   const h = new HistoryManager(config, tmpDir);
   h.ensureStorageDir();
   const pullId = h.openPullSession();
@@ -37,7 +44,10 @@ function recordPull(config: string, specs: StageSpec[]): string {
       }).fileRef,
     );
   }
-  h.closePullSession(pullId, config, refs);
+  const entryRefs = carryOver
+    ? mergeLastPullRefs(h.getLastPullFiles(), new Set(), refs)
+    : refs;
+  h.closePullSession(pullId, config, entryRefs);
   for (const s of specs) writeFileSync(s.path, s.content);
   return pullId;
 }
@@ -147,6 +157,63 @@ describe('log: pull history', () => {
     const out = await run([], false);
     expect(out).toContain('avanti.yml');
     expect(out).toContain('other.yml');
+  });
+});
+
+describe('log: carried-over refs', () => {
+  function pullSections(out: string): Map<string, string> {
+    const sections = new Map<string, string>();
+    for (const block of out.split('\n\n')) {
+      const m = /^pull (\w{8})/.exec(block.trim());
+      if (m) sections.set(m[1], block);
+    }
+    return sections;
+  }
+
+  it('lists only the files a pull wrote', async () => {
+    const a = join(tmpDir, 'a.txt');
+    const b = join(tmpDir, 'b.txt');
+    const first = recordPull(
+      configPath,
+      [
+        { path: a, content: 'a1', isNew: true },
+        { path: b, content: 'b1', isNew: true },
+      ],
+      true,
+    );
+    const second = recordPull(
+      configPath,
+      [{ path: a, content: 'a2', isNew: false }],
+      true,
+    );
+    const sections = pullSections(await run([]));
+    const firstOut = sections.get(first.slice(0, 8)) ?? '';
+    const secondOut = sections.get(second.slice(0, 8)) ?? '';
+    expect(firstOut).toContain(`${a}  → v1  (new file)`);
+    expect(firstOut).toContain(`${b}  → v1  (new file)`);
+    expect(secondOut).toContain(`${a}  → v2  (modified)`);
+    expect(secondOut).not.toContain(b);
+  });
+
+  it('attributes a version to the pull that wrote it', async () => {
+    const a = join(tmpDir, 'a.txt');
+    const b = join(tmpDir, 'b.txt');
+    const first = recordPull(
+      configPath,
+      [
+        { path: a, content: 'a1', isNew: true },
+        { path: b, content: 'b1', isNew: true },
+      ],
+      true,
+    );
+    const second = recordPull(
+      configPath,
+      [{ path: a, content: 'a2', isNew: false }],
+      true,
+    );
+    const out = await run(['b.txt']);
+    expect(out).toContain(`pull ${first.slice(0, 8)}  (current)`);
+    expect(out).not.toContain(second.slice(0, 8));
   });
 });
 
