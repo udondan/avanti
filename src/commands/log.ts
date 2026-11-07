@@ -6,6 +6,7 @@ import {
   PullLogEntry,
   PullLogFileRef,
   SourceShaRecord,
+  writtenRefs,
 } from '../history';
 import { formatSourceLabel } from '../sources';
 import { resolveWorkingDir } from './project';
@@ -77,8 +78,15 @@ function printPull(pull: PullLogEntry): void {
 }
 
 function showPullHistory(managers: HistoryManager[]): void {
+  // Each manager has its own pull log, so carried-over refs are detected
+  // per manager. listPulls() is newest first: the previous entry is i + 1.
   const pulls = managers
-    .flatMap((m) => m.listPulls())
+    .flatMap((m) =>
+      m.listPulls().map((pull, i, all) => ({
+        ...pull,
+        files: writtenRefs(pull, all[i + 1]),
+      })),
+    )
     .sort((a, b) => b.timestamp.localeCompare(a.timestamp));
 
   if (pulls.length === 0) {
