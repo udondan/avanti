@@ -166,7 +166,7 @@ export function mergeToml(
 
 export function formatToml(content: string): string {
   try {
-    return stringify(parse(content) as Parameters<typeof stringify>[0]);
+    return stringify(parse(content));
   } catch (e) {
     throw new Error(`invalid TOML: ${(e as Error).message}`, { cause: e });
   }

@@ -1,6 +1,6 @@
 import { spawnSync } from 'child_process';
 import { verbose } from '../../logger';
-import type { ForgeCli } from '../forge/transport';
+import { firstNonEmpty, type ForgeCli } from '../forge/transport';
 
 export interface GitLabResult {
   /** Map of relative path → content */
@@ -22,7 +22,7 @@ type GlabBinaryResult = {
 export const PER_PAGE = 100;
 
 export function getHost(override?: string): string {
-  return override?.trim() || process.env.GITLAB_HOST?.trim() || 'gitlab.com';
+  return firstNonEmpty(override, process.env.GITLAB_HOST) ?? 'gitlab.com';
 }
 
 export function envToken(): string | undefined {
@@ -61,7 +61,7 @@ export const GLAB: ForgeCli = {
 };
 
 export function hostnameArgs(host?: string): string[] {
-  const resolved = host?.trim() || process.env.GITLAB_HOST?.trim() || '';
+  const resolved = firstNonEmpty(host, process.env.GITLAB_HOST);
   return resolved ? ['--hostname', resolved] : [];
 }
 

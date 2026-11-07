@@ -146,7 +146,7 @@ describe('atomicWrite — backups', () => {
     // with a warning and no backup directory is created.
     const realLstat = realImpl(mockLstat) as typeof fs.lstatSync;
     mockLstat.mockImplementation(((p: fs.PathLike, o?: fs.StatOptions) => {
-      const st = realLstat(p, o as fs.StatOptions & { bigint?: false });
+      const st = realLstat(p, o);
       if (p === dest && st) {
         return Object.assign(Object.create(st) as fs.Stats, {
           isFile: () => false,
@@ -365,7 +365,7 @@ describe('atomicWrite — in-place writes', () => {
             if (calls === 1) return undefined;
             fs.symlinkSync('real', dest);
           }
-          return realLstat(p, o as fs.StatOptions & { bigint?: false });
+          return realLstat(p, o);
         }) as typeof fs.lstatSync);
         expect(() =>
           atomicWrite([

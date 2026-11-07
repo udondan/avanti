@@ -8,6 +8,7 @@ import { verbose } from '../../logger';
 import type { Via } from '../../types';
 import {
   apiOrCli,
+  firstNonEmpty,
   HttpError,
   normalizeVia,
   withTransports,
@@ -123,8 +124,7 @@ function inferGitlabHost(
   links: GitLabReleaseLink[],
   host?: string,
 ): string | undefined {
-  const explicitGitlabHost =
-    host?.trim() || process.env.GITLAB_HOST?.trim() || undefined;
+  const explicitGitlabHost = firstNonEmpty(host, process.env.GITLAB_HOST);
   return (
     explicitGitlabHost ??
     links

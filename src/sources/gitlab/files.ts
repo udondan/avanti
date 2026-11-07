@@ -1,6 +1,11 @@
 import { verbose } from '../../logger';
 import type { Via } from '../../types';
-import { fetchApi, statusFallback, withTransports } from '../forge/transport';
+import {
+  fetchApi,
+  firstNonEmpty,
+  statusFallback,
+  withTransports,
+} from '../forge/transport';
 import {
   apiHeaders,
   GLAB,
@@ -60,7 +65,7 @@ function detectPathTypeViaCli(
     host,
   );
   if (res.status === 0) return 'file';
-  const hasExplicitHost = host?.trim() || process.env.GITLAB_HOST?.trim();
+  const hasExplicitHost = firstNonEmpty(host, process.env.GITLAB_HOST);
   if (hasExplicitHost && !(res.stderr + res.stdout).includes('404')) {
     throw new Error(
       `gitlab: glab failed for ${project}: ${(res.stderr || res.stdout).trim()}`,
