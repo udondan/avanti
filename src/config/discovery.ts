@@ -84,8 +84,8 @@ export function parseGitLabSpec(spec: string): {
 
 function deriveHttpBase(configPath: string): string {
   const url = new URL(configPath);
-  const lastSlash = url.pathname.lastIndexOf('/');
-  url.pathname = lastSlash >= 0 ? url.pathname.slice(0, lastSlash + 1) : '/';
+  // An http(s) pathname always starts with '/', so a slash is always found.
+  url.pathname = url.pathname.slice(0, url.pathname.lastIndexOf('/') + 1);
   return url.toString();
 }
 
