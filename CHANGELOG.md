@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.29.4](https://github.com/udondan/avanti/compare/v0.29.3...v0.29.4) (2026-11-09)
+
+
+### Bug Fixes
+
+* handle readline error on privileged worker IPC socket ([#544](https://github.com/udondan/avanti/issues/544)) ([e2ee6d4](https://github.com/udondan/avanti/commit/e2ee6d4e72b5fd0ccfb993c9379612f6defddeb0)), closes [#540](https://github.com/udondan/avanti/issues/540)
+* keep files untouched by the last pull when reverting it ([#545](https://github.com/udondan/avanti/issues/545)) ([f649184](https://github.com/udondan/avanti/commit/f64918492d6330eb31dacf71e3aa9894bcc86481)), closes [#538](https://github.com/udondan/avanti/issues/538)
+* only list files a pull wrote in avanti log ([#547](https://github.com/udondan/avanti/issues/547)) ([9a091ca](https://github.com/udondan/avanti/commit/9a091ca0b94a6bb1d03b00b8035e5701c01e3596)), closes [#546](https://github.com/udondan/avanti/issues/546)
+
+
+### Dependencies
+
+* **deps:** update aws-sdk-js-v3 monorepo to v3.1162.0 ([#548](https://github.com/udondan/avanti/issues/548)) ([cb0877c](https://github.com/udondan/avanti/commit/cb0877c30184f574422335cb43e640e8c2649c40))
+
 ## [0.29.3](https://github.com/udondan/avanti/compare/v0.29.2...v0.29.3) (2026-11-03)
 
 
