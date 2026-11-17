@@ -39,6 +39,20 @@ Run a single test file:
 mise exec -- bunx vitest run test/config.test.ts
 ```
 
+## CI
+
+Node.js and Bun versions are pinned only in `mise.toml`; the workflows install
+them with `jdx/mise-action` (tool cache on in `test.yml`, off in `publish.yml`).
+Every job in `test.yml` except `required` waits for boarding-gate (job `Queue`,
+one run at a time because the tests share the rate limits of the live GitHub,
+GitLab and Bitbucket APIs) and fails if it failed: while another run holds the
+turn, the branch likely needs a rebase anyway, so nothing runs in parallel.
+Pull requests from forks skip the wait. On pull requests the `changes` job
+(`dorny/paths-filter`) decides whether `test` and `integration-tests-vault`
+run; when the code or the build starts depending on another file, add it to
+that filter, or the tests silently skip. `actions` (actionlint, zizmor) and
+`qlty` always run on pull requests.
+
 ## Architecture
 
 **avanti** is a CLI tool that assembles local files from declarative YAML specs.
