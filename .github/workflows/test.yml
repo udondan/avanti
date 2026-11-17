@@ -195,7 +195,7 @@ jobs:
       # Linux: Windows skips the POSIX-only tests.
       - name: Check coverage
         if: runner.os == 'Linux'
-        run: bun test/setup/check-coverage.ts
+        run: bun run coverage:check
 
   # Codecov reports its result as the check runs codecov/project and
   # codecov/patch. This job waits for them, so a coverage drop fails the
