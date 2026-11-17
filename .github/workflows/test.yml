@@ -189,6 +189,14 @@ jobs:
           # coverage/child-raw, which counts comments as lines.
           disable_search: true
 
+      # The Coverage job passes with a warning if Codecov doesn't report, so
+      # this checks the combined coverage against codecov.yml here too. It runs
+      # after the upload, so Codecov still shows the missed lines. Only on
+      # Linux: Windows skips the POSIX-only tests.
+      - name: Check coverage
+        if: runner.os == 'Linux'
+        run: bun run coverage:check
+
   # Codecov reports its result as the check runs codecov/project and
   # codecov/patch. This job waits for them, so a coverage drop fails the
   # required job. It is skipped along with the tests, e.g. when only the README
