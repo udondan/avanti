@@ -50,10 +50,6 @@ test_patterns = [
 [smells]
 mode = "block"
 
-# Qlty doesn't know bun.lock as a lockfile yet.
-[file_types.osv-scanner]
-globs = ["**/bun.lock"]
-
 # radarlint sometimes loses type information and then reports required
 # assertions as unnecessary. ESLint's no-unnecessary-type-assertion enforces
 # the same rule with full type information.
@@ -93,9 +89,6 @@ triggers = ["manual", "ide", "agent", "pre-commit", "pre-push"]
 name = "markdownlint"
 
 [[plugin]]
-name = "osv-scanner"
-
-[[plugin]]
 name = "oxc"
 
 [[plugin]]
@@ -106,8 +99,12 @@ package_filters = ["prettier"]
 [[plugin]]
 name = "radarlint-js"
 
+# Without fs-vuln: vulnerable dependencies are Dependabot alerts (see
+# .github/workflows/dependency-submission.yml) and don't fail pull requests,
+# which they would even when no fixed version exists yet.
 [[plugin]]
 name = "trivy"
+drivers = ["config", "fs-secret"]
 
 [[plugin]]
 name = "trufflehog"
