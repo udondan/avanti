@@ -15,6 +15,11 @@ export default defineConfig({
       // Count every source file, also the ones no test imports.
       include: ['src/**/*.ts'],
       exclude: ['src/types.ts'],
+      // Fail below the line coverage the tests reach in this process alone.
+      // Code that runs in child processes is measured separately (see
+      // .c8rc.json), and Codecov checks the merged result. Windows skips the
+      // POSIX-only tests, so it has its own lower floor.
+      thresholds: { lines: process.platform === 'win32' ? 81 : 97 },
     },
   },
 });

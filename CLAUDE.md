@@ -51,7 +51,9 @@ Pull requests from forks skip the wait. On pull requests the `changes` job
 (`dorny/paths-filter`) decides whether `test` and `integration-tests-vault`
 run; when the code or the build starts depending on another file, add it to
 that filter, or the tests silently skip. `actions` (actionlint, zizmor) and
-`qlty` always run on pull requests.
+`qlty` always run on pull requests. Runs with `--coverage` fail below the line
+coverage threshold in `vitest.config.ts` (97 %, 81 % on Windows), the backstop
+for when Codecov doesn't report.
 
 ## Architecture
 
