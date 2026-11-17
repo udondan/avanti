@@ -200,7 +200,8 @@ jobs:
   # Codecov reports its result as the check runs codecov/project and
   # codecov/patch. This job waits for them, so a coverage drop fails the
   # required job. It is skipped along with the tests, e.g. when only the README
-  # changes, and passes with a warning if Codecov doesn't report in time.
+  # changes. If Codecov doesn't report in time, it passes with a warning and
+  # only the combined line coverage of the Check coverage step is checked.
   coverage:
     name: Coverage
     runs-on: ubuntu-latest
@@ -231,7 +232,7 @@ jobs:
             fi
             sleep 10
           done
-          echo "::warning::Codecov didn't report within 5 minutes, coverage is not checked."
+          echo "::warning::Codecov didn't report within 5 minutes, only the combined line coverage is checked, not patch coverage."
 
   integration-tests-vault:
     runs-on: ubuntu-latest
