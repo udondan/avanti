@@ -94,7 +94,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up Node.js and Bun
-        uses: jdx/mise-action@236a21c3b91f5db6d4e174b348674a0f0caac06d # v5.2.9
+        uses: jdx/mise-action@90f833d396d0cc3674b631d2d225e306476c303a # v5.2.10
         with:
           install_args: node bun # versions from mise.toml
 
@@ -250,7 +250,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up Node.js and Bun
-        uses: jdx/mise-action@236a21c3b91f5db6d4e174b348674a0f0caac06d # v5.2.9
+        uses: jdx/mise-action@90f833d396d0cc3674b631d2d225e306476c303a # v5.2.10
         with:
           install_args: node bun # versions from mise.toml
 
@@ -321,7 +321,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: jdx/mise-action@236a21c3b91f5db6d4e174b348674a0f0caac06d # v5.2.9
+      - uses: jdx/mise-action@90f833d396d0cc3674b631d2d225e306476c303a # v5.2.10
         with:
           install_args: actionlint shellcheck zizmor
 
@@ -359,7 +359,7 @@ jobs:
       # The type-aware rules of eslint, knip and radarlint-js need the
       # project's dependencies to resolve types.
       - name: Set up Node.js and Bun
-        uses: jdx/mise-action@236a21c3b91f5db6d4e174b348674a0f0caac06d # v5.2.9
+        uses: jdx/mise-action@90f833d396d0cc3674b631d2d225e306476c303a # v5.2.10
         with:
           install_args: node bun # versions from mise.toml
 
