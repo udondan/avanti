@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.29.5](https://github.com/udondan/avanti/compare/v0.29.4...v0.29.5) (2026-11-23)
+
+
+### Dependencies
+
+* **deps:** update aws-sdk-js-v3 monorepo to v3.1170.0 ([#584](https://github.com/udondan/avanti/issues/584)) ([890cfce](https://github.com/udondan/avanti/commit/890cfceb706c3f7b737d0e00c7c002a4db4ccc98))
+* **deps:** update aws-sdk-js-v3 monorepo to v3.1171.0 ([#587](https://github.com/udondan/avanti/issues/587)) ([92fcc9f](https://github.com/udondan/avanti/commit/92fcc9fbe3a8f75d27f260b57fd76f031ae063df))
+* **deps:** update aws-sdk-js-v3 monorepo to v3.1172.0 ([#590](https://github.com/udondan/avanti/issues/590)) ([62c7744](https://github.com/udondan/avanti/commit/62c7744cb71696b335dcd00ec7b78ceec2d968ae))
+* **deps:** update aws-sdk-js-v3 monorepo to v3.1173.0 ([#593](https://github.com/udondan/avanti/issues/593)) ([1918cd3](https://github.com/udondan/avanti/commit/1918cd38c1bde3e6d89aa6381e19d3cb6f067647))
+
 ## [0.29.4](https://github.com/udondan/avanti/compare/v0.29.3...v0.29.4) (2026-11-09)
 
 
