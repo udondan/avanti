@@ -68,7 +68,7 @@
     "@eslint/js": "10.0.1",
     "@types/ejs": "3.1.5",
     "@types/mustache": "4.2.6",
-    "@types/node": "26.6.7",
+    "@types/node": "26.6.10",
     "@types/nunjucks": "3.2.6",
     "@types/unzipper": "0.10.11",
     "@vitest/coverage-v8": "5.1.1",
